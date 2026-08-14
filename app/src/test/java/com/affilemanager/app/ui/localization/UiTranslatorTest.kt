@@ -9,6 +9,19 @@ class UiTranslatorTest {
         assertEquals("Files", UiTranslator.translate("Failai", AppLanguageManager.ENGLISH))
         assertEquals("Selected: 12", UiTranslator.translate("Pasirinkta: 12", AppLanguageManager.ENGLISH))
         assertEquals("Copy (4)", UiTranslator.translate("Kopijuoti (4)", AppLanguageManager.ENGLISH))
+        assertEquals("Paste (2)", UiTranslator.translate("Įklijuoti (2)", AppLanguageManager.ENGLISH))
+        assertEquals("Paste from server", UiTranslator.translate("Įklijuoti iš serverio", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "3 items will be copied from the server to /storage/emulated/0/Download. Existing names will not be overwritten.",
+            UiTranslator.translate(
+                "Iš serverio bus nukopijuota 3 elementų į /storage/emulated/0/Download. Esami vardai nebus perrašyti.",
+                AppLanguageManager.ENGLISH,
+            ),
+        )
+        assertEquals(
+            "Copied from server to clipboard: 3",
+            UiTranslator.translate("Nukopijuota iš serverio į iškarpinę: 3", AppLanguageManager.ENGLISH),
+        )
         assertEquals("PDF page 3", UiTranslator.translate("PDF puslapis 3", AppLanguageManager.ENGLISH))
         assertEquals("Downloads", UiTranslator.translate("Atsisiuntimai", AppLanguageManager.ENGLISH))
         assertEquals("8.0 GB free of 9.7 GB", UiTranslator.translate("8.0 GB laisva iš 9.7 GB", AppLanguageManager.ENGLISH))
@@ -19,6 +32,7 @@ class UiTranslatorTest {
         assertEquals("Advanced filters · 2", UiTranslator.translate("Išplėstiniai filtrai · 2", AppLanguageManager.ENGLISH))
         assertEquals("Every 24 hr · Wi-Fi/Ethernet only", UiTranslator.translate("Kas 24 val. · tik Wi‑Fi/Ethernet", AppLanguageManager.ENGLISH))
         assertEquals("Create remote folder", UiTranslator.translate("Kurti nuotolinį aplanką", AppLanguageManager.ENGLISH))
+        assertEquals("New connection", UiTranslator.translate("Nauja jungtis", AppLanguageManager.ENGLISH))
         assertEquals("Local file is missing", UiTranslator.translate("Trūksta vietinio failo", AppLanguageManager.ENGLISH))
         assertEquals(
             "Failed: The network profile was removed",

@@ -33,6 +33,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import java.net.UnknownHostException
+import java.util.concurrent.atomic.AtomicInteger
 
 class ConnectionsComponentsTest {
     @get:Rule
@@ -42,37 +43,47 @@ class ConnectionsComponentsTest {
     fun connectedBrowserExposesCopyActionsInBothDirectionsIncludingFolders() {
         val folder = RemoteEntry("remote-folder", "/remote-folder", true, 0, null)
         val file = RemoteEntry("remote.txt", "/remote.txt", false, 12, null)
+        val pasteRequests = AtomicInteger()
         compose.setContent {
             MaterialTheme {
-                RemoteBrowser(
-                    state = NetworkUiState(
-                        connectedProfile = profile(),
-                        path = "/remote",
-                        entries = listOf(folder, file),
-                    ),
-                    localDirectory = "/local/target",
-                    onUp = {},
-                    onRefresh = {},
-                    onOpen = {},
-                    onDownload = {},
-                    onToggleSelection = {},
-                    onClearSelection = {},
-                    onSelectAll = {},
-                    onDownloadSelected = {},
-                    onChooseUpload = {},
-                    onCreateFolder = {},
-                    onRename = {},
-                    onDelete = {},
-                    onSync = {},
-                )
+                Column {
+                    RemoteBrowser(
+                        state = NetworkUiState(
+                            connectedProfile = profile(),
+                            path = "/remote",
+                            entries = listOf(folder, file),
+                        ),
+                        localDirectory = "/local/target",
+                        onUp = {},
+                        onRefresh = {},
+                        onOpen = {},
+                        onDownload = {},
+                        onToggleSelection = {},
+                        onClearSelection = {},
+                        onSelectAll = {},
+                        onDownloadSelected = {},
+                        onCopySelected = {},
+                        onCopy = {},
+                        localClipboardCount = 2,
+                        onPasteLocalClipboard = { pasteRequests.incrementAndGet() },
+                        onChooseUpload = {},
+                        onCreateFolder = {},
+                        onRename = {},
+                        onDelete = {},
+                        onSync = {},
+                    )
+                }
             }
         }
 
         compose.onNodeWithTag("remote_upload_choose").assertIsEnabled().assertHasClickAction()
+        compose.onNodeWithTag("remote_paste_local").assertIsEnabled().assertHasClickAction()
+        compose.onNodeWithText("Paste (2)").performClick()
         compose.onAllNodesWithContentDescription("Copy to active local folder")
             .assertCountEquals(2)[0]
             .assertHasClickAction()
         compose.onNodeWithText("From server → /local/target").fetchSemanticsNode()
+        compose.waitUntil(timeoutMillis = 5_000) { pasteRequests.get() == 1 }
     }
 
     @Test
@@ -119,6 +130,14 @@ class ConnectionsComponentsTest {
                         onDownloadSelected = {
                             copied = state.entries.filter { it.path in state.selectedPaths }.map(RemoteEntry::path)
                         },
+                        onCopySelected = {
+                            copied = state.entries.filter { it.path in state.selectedPaths }.map(RemoteEntry::path)
+                            state = state.copy(selectedPaths = emptySet())
+                            observedSelection = state.selectedPaths
+                        },
+                        onCopy = {},
+                        localClipboardCount = 0,
+                        onPasteLocalClipboard = {},
                         onChooseUpload = {},
                         onCreateFolder = {},
                         onRename = {},
@@ -141,31 +160,76 @@ class ConnectionsComponentsTest {
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Selected: 2").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithContentDescription("Copy to active local folder").performClick()
-        compose.runOnIdle { assertEquals(listOf(folder.path, file.path), copied) }
         compose.onNodeWithContentDescription("Deselect all").performClick()
+        compose.onAllNodesWithText("Selected:", substring = true).assertCountEquals(0)
+
+        compose.onNodeWithTag("remote_entry_/remote-folder").performTouchInput { longClick() }
+        compose.onNodeWithContentDescription("Select all").performClick()
+        compose.onNodeWithContentDescription("Copy").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(folder.path, file.path), copied)
+            assertEquals(emptySet<String>(), observedSelection)
+        }
         compose.onAllNodesWithText("Selected:", substring = true).assertCountEquals(0)
     }
 
     @Test
-    fun localPickerReturnsSelectedFilesAndFolders() {
+    fun localPickerBrowsesIntoFoldersAndReturnsNestedSelection() {
         var copied = emptyList<String>()
         val folder = localEntry("folder", EntryKind.DIRECTORY)
         val file = localEntry("file.txt", EntryKind.DOCUMENT)
+        val nested = localEntry("folder/nested.txt", EntryKind.DOCUMENT)
         compose.setContent {
             MaterialTheme {
                 LocalUploadDialog(
-                    directoryPath = "/local",
+                    initialDirectoryPath = "/local",
                     remotePath = "/remote",
-                    entries = listOf(folder, file),
+                    initialEntries = listOf(folder, file),
                     initiallySelected = emptySet(),
+                    loadDirectory = { path ->
+                        Result.success(if (path == folder.absolutePath) listOf(nested) else listOf(folder, file))
+                    },
                     onDismiss = {},
                     onCopy = { copied = it },
                 )
             }
         }
 
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("folder").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("folder").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("nested.txt").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("nested.txt").performClick()
+        compose.onNodeWithText("Copy (1)").performClick()
+
+        compose.runOnIdle { assertEquals(listOf(nested.absolutePath), copied) }
+    }
+
+    @Test
+    fun localPickerLongPressSelectsTheWholeFolderWithoutOpeningIt() {
+        val folder = localEntry("folder", EntryKind.DIRECTORY)
+        var copied = emptyList<String>()
+        compose.setContent {
+            MaterialTheme {
+                LocalUploadDialog(
+                    initialDirectoryPath = "/local",
+                    remotePath = "/remote",
+                    initialEntries = listOf(folder),
+                    initiallySelected = emptySet(),
+                    loadDirectory = { Result.success(listOf(folder)) },
+                    onDismiss = {},
+                    onCopy = { copied = it },
+                )
+            }
+        }
+
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("folder").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("local_upload_entry_${folder.absolutePath}").performTouchInput { longClick() }
         compose.onNodeWithText("Copy (1)").performClick()
 
         compose.runOnIdle { assertEquals(listOf(folder.absolutePath), copied) }
@@ -180,10 +244,11 @@ class ConnectionsComponentsTest {
         compose.setContent {
             MaterialTheme {
                 LocalUploadDialog(
-                    directoryPath = "/local",
+                    initialDirectoryPath = "/local",
                     remotePath = "/remote",
-                    entries = entries,
+                    initialEntries = entries,
                     initiallySelected = setOf(entries.first().absolutePath),
+                    loadDirectory = { Result.success(entries) },
                     onDismiss = {},
                     onCopy = {},
                 )
@@ -297,7 +362,7 @@ class ConnectionsComponentsTest {
 
     private fun localEntry(name: String, kind: EntryKind) = FileEntry(
         absolutePath = "/local/$name",
-        name = name,
+        name = name.substringAfterLast('/'),
         kind = kind,
         sizeBytes = 12,
         modifiedAtMillis = 1,

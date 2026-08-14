@@ -159,6 +159,11 @@ data class NetworkUiState(
     val error: RemoteErrorInfo? = null,
 )
 
+data class RemoteClipboardState(
+    val profileId: String,
+    val entries: List<RemoteEntry>,
+)
+
 data class SafBrowserUiState(
     val location: SafLocation? = null,
     val currentUri: String? = null,
@@ -244,6 +249,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _clipboard = MutableStateFlow<ClipboardState?>(null)
     val clipboard: StateFlow<ClipboardState?> = _clipboard.asStateFlow()
+
+    private val _remoteClipboard = MutableStateFlow<RemoteClipboardState?>(null)
+    val remoteClipboard: StateFlow<RemoteClipboardState?> = _remoteClipboard.asStateFlow()
 
     private val _searchState = MutableStateFlow(SearchUiState())
     val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
@@ -797,6 +805,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val selected = panelFlow(panel).value.selectedPaths.toList()
         if (selected.isEmpty()) return
         _clipboard.value = ClipboardState(selected, if (move) ClipboardMode.MOVE else ClipboardMode.COPY)
+        _remoteClipboard.value = null
         clearSelection(panel)
         message(if (move) "Paruošta perkelti: ${selected.size}" else "Nukopijuota į iškarpinę: ${selected.size}")
     }
@@ -1056,6 +1065,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val selected = orderedSearchSelection()
         if (selected.isEmpty()) return
         _clipboard.value = ClipboardState(selected, if (move) ClipboardMode.MOVE else ClipboardMode.COPY)
+        _remoteClipboard.value = null
         clearSearchSelection()
         message(if (move) "Paruošta perkelti: ${selected.size}" else "Nukopijuota į iškarpinę: ${selected.size}")
     }
@@ -1567,6 +1577,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _networkState.update { it.copy(selectedPaths = emptySet()) }
     }
 
+    fun copyRemoteSelection() {
+        val state = _networkState.value
+        val entries = state.entries.filter { it.path in state.selectedPaths }
+        setRemoteClipboard(entries)
+    }
+
+    fun copyRemoteEntry(entry: RemoteEntry) {
+        setRemoteClipboard(listOf(entry))
+    }
+
+    private fun setRemoteClipboard(entries: List<RemoteEntry>) {
+        val profile = _networkState.value.connectedProfile ?: return
+        val selected = entries.distinctBy { RemotePath.normalize(it.path) }.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
+        if (selected.isEmpty()) return
+        _remoteClipboard.value = RemoteClipboardState(profile.id, selected)
+        _clipboard.value = null
+        clearRemoteSelection()
+        message("Nukopijuota iš serverio į iškarpinę: ${selected.size}")
+    }
+
+    fun pasteRemoteClipboard(destinationPanel: PanelId = _activePanel.value): Boolean {
+        val clipboard = _remoteClipboard.value ?: return false
+        val profile = _networkState.value.connectedProfile
+        if (profile == null || profile.id != clipboard.profileId || remoteClient == null) {
+            message("Serverio iškarpinė nebegalioja; prisijunkite prie to paties serverio", true)
+            return false
+        }
+        return enqueueRemoteDownload(clipboard.entries, destinationPanel)
+    }
+
     fun remoteDownloadSelection(destinationPanel: PanelId = _activePanel.value) {
         val state = _networkState.value
         val entries = state.entries.filter { it.path in state.selectedPaths }
@@ -1619,6 +1659,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (result.copiedRoots > 0) refreshRemote(normalizedRemoteDirectory)
         }.onFailure { message(it.message ?: "Įkėlimo pradėti nepavyko", true) }.isSuccess
     }
+
+    fun pasteLocalClipboardToRemote(): Boolean {
+        val clipboard = _clipboard.value ?: return false
+        if (clipboard.mode != ClipboardMode.COPY) {
+            message("Į serverį galima įklijuoti tik nukopijuotus, ne iškirptus elementus", true)
+            return false
+        }
+        return remoteUpload(clipboard.paths)
+    }
+
+    suspend fun listLocalDirectoryForUpload(path: String): Result<List<FileEntry>> = graph.localFiles.list(
+        directoryPath = path,
+        includeHidden = false,
+        sortMode = SortMode.NAME,
+        sortDirection = SortDirection.ASCENDING,
+    )
 
     fun remoteCreateDirectory(name: String) {
         val client = remoteClient ?: return
@@ -1895,6 +1951,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _networkState.update {
             it.copy(connectedProfile = null, entries = emptyList(), selectedPaths = emptySet(), loading = false, error = null)
         }
+        _remoteClipboard.value = null
         _syncState.value = SyncUiState()
     }
 

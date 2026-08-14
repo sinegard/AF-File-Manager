@@ -163,6 +163,7 @@ fun FilesScreen(
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
+    val remoteClipboard by viewModel.remoteClipboard.collectAsStateWithLifecycle()
     val renameUndo by viewModel.renameUndo.collectAsStateWithLifecycle()
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
     val panelComparison by viewModel.panelComparison.collectAsStateWithLifecycle()
@@ -173,6 +174,11 @@ fun FilesScreen(
     var archivePanel by remember { mutableStateOf<PanelId?>(null) }
     var pastePanel by remember { mutableStateOf<PanelId?>(null) }
     var tagPanel by remember { mutableStateOf<PanelId?>(null) }
+    val clipboardAvailable = clipboard != null || remoteClipboard != null
+
+    LaunchedEffect(clipboardAvailable) {
+        if (!clipboardAvailable) pastePanel = null
+    }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -197,7 +203,7 @@ fun FilesScreen(
                     event.isCtrlPressed && event.key == Key.X -> {
                         viewModel.copySelection(activePanel, move = true); true
                     }
-                    event.isCtrlPressed && event.key == Key.V && clipboard != null -> {
+                    event.isCtrlPressed && event.key == Key.V && clipboardAvailable -> {
                         pastePanel = activePanel; true
                     }
                     event.isCtrlPressed && event.key == Key.A -> {
@@ -242,7 +248,7 @@ fun FilesScreen(
                         state = left,
                         tabs = leftTabs,
                         active = activePanel == PanelId.LEFT,
-                        clipboardAvailable = clipboard != null,
+                        clipboardAvailable = clipboardAvailable,
                         batchRenameUndoAvailable = renameUndo != null,
                         compactToolbar = compactToolbar,
                         modifier = Modifier.weight(1f),
@@ -262,7 +268,7 @@ fun FilesScreen(
                         state = right,
                         tabs = rightTabs,
                         active = activePanel == PanelId.RIGHT,
-                        clipboardAvailable = clipboard != null,
+                        clipboardAvailable = clipboardAvailable,
                         batchRenameUndoAvailable = renameUndo != null,
                         compactToolbar = compactToolbar,
                         modifier = Modifier.weight(1f),
@@ -284,7 +290,7 @@ fun FilesScreen(
                     state = panelState,
                     tabs = if (activePanel == PanelId.LEFT) leftTabs else rightTabs,
                     active = true,
-                    clipboardAvailable = clipboard != null,
+                    clipboardAvailable = clipboardAvailable,
                     batchRenameUndoAvailable = renameUndo != null,
                     compactToolbar = compactToolbar,
                     modifier = Modifier.fillMaxSize(),
@@ -343,14 +349,34 @@ fun FilesScreen(
         )
     }
     pastePanel?.let { panel ->
-        TransferOptionsDialog(
-            moving = clipboard?.mode == ClipboardMode.MOVE,
-            onDismiss = { pastePanel = null },
-            onConfirm = { policy, verification, failurePolicy ->
-                viewModel.paste(panel, policy, verification, failurePolicy)
-                pastePanel = null
-            },
-        )
+        val remote = remoteClipboard
+        if (remote != null) {
+            val destination = if (panel == PanelId.LEFT) left.path else right.path
+            AlertDialog(
+                onDismissRequest = { pastePanel = null },
+                title = { LText("Įklijuoti iš serverio") },
+                text = {
+                    LText(
+                        "Iš serverio bus nukopijuota ${remote.entries.size} elementų į $destination. Esami vardai nebus perrašyti.",
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        if (viewModel.pasteRemoteClipboard(panel)) pastePanel = null
+                    }) { LText("Įklijuoti") }
+                },
+                dismissButton = { TextButton(onClick = { pastePanel = null }) { LText("Atšaukti") } },
+            )
+        } else if (clipboard != null) {
+            TransferOptionsDialog(
+                moving = clipboard?.mode == ClipboardMode.MOVE,
+                onDismiss = { pastePanel = null },
+                onConfirm = { policy, verification, failurePolicy ->
+                    viewModel.paste(panel, policy, verification, failurePolicy)
+                    pastePanel = null
+                },
+            )
+        }
     }
     tagPanel?.let { panel ->
         val selectedPaths = if (panel == PanelId.LEFT) left.selectedPaths.toList() else right.selectedPaths.toList()

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,11 +22,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Link
@@ -53,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
 import com.affilemanager.app.network.NetworkProtocol
@@ -83,6 +90,7 @@ import com.affilemanager.app.network.RemoteCopyEngine
 import com.affilemanager.app.sync.SyncActionType
 import com.affilemanager.app.sync.SyncConflictPolicy
 import com.affilemanager.app.sync.SyncMode
+import java.io.File
 
 @Composable
 fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
@@ -91,6 +99,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val left by viewModel.leftPanel.collectAsStateWithLifecycle()
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
     val sync by viewModel.syncState.collectAsStateWithLifecycle()
+    val localClipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val activeLocalState = if (activePanel == com.affilemanager.app.ui.PanelId.LEFT) left else right
     val activeSelection = activeLocalState.selectedPaths
 
@@ -168,6 +177,10 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 onClearSelection = viewModel::clearRemoteSelection,
                 onSelectAll = viewModel::selectAllRemote,
                 onDownloadSelected = viewModel::remoteDownloadSelection,
+                onCopySelected = viewModel::copyRemoteSelection,
+                onCopy = viewModel::copyRemoteEntry,
+                localClipboardCount = localClipboard?.takeIf { it.mode == ClipboardMode.COPY }?.paths?.size ?: 0,
+                onPasteLocalClipboard = { viewModel.pasteLocalClipboardToRemote() },
                 onChooseUpload = { showUploadPicker = true },
                 onCreateFolder = { createRemoteFolder = true },
                 onRename = { renameRemote = it },
@@ -236,10 +249,11 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
     if (showUploadPicker && state.connectedProfile != null) {
         LocalUploadDialog(
-            directoryPath = activeLocalState.path,
+            initialDirectoryPath = activeLocalState.path,
             remotePath = state.path,
-            entries = activeLocalState.entries,
+            initialEntries = activeLocalState.entries,
             initiallySelected = activeSelection,
+            loadDirectory = viewModel::listLocalDirectoryForUpload,
             onDismiss = { showUploadPicker = false },
             onCopy = { paths ->
                 if (viewModel.remoteUpload(paths)) {
@@ -308,6 +322,10 @@ internal fun RemoteBrowser(
     onClearSelection: () -> Unit,
     onSelectAll: () -> Unit,
     onDownloadSelected: () -> Unit,
+    onCopySelected: () -> Unit,
+    onCopy: (RemoteEntry) -> Unit,
+    localClipboardCount: Int,
+    onPasteLocalClipboard: () -> Unit,
     onChooseUpload: () -> Unit,
     onCreateFolder: () -> Unit,
     onRename: (RemoteEntry) -> Unit,
@@ -323,6 +341,9 @@ internal fun RemoteBrowser(
             onClose = onClearSelection,
             onToggleSelectAll = { if (allSelected) onClearSelection() else onSelectAll() },
         ) {
+            IconButton(onClick = onCopySelected, enabled = !state.loading) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+            }
             IconButton(onClick = onDownloadSelected, enabled = !state.loading) {
                 Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))
             }
@@ -342,6 +363,16 @@ internal fun RemoteBrowser(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (localClipboardCount > 0) {
+                OutlinedButton(
+                    onClick = onPasteLocalClipboard,
+                    enabled = !state.loading,
+                    modifier = Modifier.testTag("remote_paste_local"),
+                ) {
+                    Icon(Icons.Rounded.ContentPaste, contentDescription = null)
+                    LText("Įklijuoti ($localClipboardCount)", modifier = Modifier.padding(start = 6.dp))
+                }
+            }
             OutlinedButton(onClick = onChooseUpload, enabled = !state.loading, modifier = Modifier.testTag("remote_upload_choose")) {
                 Icon(Icons.Rounded.CloudUpload, contentDescription = null)
                 LText("Į serverį", modifier = Modifier.padding(start = 6.dp))
@@ -396,21 +427,26 @@ internal fun RemoteBrowser(
                                     text = { LText("Pasirinkti") },
                                     onClick = { menu = false; onToggleSelection(entry.path) },
                                 )
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { LText("Kopijuoti į telefoną") },
-                                leadingIcon = { Icon(Icons.Rounded.CloudDownload, contentDescription = null) },
-                                onClick = { menu = false; onDownload(entry) },
-                            )
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { LText("Pervadinti") },
-                                leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
-                                onClick = { menu = false; onRename(entry) },
-                            )
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { LText("Ištrinti") },
-                                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
-                                onClick = { menu = false; onDelete(entry) },
-                            )
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { LText("Kopijuoti") },
+                                    leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                                    onClick = { menu = false; onCopy(entry) },
+                                )
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { LText("Kopijuoti į telefoną") },
+                                    leadingIcon = { Icon(Icons.Rounded.CloudDownload, contentDescription = null) },
+                                    onClick = { menu = false; onDownload(entry) },
+                                )
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { LText("Pervadinti") },
+                                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+                                    onClick = { menu = false; onRename(entry) },
+                                )
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { LText("Ištrinti") },
+                                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+                                    onClick = { menu = false; onDelete(entry) },
+                                )
                             }
                         }
                     }
@@ -420,39 +456,93 @@ internal fun RemoteBrowser(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LocalUploadDialog(
-    directoryPath: String,
+    initialDirectoryPath: String,
     remotePath: String,
-    entries: List<FileEntry>,
+    initialEntries: List<FileEntry>,
     initiallySelected: Set<String>,
+    loadDirectory: suspend (String) -> Result<List<FileEntry>>,
     onDismiss: () -> Unit,
     onCopy: (List<String>) -> Unit,
 ) {
-    val availablePaths = remember(entries) { entries.mapTo(HashSet(entries.size), FileEntry::absolutePath) }
-    val selectableEntries = remember(entries) { entries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS) }
-    var selected by remember(directoryPath, remotePath) {
-        mutableStateOf(initiallySelected.filterTo(linkedSetOf()) { it in availablePaths }.take(1_000).toSet())
+    var navigation by remember(initialDirectoryPath, remotePath) {
+        mutableStateOf(LocalUploadNavigationState(initialDirectoryPath))
     }
+    val currentPath = navigation.currentPath
+    var entries by remember(initialDirectoryPath, remotePath) { mutableStateOf(initialEntries) }
+    var loading by remember(initialDirectoryPath, remotePath) { mutableStateOf(false) }
+    var error by remember(initialDirectoryPath, remotePath) { mutableStateOf<String?>(null) }
+    var selected: Set<String> by remember(initialDirectoryPath, remotePath) {
+        mutableStateOf(initiallySelected.take(RemoteCopyEngine.MAX_SELECTED_ROOTS).toCollection(linkedSetOf()))
+    }
+
+    LaunchedEffect(currentPath) {
+        loading = true
+        error = null
+        if (currentPath != initialDirectoryPath) entries = emptyList()
+        loadDirectory(currentPath).fold(
+            onSuccess = { loaded -> entries = loaded },
+            onFailure = { failure ->
+                entries = emptyList()
+                error = failure.message ?: "Katalogo atverti nepavyko"
+            },
+        )
+        loading = false
+    }
+
     fun toggle(path: String) {
         selected = if (path in selected) {
             selected - path
-        } else if (selected.size < 1_000) {
+        } else if (selected.size < RemoteCopyEngine.MAX_SELECTED_ROOTS) {
             selected + path
         } else {
             selected
         }
     }
-    val allSelected = selectableEntries.isNotEmpty() && selectableEntries.all { it.absolutePath in selected }
+
+    fun navigateTo(path: String) {
+        navigation = navigation.navigateTo(path)
+    }
+
+    fun navigateBack() {
+        navigation = navigation.navigateBack()
+    }
+
+    val parentPath = remember(currentPath) { File(currentPath).parentFile?.absolutePath }
+    val visiblePaths = remember(entries) {
+        entries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS).map(FileEntry::absolutePath)
+    }
+    val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(selected::contains)
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (navigation.canNavigateBack) navigateBack() else onDismiss() },
         icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
         title = { LText("Kopijuoti į serverį") },
         text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 item {
-                    LText("Iš: $directoryPath", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { parentPath?.let(::navigateTo) },
+                            enabled = parentPath != null && !loading,
+                            modifier = Modifier.testTag("local_upload_up"),
+                        ) {
+                            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
+                        }
+                        Text(
+                            currentPath,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    LText("Iš: $currentPath", style = MaterialTheme.typography.bodySmall)
                     LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
                     LText("Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
                 }
@@ -463,24 +553,52 @@ internal fun LocalUploadDialog(
                             allSelected = allSelected,
                             onClose = { selected = emptySet() },
                             onToggleSelectAll = {
-                                selected = if (allSelected) emptySet() else selectableEntries.map(FileEntry::absolutePath).toSet()
+                                selected = if (allSelected) {
+                                    selected - visiblePaths.toSet()
+                                } else {
+                                    val available = RemoteCopyEngine.MAX_SELECTED_ROOTS - selected.size
+                                    selected + visiblePaths.filterNot(selected::contains).take(available)
+                                }
                             },
                             modifier = Modifier.testTag("local_upload_selection_bar"),
                         )
                     }
                 }
-                if (entries.isEmpty()) {
-                    item { LText("Aktyviame vietiniame aplanke nėra ką kopijuoti.") }
+                if (loading) {
+                    item {
+                        Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                } else if (error != null) {
+                    item {
+                        LText(
+                            error.orEmpty(),
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else if (entries.isEmpty()) {
+                    item { LText("Katalogas tuščias") }
                 }
                 items(entries, key = FileEntry::absolutePath) { entry ->
                     val entrySelected = entry.absolutePath in selected
                     val selectionShape = RoundedCornerShape(8.dp)
                     Card(
-                        onClick = { toggle(entry.absolutePath) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("local_upload_entry_${entry.absolutePath}")
-                            .then(if (entrySelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier),
+                            .then(if (entrySelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
+                            .combinedClickable(
+                                onClick = {
+                                    if (entry.isDirectory && selected.isEmpty()) {
+                                        navigateTo(entry.absolutePath)
+                                    } else {
+                                        toggle(entry.absolutePath)
+                                    }
+                                },
+                                onLongClick = { toggle(entry.absolutePath) },
+                            ),
                         shape = selectionShape,
                         colors = CardDefaults.cardColors(
                             containerColor = if (entrySelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
@@ -506,6 +624,14 @@ internal fun LocalUploadDialog(
                                     Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
+                            if (entry.isDirectory) {
+                                IconButton(
+                                    onClick = { navigateTo(entry.absolutePath) },
+                                    modifier = Modifier.testTag("local_upload_open_${entry.absolutePath}"),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Atidaryti aplanką"))
+                                }
+                            }
                         }
                     }
                 }
@@ -513,12 +639,29 @@ internal fun LocalUploadDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCopy(entries.map(FileEntry::absolutePath).filter(selected::contains)) },
+                onClick = { onCopy(selected.toList()) },
                 enabled = selected.isNotEmpty(),
             ) { LText("Kopijuoti (${selected.size})") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
+}
+
+internal data class LocalUploadNavigationState(
+    val currentPath: String,
+    val backStack: List<String> = emptyList(),
+) {
+    val canNavigateBack: Boolean get() = backStack.isNotEmpty()
+
+    fun navigateTo(path: String): LocalUploadNavigationState = if (path == currentPath) {
+        this
+    } else {
+        copy(currentPath = path, backStack = backStack + currentPath)
+    }
+
+    fun navigateBack(): LocalUploadNavigationState = backStack.lastOrNull()?.let { previous ->
+        copy(currentPath = previous, backStack = backStack.dropLast(1))
+    } ?: this
 }
 
 @Composable
