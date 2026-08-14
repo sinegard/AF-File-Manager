@@ -49,9 +49,9 @@ class SearchWorkspaceFlowTest {
                 viewModel.setSection(AppSection.ANALYZE)
             }
 
-            compose.onNodeWithText("Šiame aplanke").fetchSemanticsNode()
+            compose.onNodeWithText("This folder").fetchSemanticsNode()
             compose.onNodeWithTag("search_advanced_toggle").performClick()
-            compose.onNodeWithText("Failų tipai").fetchSemanticsNode()
+            compose.onNodeWithText("File types").fetchSemanticsNode()
             compose.onNodeWithTag("search_advanced_toggle").performClick()
             compose.onNodeWithTag("search_query").performTextInput(token)
             compose.onNodeWithTag("search_query").assert(hasText(token))
@@ -66,15 +66,15 @@ class SearchWorkspaceFlowTest {
             captureSearchWorkspace()
 
             compose.onNodeWithTag("search_result").performTouchInput { longClick() }
-            compose.onNodeWithContentDescription("Masinis pervadinimas").fetchSemanticsNode()
-            compose.onNodeWithContentDescription("Uždaryti").performClick()
-            compose.onNodeWithTag("analyze_list").performScrollToNode(hasContentDescription("Rodyti aplanke"))
-            compose.onNodeWithContentDescription("Rodyti aplanke").performClick()
+            compose.onNodeWithContentDescription("Batch rename").fetchSemanticsNode()
+            compose.onNodeWithContentDescription("Close").performClick()
+            compose.onNodeWithTag("analyze_list").performScrollToNode(hasContentDescription("Show in folder"))
+            compose.onNodeWithContentDescription("Show in folder").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.section.value == AppSection.FILES }
             compose.waitForIdle()
             assertEquals(root.canonicalPath, File(viewModel.activePanelState().path).canonicalPath)
             assertTrue(resultFile.absolutePath in viewModel.activePanelState().selectedPaths)
-            compose.onNodeWithText("Failai").fetchSemanticsNode()
+            compose.onNodeWithText("Files").fetchSemanticsNode()
         } finally {
             root.deleteRecursively()
         }

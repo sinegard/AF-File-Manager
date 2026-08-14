@@ -54,16 +54,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.BuildConfig
+import com.affilemanager.app.R
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationSnapshot
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.UiTranslator
+import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.transfer.LanTransferController
 import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.update.AppUpdateState
@@ -90,6 +98,7 @@ fun ToolsScreen(
     val active = viewModel.activePanelState()
     val selectedEntry = active.entries.singleOrNull { it.absolutePath in active.selectedPaths }
     val context = LocalContext.current
+    val interfaceLanguage = LocalConfiguration.current.locales[0].language
     val shizukuInstalled = remember {
         @Suppress("DEPRECATION")
         runCatching { context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0) }.isSuccess
@@ -102,13 +111,40 @@ fun ToolsScreen(
     var lanDuration by remember { mutableStateOf(15) }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(contentPadding),
+        modifier = Modifier.fillMaxSize().padding(contentPadding).testTag("tools_list"),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("Įrankiai ir saugumas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("Jokių reklamų, sekimo SDK ar privalomos paskyros.", style = MaterialTheme.typography.bodySmall)
+            LText("Įrankiai ir saugumas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            LText("Jokių reklamų, sekimo SDK ar privalomos paskyros.", style = MaterialTheme.typography.bodySmall)
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(stringResource(R.string.language_title), fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.language_description), style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = interfaceLanguage == AppLanguageManager.ENGLISH,
+                            onClick = { AppLanguageManager.setLanguage(context, AppLanguageManager.ENGLISH) },
+                            label = { Text(stringResource(R.string.language_english)) },
+                        )
+                        FilterChip(
+                            selected = interfaceLanguage == AppLanguageManager.LITHUANIAN,
+                            onClick = { AppLanguageManager.setLanguage(context, AppLanguageManager.LITHUANIAN) },
+                            label = { Text(stringResource(R.string.language_lithuanian)) },
+                        )
+                    }
+                }
+            }
         }
 
         item { SectionHeader("Operacijų centras", operations.size.toString()) }
@@ -125,7 +161,7 @@ fun ToolsScreen(
                 )
             }
             item {
-                TextButton(onClick = viewModel::dismissFinishedOperations) { Text("Paslėpti užbaigtas") }
+                TextButton(onClick = viewModel::dismissFinishedOperations) { LText("Paslėpti užbaigtas") }
             }
         }
 
@@ -136,8 +172,8 @@ fun ToolsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Wifi, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
                         Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text("Trumpalaikis LAN tinklalapis", fontWeight = FontWeight.SemiBold)
-                            Text(
+                            LText("Trumpalaikis LAN tinklalapis", fontWeight = FontWeight.SemiBold)
+                            LText(
                                 "Tik vienas pasirinktas katalogas · prisijungimas vienkartiniu kodu · jokio viešo tunelio",
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -145,40 +181,44 @@ fun ToolsScreen(
                     }
                     when (lanTransfer.status) {
                         LanTransferStatus.RUNNING -> {
-                            Text("Adresas: ${lanTransfer.url}", fontWeight = FontWeight.SemiBold)
-                            Text("Vienkartinis kodas: ${lanTransfer.code}", style = MaterialTheme.typography.titleMedium)
+                            LText("Adresas: ${lanTransfer.url}", fontWeight = FontWeight.SemiBold)
+                            LText("Vienkartinis kodas: ${lanTransfer.code}", style = MaterialTheme.typography.titleMedium)
                             lanTransfer.expiresAtMillis?.let { expires ->
-                                Text("Baigsis: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(expires))}", style = MaterialTheme.typography.bodySmall)
+                                LText("Baigsis: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(expires))}", style = MaterialTheme.typography.bodySmall)
                             }
-                            Text("Katalogas: ${lanTransfer.rootName}", style = MaterialTheme.typography.bodySmall)
+                            LText("Katalogas: ${lanTransfer.rootName}", style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(onClick = {
                                     val clipboard = context.getSystemService(ClipboardManager::class.java)
                                     clipboard.setPrimaryClip(ClipData.newPlainText("AF File Manager LAN", lanTransfer.url.orEmpty()))
-                                    Toast.makeText(context, "Adresas nukopijuotas", Toast.LENGTH_SHORT).show()
-                                }) { Text("Kopijuoti adresą") }
-                                OutlinedButton(onClick = { LanTransferController.stop(context) }) { Text("Sustabdyti") }
+                                    Toast.makeText(
+                                        context,
+                                        UiTranslator.translate("Adresas nukopijuotas", interfaceLanguage),
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }) { LText("Kopijuoti adresą") }
+                                OutlinedButton(onClick = { LanTransferController.stop(context) }) { LText("Sustabdyti") }
                             }
                         }
                         LanTransferStatus.STARTING -> {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Text(lanTransfer.message ?: "Paleidžiama…", style = MaterialTheme.typography.bodySmall)
+                            LText(lanTransfer.message ?: "Paleidžiama…", style = MaterialTheme.typography.bodySmall)
                         }
                         LanTransferStatus.STOPPED, LanTransferStatus.ERROR -> {
-                            Text("Bus bendrinamas aktyvus katalogas: ${File(active.path).name.ifBlank { active.path }}", style = MaterialTheme.typography.bodySmall)
+                            LText("Bus bendrinamas aktyvus katalogas: ${File(active.path).name.ifBlank { active.path }}", style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 listOf(15, 30, 60).forEach { minutes ->
                                     FilterChip(
                                         selected = lanDuration == minutes,
                                         onClick = { lanDuration = minutes },
-                                        label = { Text("$minutes min.") },
+                                        label = { LText("$minutes min.") },
                                     )
                                 }
                             }
                             lanTransfer.message?.let { message ->
-                                Text(message, style = MaterialTheme.typography.bodySmall, color = if (lanTransfer.status == LanTransferStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                                LText(message, style = MaterialTheme.typography.bodySmall, color = if (lanTransfer.status == LanTransferStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Button(onClick = { LanTransferController.start(context, active.path, lanDuration) }) { Text("Paleisti") }
+                            Button(onClick = { LanTransferController.start(context, active.path, lanDuration) }) { LText("Paleisti") }
                         }
                     }
                 }
@@ -203,13 +243,13 @@ fun ToolsScreen(
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("Atidaryti šiukšliadėžę", fontWeight = FontWeight.SemiBold)
-                        Text(
+                        LText("Atidaryti šiukšliadėžę", fontWeight = FontWeight.SemiBold)
+                        LText(
                             if (trash.isEmpty()) "Šiukšliadėžė tuščia" else "${trash.size} elementų · galima atkurti arba išvalyti viską",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    Text("Atidaryti", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    LText("Atidaryti", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -218,7 +258,7 @@ fun ToolsScreen(
         item {
             FilledTonalButton(onClick = onAddSafLocation) {
                 Icon(Icons.Rounded.Add, contentDescription = null)
-                Text("Pridėti per Android dokumentų sistemą", modifier = Modifier.padding(start = 8.dp))
+                LText("Pridėti per Android dokumentų sistemą", modifier = Modifier.padding(start = 8.dp))
             }
         }
         items(safLocations, key = { it.uri }) { location ->
@@ -230,7 +270,7 @@ fun ToolsScreen(
                         Text(location.uri, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     IconButton(onClick = { removeSaf = location }) {
-                        Icon(Icons.Rounded.Delete, contentDescription = "Pašalinti vietą")
+                        Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti vietą"))
                     }
                 }
             }
@@ -242,8 +282,8 @@ fun ToolsScreen(
                 Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Fingerprint, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text("Biometrinis arba įrenginio užraktas", fontWeight = FontWeight.SemiBold)
-                        Text("Grįžus iš fono failų langas bus užrakintas. Keitimą patvirtina Android.", style = MaterialTheme.typography.bodySmall)
+                        LText("Biometrinis arba įrenginio užraktas", fontWeight = FontWeight.SemiBold)
+                        LText("Grįžus iš fono failų langas bus užrakintas. Keitimą patvirtina Android.", style = MaterialTheme.typography.bodySmall)
                     }
                     Switch(checked = appLockEnabled, onCheckedChange = onToggleAppLock)
                 }
@@ -260,15 +300,15 @@ fun ToolsScreen(
                         Icon(Icons.Rounded.Sync, contentDescription = null)
                         Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
                             Text(schedule.profileName, fontWeight = FontWeight.SemiBold)
-                            Text("${schedule.localRoot} ↔ ${schedule.remoteRoot}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
+                            LText("${schedule.localRoot} ↔ ${schedule.remoteRoot}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            LText(
                                 "Kas ${schedule.intervalHours} val. · ${if (schedule.unmeteredOnly) "tik Wi‑Fi/Ethernet" else "bet koks tinklas"}",
                                 style = MaterialTheme.typography.labelSmall,
                             )
-                            schedule.lastStatus?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                            schedule.lastStatus?.let { LText(it, style = MaterialTheme.typography.labelSmall) }
                         }
                         IconButton(onClick = { viewModel.removeSyncSchedule(schedule.id) }) {
-                            Icon(Icons.Rounded.Delete, contentDescription = "Atšaukti tvarkaraštį")
+                            Icon(Icons.Rounded.Delete, contentDescription = uiText("Atšaukti tvarkaraštį"))
                         }
                     }
                 }
@@ -282,14 +322,14 @@ fun ToolsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(34.dp))
                         Column(modifier = Modifier.padding(start = 12.dp)) {
-                            Text("AES-256-GCM failų šifravimas", fontWeight = FontWeight.SemiBold)
-                            Text("Slaptafrazė neišsaugoma. Originalas automatiškai netrinamas.", style = MaterialTheme.typography.bodySmall)
+                            LText("AES-256-GCM failų šifravimas", fontWeight = FontWeight.SemiBold)
+                            LText("Slaptafrazė neišsaugoma. Originalas automatiškai netrinamas.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     Button(
                         onClick = { encryptTarget = selectedEntry; showEncrypt = true },
                         enabled = selectedEntry?.isDirectory == false,
-                    ) { Text("Šifruoti pasirinktą failą") }
+                    ) { LText("Šifruoti pasirinktą failą") }
                 }
             }
         }
@@ -300,7 +340,7 @@ fun ToolsScreen(
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatusLine("Shizuku", if (shizukuInstalled) "Aptikta, leidimas dar nesuteiktas" else "Neįdiegta")
                     StatusLine("Root", if (rootPresent) "Galimas su dvejetainiu su" else "Neaptiktas")
-                    Text(
+                    LText(
                         "Šis režimas pagal nutylėjimą išjungtas. Jis negali pažadėti prieigos prie Android/data visuose įrenginiuose dėl SELinux ir gamintojo ribojimų.",
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -331,12 +371,12 @@ fun ToolsScreen(
     removeSaf?.let { location ->
         AlertDialog(
             onDismissRequest = { removeSaf = null },
-            title = { Text("Pašalinti pasirinktą vietą?") },
-            text = { Text("Bus atšauktas AF File Manager ilgalaikis leidimas vietai „${location.title}“. Failai nebus trinami.") },
+            title = { LText("Pašalinti pasirinktą vietą?") },
+            text = { LText("Bus atšauktas AF File Manager ilgalaikis leidimas vietai „${location.title}“. Failai nebus trinami.") },
             confirmButton = {
-                Button(onClick = { viewModel.removeSafLocation(location.uri); removeSaf = null }) { Text("Pašalinti") }
+                Button(onClick = { viewModel.removeSafLocation(location.uri); removeSaf = null }) { LText("Pašalinti") }
             },
-            dismissButton = { TextButton(onClick = { removeSaf = null }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { removeSaf = null }) { LText("Atšaukti") } },
         )
     }
 
@@ -387,27 +427,31 @@ private fun AppUpdateCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.SystemUpdate, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text("AF File Manager ${BuildConfig.VERSION_NAME.removeSuffix("-debug")}", fontWeight = FontWeight.SemiBold)
-                    Text("Saugūs leidimai iš viešos GitHub repozitorijos", style = MaterialTheme.typography.bodySmall)
+                    LText("AF File Manager ${BuildConfig.VERSION_NAME.removeSuffix("-debug")}", fontWeight = FontWeight.SemiBold)
+                    LText("Saugūs leidimai iš viešos GitHub repozitorijos", style = MaterialTheme.typography.bodySmall)
                 }
             }
             when (state) {
                 AppUpdateState.Idle -> {
-                    Text("Paleidus programą nauja versija tikrinama ne dažniau kaip kas 6 valandas. APK automatiškai siunčiamas tik nematuojamame tinkle.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = onCheck) { Text("Tikrinti dabar") }
+                    LText("Paleidus programą nauja versija tikrinama ne dažniau kaip kas 6 valandas. APK automatiškai siunčiamas tik nematuojamame tinkle.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = onCheck) { LText("Tikrinti dabar") }
                 }
                 AppUpdateState.Checking -> {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text("Tikrinamas naujausias GitHub leidimas…", style = MaterialTheme.typography.bodySmall)
+                    LText("Tikrinamas naujausias GitHub leidimas…", style = MaterialTheme.typography.bodySmall)
                 }
                 is AppUpdateState.UpToDate -> {
-                    Text("Įdiegta naujausia versija ${state.currentVersion}.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = onCheck) { Text("Tikrinti dar kartą") }
+                    LText("Įdiegta naujausia versija ${state.currentVersion}.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = onCheck) { LText("Tikrinti dar kartą") }
                 }
                 is AppUpdateState.Available -> {
-                    Text("Galima versija ${state.release.version}.", fontWeight = FontWeight.SemiBold)
-                    Text(state.release.notes.ifBlank { "Paskelbtas naujas stabilus leidimas." }, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                    Button(onClick = { onDownload(state.release) }) { Text("Atsisiųsti ir patikrinti") }
+                    LText("Galima versija ${state.release.version}.", fontWeight = FontWeight.SemiBold)
+                    if (state.release.notes.isBlank()) {
+                        LText("Paskelbtas naujas stabilus leidimas.", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text(state.release.notes, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    }
+                    Button(onClick = { onDownload(state.release) }) { LText("Atsisiųsti ir patikrinti") }
                 }
                 is AppUpdateState.Downloading -> {
                     val total = state.release.asset.sizeBytes.coerceAtLeast(1L)
@@ -415,23 +459,23 @@ private fun AppUpdateCard(
                         progress = { (state.downloadedBytes.toFloat() / total).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Text("${FileSystemRules.humanBytes(state.downloadedBytes)} / ${FileSystemRules.humanBytes(total)}", style = MaterialTheme.typography.bodySmall)
+                    LText("${FileSystemRules.humanBytes(state.downloadedBytes)} / ${FileSystemRules.humanBytes(total)}", style = MaterialTheme.typography.bodySmall)
                 }
                 is AppUpdateState.Ready -> {
-                    Text("Versija ${state.release.version} atsisiųsta ir patikrinta.", fontWeight = FontWeight.SemiBold)
-                    Text(
+                    LText("Versija ${state.release.version} atsisiųsta ir patikrinta.", fontWeight = FontWeight.SemiBold)
+                    LText(
                         if (state.installPermissionRequired) "Android nustatymuose leiskite diegti iš AF File Manager, grįžkite ir spauskite „Diegti“." else "Diegimą dar turės patvirtinti Android sistemos lange.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    Button(onClick = onInstall) { Text("Diegti") }
+                    Button(onClick = onInstall) { LText("Diegti") }
                 }
                 is AppUpdateState.Failed -> {
-                    Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    LText(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         state.release?.let { release ->
-                            Button(onClick = { onDownload(release) }) { Text("Bandyti siųsti dar kartą") }
+                            Button(onClick = { onDownload(release) }) { LText("Bandyti siųsti dar kartą") }
                         }
-                        OutlinedButton(onClick = onCheck) { Text("Tikrinti dar kartą") }
+                        OutlinedButton(onClick = onCheck) { LText("Tikrinti dar kartą") }
                     }
                 }
             }
@@ -451,19 +495,21 @@ private fun OperationCard(
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(operation.title, fontWeight = FontWeight.SemiBold)
-                    Text(operation.currentName ?: operation.message ?: operation.status.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    LText(operation.title, fontWeight = FontWeight.SemiBold)
+                    operation.currentName?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    } ?: LText(operation.message ?: operation.status.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 }
                 when (operation.status) {
-                    OperationStatus.RUNNING -> IconButton(onClick = onPause) { Icon(Icons.Rounded.Pause, contentDescription = "Pauzė") }
-                    OperationStatus.PAUSED -> IconButton(onClick = onResume) { Icon(Icons.Rounded.PlayArrow, contentDescription = "Tęsti") }
+                    OperationStatus.RUNNING -> IconButton(onClick = onPause) { Icon(Icons.Rounded.Pause, contentDescription = uiText("Pauzė")) }
+                    OperationStatus.PAUSED -> IconButton(onClick = onResume) { Icon(Icons.Rounded.PlayArrow, contentDescription = uiText("Tęsti")) }
                     else -> Unit
                 }
                 if (operation.status == OperationStatus.RUNNING || operation.status == OperationStatus.PAUSED || operation.status == OperationStatus.QUEUED) {
-                    IconButton(onClick = onCancel) { Icon(Icons.Rounded.Cancel, contentDescription = "Atšaukti") }
+                    IconButton(onClick = onCancel) { Icon(Icons.Rounded.Cancel, contentDescription = uiText("Atšaukti")) }
                 }
                 if (operation.retryable && operation.status !in setOf(OperationStatus.RUNNING, OperationStatus.PAUSED, OperationStatus.QUEUED)) {
-                    IconButton(onClick = onRetry) { Icon(Icons.Rounded.Refresh, contentDescription = "Bandyti dar kartą") }
+                    IconButton(onClick = onRetry) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Bandyti dar kartą")) }
                 }
             }
             val totalBytes = operation.totalBytes
@@ -472,13 +518,13 @@ private fun OperationCard(
                     progress = { (operation.completedBytes.toFloat() / totalBytes).coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("${FileSystemRules.humanBytes(operation.completedBytes)} / ${FileSystemRules.humanBytes(totalBytes)}", style = MaterialTheme.typography.labelSmall)
+                LText("${FileSystemRules.humanBytes(operation.completedBytes)} / ${FileSystemRules.humanBytes(totalBytes)}", style = MaterialTheme.typography.labelSmall)
                 val startedAt = operation.startedAtMillis
                 if (startedAt != null && operation.completedBytes > 0 && operation.status == OperationStatus.RUNNING) {
                     val elapsedSeconds = ((System.currentTimeMillis() - startedAt).coerceAtLeast(1L) / 1_000.0)
                     val bytesPerSecond = (operation.completedBytes / elapsedSeconds).toLong().coerceAtLeast(1L)
                     val remainingSeconds = ((totalBytes - operation.completedBytes).coerceAtLeast(0L) / bytesPerSecond)
-                    Text(
+                    LText(
                         "${FileSystemRules.humanBytes(bytesPerSecond)}/s · liko apie ${remainingSeconds}s",
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -487,7 +533,7 @@ private fun OperationCard(
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (operation.errorCount > 0) {
-                Text("Klaidų: ${operation.errorCount}. Galima bandyti dar kartą.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                LText("Klaidų: ${operation.errorCount}. Galima bandyti dar kartą.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -496,8 +542,8 @@ private fun OperationCard(
 @Composable
 private fun SectionHeader(title: String, detail: String) {
     Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-        Text(detail, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LText(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        LText(detail, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     HorizontalDivider()
 }
@@ -508,8 +554,8 @@ private fun InfoCard(title: String, description: String, icon: androidx.compose.
         Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(34.dp), tint = MaterialTheme.colorScheme.primary)
             Column(modifier = Modifier.padding(start = 12.dp)) {
-                Text(title, fontWeight = FontWeight.SemiBold)
-                Text(description, style = MaterialTheme.typography.bodySmall)
+                LText(title, fontWeight = FontWeight.SemiBold)
+                LText(description, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -518,8 +564,8 @@ private fun InfoCard(title: String, description: String, icon: androidx.compose.
 @Composable
 private fun StatusLine(name: String, status: String) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        Text(name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        Text(status, style = MaterialTheme.typography.bodySmall)
+        LText(name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        LText(status, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -535,21 +581,21 @@ private fun PasswordDialog(
     val valid = password.length >= 8 && password == repeated
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { LText(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(explanation, style = MaterialTheme.typography.bodySmall)
+                LText(explanation, style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Slaptafrazė") },
+                    label = { LText("Slaptafrazė") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = repeated,
                     onValueChange = { repeated = it },
-                    label = { Text("Pakartokite") },
+                    label = { LText("Pakartokite") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                 )
@@ -563,8 +609,8 @@ private fun PasswordDialog(
                     repeated = ""
                 },
                 enabled = valid,
-            ) { Text("Šifruoti") }
+            ) { LText("Šifruoti") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Atšaukti") } },
+        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
 }

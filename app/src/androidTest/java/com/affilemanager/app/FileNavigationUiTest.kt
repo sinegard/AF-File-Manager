@@ -89,9 +89,9 @@ class FileNavigationUiTest {
             compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, files.first().canonicalPath) }
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.selectedPaths.size == 1 }
 
-            compose.onNodeWithContentDescription("Pasirinkti visus").performClick()
+            compose.onNodeWithContentDescription("Select all").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.selectedPaths.size == files.size }
-            compose.onNodeWithContentDescription("Atžymėti visus").performClick()
+            compose.onNodeWithContentDescription("Deselect all").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.selectedPaths.isEmpty() }
 
             assertEquals(emptySet<String>(), viewModel.leftPanel.value.selectedPaths)

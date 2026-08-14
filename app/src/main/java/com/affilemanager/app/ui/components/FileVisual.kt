@@ -1,5 +1,7 @@
 package com.affilemanager.app.ui.components
 
+import com.affilemanager.app.ui.localization.uiText
+
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -232,14 +234,14 @@ private fun FileVisualFrame(
                 .padding(if (visual.crop) 0.dp else 4.dp)
             Image(
                 bitmap = visual.bitmap.asImageBitmap(),
-                contentDescription = if (visual.contentThumbnail) "$name miniatiūra" else "$name piktograma",
+                contentDescription = "$name ${uiText(if (visual.contentThumbnail) "miniatiūra" else "piktograma")}",
                 contentScale = if (visual.crop) ContentScale.Crop else ContentScale.Fit,
                 modifier = imageModifier,
             )
         } else {
             Icon(
                 imageVector = fallbackIcon(kind, extension),
-                contentDescription = "$name failo tipo piktograma",
+                contentDescription = uiText("$name failo tipo piktograma"),
                 tint = fallbackColor(kind),
                 modifier = Modifier.fillMaxSize().padding(7.dp),
             )

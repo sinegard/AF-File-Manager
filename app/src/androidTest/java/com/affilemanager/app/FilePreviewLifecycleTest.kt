@@ -60,7 +60,7 @@ class FilePreviewLifecycleTest {
                 openAndClose(
                     viewModel,
                     repository.toEntry(pdf),
-                    "PDF puslapis 1",
+                    "PDF page 1",
                     File(validationRoot, "preview-pdf.png").takeIf { iteration == 0 },
                 )
             }
@@ -87,29 +87,29 @@ class FilePreviewLifecycleTest {
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithContentDescription(image.name, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithText("Atidaryti su kita programa").assertIsDisplayed()
-            compose.onNodeWithContentDescription("Priartinti").performClick()
+            compose.onNodeWithText("Open with another app").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Zoom in").performClick()
             compose.onNodeWithText("125 %").fetchSemanticsNode()
             captureRoot(File(validationRoot, "preview-image-zoomed.png"))
-            compose.onNodeWithText("Atstatyti").performClick()
+            compose.onNodeWithText("Reset").performClick()
             compose.onNodeWithText("100 %").fetchSemanticsNode()
             compose.runOnUiThread { viewModel.closePreview() }
 
             compose.runOnUiThread { viewModel.open(repository.toEntry(pdf)) }
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithContentDescription("PDF puslapis 1", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithContentDescription("PDF page 1", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             assertTrue(compose.onAllNodesWithText("Ryškus PDF", substring = true).fetchSemanticsNodes().isEmpty())
             assertTrue(compose.onAllNodesWithText("1 / 3").fetchSemanticsNodes().isEmpty())
             compose.onNodeWithTag("pdf-continuous-pages").performScrollToIndex(2)
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithContentDescription("PDF puslapis 3", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithContentDescription("PDF page 3", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithContentDescription("PDF puslapis 3", useUnmergedTree = true).assertIsDisplayed()
-            compose.onNodeWithContentDescription("Priartinti").performClick()
+            compose.onNodeWithContentDescription("PDF page 3", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithContentDescription("Zoom in").performClick()
             compose.onNodeWithText("125 %").fetchSemanticsNode()
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithContentDescription("PDF puslapis 3", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithContentDescription("PDF page 3", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             compose.waitForIdle()
             captureRoot(File(validationRoot, "preview-pdf-continuous-page3.png"))
@@ -133,7 +133,7 @@ class FilePreviewLifecycleTest {
             val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
 
             compose.runOnUiThread { viewModel.open(repository.toEntry(archive)) }
-            compose.onNodeWithText("Archyvo pradžia").assertIsDisplayed()
+            compose.onNodeWithText("Archive root").assertIsDisplayed()
             compose.onNodeWithText("Aplankas").assertIsDisplayed()
             compose.onNodeWithText("šaknis.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("viduje.txt").fetchSemanticsNodes().isEmpty())
@@ -150,7 +150,7 @@ class FilePreviewLifecycleTest {
 
             compose.onNodeWithText("Giliau").performClick()
             compose.onNodeWithText("gilus.txt").assertIsDisplayed()
-            compose.onNodeWithContentDescription("Grįžti į ankstesnį archyvo aplanką").performClick()
+            compose.onNodeWithContentDescription("Return to the previous archive folder").performClick()
             compose.onNodeWithText("viduje.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("gilus.txt").fetchSemanticsNodes().isEmpty())
             compose.runOnUiThread { viewModel.closePreview() }
@@ -199,7 +199,7 @@ class FilePreviewLifecycleTest {
 
             compose.runOnUiThread { viewModel.open(entry) }
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithText("Failo peržiūros sukurti nepavyko").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithText("Could not create the file preview").fetchSemanticsNodes().isNotEmpty()
             }
             compose.runOnUiThread { viewModel.closePreview() }
             compose.waitForIdle()

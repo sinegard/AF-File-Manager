@@ -9,7 +9,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -46,13 +48,14 @@ class TrashBrowserVisualTest {
                 viewModel.refreshTrash()
                 viewModel.setSection(AppSection.TOOLS)
             }
+            compose.onNodeWithTag("tools_list").performScrollToNode(hasText("Open trash"))
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithText("Atidaryti šiukšliadėžę").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithText("Open trash").fetchSemanticsNodes().isNotEmpty()
             }
 
-            compose.onNodeWithText("Atidaryti šiukšliadėžę").performClick()
+            compose.onNodeWithText("Open trash").performClick()
             compose.onNodeWithText("AFTrashVisual").assertIsDisplayed()
-            compose.onNodeWithContentDescription("Rodyti miniatiūras").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Show thumbnails").assertIsDisplayed()
             compose.onNodeWithText("AFTrashVisual").performClick()
             compose.onNodeWithText("Vidinis katalogas").assertIsDisplayed()
             compose.onNodeWithText("tik-pirmame-lygyje.txt").assertIsDisplayed()
@@ -60,7 +63,7 @@ class TrashBrowserVisualTest {
             captureDialog(File(requireNotNull(application.getExternalFilesDir("validation")), "trash-folder-0.4.0.png"))
 
             compose.onNodeWithText("tik-pirmame-lygyje.txt").performClick()
-            compose.onNodeWithText("UTF-8 · iki 2 MB · tik skaityti").assertIsDisplayed()
+            compose.onNodeWithText("UTF-8 · up to 2 MB · read-only").assertIsDisplayed()
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithText("Vidinis katalogas").assertIsDisplayed()
 
@@ -72,13 +75,13 @@ class TrashBrowserVisualTest {
             compose.onNodeWithText("tik-pirmame-lygyje.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("tik-viduje.txt").fetchSemanticsNodes().isEmpty())
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
-            compose.onNodeWithContentDescription("Atkurti AFTrashVisual").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Restore AFTrashVisual").assertIsDisplayed()
 
-            compose.onNodeWithContentDescription("Išvalyti visą šiukšliadėžę").performClick()
-            compose.onNodeWithText("Išvalyti visą šiukšliadėžę?").assertIsDisplayed()
-            compose.onNodeWithText("Išvalyti viską").performClick()
+            compose.onNodeWithContentDescription("Empty trash").performClick()
+            compose.onNodeWithText("Empty all trash?").assertIsDisplayed()
+            compose.onNodeWithText("Delete all").performClick()
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithText("Šiukšliadėžė tuščia").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithText("Trash is empty").fetchSemanticsNodes().isNotEmpty()
             }
             assertTrue(repository.list().isEmpty())
         } finally {

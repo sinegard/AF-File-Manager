@@ -1,5 +1,8 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -86,18 +89,14 @@ fun TrashBrowserDialog(
                     IconButton(onClick = { viewModel.navigateTrashBack() }) {
                         Icon(
                             Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = if (state.itemId == null) "Uždaryti šiukšliadėžę" else "Aukštyn",
+                            contentDescription = uiText(if (state.itemId == null) "Uždaryti šiukšliadėžę" else "Aukštyn"),
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = state.rootName ?: "Šiukšliadėžė",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
+                        state.rootName?.let { rootName ->
+                            Text(rootName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        } ?: LText("Šiukšliadėžė", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        LText(
                             text = trashLocationLabel(state),
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
@@ -107,14 +106,14 @@ fun TrashBrowserDialog(
                     IconButton(onClick = viewModel::toggleTrashThumbnails) {
                         Icon(
                             if (state.showThumbnails) Icons.AutoMirrored.Rounded.InsertDriveFile else Icons.Rounded.PhotoLibrary,
-                            contentDescription = if (state.showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras",
+                            contentDescription = uiText(if (state.showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras"),
                         )
                     }
                     IconButton(onClick = viewModel::refreshTrashBrowser, enabled = !state.loading && !state.emptying) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "Atnaujinti šiukšliadėžę")
+                        Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti šiukšliadėžę"))
                     }
                     IconButton(onClick = { confirmEmpty = true }, enabled = itemCount > 0 && !state.emptying) {
-                        Icon(Icons.Rounded.DeleteForever, contentDescription = "Išvalyti visą šiukšliadėžę")
+                        Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Išvalyti visą šiukšliadėžę"))
                     }
                 }
                 HorizontalDivider()
@@ -152,12 +151,12 @@ fun TrashBrowserDialog(
         AlertDialog(
             onDismissRequest = { confirmEmpty = false },
             icon = { Icon(Icons.Rounded.Warning, contentDescription = null) },
-            title = { Text("Išvalyti visą šiukšliadėžę?") },
-            text = { Text("Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.") },
+            title = { LText("Išvalyti visą šiukšliadėžę?") },
+            text = { LText("Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.") },
             confirmButton = {
-                Button(onClick = { confirmEmpty = false; viewModel.emptyTrash() }) { Text("Išvalyti viską") }
+                Button(onClick = { confirmEmpty = false; viewModel.emptyTrash() }) { LText("Išvalyti viską") }
             },
-            dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { confirmEmpty = false }) { LText("Atšaukti") } },
         )
     }
 
@@ -165,14 +164,14 @@ fun TrashBrowserDialog(
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             icon = { Icon(Icons.Rounded.Warning, contentDescription = null) },
-            title = { Text("Ištrinti visam laikui?") },
-            text = { Text("„${entry.name}“ nebebus galima atkurti iš programos šiukšliadėžės.") },
+            title = { LText("Ištrinti visam laikui?") },
+            text = { LText("„${entry.name}“ nebebus galima atkurti iš programos šiukšliadėžės.") },
             confirmButton = {
                 Button(onClick = { viewModel.deleteTrashForever(entry.itemId); deleteTarget = null }) {
-                    Text("Ištrinti visam laikui")
+                    LText("Ištrinti visam laikui")
                 }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { LText("Atšaukti") } },
         )
     }
 }
@@ -210,14 +209,14 @@ private fun TrashBrowserRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(trashEntryMeta(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LText(trashEntryMeta(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 entry.originalPath?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             if (entry.topLevel) {
-                IconButton(onClick = onRestore) { Icon(Icons.Rounded.Restore, contentDescription = "Atkurti ${entry.name}") }
-                IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteForever, contentDescription = "Ištrinti ${entry.name} visam laikui") }
+                IconButton(onClick = onRestore) { Icon(Icons.Rounded.Restore, contentDescription = uiText("Atkurti ${entry.name}")) }
+                IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti ${entry.name} visam laikui")) }
             }
         }
     }
@@ -248,7 +247,7 @@ private fun TrashEmptyState(title: String, description: String) {
     ) {
         Icon(Icons.Rounded.Folder, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(10.dp))
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LText(title, style = MaterialTheme.typography.titleMedium)
+        LText(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -1,5 +1,8 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -162,8 +165,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Paieška ir vietos analizė", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text(
+                        LText("Paieška ir vietos analizė", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        LText(
                             if (scope == SearchScope.ALL_STORAGE) "Visos Android matomos saugyklos" else selectedRoots.firstOrNull().orEmpty(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -173,7 +176,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     }
                     if (renameUndo != null) {
                         IconButton(onClick = viewModel::undoBatchRename) {
-                            Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = "Atšaukti paskutinį masinį pervadinimą")
+                            Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = uiText("Atšaukti paskutinį masinį pervadinimą"))
                         }
                     }
                 }
@@ -185,18 +188,18 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Kur ieškoti", style = MaterialTheme.typography.labelLarge)
+                    LText("Kur ieškoti", style = MaterialTheme.typography.labelLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = scope == SearchScope.CURRENT_FOLDER,
                             onClick = { scope = SearchScope.CURRENT_FOLDER; scopedRoots = listOf(activePath) },
-                            label = { Text("Šiame aplanke") },
+                            label = { LText("Šiame aplanke") },
                         )
                         FilterChip(
                             selected = scope == SearchScope.ALL_STORAGE,
                             onClick = { scope = SearchScope.ALL_STORAGE },
                             enabled = storageRoots.isNotEmpty(),
-                            label = { Text("Visose saugyklose") },
+                            label = { LText("Visose saugyklose") },
                             modifier = Modifier.testTag("search_scope_all"),
                         )
                     }
@@ -204,17 +207,17 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         value = query,
                         onValueChange = { query = it },
                         modifier = Modifier.fillMaxWidth().testTag("search_query"),
-                        label = { Text("Failo arba aplanko pavadinimas") },
+                        label = { LText("Failo arba aplanko pavadinimas") },
                         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                         singleLine = true,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = includeHidden, onClick = { includeHidden = !includeHidden }, label = { Text("Paslėpti") })
+                        FilterChip(selected = includeHidden, onClick = { includeHidden = !includeHidden }, label = { LText("Paslėpti") })
                         FilterChip(
                             selected = regex,
                             onClick = { regex = !regex },
                             enabled = query.isNotBlank(),
-                            label = { Text("Regex") },
+                            label = { LText("Regex") },
                         )
                     }
                     FilterChip(
@@ -222,14 +225,14 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         onClick = { advancedExpanded = !advancedExpanded },
                         leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
                         label = {
-                            Text(
+                            LText(
                                 if (advancedFilterCount > 0) "Išplėstiniai filtrai · $advancedFilterCount" else "Išplėstiniai filtrai",
                             )
                         },
                         modifier = Modifier.testTag("search_advanced_toggle"),
                     )
                     if (advancedExpanded) {
-                        Text("Failų tipai", style = MaterialTheme.typography.labelLarge)
+                        LText("Failų tipai", style = MaterialTheme.typography.labelLarge)
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -238,12 +241,12 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 FilterChip(
                                     selected = kind in kinds,
                                     onClick = { kinds = if (kind in kinds) kinds - kind else kinds + kind },
-                                    label = { Text(kindLabel(kind)) },
+                                    label = { LText(kindLabel(kind)) },
                                 )
                             }
                         }
                         if (tagSnapshot.definitions.isNotEmpty()) {
-                            Text("Žymos (turi atitikti visas)", style = MaterialTheme.typography.labelLarge)
+                            LText("Žymos (turi atitikti visas)", style = MaterialTheme.typography.labelLarge)
                             Row(
                                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -257,13 +260,13 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 }
                             }
                         }
-                        Text("Dydis (MiB)", style = MaterialTheme.typography.labelLarge)
+                        LText("Dydis (MiB)", style = MaterialTheme.typography.labelLarge)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value = minimumMiB,
                                 onValueChange = { minimumMiB = decimalInput(it) },
                                 modifier = Modifier.weight(1f),
-                                label = { Text("Nuo") },
+                                label = { LText("Nuo") },
                                 isError = !sizeInputValid,
                                 singleLine = true,
                             )
@@ -271,12 +274,12 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 value = maximumMiB,
                                 onValueChange = { maximumMiB = decimalInput(it) },
                                 modifier = Modifier.weight(1f),
-                                label = { Text("Iki") },
+                                label = { LText("Iki") },
                                 isError = !sizeInputValid,
                                 singleLine = true,
                             )
                         }
-                        Text("Ne senesni nei", style = MaterialTheme.typography.labelLarge)
+                        LText("Ne senesni nei", style = MaterialTheme.typography.labelLarge)
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -285,11 +288,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 FilterChip(
                                     selected = newerThanDays == days,
                                     onClick = { newerThanDays = days },
-                                    label = { Text(days?.let(::daysLabel) ?: "Bet kada") },
+                                    label = { LText(days?.let(::daysLabel) ?: "Bet kada") },
                                 )
                             }
                         }
-                        Text("Senesni nei", style = MaterialTheme.typography.labelLarge)
+                        LText("Senesni nei", style = MaterialTheme.typography.labelLarge)
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -298,15 +301,15 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 FilterChip(
                                     selected = olderThanDays == days,
                                     onClick = { olderThanDays = days },
-                                    label = { Text(days?.let(::daysLabel) ?: "Neriboti") },
+                                    label = { LText(days?.let(::daysLabel) ?: "Neriboti") },
                                 )
                             }
                         }
                         if (!sizeInputValid) {
-                            Text("Dydžio ribos netinkamos", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            LText("Dydžio ribos netinkamos", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
                         if (!dateInputValid) {
-                            Text("Datos intervalas negalimas", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            LText("Datos intervalas negalimas", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     Row(
@@ -317,14 +320,14 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             onClick = { viewModel.search(currentFilters, selectedRoots) },
                             enabled = hasCondition && sizeInputValid && dateInputValid && selectedRoots.isNotEmpty(),
                             modifier = Modifier.testTag("search_execute"),
-                        ) { Text("Ieškoti") }
-                        OutlinedButton(onClick = { viewModel.analyze(activePath) }) { Text("Analizuoti aplanką") }
+                        ) { LText("Ieškoti") }
+                        OutlinedButton(onClick = { viewModel.analyze(activePath) }) { LText("Analizuoti aplanką") }
                         OutlinedButton(
                             onClick = { showSave = true },
                             enabled = hasCondition && sizeInputValid && dateInputValid && selectedRoots.isNotEmpty(),
                         ) {
                             Icon(Icons.Rounded.BookmarkAdd, contentDescription = null)
-                            Text("Išsaugoti", modifier = Modifier.padding(start = 6.dp))
+                            LText("Išsaugoti", modifier = Modifier.padding(start = 6.dp))
                         }
                         OutlinedButton(
                             onClick = {
@@ -339,7 +342,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 tags = emptySet()
                             },
                             enabled = hasCondition || includeHidden || regex,
-                        ) { Text("Išvalyti filtrus") }
+                        ) { LText("Išvalyti filtrus") }
                     }
                 }
             }
@@ -352,7 +355,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(saved.name, fontWeight = FontWeight.SemiBold)
-                            Text(
+                            LText(
                                 "${saved.query.ifBlank { "Keli filtrai" }} · ${if (saved.rootPaths.size > 1) "${saved.rootPaths.size} saugyklos" else saved.rootPath}",
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
@@ -360,7 +363,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             )
                         }
                         IconButton(onClick = { viewModel.removeSavedSearch(saved.id) }) {
-                            Icon(Icons.Rounded.Delete, contentDescription = "Pašalinti išsaugotą paiešką")
+                            Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti išsaugotą paiešką"))
                         }
                     }
                 }
@@ -381,12 +384,12 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             item {
                 Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     SectionTitle("Paieškos virtualus aplankas", searchState.results.size.toString())
-                    Text(
+                    LText(
                         "Perskaityta ${searchState.scannedEntries} elementų · ${searchState.roots.size} vieta(-os)",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (searchState.truncated) {
-                        Text(
+                        LText(
                             "Rezultatai sutrumpinti pasiekus 5 000 rezultatų arba 200 000 skenuotų elementų ribą.",
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall,
@@ -433,9 +436,9 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column {
-                            Text("Rasta ${analysis.scannedFiles} failų", fontWeight = FontWeight.SemiBold)
-                            Text("${analysis.scannedDirectories} aplankų · ${FileSystemRules.humanBytes(analysis.totalBytes)}")
-                            if (analysis.truncated) Text("Rezultatas sutrumpintas pasiekus saugos ribą", color = MaterialTheme.colorScheme.error)
+                            LText("Rasta ${analysis.scannedFiles} failų", fontWeight = FontWeight.SemiBold)
+                            LText("${analysis.scannedDirectories} aplankų · ${FileSystemRules.humanBytes(analysis.totalBytes)}")
+                            if (analysis.truncated) LText("Rezultatas sutrumpintas pasiekus saugos ribą", color = MaterialTheme.colorScheme.error)
                         }
                         Icon(Icons.Rounded.Analytics, contentDescription = null, modifier = Modifier.size(42.dp))
                     }
@@ -459,8 +462,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             analysis.typeUsage.forEach { usage ->
                                 Column {
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(kindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
-                                        Text("${FileSystemRules.humanBytes(usage.sizeBytes)} · ${usage.fileCount}", style = MaterialTheme.typography.bodySmall)
+                                        LText(kindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
+                                        LText("${FileSystemRules.humanBytes(usage.sizeBytes)} · ${usage.fileCount}", style = MaterialTheme.typography.bodySmall)
                                     }
                                     LinearProgressIndicator(
                                         progress = { usage.sizeBytes.toFloat() / maxTypeBytes.toFloat() },
@@ -506,11 +509,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             items(analysisState.duplicates.take(100), key = { it.sha256 }) { group ->
                 Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("${group.paths.size} vienodi failai · ${FileSystemRules.humanBytes(group.sizeBytes)} kiekvienas", fontWeight = FontWeight.SemiBold)
+                        LText("${group.paths.size} vienodi failai · ${FileSystemRules.humanBytes(group.sizeBytes)} kiekvienas", fontWeight = FontWeight.SemiBold)
                         group.paths.take(5).forEach { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        if (group.paths.size > 5) Text("… ir dar ${group.paths.size - 5}", style = MaterialTheme.typography.labelSmall)
-                        Text("SHA-256 ${group.sha256.take(16)}…", style = MaterialTheme.typography.labelSmall)
-                        OutlinedButton(onClick = { duplicateGroup = group }) { Text("Tvarkyti kopijas") }
+                        if (group.paths.size > 5) LText("… ir dar ${group.paths.size - 5}", style = MaterialTheme.typography.labelSmall)
+                        LText("SHA-256 ${group.sha256.take(16)}…", style = MaterialTheme.typography.labelSmall)
+                        OutlinedButton(onClick = { duplicateGroup = group }) { LText("Tvarkyti kopijas") }
                     }
                 }
             }
@@ -521,11 +524,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         var name by remember(query) { mutableStateOf(query.take(40).ifBlank { "Mano paieška" }) }
         AlertDialog(
             onDismissRequest = { showSave = false },
-            title = { Text("Išsaugoti paiešką") },
+            title = { LText("Išsaugoti paiešką") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Bus išsaugotos vietos ir visi dabar pasirinkti filtrai.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Pavadinimas") }, singleLine = true)
+                    LText("Bus išsaugotos vietos ir visi dabar pasirinkti filtrai.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true)
                 }
             },
             confirmButton = {
@@ -535,21 +538,21 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         showSave = false
                     },
                     enabled = name.isNotBlank(),
-                ) { Text("Išsaugoti") }
+                ) { LText("Išsaugoti") }
             },
-            dismissButton = { TextButton(onClick = { showSave = false }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { showSave = false }) { LText("Atšaukti") } },
         )
     }
 
     if (confirmTrash) {
         AlertDialog(
             onDismissRequest = { confirmTrash = false },
-            title = { Text("Perkelti rezultatus į šiukšlinę?") },
-            text = { Text("Pasirinkta: ${searchState.selectedPaths.size}. Failus bus galima atkurti skiltyje „Daugiau“.") },
+            title = { LText("Perkelti rezultatus į šiukšlinę?") },
+            text = { LText("Pasirinkta: ${searchState.selectedPaths.size}. Failus bus galima atkurti skiltyje „Daugiau“.") },
             confirmButton = {
-                Button(onClick = { viewModel.trashSearchSelection(); confirmTrash = false }) { Text("Perkelti") }
+                Button(onClick = { viewModel.trashSearchSelection(); confirmTrash = false }) { LText("Perkelti") }
             },
-            dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { confirmTrash = false }) { LText("Atšaukti") } },
         )
     }
 
@@ -557,17 +560,17 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         var selectedPaths by remember(group.sha256) { mutableStateOf(emptySet<String>()) }
         AlertDialog(
             onDismissRequest = { duplicateGroup = null },
-            title = { Text("Pasirinkti dublikatų kopijas") },
+            title = { LText("Pasirinkti dublikatų kopijas") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
+                    LText(
                         "Programa nieko nepažymi automatiškai. Patikrinkite kelius; pažymėti failai bus perkelti į atkuriamą šiukšlinę.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedButton(
                         onClick = { selectedPaths = group.paths.drop(1).toSet() },
                         enabled = group.paths.size > 1,
-                    ) { Text("Pažymėti visas, išskyrus pirmą") }
+                    ) { LText("Pažymėti visas, išskyrus pirmą") }
                     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
                         items(group.paths, key = { "duplicate-path:$it" }) { path ->
                             Row(
@@ -585,7 +588,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             }
                         }
                     }
-                    Text("Pažymėta: ${selectedPaths.size} iš ${group.paths.size}", style = MaterialTheme.typography.labelLarge)
+                    LText("Pažymėta: ${selectedPaths.size} iš ${group.paths.size}", style = MaterialTheme.typography.labelLarge)
                 }
             },
             confirmButton = {
@@ -595,9 +598,9 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         duplicateGroup = null
                     },
                     enabled = selectedPaths.isNotEmpty() && selectedPaths.size < group.paths.size,
-                ) { Text("Perkelti į šiukšlinę") }
+                ) { LText("Perkelti į šiukšlinę") }
             },
-            dismissButton = { TextButton(onClick = { duplicateGroup = null }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { duplicateGroup = null }) { LText("Atšaukti") } },
         )
     }
 }
@@ -615,15 +618,15 @@ private fun SearchSelectionToolbar(
 ) {
     Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.large) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, contentDescription = "Uždaryti") }
-            Text("Pasirinkta: $count", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            IconButton(onClick = onSelectAll) { Icon(Icons.Rounded.CheckBox, contentDescription = "Pasirinkti visus") }
-            IconButton(onClick = onCopy) { Icon(Icons.Rounded.ContentCopy, contentDescription = "Kopijuoti") }
-            IconButton(onClick = onMove) { Icon(Icons.Rounded.ContentCut, contentDescription = "Perkelti") }
+            IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti")) }
+            LText("Pasirinkta: $count", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = onSelectAll) { Icon(Icons.Rounded.CheckBox, contentDescription = uiText("Pasirinkti visus")) }
+            IconButton(onClick = onCopy) { Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti")) }
+            IconButton(onClick = onMove) { Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti")) }
             IconButton(onClick = onBatchRename) {
-                Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = "Masinis pervadinimas")
+                Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = uiText("Masinis pervadinimas"))
             }
-            IconButton(onClick = onTrash) { Icon(Icons.Rounded.Delete, contentDescription = "Į šiukšlinę", tint = MaterialTheme.colorScheme.error) }
+            IconButton(onClick = onTrash) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error) }
         }
     }
 }
@@ -665,7 +668,7 @@ private fun ResultRow(
                 Text(entry.absolutePath, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (!entry.isDirectory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelMedium)
-            IconButton(onClick = onReveal) { Icon(Icons.Rounded.FolderOpen, contentDescription = "Rodyti aplanke") }
+            IconButton(onClick = onReveal) { Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Rodyti aplanke")) }
         }
     }
 }
@@ -679,7 +682,7 @@ private fun SectionTitle(
 ) {
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (icon != null) Icon(icon, contentDescription = null)
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        LText(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         Text(count, style = MaterialTheme.typography.labelLarge)
     }
 }
@@ -687,7 +690,7 @@ private fun SectionTitle(
 @Composable
 private fun ErrorCard(error: String, modifier: Modifier = Modifier) {
     Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-        Text(error, modifier = Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer)
+        LText(error, modifier = Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer)
     }
 }
 
@@ -743,7 +746,7 @@ private fun DirectoryUsageRow(usage: DirectoryUsage, maximumBytes: Long, onOpen:
             Text(usage.path, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(FileSystemRules.humanBytes(usage.sizeBytes), style = MaterialTheme.typography.bodySmall)
-                Text("${usage.fileCount} failų", style = MaterialTheme.typography.bodySmall)
+                LText("${usage.fileCount} failų", style = MaterialTheme.typography.bodySmall)
             }
             LinearProgressIndicator(
                 progress = { usage.sizeBytes.toFloat() / maximumBytes.toFloat() },

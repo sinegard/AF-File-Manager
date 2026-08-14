@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -70,6 +71,8 @@ import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.IncomingViewRequest
 import com.affilemanager.app.ui.preview.FilePreviewDialog
 import com.affilemanager.app.ui.components.BatchRenameDialog
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.screens.AnalyzeScreen
 import com.affilemanager.app.ui.screens.ConnectionsScreen
 import com.affilemanager.app.ui.screens.FilesScreen
@@ -97,6 +100,7 @@ fun AFFileManagerApp(
     onIncomingViewRequestConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val interfaceLanguage = LocalConfiguration.current.locales[0].language
     val lifecycleOwner = LocalLifecycleOwner.current
     val section by viewModel.section.collectAsStateWithLifecycle()
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
@@ -108,6 +112,7 @@ fun AFFileManagerApp(
     val storageRoots by viewModel.roots.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val networkState by viewModel.networkState.collectAsStateWithLifecycle()
     var hasAllFilesAccess by remember { mutableStateOf(hasFullFileAccess(context)) }
     var unlocked by remember(appLockEnabled) { mutableStateOf(!appLockEnabled) }
     var appStopped by remember { mutableStateOf(false) }
@@ -127,6 +132,7 @@ fun AFFileManagerApp(
         hasParent = File(activePanelState.path).parentFile != null &&
             !sameNormalizedPath(Environment.getExternalStorageDirectory().absolutePath, activePanelState.path) &&
             storageRoots.none { root -> sameNormalizedPath(root.path, activePanelState.path) },
+        remoteSelectedCount = networkState.selectedPaths.size,
     )
 
     BackHandler(
@@ -135,6 +141,7 @@ fun AFFileManagerApp(
         when (systemBackAction) {
             SystemBackAction.CLOSE_PREVIEW -> viewModel.closePreview()
             SystemBackAction.SHOW_FILES -> viewModel.setSection(AppSection.FILES)
+            SystemBackAction.CLEAR_REMOTE_SELECTION -> viewModel.clearRemoteSelection()
             SystemBackAction.CLEAR_SELECTION -> viewModel.clearSelection(activePanel)
             SystemBackAction.NAVIGATE_BACK -> viewModel.navigateBack(activePanel)
             SystemBackAction.NAVIGATE_UP -> viewModel.navigateUp(activePanel)
@@ -171,9 +178,9 @@ fun AFFileManagerApp(
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { message ->
             val result = snackbarHostState.showSnackbar(
-                message = message.text,
+                message = UiTranslator.translate(message.text, interfaceLanguage),
                 actionLabel = when (message.action) {
-                    UiMessageAction.UNDO_BATCH_RENAME -> "Atšaukti"
+                    UiMessageAction.UNDO_BATCH_RENAME -> UiTranslator.translate("Atšaukti", interfaceLanguage)
                     null -> null
                 },
                 duration = if (message.action != null) SnackbarDuration.Long else SnackbarDuration.Short,
@@ -205,7 +212,7 @@ fun AFFileManagerApp(
                                 icon = {
                                     DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
                                 },
-                                label = { Text(destination.label) },
+                                label = { LText(destination.label) },
                             )
                         }
                     }
@@ -222,7 +229,7 @@ fun AFFileManagerApp(
                                 icon = {
                                     DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
                                 },
-                                label = { Text(destination.label) },
+                                label = { LText(destination.label) },
                             )
                         }
                     }
@@ -257,14 +264,14 @@ fun AFFileManagerApp(
                                 if (enabled) {
                                     authenticate(
                                         context = context,
-                                        title = "Įjungti AF File Manager užraktą",
+                                        title = UiTranslator.translate("Įjungti AF File Manager užraktą", interfaceLanguage),
                                         onSuccess = { viewModel.setAppLockEnabled(true); unlocked = true },
                                         onError = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                                     )
                                 } else {
                                     authenticate(
                                         context = context,
-                                        title = "Išjungti AF File Manager užraktą",
+                                        title = UiTranslator.translate("Išjungti AF File Manager užraktą", interfaceLanguage),
                                         onSuccess = { viewModel.setAppLockEnabled(false); unlocked = true },
                                         onError = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                                     )
@@ -297,11 +304,11 @@ fun AFFileManagerApp(
         val ready = updateState as? AppUpdateState.Ready
         AlertDialog(
             onDismissRequest = { dismissedUpdateVersion = offeredRelease.version },
-            title = { Text(if (ready == null) "Nauja AF File Manager versija" else "Atnaujinimas paruoštas") },
+            title = { LText(if (ready == null) "Nauja AF File Manager versija" else "Atnaujinimas paruoštas") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Versija ${offeredRelease.version}")
-                    Text(
+                    LText("Versija ${offeredRelease.version}")
+                    LText(
                         when {
                             ready?.installPermissionRequired == true -> "Android nustatymuose leiskite diegti iš šios programos, tada grįžkite ir dar kartą pasirinkite „Diegti“."
                             ready != null -> "APK SHA-256 ir pasirašymo sertifikatas patikrinti. Diegimą patvirtinsite Android sistemos lange."
@@ -314,10 +321,10 @@ fun AFFileManagerApp(
             confirmButton = {
                 Button(onClick = {
                     if (ready == null) viewModel.downloadUpdate(offeredRelease) else viewModel.installUpdate()
-                }) { Text(if (ready == null) "Atsisiųsti" else "Diegti") }
+                }) { LText(if (ready == null) "Atsisiųsti" else "Diegti") }
             },
             dismissButton = {
-                TextButton(onClick = { dismissedUpdateVersion = offeredRelease.version }) { Text("Vėliau") }
+                TextButton(onClick = { dismissedUpdateVersion = offeredRelease.version }) { LText("Vėliau") }
             },
         )
     }
@@ -327,7 +334,7 @@ fun AFFileManagerApp(
             onUnlock = {
                 authenticate(
                     context = context,
-                    title = "Atrakinti AF File Manager",
+                    title = UiTranslator.translate("Atrakinti AF File Manager", interfaceLanguage),
                     onSuccess = { unlocked = true },
                     onError = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                 )
@@ -363,8 +370,8 @@ private fun AppLockOverlay(onUnlock: () -> Unit) {
                 verticalArrangement = Arrangement.Center,
             ) {
                 Icon(Icons.Rounded.Fingerprint, contentDescription = null, modifier = Modifier.size(84.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("AF File Manager užrakinta", style = MaterialTheme.typography.headlineSmall)
-                Button(onClick = onUnlock, modifier = Modifier.padding(top = 18.dp)) { Text("Atrakinti") }
+                LText("AF File Manager užrakinta", style = MaterialTheme.typography.headlineSmall)
+                Button(onClick = onUnlock, modifier = Modifier.padding(top = 18.dp)) { LText("Atrakinti") }
             }
         }
     }

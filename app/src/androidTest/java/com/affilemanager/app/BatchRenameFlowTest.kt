@@ -48,7 +48,7 @@ class BatchRenameFlowTest {
             compose.waitUntil(timeoutMillis = 10_000) { renamedFirst.exists() && renamedSecond.exists() }
             assertTrue(!first.exists() && !second.exists())
 
-            compose.onNodeWithText("Atšaukti").performClick()
+            compose.onNodeWithText("Cancel").performClick()
             compose.waitUntil(timeoutMillis = 10_000) { first.exists() && second.exists() }
             assertTrue(!renamedFirst.exists() && !renamedSecond.exists())
         } finally {

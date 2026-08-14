@@ -1,5 +1,7 @@
 package com.affilemanager.app.ui.components
 
+import com.affilemanager.app.ui.localization.LText
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -69,10 +71,10 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                 ) {
                     Icon(Icons.Rounded.DriveFileRenameOutline, contentDescription = null)
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Masinis pervadinimas", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Pakeitimai bus vykdomi tik patvirtinus planą", style = MaterialTheme.typography.bodySmall)
+                        LText("Masinis pervadinimas", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        LText("Pakeitimai bus vykdomi tik patvirtinus planą", style = MaterialTheme.typography.bodySmall)
                     }
-                    TextButton(onClick = viewModel::closeBatchRename) { Text("Uždaryti") }
+                    TextButton(onClick = viewModel::closeBatchRename) { LText("Uždaryti") }
                 }
                 HorizontalDivider()
                 LazyColumn(
@@ -88,51 +90,51 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                                 value = spec.findText,
                                 onValueChange = { viewModel.updateBatchRenameSpec(spec.copy(findText = it)) },
                                 modifier = Modifier.fillMaxWidth().testTag("batch_rename_find"),
-                                label = { Text("Rasti pavadinime") },
+                                label = { LText("Rasti pavadinime") },
                                 singleLine = true,
                             )
                             OutlinedTextField(
                                 value = spec.replacementText,
                                 onValueChange = { viewModel.updateBatchRenameSpec(spec.copy(replacementText = it)) },
                                 modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Pakeisti į") },
+                                label = { LText("Pakeisti į") },
                                 singleLine = true,
                             )
                             FilterChip(
                                 selected = spec.useRegex,
                                 onClick = { viewModel.updateBatchRenameSpec(spec.copy(useRegex = !spec.useRegex)) },
-                                label = { Text("Reguliarioji išraiška") },
+                                label = { LText("Reguliarioji išraiška") },
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
                                     value = spec.prefix,
                                     onValueChange = { viewModel.updateBatchRenameSpec(spec.copy(prefix = it)) },
                                     modifier = Modifier.weight(1f).testTag("batch_rename_prefix"),
-                                    label = { Text("Prefiksas") },
+                                    label = { LText("Prefiksas") },
                                     singleLine = true,
                                 )
                                 OutlinedTextField(
                                     value = spec.suffix,
                                     onValueChange = { viewModel.updateBatchRenameSpec(spec.copy(suffix = it)) },
                                     modifier = Modifier.weight(1f),
-                                    label = { Text("Sufiksas") },
+                                    label = { LText("Sufiksas") },
                                     singleLine = true,
                                 )
                             }
-                            Text("Raidės", style = MaterialTheme.typography.labelLarge)
+                            LText("Raidės", style = MaterialTheme.typography.labelLarge)
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 RenameCaseMode.entries.forEach { mode ->
                                     FilterChip(
                                         selected = spec.caseMode == mode,
                                         onClick = { viewModel.updateBatchRenameSpec(spec.copy(caseMode = mode)) },
-                                        label = { Text(caseModeLabel(mode)) },
+                                        label = { LText(caseModeLabel(mode)) },
                                     )
                                 }
                             }
                             FilterChip(
                                 selected = spec.numberingEnabled,
                                 onClick = { viewModel.updateBatchRenameSpec(spec.copy(numberingEnabled = !spec.numberingEnabled)) },
-                                label = { Text("Pridėti numeravimą") },
+                                label = { LText("Pridėti numeravimą") },
                             )
                             if (spec.numberingEnabled) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -145,7 +147,7 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                                             }
                                         },
                                         modifier = Modifier.weight(1f),
-                                        label = { Text("Pradžia") },
+                                        label = { LText("Pradžia") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         isError = numberStartText.toIntOrNull()?.let { it !in 0..999_999_999 } != false,
                                         singleLine = true,
@@ -159,7 +161,7 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                                             }
                                         },
                                         modifier = Modifier.weight(1f),
-                                        label = { Text("Skaitmenys") },
+                                        label = { LText("Skaitmenys") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         isError = numberPaddingText.toIntOrNull()?.let { it !in 1..9 } != false,
                                         singleLine = true,
@@ -168,7 +170,7 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                                         value = spec.numberSeparator,
                                         onValueChange = { viewModel.updateBatchRenameSpec(spec.copy(numberSeparator = it.take(8))) },
                                         modifier = Modifier.weight(1f),
-                                        label = { Text("Skirtukas") },
+                                        label = { LText("Skirtukas") },
                                         singleLine = true,
                                     )
                                 }
@@ -177,8 +179,8 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                                 value = spec.extensionOverride,
                                 onValueChange = { viewModel.updateBatchRenameSpec(spec.copy(extensionOverride = it)) },
                                 modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Naujas failų plėtinys (nebūtinas)") },
-                                supportingText = { Text("Tuščia reikšmė palieka esamą plėtinį; aplankams netaikoma") },
+                                label = { LText("Naujas failų plėtinys (nebūtinas)") },
+                                supportingText = { LText("Tuščia reikšmė palieka esamą plėtinį; aplankams netaikoma") },
                                 singleLine = true,
                             )
                         }
@@ -191,9 +193,9 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            Text("Peržiūra", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            LText("Peržiūra", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             if (state.running) CircularProgressIndicator(modifier = Modifier.padding(3.dp))
-                            state.preview?.let { Text("Keisis ${it.changedCount} / ${it.items.size}") }
+                            state.preview?.let { LText("Keisis ${it.changedCount} / ${it.items.size}") }
                         }
                     }
 
@@ -218,13 +220,13 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = viewModel::closeBatchRename) { Text("Atšaukti") }
+                    TextButton(onClick = viewModel::closeBatchRename) { LText("Atšaukti") }
                     Button(
                         onClick = viewModel::executeBatchRename,
                         enabled = numberInputsValid && !state.running && state.preview?.canExecute == true,
                         modifier = Modifier.testTag("batch_rename_execute"),
                     ) {
-                        Text("Pervadinti ${state.preview?.changedCount ?: 0}")
+                        LText("Pervadinti ${state.preview?.changedCount ?: 0}")
                     }
                 }
             }
@@ -240,21 +242,31 @@ private fun RenamePreviewRow(item: BatchRenamePreviewItem) {
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(item.originalName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(
-            if (item.changed) "→ ${item.targetName}" else "→ Nesikeičia",
-            color = if (issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (issue != null) Text(issue, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (item.changed) {
+            Text(
+                "→ ${item.targetName}",
+                color = if (issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            LText(
+                "→ Nesikeičia",
+                color = if (issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (issue != null) LText(issue, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         HorizontalDivider(modifier = Modifier.padding(top = 5.dp))
     }
 }
 
 @Composable
 private fun ErrorText(text: String) {
-    Text(
+    LText(
         text,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp),
         color = MaterialTheme.colorScheme.error,

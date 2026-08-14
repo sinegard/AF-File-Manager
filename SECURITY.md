@@ -1,30 +1,47 @@
-# Saugumo modelis
+# Security policy
 
-## Paslaptys
+## Supported versions
 
-- Tinklo slaptažodžiai ir privatūs SSH raktai prieš rašymą šifruojami AES-GCM raktu iš `AndroidKeyStore`.
-- Paslapčių tekstiniai ir baitų masyvai po naudojimo išvalomi ten, kur JVM / Android API tai leidžia.
-- Failų miniatiūros kuriamos vietoje ir laikomos tik iki 24 MiB ribotoje proceso atminties LRU talpykloje; nuolatinė miniatiūrų duomenų bazė ar foninis visos saugyklos indeksavimas nekuriami.
-- SFTP serverio raktas tikrinamas pagal SHA-256 atspaudą. TOFU galimas tik aiškiai pasirinkus; pirmas raktas įrašomas, o vėliau pasikeitęs raktas blokuojamas.
-- WebDAV leidžiamas tik per HTTPS. FTPS įjungia sertifikato grandinės ir galinio taško vardo tikrinimą. Paprastas FTP sąmoningai lieka nesaugus protokolas ir neturėtų būti naudojamas nepatikimame tinkle.
+Security fixes are provided for the latest stable release. Before reporting a problem, reproduce it with the newest version from [GitHub Releases](https://github.com/sinegard/AF-File-Manager/releases/latest) when it is safe to do so.
 
-## Failų vientisumas
+## Reporting a vulnerability
 
-- Kopijavimas, atsisiuntimas, šifravimas, teksto keitimas ir išpakavimas naudoja laikinus failus; galutinis vardas pakeičiamas tik sėkmingai užbaigus.
-- Kur įmanoma, tikrinamas įrašytas dydis. Dublikatams naudojamas SHA-256.
-- Archyvų keliai kanonizuojami ir negali išeiti už paskirties. Ribojamas įrašų skaičius, gylis, vieno failo ir bendras išplėstas dydis; TAR nuorodos atmetamos.
-- Nuotolinės sesijos serializuotos vienu `Mutex`, kad vienas klientas nebūtų naudojamas lygiagrečiai nesaugiais būdais.
+Do not publish credentials, private keys, personal file names, server addresses, or working exploit details in a public issue.
 
-## Destruktyvūs veiksmai
+If the repository's **Security** tab offers **Report a vulnerability**, use that private form. If no private form is available, open a minimal public issue requesting a private contact channel and include no sensitive technical details. Maintainers should acknowledge a complete report before discussing disclosure timing.
 
-- Vietiniai failai pagal nutylėjimą siunčiami į programos šiukšlinę.
-- Galutinis vietinis, SAF ir nuotolinis trynimas turi atskirą patvirtinimą.
-- Sinchronizavimo variklis neturi tylaus trynimo veiksmo. Fone konfliktai sustabdo vykdymą ir įrašo būseną.
-- APK diegimą patvirtina Android. Root / Shizuku veiksmai nėra automatiškai vykdomi.
-- Atnaujintojas priima tik šios viešos GitHub repozitorijos stabilų leidimą, tikrina HTTPS adresą, APK vardą, dydį, GitHub SHA-256, paketo ID, didesnį `versionCode` ir tą patį pasirašymo sertifikatą. Tik tada atveriamas Android diegimo langas.
+Ordinary bugs that contain no sensitive information may be reported through GitHub Issues.
 
-## Ribos
+## Secret handling
 
-- Android sistemos ir gamintojo apribojimai yra viršesni už programą.
-- Release APK pasirašomas atskiru platinimo raktu per GitHub Actions paslaptis. Privatus raktas ir jo slaptažodžiai repozitorijoje nesaugomi; jų praradimas neleistų pasirašyti suderinamų atnaujinimų.
-- Prieš produkcinį naudojimą kiekvienas tikras tinklo serverio tipas turi būti patikrintas su savininko infrastruktūra ir sertifikatų / SSH atspaudų politika.
+- Network passwords and private SSH keys are encrypted before storage with an AES-GCM key held by `AndroidKeyStore`.
+- Secret character and byte arrays are cleared after use where JVM and Android APIs permit it.
+- Thumbnails are generated locally and kept only in a process-memory LRU cache capped at 24 MiB. The app does not build a persistent thumbnail database or silently index the entire device.
+- SFTP host keys are verified by SHA-256 fingerprint. Trust on first use is available only after an explicit choice; the first key is stored and a later key change is blocked.
+- WebDAV requires HTTPS. FTPS validates the certificate chain and endpoint name. Plain FTP is intentionally an insecure legacy protocol and should never be used on an untrusted network.
+
+## File integrity
+
+- Copy, download, encryption, text editing, and extraction write to temporary files and publish the final name only after successful completion.
+- Written sizes are checked where possible. Duplicate detection uses SHA-256.
+- Archive paths are canonicalized and cannot escape the destination. Entry count, nesting depth, per-file size, and total expanded size are bounded; TAR links are rejected.
+- Remote sessions are serialized with a `Mutex` so one client is not used concurrently in an unsafe way.
+
+## Destructive actions
+
+- Local deletion goes to the app's recoverable trash by default.
+- Permanent local, Storage Access Framework, and remote deletion requires a separate confirmation.
+- Synchronization never performs a silent delete. Background conflicts stop execution and record their state.
+- Android confirms every APK installation. Root and Shizuku actions are not executed automatically.
+- The updater accepts only a stable release from this public repository. It verifies the HTTPS origin, APK name, size, GitHub SHA-256 digest, package ID, higher `versionCode`, and the installed app's signing certificate before opening Android's installer.
+
+## Security boundaries
+
+- Android and device-vendor restrictions take precedence over the app, including restrictions around `Android/data` and `Android/obb`.
+- Release APKs are signed with a separate distribution key stored as GitHub Actions secrets. The private key and passwords are not present in this repository. Losing that key prevents compatible updates.
+- Every real server type should be validated against the owner's infrastructure and certificate or SSH-fingerprint policy before production use.
+- No software can guarantee that a remote server, network, removable drive, or third-party Android provider is trustworthy or available.
+
+## Warranty and liability
+
+AF File Manager is distributed under the [MIT License](LICENSE). It is provided **as is**, without warranty of any kind, and the authors or copyright holders are not liable for claims, damages, or other liability arising from the software or its use. See [LICENSE](LICENSE) for the complete terms.
