@@ -106,6 +106,7 @@ fun AFFileManagerApp(
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
+    val fileEditState by viewModel.fileEditState.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val leftPanel by viewModel.leftPanel.collectAsStateWithLifecycle()
     val rightPanel by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -292,7 +293,16 @@ fun AFFileManagerApp(
     preview?.let { target ->
         FilePreviewDialog(
             target = target,
+            editState = fileEditState,
             onClose = viewModel::closePreview,
+            onPrepareEdit = viewModel::prepareFileEdit,
+            onEditTextChanged = viewModel::updateEditText,
+            onSaveEdit = viewModel::saveFileEdit,
+            onSaveEditAs = viewModel::saveFileEditAs,
+            onExternalEditorReturned = viewModel::refreshFileEditAfterExternalEditor,
+            onDismissEditConflict = viewModel::dismissFileEditConflict,
+            onKeepEditing = viewModel::keepEditing,
+            onDiscardEditAndClose = viewModel::discardFileEditAndClose,
             onExtract = { file, password -> viewModel.extractArchive(file, password) },
             onDecrypt = { file, password -> viewModel.decryptVault(file, password) },
         )

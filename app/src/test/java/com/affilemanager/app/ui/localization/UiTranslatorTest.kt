@@ -42,6 +42,21 @@ class UiTranslatorTest {
         assertEquals("Every 24 hr · Wi-Fi/Ethernet only", UiTranslator.translate("Kas 24 val. · tik Wi‑Fi/Ethernet", AppLanguageManager.ENGLISH))
         assertEquals("Create remote folder", UiTranslator.translate("Kurti nuotolinį aplanką", AppLanguageManager.ENGLISH))
         assertEquals("New connection", UiTranslator.translate("Nauja jungtis", AppLanguageManager.ENGLISH))
+        assertEquals("Edit with another app", UiTranslator.translate("Redaguoti su kita programa", AppLanguageManager.ENGLISH))
+        assertEquals("Save as", UiTranslator.translate("Išsaugoti kaip", AppLanguageManager.ENGLISH))
+        assertEquals("Your edited copy", UiTranslator.translate("Jūsų redaguojama kopija", AppLanguageManager.ENGLISH))
+        assertEquals("Add to clipboard", UiTranslator.translate("Įtraukti į iškarpinę", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Added to clipboard: 2 · total: 5",
+            UiTranslator.translate("Į iškarpinę įtraukta: 2 · iš viso: 5", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Reconnect to Office NAS before saving to the original server",
+            UiTranslator.translate(
+                "Prieš išsaugodami pradiniame serveryje vėl prisijunkite prie Office NAS",
+                AppLanguageManager.ENGLISH,
+            ),
+        )
         assertEquals("Local file is missing", UiTranslator.translate("Trūksta vietinio failo", AppLanguageManager.ENGLISH))
         assertEquals(
             "Failed: The network profile was removed",

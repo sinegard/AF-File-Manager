@@ -10,13 +10,17 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import androidx.core.graphics.createBitmap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
@@ -24,6 +28,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.ui.MainViewModel
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -176,6 +181,14 @@ class FilePreviewLifecycleTest {
             val handlers = application.packageManager.queryIntentActivities(viewIntent, PackageManager.MATCH_DEFAULT_ONLY)
             assertTrue(handlers.any { it.activityInfo.packageName == application.packageName })
 
+            val editIntent = Intent(Intent.ACTION_EDIT).apply {
+                setDataAndType(uri, "text/plain")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+            @Suppress("DEPRECATION")
+            val editHandlers = application.packageManager.queryIntentActivities(editIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            assertTrue(editHandlers.any { it.activityInfo.packageName == application.packageName })
+
             compose.runOnUiThread { compose.activity.onNewIntent(viewIntent) }
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithContentDescription(fixture.name, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
@@ -205,6 +218,42 @@ class FilePreviewLifecycleTest {
             compose.waitForIdle()
         } finally {
             fixture.delete()
+        }
+    }
+
+    @Test
+    fun textEditorUsesWorkingCopyAndRequiresExplicitConflictResolution() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("edit-session")), "current")
+        fixtureRoot.deleteRecursively()
+        require(fixtureRoot.mkdirs())
+        val source = File(fixtureRoot, "editable.txt").apply { writeText("original") }
+        val validationRoot = requireNotNull(application.getExternalFilesDir("validation"))
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(source)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithText("original").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("internal-text-editor").performTextClearance()
+            compose.onNodeWithTag("internal-text-editor").performTextInput("edited in AF")
+            compose.runOnIdle { assertEquals("original", source.readText()) }
+            compose.waitForIdle()
+            captureRoot(File(validationRoot, "preview-text-editor.png"))
+
+            source.writeText("changed by another app")
+            compose.onNodeWithTag("save-edit-original").assertIsEnabled().performClick()
+            compose.onNodeWithText("The original file changed").assertIsDisplayed()
+            compose.runOnIdle { assertEquals("changed by another app", source.readText()) }
+            captureRoot(File(validationRoot, "preview-edit-conflict.png"))
+            compose.onNodeWithTag("overwrite-edit-conflict").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) { source.readText() == "edited in AF" }
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            fixtureRoot.deleteRecursively()
         }
     }
 

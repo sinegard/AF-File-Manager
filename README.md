@@ -8,10 +8,12 @@ AF File Manager is a privacy-first Android file manager with no ads, tracking SD
 - folders-first sorting, list/grid layouts, real file icons, and optional asynchronous thumbnails;
 - local copy, move, rename, batch rename, recoverable trash, operation queue, pause/resume, retry, and SHA-256 verification;
 - continuous PDF viewing, image zoom, media/text/APK previews, Android `Open with`, and archive browsing;
+- built-in UTF-8 text editing and Android `Edit with`, using private working copies, explicit Save or Save As, revision conflict handling, and verified writes for local, document-provider, and remote files;
 - ZIP, 7z, RAR, TAR, TAR.GZ, and GZIP support with extraction safety limits;
 - scoped search, saved searches, tags, ratings, folder-size analysis, large files, empty folders, and duplicate detection;
 - SMB 2/3, SFTP, HTTPS WebDAV, FTP, and FTPS connections with bidirectional recursive transfers;
 - one cross-location clipboard: copy locally and paste into the current server folder, or copy remotely and paste into the current local folder;
+- `Copy more` appends missed local, search-result, or same-server items to the current copy set without duplicates or replacing its earlier contents;
 - a browsable local upload picker with folder navigation, persistent multi-folder selection, and system-back history;
 - the same long-press selection, clear/select-all toggle, strong highlight, and grouped copy flow for local and remote files;
 - one consistent local and remote browser layout with back/forward/up history, breadcrumbs, list/grid views, hidden-file controls, folders-first sorting, file-type icons, and matching action menus;

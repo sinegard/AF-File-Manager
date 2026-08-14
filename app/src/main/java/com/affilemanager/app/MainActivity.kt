@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun Intent.toIncomingViewRequest(): IncomingViewRequest? {
-        if (action != Intent.ACTION_VIEW) return null
+        if (action !in setOf(Intent.ACTION_VIEW, Intent.ACTION_EDIT)) return null
         val viewUri = data ?: return null
         if (viewUri.scheme !in setOf("content", "file")) return null
         return IncomingViewRequest(viewUri, type)

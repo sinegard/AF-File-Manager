@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SdStorage
@@ -196,6 +197,9 @@ fun FilesScreen(
                     }
                     event.isCtrlPressed && event.key == Key.W -> {
                         viewModel.closeActiveTab(activePanel); true
+                    }
+                    event.isCtrlPressed && event.isShiftPressed && event.key == Key.C -> {
+                        viewModel.addSelectionToClipboard(activePanel); true
                     }
                     event.isCtrlPressed && event.key == Key.C -> {
                         viewModel.copySelection(activePanel, move = false); true
@@ -580,6 +584,7 @@ private fun FilePanel(
     var compactMenu by remember { mutableStateOf(false) }
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val recents by viewModel.recents.collectAsStateWithLifecycle()
+    val localClipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
     val tagsByPath = remember(tagSnapshot.records) { tagSnapshot.records.associateBy(TaggedFileRecord::path) }
     val allEntriesSelected = state.entries.isNotEmpty() && state.entries.all { it.absolutePath in state.selectedPaths }
@@ -603,6 +608,15 @@ private fun FilePanel(
             ) {
                 IconButton(onClick = { viewModel.copySelection(panelId, move = false) }) {
                     Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+                }
+                if (localClipboard?.mode == ClipboardMode.COPY) {
+                    TextButton(
+                        onClick = { viewModel.addSelectionToClipboard(panelId) },
+                        modifier = Modifier.testTag("copy-more-local"),
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Įtraukti į iškarpinę"))
+                        LText("Kopijuoti daugiau", modifier = Modifier.padding(start = 5.dp))
+                    }
                 }
                 IconButton(onClick = { viewModel.copySelection(panelId, move = true) }) {
                     Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))

@@ -36,6 +36,7 @@ data class ContentFileEntry(
     val mimeType: String,
     val sizeBytes: Long?,
     val modifiedAtMillis: Long?,
+    val isWritable: Boolean = false,
 ) {
     val extension: String get() = name.substringAfterLast('.', "").lowercase()
 }

@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Sync
@@ -120,6 +121,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
     val sync by viewModel.syncState.collectAsStateWithLifecycle()
     val localClipboard by viewModel.clipboard.collectAsStateWithLifecycle()
+    val remoteClipboard by viewModel.remoteClipboard.collectAsStateWithLifecycle()
     val activeLocalState = if (activePanel == com.affilemanager.app.ui.PanelId.LEFT) left else right
     val activeSelection = activeLocalState.selectedPaths
 
@@ -195,6 +197,8 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onSelectAll = viewModel::selectAllRemote,
                     onDownloadSelected = viewModel::remoteDownloadSelection,
                     onCopySelected = viewModel::copyRemoteSelection,
+                    canAddToRemoteClipboard = remoteClipboard?.profileId == state.connectedProfile?.id,
+                    onAddToRemoteClipboard = viewModel::addRemoteSelectionToClipboard,
                     localClipboardCount = localClipboard?.takeIf { it.mode == ClipboardMode.COPY }?.paths?.size ?: 0,
                     onPasteLocalClipboard = { viewModel.pasteLocalClipboardToRemote() },
                     onChooseUpload = { showUploadPicker = true },
@@ -361,6 +365,8 @@ internal fun RemoteBrowser(
     onSelectAll: () -> Unit,
     onDownloadSelected: () -> Unit,
     onCopySelected: () -> Unit,
+    canAddToRemoteClipboard: Boolean = false,
+    onAddToRemoteClipboard: () -> Unit = {},
     localClipboardCount: Int,
     onPasteLocalClipboard: () -> Unit,
     onChooseUpload: () -> Unit,
@@ -394,6 +400,16 @@ internal fun RemoteBrowser(
             ) {
                 IconButton(onClick = onCopySelected, enabled = !state.loading) {
                     Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+                }
+                if (canAddToRemoteClipboard) {
+                    TextButton(
+                        onClick = onAddToRemoteClipboard,
+                        enabled = !state.loading,
+                        modifier = Modifier.testTag("copy-more-remote"),
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Įtraukti į iškarpinę"))
+                        LText("Kopijuoti daugiau", modifier = Modifier.padding(start = 5.dp))
+                    }
                 }
                 IconButton(onClick = onDownloadSelected, enabled = !state.loading) {
                     Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))

@@ -5,4 +5,6 @@
     <string name="language_description">Programos sąsajos kalba. Pakeitus langas bus atnaujintas.</string>
     <string name="language_english">English</string>
     <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Atidaryti „%1$s“ su</string>
+    <string name="edit_with_chooser_title">Redaguoti „%1$s“ su</string>
 </resources>

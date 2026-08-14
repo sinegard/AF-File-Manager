@@ -6,6 +6,7 @@ import com.affilemanager.app.ui.localization.uiText
 import android.content.ClipData
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -16,6 +17,8 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.widget.MediaController
 import android.widget.VideoView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,11 +50,13 @@ import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Calculate
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.SaveAs
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -103,17 +108,22 @@ import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveBrowserIndex
 import com.affilemanager.app.MainActivity
+import com.affilemanager.app.R
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.editing.EditConflict
+import com.affilemanager.app.editing.EditSession
+import com.affilemanager.app.editing.EditabilityRules
+import com.affilemanager.app.editing.FileRevision
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.ui.PreviewTarget
+import com.affilemanager.app.ui.FileEditUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.text.DateFormat
@@ -128,7 +138,16 @@ private data class PdfDocumentInfo(val pageAspectRatios: List<Float>) {
 @Composable
 fun FilePreviewDialog(
     target: PreviewTarget,
+    editState: FileEditUiState,
     onClose: () -> Unit,
+    onPrepareEdit: () -> Unit,
+    onEditTextChanged: (String) -> Unit,
+    onSaveEdit: (Boolean) -> Unit,
+    onSaveEditAs: (Uri) -> Unit,
+    onExternalEditorReturned: () -> Unit,
+    onDismissEditConflict: () -> Unit,
+    onKeepEditing: () -> Unit,
+    onDiscardEditAndClose: () -> Unit,
     onExtract: (FileEntry, CharArray?) -> Unit,
     onDecrypt: (FileEntry, CharArray) -> Unit,
 ) {
@@ -138,7 +157,46 @@ fun FilePreviewDialog(
     var hashRunning by remember { mutableStateOf(false) }
     var actionError by remember(source.key) { mutableStateOf<String?>(null) }
     var archivePath by remember(source.key) { mutableStateOf("") }
+    var launchExternalEditorWhenReady by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val internalEditor = EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
+    val externalEditorAvailable = remember(source.key) { canEditExternally(context, source) }
+    val activeEditState = editState.takeIf { it.sourceKey == source.key }
+    val editSession = activeEditState?.session
+    val saveAsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.data?.let(onSaveEditAs)
+    }
+    val externalEditorLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        onExternalEditorReturned()
+    }
+    val launchSaveAs: () -> Unit = {
+        val session = editSession
+        if (session == null) {
+            actionError = "Redaguojama kopija dar neparuošta"
+        } else {
+            saveAsLauncher.launch(createSaveAsIntent(session))
+        }
+    }
+
+    LaunchedEffect(source.key, internalEditor) {
+        if (internalEditor) onPrepareEdit()
+    }
+    LaunchedEffect(
+        launchExternalEditorWhenReady,
+        editSession?.id,
+        activeEditState?.preparing,
+        activeEditState?.error,
+    ) {
+        if (!launchExternalEditorWhenReady) return@LaunchedEffect
+        if (activeEditState?.error != null) {
+            launchExternalEditorWhenReady = false
+            return@LaunchedEffect
+        }
+        val session = editSession ?: return@LaunchedEffect
+        launchExternalEditorWhenReady = false
+        runCatching { externalEditorLauncher.launch(createExternalEditIntent(context, session)) }
+            .onFailure { actionError = it.message ?: "Nepavyko atidaryti redaktoriaus pasirinkimo" }
+    }
     val navigateBack: () -> Unit = {
         if ((target is PreviewTarget.Archive || target is PreviewTarget.RemoteArchive) && archivePath.isNotEmpty()) {
             archivePath = ArchiveBrowserIndex.parentOf(archivePath)
@@ -188,6 +246,28 @@ fun FilePreviewDialog(
                         Spacer(Modifier.width(7.dp))
                         LText("Atidaryti su kita programa")
                     }
+                    if (externalEditorAvailable) {
+                        FilledTonalButton(
+                            onClick = {
+                                if (editSession == null) {
+                                    launchExternalEditorWhenReady = true
+                                    onPrepareEdit()
+                                } else {
+                                    runCatching {
+                                        externalEditorLauncher.launch(createExternalEditIntent(context, editSession))
+                                    }.onFailure {
+                                        actionError = it.message ?: "Nepavyko atidaryti redaktoriaus pasirinkimo"
+                                    }
+                                }
+                            },
+                            enabled = activeEditState?.preparing != true && activeEditState?.saving != true,
+                            modifier = Modifier.testTag("edit-with-action"),
+                        ) {
+                            Icon(Icons.Rounded.Edit, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            LText("Redaguoti su kita programa")
+                        }
+                    }
                     TextButton(
                         onClick = {
                             runCatching { shareFile(context, source) }
@@ -221,6 +301,13 @@ fun FilePreviewDialog(
                 actionError?.let {
                     LText(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
+                activeEditState?.let { state ->
+                    FileEditActions(
+                        state = state,
+                        onSave = { onSaveEdit(false) },
+                        onSaveAs = launchSaveAs,
+                    )
+                }
 
                 when (target) {
                     is PreviewTarget.Archive -> ArchivePreview(
@@ -242,24 +329,68 @@ fun FilePreviewDialog(
                     is PreviewTarget.TrashFile,
                     is PreviewTarget.ContentFile,
                     is PreviewTarget.RemoteFile,
-                    -> FileContentPreview(source)
+                    -> FileContentPreview(
+                        source = source,
+                        editState = activeEditState,
+                        onPrepareEdit = onPrepareEdit,
+                        onEditTextChanged = onEditTextChanged,
+                    )
                 }
             }
         }
     }
+
+    activeEditState?.conflict?.let { conflict ->
+        EditConflictDialog(
+            conflict = conflict,
+            workingRevision = editSession?.workingRevision ?: conflict.expected,
+            saving = activeEditState.saving,
+            onOverwrite = { onSaveEdit(true) },
+            onSaveAs = launchSaveAs,
+            onKeepEditing = onDismissEditConflict,
+        )
+    }
+    if (activeEditState?.confirmDiscard == true) {
+        AlertDialog(
+            onDismissRequest = onKeepEditing,
+            title = { LText("Atmesti neišsaugotus pakeitimus?") },
+            text = { LText("Redaguojamoje kopijoje yra niekur neišsaugotų pakeitimų. Originalus failas nepakeistas.") },
+            confirmButton = {
+                Button(onClick = onDiscardEditAndClose, modifier = Modifier.testTag("discard-edit-confirm")) {
+                    LText("Atmesti pakeitimus")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onKeepEditing) { LText("Tęsti redagavimą") }
+            },
+        )
+    }
 }
 
 @Composable
-private fun FileContentPreview(source: PreviewSource) {
+private fun FileContentPreview(
+    source: PreviewSource,
+    editState: FileEditUiState?,
+    onPrepareEdit: () -> Unit,
+    onEditTextChanged: (String) -> Unit,
+) {
     val context = LocalContext.current
+    val displayedSource = editState?.session
+        ?.takeIf { it.sourceKey == source.key }
+        ?.let { PreviewSource.Working(source, it) }
+        ?: source
     when {
         source.extension == "afvault" -> PropertiesPreview(source, "Šifruotas AF File Manager failas. Jį galima iššifruoti tik atidarius iš vietinės saugyklos.")
-        source.kind == EntryKind.IMAGE -> ImagePreview(source)
-        source.extension == "pdf" || source.mimeType(LocalContext.current) == "application/pdf" -> PdfPreview(source)
-        source.kind == EntryKind.VIDEO || source.kind == EntryKind.AUDIO -> MediaPreview(source)
+        source.kind == EntryKind.IMAGE -> ImagePreview(displayedSource)
+        source.extension == "pdf" || source.mimeType(context) == "application/pdf" -> PdfPreview(displayedSource)
+        source.kind == EntryKind.VIDEO || source.kind == EntryKind.AUDIO -> MediaPreview(displayedSource)
         source.kind == EntryKind.APK && source.localFile != null -> ApkPreview(requireNotNull(source.localFile))
-        isEditableText(source, context) -> TextPreview(source)
-        else -> PropertiesPreview(source)
+        EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind) -> TextPreview(
+            state = editState,
+            onPrepareEdit = onPrepareEdit,
+            onTextChanged = onEditTextChanged,
+        )
+        else -> PropertiesPreview(displayedSource)
     }
 }
 
@@ -533,58 +664,147 @@ private fun MediaPreview(source: PreviewSource) {
 }
 
 @Composable
-private fun TextPreview(source: PreviewSource) {
-    val context = LocalContext.current
-    val localFile = source.localFile
-    var text by remember(source.key) { mutableStateOf("") }
-    var loading by remember { mutableStateOf(true) }
-    var changed by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(source.key) {
-        val result = withContext(Dispatchers.IO) {
-            runCatching { readBoundedText(context, source) }
-        }
-        result.onSuccess { text = it }.onFailure { status = it.message }
-        loading = false
-    }
-    Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            LText(
-                if (localFile != null && source.isWritable) "UTF-8 · iki 2 MB" else "UTF-8 · iki 2 MB · tik skaityti",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (localFile != null && source.isWritable) {
-                Button(
-                    onClick = {
-                        scope.launch {
-                            status = withContext(Dispatchers.IO) { atomicWriteText(localFile, text).fold({ "Išsaugota" }, { it.message }) }
-                            changed = false
-                        }
+private fun FileEditActions(
+    state: FileEditUiState,
+    onSave: () -> Unit,
+    onSaveAs: () -> Unit,
+) {
+    val session = state.session
+    val busy = state.preparing || state.saving
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                LText(
+                    when {
+                        state.preparing -> "Ruošiama saugi redaguojama kopija…"
+                        state.saving -> "Išsaugoma ir patikrinama…"
+                        state.hasUnsavedChanges -> "Neišsaugoti pakeitimai laikomi privačioje darbinėje kopijoje"
+                        state.hasOriginChanges -> "Kopija išsaugota kitur; originalas vis dar skiriasi"
+                        session != null -> "Redaguojama naudojant privačią darbinę kopiją"
+                        else -> "Redagavimo paruošti nepavyko"
                     },
-                    enabled = changed,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = onSave,
+                    enabled = session != null && state.hasOriginChanges && session.origin.canWrite && !busy,
+                    modifier = Modifier.testTag("save-edit-original"),
                 ) {
                     Icon(Icons.Rounded.Save, contentDescription = null)
-                    LText("Išsaugoti", modifier = Modifier.padding(start = 6.dp))
+                    Spacer(Modifier.width(5.dp))
+                    LText("Išsaugoti")
+                }
+                OutlinedButton(
+                    onClick = onSaveAs,
+                    enabled = session != null && !busy,
+                    modifier = Modifier.testTag("save-edit-as"),
+                ) {
+                    Icon(Icons.Rounded.SaveAs, contentDescription = null)
+                    Spacer(Modifier.width(5.dp))
+                    LText("Išsaugoti kaip")
                 }
             }
+            if (session != null && !session.origin.canWrite) {
+                LText(
+                    "Originalas skirtas tik skaityti. Išsaugokite redaguotą failą kitoje vietoje.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+            state.status?.let { LText(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+            state.error?.let { LText(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         }
-        status?.let { LText(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
-        if (loading) CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
-        else OutlinedTextField(
-            value = text,
-            onValueChange = { updated ->
-                if (localFile != null && source.isWritable) {
-                    text = updated
-                    changed = true
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            readOnly = localFile == null || !source.isWritable,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-        )
     }
+}
+
+@Composable
+private fun TextPreview(
+    state: FileEditUiState?,
+    onPrepareEdit: () -> Unit,
+    onTextChanged: (String) -> Unit,
+) {
+    LaunchedEffect(state?.sourceKey) {
+        if (state?.session == null && state?.preparing != true) onPrepareEdit()
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+        LText("UTF-8 · iki 2 MB · redaguojama darbinė kopija", style = MaterialTheme.typography.bodySmall)
+        when {
+            state == null || state.preparing -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            state.session == null -> LText(
+                state.error ?: "Nepavyko paruošti vidinio redaktoriaus",
+                modifier = Modifier.padding(top = 12.dp),
+                color = MaterialTheme.colorScheme.error,
+            )
+            else -> OutlinedTextField(
+                value = state.text.orEmpty(),
+                onValueChange = onTextChanged,
+                modifier = Modifier.fillMaxSize().testTag("internal-text-editor"),
+                readOnly = state.saving,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditConflictDialog(
+    conflict: EditConflict,
+    workingRevision: FileRevision,
+    saving: Boolean,
+    onOverwrite: () -> Unit,
+    onSaveAs: () -> Unit,
+    onKeepEditing: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onKeepEditing,
+        title = { LText("Originalus failas pasikeitė") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LText("AF File Manager jo neperrašė. Palyginkite versijas ir pasirinkite veiksmą.")
+                Text(conflict.originLabel, style = MaterialTheme.typography.bodySmall)
+                LText("Originalas atidarymo metu", fontWeight = FontWeight.SemiBold)
+                Text(revisionSummary(conflict.expected), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                LText("Jūsų redaguojama kopija", fontWeight = FontWeight.SemiBold)
+                Text(revisionSummary(workingRevision), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                LText("Dabartinis originalas", fontWeight = FontWeight.SemiBold)
+                if (conflict.current == null) {
+                    LText("Originalaus failo nebėra")
+                } else {
+                    Text(revisionSummary(conflict.current), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                }
+                LText("Perrašymas pakeis dabartinį originalą. „Išsaugoti kaip“ paliks abi versijas.")
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onOverwrite,
+                enabled = !saving,
+                modifier = Modifier.testTag("overwrite-edit-conflict"),
+            ) { LText("Perrašyti originalą") }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onSaveAs, enabled = !saving) { LText("Išsaugoti kaip") }
+                TextButton(onClick = onKeepEditing, enabled = !saving) { LText("Tęsti redagavimą") }
+            }
+        },
+    )
 }
 
 @Composable
@@ -850,58 +1070,10 @@ private fun imageMetadata(context: android.content.Context, source: PreviewSourc
         ?: source.openFileDescriptor(context).use { attributes(ExifInterface(it.fileDescriptor)) }
 }
 
-private fun isEditableText(source: PreviewSource, context: android.content.Context): Boolean = source.extension in setOf(
-    "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "html", "htm", "kt", "java", "py", "js", "ts", "css", "sh", "ini", "conf",
-) || source.kind == EntryKind.DOCUMENT && source.mimeType(context).startsWith("text/")
-
-private fun readBoundedText(context: android.content.Context, source: PreviewSource, maxBytes: Int = 2 * 1_024 * 1_024): String {
-    source.sizeBytes?.let { require(it <= maxBytes) { "Failas per didelis vidiniam redaktoriui" } }
-    val output = ByteArrayOutputStream(minOf(source.sizeBytes?.toInt() ?: 8_192, maxBytes))
-    source.openInputStream(context).buffered().use { input ->
-        val buffer = ByteArray(64 * 1_024)
-        var total = 0
-        while (true) {
-            val read = input.read(buffer)
-            if (read < 0) break
-            total += read
-            require(total <= maxBytes) { "Failas per didelis vidiniam redaktoriui" }
-            output.write(buffer, 0, read)
-        }
-    }
-    val bytes = output.toByteArray()
-    return try {
-        bytes.toString(Charsets.UTF_8)
-    } finally {
-        bytes.fill(0)
-    }
-}
-
 private fun boundedOffset(candidate: Offset, viewport: IntSize, scale: Float): Offset {
     val maxX = viewport.width * (scale - 1f) / 2f
     val maxY = viewport.height * (scale - 1f) / 2f
     return Offset(candidate.x.coerceIn(-maxX, maxX), candidate.y.coerceIn(-maxY, maxY))
-}
-
-private fun atomicWriteText(file: File, text: String): Result<Unit> = runCatching {
-    val bytes = text.toByteArray(Charsets.UTF_8)
-    require(bytes.size <= 2 * 1_024 * 1_024) { "Turinys viršijo 2 MB ribą" }
-    val temporary = File(file.parentFile, ".${file.name}.af.tmp")
-    try {
-        temporary.outputStream().use { output -> output.write(bytes); output.fd.sync() }
-        runCatching {
-            java.nio.file.Files.move(
-                temporary.toPath(),
-                file.toPath(),
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-            )
-        }.getOrElse {
-            java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-        }
-    } finally {
-        bytes.fill(0)
-        if (temporary.exists()) temporary.delete()
-    }
 }
 
 private fun sha256(context: android.content.Context, source: PreviewSource): String {
@@ -939,10 +1111,56 @@ internal fun openWith(context: android.content.Context, source: PreviewSource) {
         clipData = ClipData.newRawUri(source.name, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    val chooser = Intent.createChooser(viewIntent, "Atidaryti „${source.name}“ su").apply {
+    val chooser = Intent.createChooser(
+        viewIntent,
+        context.getString(R.string.open_with_chooser_title, source.name),
+    ).apply {
         putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(context, MainActivity::class.java)))
     }
     context.startActivity(chooser)
+}
+
+internal fun canEditExternally(context: android.content.Context, source: PreviewSource): Boolean {
+    if (!EditabilityRules.mayUseExternalEditor(source.kind, source.extension)) return false
+    val intent = Intent(Intent.ACTION_EDIT).apply {
+        setDataAndType(source.uri(context), source.mimeType(context))
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+    @Suppress("DEPRECATION")
+    return context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        .any { it.activityInfo?.packageName != context.packageName }
+}
+
+private fun createExternalEditIntent(context: android.content.Context, session: EditSession): Intent {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", session.workingFile)
+    val editIntent = Intent(Intent.ACTION_EDIT).apply {
+        setDataAndType(uri, session.mimeType)
+        clipData = ClipData.newRawUri(session.displayName, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+    return Intent.createChooser(
+        editIntent,
+        context.getString(R.string.edit_with_chooser_title, session.displayName),
+    ).apply {
+        putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(context, MainActivity::class.java)))
+    }
+}
+
+private fun createSaveAsIntent(session: EditSession): Intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+    addCategory(Intent.CATEGORY_OPENABLE)
+    type = session.mimeType.ifBlank { "application/octet-stream" }
+    putExtra(Intent.EXTRA_TITLE, session.displayName)
+}
+
+private fun revisionSummary(revision: FileRevision): String = buildString {
+    append(FileSystemRules.humanBytes(revision.sizeBytes))
+    revision.modifiedAtMillis?.let {
+        append(" · ")
+        append(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)))
+    }
+    append(" · SHA-256 ")
+    append(revision.sha256.take(12))
+    append('…')
 }
 
 private fun installApk(context: android.content.Context, file: File) {

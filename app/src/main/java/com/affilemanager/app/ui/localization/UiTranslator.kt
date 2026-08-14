@@ -558,6 +558,58 @@ object UiTranslator {
         "Tik dešiniajame skydelyje" to "Right pane only",
         "UTF-8 · iki 2 MB · tik skaityti" to "UTF-8 · up to 2 MB · read-only",
         "UTF-8 · iki 2 MB" to "UTF-8 · up to 2 MB",
+        "UTF-8 · iki 2 MB · redaguojama darbinė kopija" to "UTF-8 · up to 2 MB · editable working copy",
+        "Įtraukti į iškarpinę" to "Add to clipboard",
+        "Kopijuoti daugiau" to "Copy more",
+        "Redaguoti su kita programa" to "Edit with another app",
+        "Redaguojama kopija dar neparuošta" to "The editable copy is not ready",
+        "Nepavyko atidaryti redaktoriaus pasirinkimo" to "Could not open the editor chooser",
+        "Ruošiama saugi redaguojama kopija…" to "Preparing a safe editable copy…",
+        "Išsaugoma ir patikrinama…" to "Saving and verifying…",
+        "Neišsaugoti pakeitimai laikomi privačioje darbinėje kopijoje" to "Unsaved changes are kept in a private working copy",
+        "Kopija išsaugota kitur; originalas vis dar skiriasi" to "A copy is saved elsewhere; the original still differs",
+        "Redaguojama naudojant privačią darbinę kopiją" to "Editing uses a private working copy",
+        "Redagavimo paruošti nepavyko" to "Editing could not be prepared",
+        "Išsaugoti kaip" to "Save as",
+        "Originalas skirtas tik skaityti. Išsaugokite redaguotą failą kitoje vietoje." to "The original is read-only. Save the edited file to another location.",
+        "Atmesti neišsaugotus pakeitimus?" to "Discard unsaved changes?",
+        "Redaguojamoje kopijoje yra niekur neišsaugotų pakeitimų. Originalus failas nepakeistas." to "The editable copy has changes that have not been saved anywhere. The original file has not been modified.",
+        "Atmesti pakeitimus" to "Discard changes",
+        "Tęsti redagavimą" to "Keep editing",
+        "Originalus failas pasikeitė" to "The original file changed",
+        "AF File Manager jo neperrašė. Palyginkite versijas ir pasirinkite veiksmą." to "AF File Manager did not overwrite it. Compare the revisions and choose what to do.",
+        "Originalas atidarymo metu" to "Original when opened",
+        "Jūsų redaguojama kopija" to "Your edited copy",
+        "Dabartinis originalas" to "Current original",
+        "Originalaus failo nebėra" to "The original file no longer exists",
+        "Perrašymas pakeis dabartinį originalą. „Išsaugoti kaip“ paliks abi versijas." to "Overwrite replaces the current original. Save as keeps both versions.",
+        "Perrašyti originalą" to "Overwrite original",
+        "Nepavyko paruošti vidinio redaktoriaus" to "Could not prepare the built-in editor",
+        "Paruošta redaguoti" to "Ready to edit",
+        "Redaguojama kopija paruošta" to "The editable copy is ready",
+        "Išsaugota pradinėje vietoje" to "Saved to the original location",
+        "Patikrinta kopija išsaugota pasirinktoje vietoje" to "A verified copy was saved to the selected location",
+        "Išorinis redaktorius uždarytas nepakeitus turinio" to "The external editor closed without content changes",
+        "Išorinio redaktoriaus pakeitimus galima išsaugoti" to "External editor changes are ready to save",
+        "Nepavyko paruošti redaguojamos kopijos" to "Could not prepare an editable copy",
+        "Failo išsaugoti nepavyko" to "Could not save the file",
+        "Kopijos išsaugoti nepavyko" to "Could not save the copy",
+        "Redaguotos kopijos perskaityti nepavyko" to "Could not read the edited copy",
+        "Originalas skirtas tik skaityti; naudokite „Išsaugoti kaip“" to "The original is read-only; use Save as",
+        "Pasirinkta vieta neįrašoma per Android dokumentų sistemą" to "The selected destination is not writable through Android Documents",
+        "Išsaugotos kopijos patikra nepavyko" to "Saved-copy verification failed",
+        "Išsaugoto failo patikra nepavyko" to "Saved-file verification failed",
+        "Išsaugoto failo patikrinti nepavyko" to "The saved file could not be verified",
+        "Pasirinkta vieta nesuteikė įrašomo srauto" to "The selected location did not provide a writable stream",
+        "Serveris negrąžino išsaugoto failo patikrai" to "The server did not return the saved file for verification",
+        "Išsaugojimo serveryje patikra nepavyko" to "Server-save verification failed",
+        "Pradiniame nuotoliniame kelyje dabar yra aplankas" to "The original remote path now contains a folder",
+        "Nuotolinis failas pasikeitė ir dabar yra per didelis saugiai patikrai" to "The remote file changed and is now too large to verify safely",
+        "Failas nėra tinkamas UTF-8 tekstas; naudokite kitą redaktorių" to "The file is not valid UTF-8 text; use another editor",
+        "Nėra vietinio kopijavimo rinkinio, kurį būtų galima papildyti" to "There is no local copy set to add to",
+        "Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują kopijavimo rinkinį." to "Cut items cannot be mixed with Copy more. Start a new copy set.",
+        "Nėra serverio kopijavimo rinkinio, kurį būtų galima papildyti" to "There is no server copy set to add to",
+        "„Kopijuoti daugiau“ galima tik iš tos pačios serverio jungties" to "Copy more can only add files from the same server connection",
         "→ Nesikeičia" to "→ Unchanged",
         "APK informacija nepasiekiama" to "APK information unavailable",
     )
@@ -571,6 +623,27 @@ object UiTranslator {
         }
 
         val patterns = listOf(
+            Regex("^Prieš išsaugodami pradiniame serveryje vėl prisijunkite prie (.+)$") to { match: MatchResult ->
+                "Reconnect to ${match.groupValues[1]} before saving to the original server"
+            },
+            Regex("^Visi pasirinkti elementai jau buvo iškarpinėje \\((\\d+) iš viso\\)$") to { match: MatchResult ->
+                "All selected items were already in the clipboard (${match.groupValues[1]} total)"
+            },
+            Regex("^Į iškarpinę įtraukta: (\\d+) · iš viso: (\\d+)$") to { match: MatchResult ->
+                "Added to clipboard: ${match.groupValues[1]} · total: ${match.groupValues[2]}"
+            },
+            Regex("^Pasiekta iškarpinės riba: (\\d+) elementų$") to { match: MatchResult ->
+                "Clipboard limit reached: ${match.groupValues[1]} items"
+            },
+            Regex("^Visi pasirinkti serverio elementai jau buvo iškarpinėje \\((\\d+) iš viso\\)$") to { match: MatchResult ->
+                "All selected server items were already in the clipboard (${match.groupValues[1]} total)"
+            },
+            Regex("^Iš serverio įtraukta: (\\d+) · iš viso: (\\d+)$") to { match: MatchResult ->
+                "Added from server: ${match.groupValues[1]} · total: ${match.groupValues[2]}"
+            },
+            Regex("^Pasiekta serverio iškarpinės riba: (\\d+) elementų$") to { match: MatchResult ->
+                "Server clipboard limit reached: ${match.groupValues[1]} items"
+            },
             Regex("^Pasirinkta: (\\d+)\\. Naujos žymos pridedamos prie esamų; viską pašalina atskiras mygtukas\\.$") to { match: MatchResult ->
                 "Selected: ${match.groupValues[1]}. New tags are added to existing ones; use the separate button to remove all."
             },
