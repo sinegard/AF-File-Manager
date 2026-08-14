@@ -54,6 +54,9 @@ class ConnectionsComponentsTest {
                             entries = listOf(folder, file),
                         ),
                         localDirectory = "/local/target",
+                        compactToolbar = true,
+                        onBack = {},
+                        onForward = {},
                         onUp = {},
                         onRefresh = {},
                         onOpen = {},
@@ -63,7 +66,6 @@ class ConnectionsComponentsTest {
                         onSelectAll = {},
                         onDownloadSelected = {},
                         onCopySelected = {},
-                        onCopy = {},
                         localClipboardCount = 2,
                         onPasteLocalClipboard = { pasteRequests.incrementAndGet() },
                         onChooseUpload = {},
@@ -71,19 +73,22 @@ class ConnectionsComponentsTest {
                         onRename = {},
                         onDelete = {},
                         onSync = {},
+                        onToggleHidden = {},
+                        onToggleGrid = {},
+                        onSort = {},
+                        onDisconnect = {},
                     )
                 }
             }
         }
 
+        compose.onNodeWithContentDescription("Folder actions").performClick()
         compose.onNodeWithTag("remote_upload_choose").assertIsEnabled().assertHasClickAction()
         compose.onNodeWithTag("remote_paste_local").assertIsEnabled().assertHasClickAction()
         compose.onNodeWithText("Paste (2)").performClick()
-        compose.onAllNodesWithContentDescription("Copy to active local folder")
-            .assertCountEquals(2)[0]
-            .assertHasClickAction()
-        compose.onNodeWithText("From server → /local/target").fetchSemanticsNode()
         compose.waitUntil(timeoutMillis = 5_000) { pasteRequests.get() == 1 }
+        compose.onNodeWithContentDescription("File actions: remote.txt").performClick()
+        compose.onNodeWithText("Copy to phone").assertHasClickAction()
     }
 
     @Test
@@ -107,6 +112,9 @@ class ConnectionsComponentsTest {
                     RemoteBrowser(
                         state = state,
                         localDirectory = "/local/target",
+                        compactToolbar = true,
+                        onBack = {},
+                        onForward = {},
                         onUp = {},
                         onRefresh = {},
                         onOpen = {},
@@ -135,7 +143,6 @@ class ConnectionsComponentsTest {
                             state = state.copy(selectedPaths = emptySet())
                             observedSelection = state.selectedPaths
                         },
-                        onCopy = {},
                         localClipboardCount = 0,
                         onPasteLocalClipboard = {},
                         onChooseUpload = {},
@@ -143,6 +150,10 @@ class ConnectionsComponentsTest {
                         onRename = {},
                         onDelete = {},
                         onSync = {},
+                        onToggleHidden = {},
+                        onToggleGrid = {},
+                        onSort = {},
+                        onDisconnect = {},
                     )
                 }
             }
@@ -171,6 +182,75 @@ class ConnectionsComponentsTest {
             assertEquals(emptySet<String>(), observedSelection)
         }
         compose.onAllNodesWithText("Selected:", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun remoteFolderUsesTheSameNavigationAndDisplayMenuPatternAsLocalStorage() {
+        val back = AtomicInteger()
+        val forward = AtomicInteger()
+        val up = AtomicInteger()
+        val hidden = AtomicInteger()
+        val grid = AtomicInteger()
+        val sort = AtomicInteger()
+        val refresh = AtomicInteger()
+        val disconnect = AtomicInteger()
+        compose.setContent {
+            MaterialTheme {
+                RemoteBrowser(
+                    state = NetworkUiState(
+                        connectedProfile = profile(),
+                        path = "/remote",
+                        entries = listOf(RemoteEntry("file.txt", "/remote/file.txt", false, 12, null)),
+                        backHistory = listOf("/"),
+                        forwardHistory = listOf("/future"),
+                    ),
+                    localDirectory = "/local/target",
+                    compactToolbar = true,
+                    onBack = { back.incrementAndGet() },
+                    onForward = { forward.incrementAndGet() },
+                    onUp = { up.incrementAndGet() },
+                    onRefresh = { refresh.incrementAndGet() },
+                    onOpen = {},
+                    onDownload = {},
+                    onToggleSelection = {},
+                    onClearSelection = {},
+                    onSelectAll = {},
+                    onDownloadSelected = {},
+                    onCopySelected = {},
+                    localClipboardCount = 0,
+                    onPasteLocalClipboard = {},
+                    onChooseUpload = {},
+                    onCreateFolder = {},
+                    onRename = {},
+                    onDelete = {},
+                    onSync = {},
+                    onToggleHidden = { hidden.incrementAndGet() },
+                    onToggleGrid = { grid.incrementAndGet() },
+                    onSort = { sort.incrementAndGet() },
+                    onDisconnect = { disconnect.incrementAndGet() },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithContentDescription("Forward").performClick()
+        compose.onNodeWithContentDescription("Up").performClick()
+        clickFolderMenuItem("Show hidden files")
+        clickFolderMenuItem("Show grid")
+        clickFolderMenuItem("By size")
+        clickFolderMenuItem("Refresh")
+        clickFolderMenuItem("Disconnect")
+
+        compose.runOnIdle {
+            assertEquals(1, back.get())
+            assertEquals(1, forward.get())
+            assertEquals(1, up.get())
+            assertEquals(1, hidden.get())
+            assertEquals(1, grid.get())
+            assertEquals(1, sort.get())
+            assertEquals(1, refresh.get())
+            assertEquals(1, disconnect.get())
+        }
     }
 
     @Test
@@ -348,6 +428,11 @@ class ConnectionsComponentsTest {
         compose.onNodeWithText("Invalid server address").fetchSemanticsNode()
         compose.onNodeWithText("Diagnostic code: NET-DNS").fetchSemanticsNode()
         compose.onAllNodesWithText(marker, substring = true).assertCountEquals(0)
+    }
+
+    private fun clickFolderMenuItem(text: String) {
+        compose.onNodeWithContentDescription("Folder actions").performClick()
+        compose.onNodeWithText(text).performClick()
     }
 
     private fun profile() = NetworkProfile(

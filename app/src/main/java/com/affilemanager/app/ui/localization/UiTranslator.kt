@@ -76,6 +76,7 @@ object UiTranslator {
         "Dar nėra jungčių" to "No connections yet",
         "Pridėkite NAS, serverį arba WebDAV vietą." to "Add a NAS, server, or WebDAV location.",
         "Į serverį" to "To server",
+        "Pasirinkti iš telefono" to "Choose from phone",
         "Kopijuoti į serverį" to "Copy to server",
         "Kopijuoti į telefoną" to "Copy to phone",
         "Įklijuoti iš serverio" to "Paste from server",
@@ -87,6 +88,9 @@ object UiTranslator {
         "Kopijuoti į aktyvų vietinį aplanką" to "Copy to active local folder",
         "Sinchronizuoti" to "Sync",
         "Sukurti aplanką" to "Create folder",
+        "Ištrinti pasirinktus elementus?" to "Delete selected items?",
+        "Ištrinti aplanką ir jo turinį?" to "Delete the folder and its contents?",
+        "Ištrinti failą?" to "Delete the file?",
         "Aplankų sinchronizavimas" to "Folder synchronization",
         "Kryptis" to "Direction",
         "Konfliktai" to "Conflicts",
@@ -607,6 +611,9 @@ object UiTranslator {
             Regex("^Iš: (.+)$") to { match: MatchResult -> "From: ${match.groupValues[1]}" },
             Regex("^Į: (.+)$") to { match: MatchResult -> "To: ${match.groupValues[1]}" },
             Regex("^Iš serverio → (.+)$") to { match: MatchResult -> "From server → ${match.groupValues[1]}" },
+            Regex("^(\\d+) elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės\\.$") to { match: MatchResult ->
+                "${match.groupValues[1]} items will be deleted from the remote server without using the local trash."
+            },
             Regex("^Iš serverio bus nukopijuota (\\d+) elementų į (.+)\\. Esami vardai nebus perrašyti\\.$") to { match: MatchResult ->
                 "${match.groupValues[1]} items will be copied from the server to ${match.groupValues[2]}. Existing names will not be overwritten."
             },

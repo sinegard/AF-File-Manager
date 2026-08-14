@@ -10,6 +10,7 @@ This roadmap is designed for Android rather than copied blindly from desktop fil
 - SMB, SFTP, HTTPS WebDAV, FTP, and FTPS with bidirectional recursive transfers and synchronization-plan previews.
 - Unified long-press selection for local and remote lists, a select-all/deselect-all toggle, and grouped transfers in both directions.
 - Cross-location copy/paste between the active local folder and the current remote folder, plus a navigable multi-selection upload picker.
+- Unified local and remote browser controls, including navigation history, system Back, breadcrumbs, list/grid layouts, hidden-file filtering, folders-first sorting, and consistent item/selection menus.
 - SHA-256 duplicate analysis, large or old files, empty folders, folder-size analysis, tags, ratings, and saved searches.
 - English as the default interface plus Lithuanian, with no translation of user data.
 - No advertising, mandatory account, analytics, or tracking SDK.

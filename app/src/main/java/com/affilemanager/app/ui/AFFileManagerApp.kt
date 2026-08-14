@@ -133,6 +133,9 @@ fun AFFileManagerApp(
             !sameNormalizedPath(Environment.getExternalStorageDirectory().absolutePath, activePanelState.path) &&
             storageRoots.none { root -> sameNormalizedPath(root.path, activePanelState.path) },
         remoteSelectedCount = networkState.selectedPaths.size,
+        remoteConnected = networkState.connectedProfile != null,
+        remoteHasBackHistory = networkState.backHistory.isNotEmpty(),
+        remoteHasParent = networkState.path != "/",
     )
 
     BackHandler(
@@ -142,6 +145,8 @@ fun AFFileManagerApp(
             SystemBackAction.CLOSE_PREVIEW -> viewModel.closePreview()
             SystemBackAction.SHOW_FILES -> viewModel.setSection(AppSection.FILES)
             SystemBackAction.CLEAR_REMOTE_SELECTION -> viewModel.clearRemoteSelection()
+            SystemBackAction.NAVIGATE_REMOTE_BACK -> viewModel.navigateRemoteBack()
+            SystemBackAction.NAVIGATE_REMOTE_UP -> viewModel.navigateRemoteUp()
             SystemBackAction.CLEAR_SELECTION -> viewModel.clearSelection(activePanel)
             SystemBackAction.NAVIGATE_BACK -> viewModel.navigateBack(activePanel)
             SystemBackAction.NAVIGATE_UP -> viewModel.navigateUp(activePanel)
