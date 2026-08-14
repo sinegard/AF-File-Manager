@@ -11,8 +11,12 @@ class BackNavigationRulesTest {
             BackNavigationRules.decide(true, AppSection.ANALYZE, false, 1, true, true),
         )
         assertEquals(
+            SystemBackAction.CLEAR_REMOTE_SELECTION,
+            BackNavigationRules.decide(false, AppSection.CONNECTIONS, false, 1, true, true, remoteSelectedCount = 2),
+        )
+        assertEquals(
             SystemBackAction.SHOW_FILES,
-            BackNavigationRules.decide(false, AppSection.CONNECTIONS, false, 1, true, true),
+            BackNavigationRules.decide(false, AppSection.CONNECTIONS, false, 1, true, true, remoteSelectedCount = 0),
         )
         assertEquals(
             SystemBackAction.DEFER_TO_SYSTEM,

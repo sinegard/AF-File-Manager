@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AF File Manager</string>
-    <string name="language_title">Language</string>
-    <string name="language_description">App interface language. The window refreshes after a change.</string>
+    <string name="language_title">Kalba</string>
+    <string name="language_description">Programos sąsajos kalba. Pakeitus langas bus atnaujintas.</string>
     <string name="language_english">English</string>
     <string name="language_lithuanian">Lietuvių</string>
 </resources>

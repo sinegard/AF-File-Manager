@@ -50,11 +50,11 @@ class ThumbnailGridVisualTest {
 
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithText("AFFileManager-photo.png").fetchSemanticsNodes().isNotEmpty() &&
-                    compose.onAllNodesWithContentDescription("AFFileManager-photo.png miniatiūra", useUnmergedTree = true)
+                    compose.onAllNodesWithContentDescription("AFFileManager-photo.png thumbnail", useUnmergedTree = true)
                         .fetchSemanticsNodes().isNotEmpty() &&
-                    compose.onAllNodesWithContentDescription("AFFileManager-document.pdf miniatiūra", useUnmergedTree = true)
+                    compose.onAllNodesWithContentDescription("AFFileManager-document.pdf thumbnail", useUnmergedTree = true)
                         .fetchSemanticsNodes().isNotEmpty() &&
-                    compose.onAllNodesWithContentDescription("AFFileManager-demo.apk piktograma", useUnmergedTree = true)
+                    compose.onAllNodesWithContentDescription("AFFileManager-demo.apk icon", useUnmergedTree = true)
                         .fetchSemanticsNodes().isNotEmpty()
             }
 

@@ -41,6 +41,7 @@ import com.affilemanager.app.network.RemoteErrorPresenter
 import com.affilemanager.app.network.RemoteOperation
 import com.affilemanager.app.network.RemotePath
 import com.affilemanager.app.network.ReconnectingRemoteClient
+import com.affilemanager.app.network.RemoteCopyEngine
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.operations.BatchRenamePreview
 import com.affilemanager.app.operations.BatchRenameSpec
@@ -153,6 +154,7 @@ data class NetworkUiState(
     val connectedProfile: NetworkProfile? = null,
     val path: String = "/",
     val entries: List<RemoteEntry> = emptyList(),
+    val selectedPaths: Set<String> = emptySet(),
     val loading: Boolean = false,
     val error: RemoteErrorInfo? = null,
 )
@@ -1504,10 +1506,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshRemote(path: String = _networkState.value.path) {
         val client = remoteClient ?: return
         val protocol = _networkState.value.connectedProfile?.protocol ?: return
+        val normalizedPath = RemotePath.normalize(path)
         viewModelScope.launch {
-            _networkState.update { it.copy(loading = true, error = null) }
-            runCatching { client.list(path) }
-                .onSuccess { entries -> _networkState.update { it.copy(path = RemotePath.normalize(path), entries = entries, loading = false) } }
+            _networkState.update { state ->
+                state.copy(
+                    path = normalizedPath,
+                    selectedPaths = if (state.path == normalizedPath) state.selectedPaths else emptySet(),
+                    loading = true,
+                    error = null,
+                )
+            }
+            runCatching { client.list(normalizedPath) }
+                .onSuccess { entries ->
+                    val available = entries.mapTo(HashSet(entries.size), RemoteEntry::path)
+                    _networkState.update { state ->
+                        if (state.path != normalizedPath) state else state.copy(
+                            entries = entries,
+                            selectedPaths = RemoteSelectionRules.retainAvailable(state.selectedPaths, available),
+                            loading = false,
+                        )
+                    }
+                }
                 .onFailure { error ->
                     _networkState.update {
                         it.copy(loading = false, error = RemoteErrorPresenter.present(protocol, RemoteOperation.LIST, error))
@@ -1516,11 +1535,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleRemoteSelection(path: String) {
+        var limitReached = false
+        _networkState.update { state ->
+            val result = RemoteSelectionRules.toggle(
+                current = state.selectedPaths,
+                availablePaths = state.entries.map(RemoteEntry::path),
+                path = path,
+                maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
+            )
+            limitReached = result.limitReached
+            state.copy(selectedPaths = result.selectedPaths)
+        }
+        if (limitReached) message("Vienu metu galima pasirinkti iki ${RemoteCopyEngine.MAX_SELECTED_ROOTS} failų ar aplankų", true)
+    }
+
+    fun selectAllRemote() {
+        var limitReached = false
+        _networkState.update { state ->
+            val result = RemoteSelectionRules.selectAll(
+                availablePaths = state.entries.map(RemoteEntry::path),
+                maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
+            )
+            limitReached = result.limitReached
+            state.copy(selectedPaths = result.selectedPaths)
+        }
+        if (limitReached) message("Pasirinkti pirmi ${RemoteCopyEngine.MAX_SELECTED_ROOTS} elementų", true)
+    }
+
+    fun clearRemoteSelection() {
+        _networkState.update { it.copy(selectedPaths = emptySet()) }
+    }
+
+    fun remoteDownloadSelection(destinationPanel: PanelId = _activePanel.value) {
+        val state = _networkState.value
+        val entries = state.entries.filter { it.path in state.selectedPaths }
+        if (entries.isEmpty()) return
+        if (enqueueRemoteDownload(entries, destinationPanel)) clearRemoteSelection()
+    }
+
     fun remoteDownload(entry: RemoteEntry, destinationPanel: PanelId = _activePanel.value) {
-        val client = remoteClient ?: return
+        enqueueRemoteDownload(listOf(entry), destinationPanel)
+    }
+
+    private fun enqueueRemoteDownload(entries: List<RemoteEntry>, destinationPanel: PanelId): Boolean {
+        val client = remoteClient ?: return false
+        if (entries.isEmpty() || entries.size > RemoteCopyEngine.MAX_SELECTED_ROOTS) return false
         val destination = File(panelFlow(destinationPanel).value.path)
-        graph.operationManager.submit("Kopijuojama iš serverio: ${entry.name}") {
-            val result = graph.remoteCopies.download(listOf(entry), destination, client, this)
+        val title = if (entries.size == 1) {
+            "Kopijuojama iš serverio: ${entries.first().name}"
+        } else {
+            "Kopijuojama iš serverio: ${entries.size}"
+        }
+        return graph.operationManager.submit(title) {
+            val result = graph.remoteCopies.download(entries, destination, client, this)
             if (result.failures.isNotEmpty()) {
                 completeWithErrors(
                     result.failures.size,
@@ -1530,15 +1598,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 note("Nukopijuota į ${destination.absolutePath}")
             }
             if (result.copiedRoots > 0) refreshPanel(destinationPanel)
-        }.onFailure { message(it.message ?: "Atsisiuntimo pradėti nepavyko", true) }
+        }.onFailure { message(it.message ?: "Atsisiuntimo pradėti nepavyko", true) }.isSuccess
     }
 
-    fun remoteUpload(localPaths: List<String>, remoteDirectory: String = _networkState.value.path) {
-        val client = remoteClient ?: return
+    fun remoteUpload(localPaths: List<String>, remoteDirectory: String = _networkState.value.path): Boolean {
+        val client = remoteClient ?: return false
         val sources = localPaths.distinct().map(::File)
-        if (sources.isEmpty()) return
+        if (sources.isEmpty() || sources.size > RemoteCopyEngine.MAX_SELECTED_ROOTS) return false
         val normalizedRemoteDirectory = RemotePath.normalize(remoteDirectory)
-        graph.operationManager.submit("Kopijuojama į serverį: ${sources.size}") {
+        return graph.operationManager.submit("Kopijuojama į serverį: ${sources.size}") {
             val result = graph.remoteCopies.upload(sources, normalizedRemoteDirectory, client, this)
             if (result.failures.isNotEmpty()) {
                 completeWithErrors(
@@ -1549,7 +1617,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 note("Nukopijuota į $normalizedRemoteDirectory")
             }
             if (result.copiedRoots > 0) refreshRemote(normalizedRemoteDirectory)
-        }.onFailure { message(it.message ?: "Įkėlimo pradėti nepavyko", true) }
+        }.onFailure { message(it.message ?: "Įkėlimo pradėti nepavyko", true) }.isSuccess
     }
 
     fun remoteCreateDirectory(name: String) {
@@ -1824,7 +1892,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val client = remoteClient
         remoteClient = null
         runCatching { client?.close() }
-        _networkState.update { it.copy(connectedProfile = null, entries = emptyList(), loading = false, error = null) }
+        _networkState.update {
+            it.copy(connectedProfile = null, entries = emptyList(), selectedPaths = emptySet(), loading = false, error = null)
+        }
         _syncState.value = SyncUiState()
     }
 

@@ -1,5 +1,8 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,25 +79,25 @@ fun SafBrowserDialog(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = "Uždaryti") }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti")) }
                     IconButton(onClick = viewModel::navigateSafBack, enabled = state.backStack.isNotEmpty()) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Atgal")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Atgal"))
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(state.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Android dokumentų sistema", style = MaterialTheme.typography.labelSmall)
+                        LText("Android dokumentų sistema", style = MaterialTheme.typography.labelSmall)
                     }
                     if (selectedLocalPath != null) {
                         IconButton(onClick = { viewModel.copyLocalToSaf(selectedLocalPath) }) {
-                            Icon(Icons.Rounded.FileUpload, contentDescription = "Kopijuoti pasirinktą vietinį elementą čia")
+                            Icon(Icons.Rounded.FileUpload, contentDescription = uiText("Kopijuoti pasirinktą vietinį elementą čia"))
                         }
                     }
-                    IconButton(onClick = viewModel::refreshSafBrowser) { Icon(Icons.Rounded.Refresh, contentDescription = "Atnaujinti") }
+                    IconButton(onClick = viewModel::refreshSafBrowser) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti")) }
                 }
                 HorizontalDivider()
                 state.error?.let { error ->
                     Card(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(error, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.error)
+                        LText(error, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.error)
                     }
                 }
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -103,7 +106,7 @@ fun SafBrowserDialog(
                     } else if (state.entries.isEmpty() && state.error == null) {
                         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Rounded.Folder, contentDescription = null, modifier = Modifier.size(56.dp))
-                            Text("Aplankas tuščias", style = MaterialTheme.typography.titleMedium)
+                            LText("Aplankas tuščias", style = MaterialTheme.typography.titleMedium)
                         }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
@@ -119,7 +122,7 @@ fun SafBrowserDialog(
                         }
                     }
                     FloatingActionButton(onClick = { create = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)) {
-                        Icon(Icons.Rounded.Add, contentDescription = "Sukurti")
+                        Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti"))
                     }
                 }
             }
@@ -145,12 +148,12 @@ fun SafBrowserDialog(
     delete?.let { entry ->
         AlertDialog(
             onDismissRequest = { delete = null },
-            title = { Text("Ištrinti visam laikui?") },
-            text = { Text("„${entry.name}“ bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę.") },
+            title = { LText("Ištrinti visam laikui?") },
+            text = { LText("„${entry.name}“ bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę.") },
             confirmButton = {
-                Button(onClick = { viewModel.deleteSafEntry(entry); delete = null }) { Text("Ištrinti") }
+                Button(onClick = { viewModel.deleteSafEntry(entry); delete = null }) { LText("Ištrinti") }
             },
-            dismissButton = { TextButton(onClick = { delete = null }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { delete = null }) { LText("Atšaukti") } },
         )
     }
 }
@@ -183,16 +186,16 @@ private fun SafEntryRow(
             }
         }
         Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "Veiksmai") }
+            IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai")) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
-                    text = { Text("Kopijuoti į aktyvų langą") },
+                    text = { LText("Kopijuoti į aktyvų langą") },
                     leadingIcon = { Icon(Icons.Rounded.FileDownload, contentDescription = null) },
                     onClick = { menu = false; onDownload() },
                 )
-                DropdownMenuItem(text = { Text("Pervadinti") }, enabled = entry.canWrite, onClick = { menu = false; onRename() })
+                DropdownMenuItem(text = { LText("Pervadinti") }, enabled = entry.canWrite, onClick = { menu = false; onRename() })
                 DropdownMenuItem(
-                    text = { Text("Ištrinti") },
+                    text = { LText("Ištrinti") },
                     leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                     enabled = entry.canWrite,
                     onClick = { menu = false; onDelete() },
@@ -208,15 +211,15 @@ private fun SafCreateDialog(onDismiss: () -> Unit, onFolder: (String) -> Unit, o
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null) },
-        title = { Text("Sukurti") },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Pavadinimas") }, singleLine = true) },
+        title = { LText("Sukurti") },
+        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true) },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onFile(name) }, enabled = name.isNotBlank()) { Text("Failą") }
-                Button(onClick = { onFolder(name) }, enabled = name.isNotBlank()) { Text("Aplanką") }
+                OutlinedButton(onClick = { onFile(name) }, enabled = name.isNotBlank()) { LText("Failą") }
+                Button(onClick = { onFolder(name) }, enabled = name.isNotBlank()) { LText("Aplanką") }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Atšaukti") } },
+        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
 }
 
@@ -231,9 +234,9 @@ private fun SafNameDialog(
     var name by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Pavadinimas") }, singleLine = true) },
-        confirmButton = { Button(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text(confirm) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Atšaukti") } },
+        title = { LText(title) },
+        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true) },
+        confirmButton = { Button(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { LText(confirm) } },
+        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
 }

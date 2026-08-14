@@ -14,11 +14,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.ViewModelProvider
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
+import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProtocol
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Rule
+import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertTrue
 import org.junit.runner.RunWith
@@ -29,19 +31,29 @@ class MainActivityTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
+    @Before
+    fun useEnglishForEveryTest() {
+        compose.runOnUiThread {
+            AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.ENGLISH)
+        }
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("Files").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     @Test
     fun startupShowsFileManagerAndCurrentPermissionState() {
         assertEquals("AF File Manager", compose.activity.applicationInfo.loadLabel(compose.activity.packageManager).toString())
-        compose.onNodeWithText("Failai").fetchSemanticsNode()
+        compose.onNodeWithText("Files").fetchSemanticsNode()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || !Environment.isExternalStorageManager()) {
-            compose.onNodeWithText("Reikia prieigos prie bendrų failų").fetchSemanticsNode()
+            compose.onNodeWithText("Shared-file access is required").fetchSemanticsNode()
         } else {
-            assertTrue(compose.onAllNodesWithText("Reikia prieigos prie bendrų failų").fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithText("Shared-file access is required").fetchSemanticsNodes().isEmpty())
         }
         compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText("Vidinė atmintis").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("Internal storage").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Failų vietos").fetchSemanticsNode()
+        compose.onNodeWithText("File locations").fetchSemanticsNode()
         assertTrue(compose.onAllNodesWithText("Kairysis:").fetchSemanticsNodes().isEmpty())
     }
 
@@ -49,16 +61,16 @@ class MainActivityTest {
     fun filesDestinationOpensLocationsAndAChoiceOpensTheActivePanel() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText("Vidinė atmintis").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithText("Internal storage").fetchSemanticsNodes().isNotEmpty()
         }
 
-        compose.onNodeWithText("Vidinė atmintis").performClick()
+        compose.onNodeWithText("Internal storage").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { !viewModel.filesHomeVisible.value }
         assertTrue(compose.onAllNodesWithText("Kairysis:").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithText("Failai").performClick()
+        compose.onNodeWithText("Files").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.filesHomeVisible.value }
-        compose.onNodeWithText("Failų vietos").fetchSemanticsNode()
+        compose.onNodeWithText("File locations").fetchSemanticsNode()
     }
 
     @Test
@@ -110,14 +122,14 @@ class MainActivityTest {
         }
         try {
             compose.runOnUiThread { viewModel.refreshProfiles() }
-            compose.onNodeWithText("Ryšiai").performClick()
+            compose.onNodeWithText("Connections").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.networkState.value.profiles.any { it.id == created.id } }
-            compose.onNodeWithContentDescription("Redaguoti jungtį").performClick()
-            compose.onNodeWithText("Redaguoti jungtį").fetchSemanticsNode()
+            compose.onNodeWithContentDescription("Edit connection").performClick()
+            compose.onNodeWithText("Edit connection").fetchSemanticsNode()
             compose.onNode(hasSetTextAction() and hasText("nas.example.test", substring = true))
                 .performTextReplacement("edited.example.test")
 
-            compose.onNodeWithText("Išsaugoti").performClick()
+            compose.onNodeWithText("Save").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.networkState.value.profiles.singleOrNull { it.id == created.id }?.host == "edited.example.test"
@@ -132,6 +144,31 @@ class MainActivityTest {
         } finally {
             runBlocking { graph.networkProfiles.remove(created.id) }
             compose.runOnUiThread { viewModel.refreshProfiles() }
+        }
+    }
+
+    @Test
+    fun languageCanSwitchToLithuanianAndBackToEnglish() {
+        try {
+            compose.onNodeWithText("More").performClick()
+            compose.onNodeWithText("Language").fetchSemanticsNode()
+            compose.onNodeWithText("Lietuvių").performClick()
+
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithText("Daugiau").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("Daugiau").performClick()
+            compose.onNodeWithText("Kalba").fetchSemanticsNode()
+            compose.onNodeWithText("Įrankiai ir saugumas").fetchSemanticsNode()
+            compose.onNodeWithText("English").performClick()
+
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithText("More").fetchSemanticsNodes().isNotEmpty()
+            }
+        } finally {
+            compose.runOnUiThread {
+                AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.ENGLISH)
+            }
         }
     }
 }

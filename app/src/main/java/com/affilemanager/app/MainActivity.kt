@@ -5,16 +5,19 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.mutableStateOf
 import com.affilemanager.app.ui.AFFileManagerApp
 import com.affilemanager.app.ui.theme.AFFileManagerTheme
+import com.affilemanager.app.ui.localization.AppLanguageManager
 
 data class IncomingViewRequest(val uri: Uri, val mimeType: String?)
 
-class MainActivity : androidx.fragment.app.FragmentActivity() {
+class MainActivity : AppCompatActivity() {
     private val pendingViewRequest = mutableStateOf<IncomingViewRequest?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppLanguageManager.ensureEnglishDefault(this)
         super.onCreate(savedInstanceState)
         pendingViewRequest.value = intent.toIncomingViewRequest()
         enableEdgeToEdge()

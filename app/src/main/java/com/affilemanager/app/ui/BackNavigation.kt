@@ -3,6 +3,7 @@ package com.affilemanager.app.ui
 internal enum class SystemBackAction {
     CLOSE_PREVIEW,
     SHOW_FILES,
+    CLEAR_REMOTE_SELECTION,
     CLEAR_SELECTION,
     NAVIGATE_BACK,
     NAVIGATE_UP,
@@ -17,8 +18,10 @@ internal object BackNavigationRules {
         selectedCount: Int,
         hasBackHistory: Boolean,
         hasParent: Boolean,
+        remoteSelectedCount: Int = 0,
     ): SystemBackAction = when {
         previewOpen -> SystemBackAction.CLOSE_PREVIEW
+        section == AppSection.CONNECTIONS && remoteSelectedCount > 0 -> SystemBackAction.CLEAR_REMOTE_SELECTION
         section != AppSection.FILES -> SystemBackAction.SHOW_FILES
         filesHomeVisible -> SystemBackAction.DEFER_TO_SYSTEM
         selectedCount > 0 -> SystemBackAction.CLEAR_SELECTION

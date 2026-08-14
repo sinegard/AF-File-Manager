@@ -1,6 +1,10 @@
 package com.affilemanager.app.ui.screens
 
 import android.view.View
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
@@ -71,6 +76,10 @@ import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.network.RemoteErrorInfo
 import com.affilemanager.app.network.RemotePath
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.components.SelectionActionBar
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.network.RemoteCopyEngine
 import com.affilemanager.app.sync.SyncActionType
 import com.affilemanager.app.sync.SyncConflictPolicy
 import com.affilemanager.app.sync.SyncMode
@@ -100,13 +109,13 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Tinklas ir nuotolinės vietos", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("SMB 2/3 · SFTP · WebDAV · FTP/FTPS", style = MaterialTheme.typography.bodySmall)
+                LText("Tinklas ir nuotolinės vietos", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                LText("SMB 2/3 · SFTP · WebDAV · FTP/FTPS", style = MaterialTheme.typography.bodySmall)
             }
             if (state.connectedProfile != null) {
                 OutlinedButton(onClick = viewModel::disconnectNetwork) {
                     Icon(Icons.Rounded.CloudOff, contentDescription = null)
-                    Text("Atjungti", modifier = Modifier.padding(start = 6.dp))
+                    LText("Atjungti", modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }
@@ -123,8 +132,8 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                                 Column(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Rounded.Link, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-                                    Text("Dar nėra jungčių", style = MaterialTheme.typography.titleMedium)
-                                    Text("Pridėkite NAS, serverį arba WebDAV vietą.")
+                                    LText("Dar nėra jungčių", style = MaterialTheme.typography.titleMedium)
+                                    LText("Pridėkite NAS, serverį arba WebDAV vietą.")
                                 }
                             }
                         }
@@ -141,7 +150,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     state.error?.let { error -> item { NetworkError(error) } }
                 }
                 FloatingActionButton(onClick = { showAdd = true }, modifier = Modifier.padding(20.dp).align(Alignment.BottomEnd)) {
-                    Icon(Icons.Rounded.Add, contentDescription = "Pridėti jungtį")
+                    Icon(Icons.Rounded.Add, contentDescription = uiText("Pridėti jungtį"))
                 }
             }
         } else {
@@ -155,6 +164,10 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 onRefresh = { viewModel.refreshRemote() },
                 onOpen = { entry -> if (entry.directory) viewModel.refreshRemote(entry.path) else viewModel.remoteDownload(entry) },
                 onDownload = viewModel::remoteDownload,
+                onToggleSelection = viewModel::toggleRemoteSelection,
+                onClearSelection = viewModel::clearRemoteSelection,
+                onSelectAll = viewModel::selectAllRemote,
+                onDownloadSelected = viewModel::remoteDownloadSelection,
                 onChooseUpload = { showUploadPicker = true },
                 onCreateFolder = { createRemoteFolder = true },
                 onRename = { renameRemote = it },
@@ -181,12 +194,12 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     deleteProfile?.let { profile ->
         AlertDialog(
             onDismissRequest = { deleteProfile = null },
-            title = { Text("Pašalinti jungtį?") },
-            text = { Text("Bus pašalintas „${profile.name}“ profilis ir jo užšifruotas prisijungimo įrašas.") },
+            title = { LText("Pašalinti jungtį?") },
+            text = { LText("Bus pašalintas „${profile.name}“ profilis ir jo užšifruotas prisijungimo įrašas.") },
             confirmButton = {
-                Button(onClick = { viewModel.removeNetworkProfile(profile.id); deleteProfile = null }) { Text("Pašalinti") }
+                Button(onClick = { viewModel.removeNetworkProfile(profile.id); deleteProfile = null }) { LText("Pašalinti") }
             },
-            dismissButton = { TextButton(onClick = { deleteProfile = null }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { deleteProfile = null }) { LText("Atšaukti") } },
         )
     }
     if (createRemoteFolder) {
@@ -204,10 +217,10 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     deleteRemote?.let { entry ->
         AlertDialog(
             onDismissRequest = { deleteRemote = null },
-            title = { Text(if (entry.directory) "Ištrinti aplanką ir jo turinį?" else "Ištrinti failą?") },
-            text = { Text("„${entry.name}“ bus ištrintas nuotoliniame serveryje be vietinės šiukšlinės.") },
-            confirmButton = { Button(onClick = { viewModel.remoteDelete(entry); deleteRemote = null }) { Text("Ištrinti") } },
-            dismissButton = { TextButton(onClick = { deleteRemote = null }) { Text("Atšaukti") } },
+            title = { LText(if (entry.directory) "Ištrinti aplanką ir jo turinį?" else "Ištrinti failą?") },
+            text = { LText("„${entry.name}“ bus ištrintas nuotoliniame serveryje be vietinės šiukšlinės.") },
+            confirmButton = { Button(onClick = { viewModel.remoteDelete(entry); deleteRemote = null }) { LText("Ištrinti") } },
+            dismissButton = { TextButton(onClick = { deleteRemote = null }) { LText("Atšaukti") } },
         )
     }
     if (showSync) {
@@ -229,8 +242,10 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             initiallySelected = activeSelection,
             onDismiss = { showUploadPicker = false },
             onCopy = { paths ->
-                viewModel.remoteUpload(paths)
-                showUploadPicker = false
+                if (viewModel.remoteUpload(paths)) {
+                    viewModel.clearSelection(activePanel)
+                    showUploadPicker = false
+                }
             },
         )
     }
@@ -252,34 +267,35 @@ internal fun ProfileCard(
             Icon(Icons.Rounded.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
             Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(safeName, fontWeight = FontWeight.SemiBold)
-                Text(
-                    if (profileProblem == null) "${profile.protocol} · ${normalized.host}:${profile.port}"
-                    else "${profile.protocol} · Neteisingi jungties duomenys",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (profileProblem == null) {
+                    Text("${profile.protocol} · ${normalized.host}:${profile.port}", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    LText("${profile.protocol} · Neteisingi jungties duomenys", style = MaterialTheme.typography.bodySmall)
+                }
                 if (profileProblem != null) {
-                    Text(
+                    LText(
                         "$profileProblem. Paspauskite pieštuką.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
                 if (profile.protocol == NetworkProtocol.SFTP) {
-                    Text(
+                    LText(
                         profile.expectedHostKeySha256?.let { "SSH ${it.take(22)}…" } ?: "Pirmasis raktas bus aiškiai patikėtas",
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
             }
-            IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = "Redaguoti jungtį") }
-            IconButton(onClick = onDelete) { Icon(Icons.Rounded.Delete, contentDescription = "Pašalinti") }
+            IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = uiText("Redaguoti jungtį")) }
+            IconButton(onClick = onDelete) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti")) }
             Button(onClick = onConnect, enabled = !loading) {
-                if (loading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Jungtis")
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp) else LText("Jungtis")
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun RemoteBrowser(
     state: com.affilemanager.app.ui.NetworkUiState,
@@ -288,35 +304,54 @@ internal fun RemoteBrowser(
     onRefresh: () -> Unit,
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
+    onToggleSelection: (String) -> Unit,
+    onClearSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDownloadSelected: () -> Unit,
     onChooseUpload: () -> Unit,
     onCreateFolder: () -> Unit,
     onRename: (RemoteEntry) -> Unit,
     onDelete: (RemoteEntry) -> Unit,
     onSync: () -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onUp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Aukštyn") }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(state.connectedProfile?.name.orEmpty(), fontWeight = FontWeight.SemiBold)
-            Text(state.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val selectableEntries = state.entries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
+    val allSelected = selectableEntries.isNotEmpty() && selectableEntries.all { it.path in state.selectedPaths }
+    if (state.selectedPaths.isNotEmpty()) {
+        SelectionActionBar(
+            count = state.selectedPaths.size,
+            allSelected = allSelected,
+            onClose = onClearSelection,
+            onToggleSelectAll = { if (allSelected) onClearSelection() else onSelectAll() },
+        ) {
+            IconButton(onClick = onDownloadSelected, enabled = !state.loading) {
+                Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))
+            }
         }
-        IconButton(onClick = onCreateFolder) { Icon(Icons.Rounded.Add, contentDescription = "Sukurti aplanką") }
-        IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, contentDescription = "Atnaujinti") }
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedButton(onClick = onChooseUpload, enabled = !state.loading, modifier = Modifier.testTag("remote_upload_choose")) {
-            Icon(Icons.Rounded.CloudUpload, contentDescription = null)
-            Text("Į serverį", modifier = Modifier.padding(start = 6.dp))
+    } else {
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onUp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Aukštyn")) }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(state.connectedProfile?.name.orEmpty(), fontWeight = FontWeight.SemiBold)
+                Text(state.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconButton(onClick = onCreateFolder) { Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti aplanką")) }
+            IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti")) }
         }
-        OutlinedButton(onClick = onSync, enabled = !state.loading) {
-            Icon(Icons.Rounded.Sync, contentDescription = null)
-            Text("Sinchronizuoti", modifier = Modifier.padding(start = 6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(onClick = onChooseUpload, enabled = !state.loading, modifier = Modifier.testTag("remote_upload_choose")) {
+                Icon(Icons.Rounded.CloudUpload, contentDescription = null)
+                LText("Į serverį", modifier = Modifier.padding(start = 6.dp))
+            }
+            OutlinedButton(onClick = onSync, enabled = !state.loading) {
+                Icon(Icons.Rounded.Sync, contentDescription = null)
+                LText("Sinchronizuoti", modifier = Modifier.padding(start = 6.dp))
+            }
+            LText("Iš serverio → $localDirectory", style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
-        Text("Iš serverio → $localDirectory", style = MaterialTheme.typography.bodySmall, maxLines = 1)
     }
     if (state.loading) {
         Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
@@ -325,34 +360,58 @@ internal fun RemoteBrowser(
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         items(state.entries, key = RemoteEntry::path) { entry ->
             var menu by remember(entry.path) { mutableStateOf(false) }
-            Card(onClick = { onOpen(entry) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp)) {
+            val selected = entry.path in state.selectedPaths
+            val selectionShape = RoundedCornerShape(8.dp)
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                    .testTag("remote_entry_${entry.path}")
+                    .then(if (selected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
+                    .combinedClickable(
+                        onClick = {
+                            if (state.selectedPaths.isNotEmpty()) onToggleSelection(entry.path) else onOpen(entry)
+                        },
+                        onLongClick = { onToggleSelection(entry.path) },
+                    ),
+                shape = selectionShape,
+                colors = CardDefaults.cardColors(
+                    containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                ),
+            ) {
                 Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (entry.directory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile, contentDescription = null)
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (!entry.directory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
                     }
-                    IconButton(onClick = { onDownload(entry) }) {
-                        Icon(Icons.Rounded.CloudDownload, contentDescription = "Kopijuoti į aktyvų vietinį aplanką")
-                    }
-                    Box {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "Veiksmai") }
-                        androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    if (state.selectedPaths.isEmpty()) {
+                        IconButton(onClick = { onDownload(entry) }) {
+                            Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))
+                        }
+                        Box {
+                            IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai")) }
+                            androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { LText("Pasirinkti") },
+                                    onClick = { menu = false; onToggleSelection(entry.path) },
+                                )
                             androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("Kopijuoti į telefoną") },
+                                text = { LText("Kopijuoti į telefoną") },
                                 leadingIcon = { Icon(Icons.Rounded.CloudDownload, contentDescription = null) },
                                 onClick = { menu = false; onDownload(entry) },
                             )
                             androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("Pervadinti") },
+                                text = { LText("Pervadinti") },
                                 leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                                 onClick = { menu = false; onRename(entry) },
                             )
                             androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("Ištrinti") },
+                                text = { LText("Ištrinti") },
                                 leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                                 onClick = { menu = false; onDelete(entry) },
                             )
+                            }
                         }
                     }
                 }
@@ -371,6 +430,7 @@ internal fun LocalUploadDialog(
     onCopy: (List<String>) -> Unit,
 ) {
     val availablePaths = remember(entries) { entries.mapTo(HashSet(entries.size), FileEntry::absolutePath) }
+    val selectableEntries = remember(entries) { entries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS) }
     var selected by remember(directoryPath, remotePath) {
         mutableStateOf(initiallySelected.filterTo(linkedSetOf()) { it in availablePaths }.take(1_000).toSet())
     }
@@ -383,29 +443,55 @@ internal fun LocalUploadDialog(
             selected
         }
     }
+    val allSelected = selectableEntries.isNotEmpty() && selectableEntries.all { it.absolutePath in selected }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
-        title = { Text("Kopijuoti į serverį") },
+        title = { LText("Kopijuoti į serverį") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
-                    Text("Iš: $directoryPath", style = MaterialTheme.typography.bodySmall)
-                    Text("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
-                    Text("Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
+                    LText("Iš: $directoryPath", style = MaterialTheme.typography.bodySmall)
+                    LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
+                    LText("Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
+                }
+                if (selected.isNotEmpty()) {
+                    item {
+                        SelectionActionBar(
+                            count = selected.size,
+                            allSelected = allSelected,
+                            onClose = { selected = emptySet() },
+                            onToggleSelectAll = {
+                                selected = if (allSelected) emptySet() else selectableEntries.map(FileEntry::absolutePath).toSet()
+                            },
+                            modifier = Modifier.testTag("local_upload_selection_bar"),
+                        )
+                    }
                 }
                 if (entries.isEmpty()) {
-                    item { Text("Aktyviame vietiniame aplanke nėra ką kopijuoti.") }
+                    item { LText("Aktyviame vietiniame aplanke nėra ką kopijuoti.") }
                 }
                 items(entries, key = FileEntry::absolutePath) { entry ->
-                    Card(onClick = { toggle(entry.absolutePath) }, modifier = Modifier.fillMaxWidth()) {
+                    val entrySelected = entry.absolutePath in selected
+                    val selectionShape = RoundedCornerShape(8.dp)
+                    Card(
+                        onClick = { toggle(entry.absolutePath) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("local_upload_entry_${entry.absolutePath}")
+                            .then(if (entrySelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier),
+                        shape = selectionShape,
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (entrySelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        ),
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
-                                checked = entry.absolutePath in selected,
+                                checked = entrySelected,
                                 onCheckedChange = { toggle(entry.absolutePath) },
                             )
                             Icon(
@@ -414,7 +500,11 @@ internal fun LocalUploadDialog(
                             )
                             Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
                                 Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (entry.isDirectory) "Aplankas" else FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                                if (entry.isDirectory) {
+                                    LText("Aplankas", style = MaterialTheme.typography.labelSmall)
+                                } else {
+                                    Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                         }
                     }
@@ -425,9 +515,9 @@ internal fun LocalUploadDialog(
             Button(
                 onClick = { onCopy(entries.map(FileEntry::absolutePath).filter(selected::contains)) },
                 enabled = selected.isNotEmpty(),
-            ) { Text("Kopijuoti (${selected.size})") }
+            ) { LText("Kopijuoti (${selected.size})") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Atšaukti") } },
+        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
 }
 
@@ -442,12 +532,12 @@ private fun RemoteNameDialog(
     var name by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Pavadinimas") }, singleLine = true) },
+        title = { LText(title) },
+        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true) },
         confirmButton = {
-            Button(onClick = { onConfirm(name.trim()) }, enabled = name.isNotBlank() && '/' !in name && '\\' !in name) { Text(confirmLabel) }
+            Button(onClick = { onConfirm(name.trim()) }, enabled = name.isNotBlank() && '/' !in name && '\\' !in name) { LText(confirmLabel) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Atšaukti") } },
+        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
 }
 
@@ -467,19 +557,20 @@ private fun SyncDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Sync, contentDescription = null) },
-        title = { Text("Aplankų sinchronizavimas") },
+        title = { LText("Aplankų sinchronizavimas") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item {
-                    Text("Vietinis: ${state.localRoot.ifBlank { "aktyvus failų langas" }}", style = MaterialTheme.typography.bodySmall)
-                    Text("Nuotolinis: ${state.remoteRoot}", style = MaterialTheme.typography.bodySmall)
-                    Text("Prieš vykdymą planas apskaičiuojamas dar kartą. Failai tyliai netrinami.", style = MaterialTheme.typography.labelSmall)
+                    val localRootLabel = state.localRoot.ifBlank { uiText("aktyvus failų langas") }
+                    LText("Vietinis: $localRootLabel", style = MaterialTheme.typography.bodySmall)
+                    LText("Nuotolinis: ${state.remoteRoot}", style = MaterialTheme.typography.bodySmall)
+                    LText("Prieš vykdymą planas apskaičiuojamas dar kartą. Failai tyliai netrinami.", style = MaterialTheme.typography.labelSmall)
                 }
                 item {
-                    Text("Kryptis", fontWeight = FontWeight.SemiBold)
+                    LText("Kryptis", fontWeight = FontWeight.SemiBold)
                     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         SyncMode.entries.forEach { mode ->
-                            AssistChip(onClick = { onMode(mode) }, label = { Text(syncModeLabel(mode)) }, leadingIcon = {
+                            AssistChip(onClick = { onMode(mode) }, label = { LText(syncModeLabel(mode)) }, leadingIcon = {
                                 Checkbox(checked = state.mode == mode, onCheckedChange = null)
                             })
                         }
@@ -487,34 +578,34 @@ private fun SyncDialog(
                 }
                 if (state.mode == SyncMode.TWO_WAY) {
                     item {
-                        Text("Konfliktai", fontWeight = FontWeight.SemiBold)
+                        LText("Konfliktai", fontWeight = FontWeight.SemiBold)
                         Column {
                             SyncConflictPolicy.entries.forEach { policy ->
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     androidx.compose.material3.RadioButton(selected = state.conflictPolicy == policy, onClick = { onPolicy(policy) })
-                                    Text(syncPolicyLabel(policy))
+                                    LText(syncPolicyLabel(policy))
                                 }
                             }
                         }
                     }
                 }
                 item {
-                    Text("Fono tvarkaraštis", fontWeight = FontWeight.SemiBold)
+                    LText("Fono tvarkaraštis", fontWeight = FontWeight.SemiBold)
                     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(1L, 6L, 12L, 24L, 168L).forEach { hours ->
                             AssistChip(
                                 onClick = { intervalHours = hours },
-                                label = { Text(if (hours == 168L) "Kas savaitę" else "Kas $hours val.") },
+                                label = { LText(if (hours == 168L) "Kas savaitę" else "Kas $hours val.") },
                                 leadingIcon = { Checkbox(checked = intervalHours == hours, onCheckedChange = null) },
                             )
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = unmeteredOnly, onCheckedChange = { unmeteredOnly = it })
-                        Text("Tik nematuojamas tinklas (Wi‑Fi / Ethernet)")
+                        LText("Tik nematuojamas tinklas (Wi‑Fi / Ethernet)")
                     }
-                    OutlinedButton(onClick = { onSchedule(intervalHours, unmeteredOnly) }) { Text("Išsaugoti tvarkaraštį") }
-                    Text("Fone vienu paleidimu leidžiama iki 10 000 veiksmų ir 1 GB; konfliktai bei trynimai nevykdomi tyliai.", style = MaterialTheme.typography.labelSmall)
+                    OutlinedButton(onClick = { onSchedule(intervalHours, unmeteredOnly) }) { LText("Išsaugoti tvarkaraštį") }
+                    LText("Fone vienu paleidimu leidžiama iki 10 000 veiksmų ir 1 GB; konfliktai bei trynimai nevykdomi tyliai.", style = MaterialTheme.typography.labelSmall)
                 }
                 if (state.running) item { CircularProgressIndicator() }
                 state.error?.let {
@@ -531,31 +622,42 @@ private fun SyncDialog(
                 }
                 state.preview?.let { preview ->
                     item {
-                        Text(
+                        LText(
                             "Planas: ${preview.actions.count { it.type != SyncActionType.SKIP }} veiksmų · ${FileSystemRules.humanBytes(preview.totalTransferBytes)} · konfliktų $conflicts",
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
                     items(preview.actions.filter { it.type != SyncActionType.SKIP }.take(100)) { action ->
-                        Text("${action.type}: ${action.relativePath}${action.targetRelativePath?.let { " → $it" }.orEmpty()} — ${action.reason}", style = MaterialTheme.typography.bodySmall)
+                        val actionLabel = uiText(syncActionLabel(action.type))
+                        val reason = uiText(action.reason)
+                        Text("$actionLabel: ${action.relativePath}${action.targetRelativePath?.let { " → $it" }.orEmpty()} — $reason", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
         },
         confirmButton = {
             if (state.preview == null) {
-                Button(onClick = onPreview, enabled = !state.running) { Text("Peržiūrėti planą") }
+                Button(onClick = onPreview, enabled = !state.running) { LText("Peržiūrėti planą") }
             } else {
-                Button(onClick = onExecute, enabled = conflicts == 0 && !state.running) { Text("Vykdyti planą") }
+                Button(onClick = onExecute, enabled = conflicts == 0 && !state.running) { LText("Vykdyti planą") }
             }
         },
         dismissButton = {
             Row {
-                if (state.preview != null) TextButton(onClick = onPreview) { Text("Atnaujinti") }
-                TextButton(onClick = onDismiss) { Text("Uždaryti") }
+                if (state.preview != null) TextButton(onClick = onPreview) { LText("Atnaujinti") }
+                TextButton(onClick = onDismiss) { LText("Uždaryti") }
             }
         },
     )
+}
+
+private fun syncActionLabel(type: SyncActionType): String = when (type) {
+    SyncActionType.CREATE_LOCAL_DIRECTORY -> "Kurti vietinį aplanką"
+    SyncActionType.CREATE_REMOTE_DIRECTORY -> "Kurti nuotolinį aplanką"
+    SyncActionType.UPLOAD -> "Įkelti"
+    SyncActionType.DOWNLOAD -> "Atsisiųsti"
+    SyncActionType.CONFLICT -> "Konfliktas"
+    SyncActionType.SKIP -> "Praleisti"
 }
 
 private fun syncModeLabel(mode: SyncMode): String = when (mode) {
@@ -609,7 +711,7 @@ internal fun NetworkProfileDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (existingProfile == null) "Nauja jungtis" else "Redaguoti jungtį") },
+        title = { LText(if (existingProfile == null) "Nauja jungtis" else "Redaguoti jungtį") },
         text = {
             Box {
                 ExcludeDialogFromAutofill(onAutofillViewReady)
@@ -627,16 +729,16 @@ internal fun NetworkProfileDialog(
                             )
                         }
                     }
-                    Text("Pasirinkta: ${protocol.name}", style = MaterialTheme.typography.labelMedium)
+                    LText("Pasirinkta: ${protocol.name}", style = MaterialTheme.typography.labelMedium)
                 }
                 item {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Jungties pavadinimas") },
+                        label = { LText("Jungties pavadinimas") },
                         singleLine = true,
                         isError = nameProblem != null,
-                        supportingText = { nameProblem?.let { Text(it) } },
+                        supportingText = { nameProblem?.let { LText(it) } },
                     )
                 }
                 item {
@@ -648,44 +750,44 @@ internal fun NetworkProfileDialog(
                             .onFocusChanged { focus ->
                                 if (!focus.isFocused) host = NetworkProfileRules.sanitizeHostInput(host)
                             },
-                        label = { Text("Serveris") },
+                        label = { LText("Serveris") },
                         singleLine = true,
                         isError = hostProblem != null,
-                        supportingText = { hostProblem?.let { Text(it) } },
+                        supportingText = { hostProblem?.let { LText(it) } },
                     )
                 }
                 item {
                     OutlinedTextField(
                         value = port,
                         onValueChange = { port = it.filter(Char::isDigit) },
-                        label = { Text("Prievadas") },
+                        label = { LText("Prievadas") },
                         singleLine = true,
                         isError = portProblem != null,
-                        supportingText = { portProblem?.let { Text(it) } },
+                        supportingText = { portProblem?.let { LText(it) } },
                     )
                 }
                 item {
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
-                        label = { Text("Naudotojas") },
+                        label = { LText("Naudotojas") },
                         singleLine = true,
                         isError = usernameProblem != null,
-                        supportingText = { usernameProblem?.let { Text(it) } },
+                        supportingText = { usernameProblem?.let { LText(it) } },
                     )
                 }
                 item {
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text(if (existingProfile == null) "Slaptažodis" else "Naujas slaptažodis (nebūtinas)") },
+                        label = { LText(if (existingProfile == null) "Slaptažodis" else "Naujas slaptažodis (nebūtinas)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
                 }
                 if (existingProfile != null) {
                     item {
-                        Text(
+                        LText(
                             "Palikite slaptažodį ir privataus rakto lauką tuščius, kad išliktų dabartiniai užšifruoti prisijungimo duomenys.",
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -695,23 +797,23 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = basePath,
                         onValueChange = { basePath = it },
-                        label = { Text("Pradinis kelias") },
+                        label = { LText("Pradinis kelias") },
                         singleLine = true,
                         isError = basePathProblem != null,
-                        supportingText = { basePathProblem?.let { Text(it) } },
+                        supportingText = { basePathProblem?.let { LText(it) } },
                     )
                 }
                 if (protocol == NetworkProtocol.SMB) {
-                    item { OutlinedTextField(value = share, onValueChange = { share = it }, label = { Text("Bendrinimo vardas") }, singleLine = true) }
-                    item { OutlinedTextField(value = domain, onValueChange = { domain = it }, label = { Text("Domenas (nebūtinas)") }, singleLine = true) }
+                    item { OutlinedTextField(value = share, onValueChange = { share = it }, label = { LText("Bendrinimo vardas") }, singleLine = true) }
+                    item { OutlinedTextField(value = domain, onValueChange = { domain = it }, label = { LText("Domenas (nebūtinas)") }, singleLine = true) }
                 }
                 if (protocol == NetworkProtocol.SFTP) {
                     item {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = usePrivateKey, onCheckedChange = { usePrivateKey = it })
                             Column {
-                                Text("Naudoti privatų SSH raktą")
-                                Text("Raktas bus užšifruotas Android Keystore; slaptažodžio laukas taps rakto slaptafraze.", style = MaterialTheme.typography.bodySmall)
+                                LText("Naudoti privatų SSH raktą")
+                                LText("Raktas bus užšifruotas Android Keystore; slaptažodžio laukas taps rakto slaptafraze.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -720,7 +822,7 @@ internal fun NetworkProfileDialog(
                             OutlinedTextField(
                                 value = privateKeyPem,
                                 onValueChange = { if (it.length <= 1_048_576) privateKeyPem = it },
-                                label = { Text(if (existingProfile == null) "Privatus raktas PEM / OpenSSH" else "Naujas privatus raktas PEM / OpenSSH") },
+                                label = { LText(if (existingProfile == null) "Privatus raktas PEM / OpenSSH" else "Naujas privatus raktas PEM / OpenSSH") },
                                 minLines = 4,
                                 maxLines = 8,
                             )
@@ -730,7 +832,7 @@ internal fun NetworkProfileDialog(
                         OutlinedTextField(
                             value = fingerprint,
                             onValueChange = { fingerprint = it },
-                            label = { Text("SSH rakto SHA256 atspaudas") },
+                            label = { LText("SSH rakto SHA256 atspaudas") },
                             singleLine = true,
                             enabled = !trustFirstUse,
                         )
@@ -739,14 +841,14 @@ internal fun NetworkProfileDialog(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = trustFirstUse, onCheckedChange = { trustFirstUse = it })
                             Column {
-                                Text("Patikėti pirmą gautą raktą")
-                                Text("Raktas bus įrašytas ir vėliau pasikeitęs bus blokuojamas.", style = MaterialTheme.typography.bodySmall)
+                                LText("Patikėti pirmą gautą raktą")
+                                LText("Raktas bus įrašytas ir vėliau pasikeitęs bus blokuojamas.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
                 }
                 if (protocol == NetworkProtocol.WEBDAV) {
-                    item { Text("WebDAV jungiamas tik per HTTPS; peradresavimai su prisijungimu nevykdomi.", style = MaterialTheme.typography.bodySmall) }
+                    item { LText("WebDAV jungiamas tik per HTTPS; peradresavimai su prisijungimu nevykdomi.", style = MaterialTheme.typography.bodySmall) }
                 }
                 }
             }
@@ -776,9 +878,9 @@ internal fun NetworkProfileDialog(
                     privateKeyPem = ""
                 },
                 enabled = profileFieldsValid && (existingProfile != null || hasNewSecret),
-            ) { Text("Išsaugoti") }
+            ) { LText("Išsaugoti") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Atšaukti") } },
+        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
 }
 
@@ -807,19 +909,19 @@ internal fun NetworkError(error: RemoteErrorInfo) {
                 modifier = Modifier.size(28.dp),
             )
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
+                LText(
                     error.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
-                Text(error.detail, color = MaterialTheme.colorScheme.onErrorContainer)
-                Text(
+                LText(error.detail, color = MaterialTheme.colorScheme.onErrorContainer)
+                LText(
                     "Ką daryti: ${error.suggestion}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
-                Text(
+                LText(
                     "Diagnostikos kodas: ${error.diagnosticCode}",
                     modifier = Modifier.testTag("network_error_code"),
                     style = MaterialTheme.typography.labelSmall,

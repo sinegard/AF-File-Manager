@@ -1,5 +1,8 @@
 package com.affilemanager.app.ui.preview
 
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
+
 import android.content.ClipData
 import android.content.ComponentName
 import android.content.Intent
@@ -157,7 +160,7 @@ fun FilePreviewDialog(
                     IconButton(onClick = navigateBack) {
                         Icon(
                             Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = if (archivePath.isEmpty()) "Uždaryti" else "Grįžti į ankstesnį archyvo aplanką",
+                            contentDescription = uiText(if (archivePath.isEmpty()) "Uždaryti" else "Grįžti į ankstesnį archyvo aplanką"),
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
@@ -183,7 +186,7 @@ fun FilePreviewDialog(
                     ) {
                         Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
-                        Text("Atidaryti su kita programa")
+                        LText("Atidaryti su kita programa")
                     }
                     TextButton(
                         onClick = {
@@ -193,7 +196,7 @@ fun FilePreviewDialog(
                     ) {
                         Icon(Icons.Rounded.Share, contentDescription = null)
                         Spacer(Modifier.width(5.dp))
-                        Text("Dalintis")
+                        LText("Dalintis")
                     }
                     TextButton(
                         onClick = {
@@ -208,15 +211,15 @@ fun FilePreviewDialog(
                         if (hashRunning) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Rounded.Calculate, contentDescription = null)
                         Spacer(Modifier.width(5.dp))
-                        Text("SHA-256")
+                        LText("SHA-256")
                     }
                 }
                 HorizontalDivider()
                 hash?.let {
-                    Text("SHA-256  $it", modifier = Modifier.fillMaxWidth().padding(8.dp), style = MaterialTheme.typography.labelSmall)
+                    LText("SHA-256  $it", modifier = Modifier.fillMaxWidth().padding(8.dp), style = MaterialTheme.typography.labelSmall)
                 }
                 actionError?.let {
-                    Text(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    LText(it, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
 
                 when (target) {
@@ -308,7 +311,7 @@ private fun ImagePreview(source: PreviewSource) {
                             contentScale = ContentScale.Fit,
                         )
                     }
-                    Text("${bitmap.width} × ${bitmap.height} px", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
+                    LText("${bitmap.width} × ${bitmap.height} px", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
                 } else {
                     PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
                 }
@@ -425,7 +428,7 @@ private fun PdfPageItem(
             ) { CircularProgressIndicator() } else PreviewLoadError(requireNotNull(renderError))
             else -> Image(
                     bitmap = loadedBitmap.asImageBitmap(),
-                    contentDescription = "PDF puslapis ${pageIndex + 1}",
+                    contentDescription = uiText("PDF puslapis ${pageIndex + 1}"),
                     modifier = Modifier.fillMaxWidth().aspectRatio(loadedBitmap.width.toFloat() / loadedBitmap.height),
                     contentScale = ContentScale.Fit,
                 )
@@ -435,6 +438,8 @@ private fun PdfPageItem(
 
 @Composable
 private fun ZoomControls(scale: Float, maximum: Float, onScaleChanged: (Float) -> Unit) {
+    val zoomOutDescription = uiText("Atitolinti")
+    val zoomInDescription = uiText("Priartinti")
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
         horizontalArrangement = Arrangement.Center,
@@ -443,9 +448,9 @@ private fun ZoomControls(scale: Float, maximum: Float, onScaleChanged: (Float) -
         IconButton(
             onClick = { onScaleChanged(PreviewZoomRules.zoomOut(scale, maximum)) },
             enabled = scale > PreviewZoomRules.MIN_SCALE,
-            modifier = Modifier.semantics { contentDescription = "Atitolinti" },
-        ) { Text("−", style = MaterialTheme.typography.headlineSmall) }
-        Text(
+            modifier = Modifier.semantics { contentDescription = zoomOutDescription },
+        ) { LText("−", style = MaterialTheme.typography.headlineSmall) }
+        LText(
             "${PreviewZoomRules.percent(scale)} %",
             modifier = Modifier.padding(horizontal = 12.dp).testTag("zoom-level"),
             style = MaterialTheme.typography.labelLarge,
@@ -453,10 +458,10 @@ private fun ZoomControls(scale: Float, maximum: Float, onScaleChanged: (Float) -
         IconButton(
             onClick = { onScaleChanged(PreviewZoomRules.zoomIn(scale, maximum)) },
             enabled = scale < maximum,
-            modifier = Modifier.semantics { contentDescription = "Priartinti" },
-        ) { Text("+", style = MaterialTheme.typography.headlineSmall) }
+            modifier = Modifier.semantics { contentDescription = zoomInDescription },
+        ) { LText("+", style = MaterialTheme.typography.headlineSmall) }
         TextButton(onClick = { onScaleChanged(PreviewZoomRules.MIN_SCALE) }, enabled = scale > PreviewZoomRules.MIN_SCALE) {
-            Text("Atstatyti")
+            LText("Atstatyti")
         }
     }
 }
@@ -469,9 +474,9 @@ private fun PreviewLoadError(error: Throwable) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.error)
-        Text("Failo peržiūros sukurti nepavyko", style = MaterialTheme.typography.titleMedium)
+        LText("Failo peržiūros sukurti nepavyko", style = MaterialTheme.typography.titleMedium)
         error.message?.takeIf(String::isNotBlank)?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LText(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -534,7 +539,7 @@ private fun TextPreview(source: PreviewSource) {
     }
     Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
+            LText(
                 if (localFile != null && source.isWritable) "UTF-8 · iki 2 MB" else "UTF-8 · iki 2 MB · tik skaityti",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
@@ -550,11 +555,11 @@ private fun TextPreview(source: PreviewSource) {
                     enabled = changed,
                 ) {
                     Icon(Icons.Rounded.Save, contentDescription = null)
-                    Text("Išsaugoti", modifier = Modifier.padding(start = 6.dp))
+                    LText("Išsaugoti", modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }
-        status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+        status?.let { LText(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
         if (loading) CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
         else OutlinedTextField(
             value = text,
@@ -584,7 +589,9 @@ private fun ApkPreview(file: File) {
     }
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(Icons.Rounded.InstallMobile, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(info?.packageName ?: "APK informacija nepasiekiama", style = MaterialTheme.typography.titleLarge)
+        info?.packageName?.let {
+            Text(it, style = MaterialTheme.typography.titleLarge)
+        } ?: LText("APK informacija nepasiekiama", style = MaterialTheme.typography.titleLarge)
         info?.let { packageInfo ->
             @Suppress("DEPRECATION")
             val versionCode = if (android.os.Build.VERSION.SDK_INT >= 28) packageInfo.longVersionCode else packageInfo.versionCode.toLong()
@@ -599,10 +606,10 @@ private fun ApkPreview(file: File) {
                 PropertyRow("Parašo SHA-256", MessageDigest.getInstance("SHA-256").digest(certificate).joinToString("") { "%02x".format(it) })
             }
         }
-        Text("Diegimą visada patvirtina Android sistema. Programa negali jo atlikti tyliai.", style = MaterialTheme.typography.bodySmall)
+        LText("Diegimą visada patvirtina Android sistema. Programa negali jo atlikti tyliai.", style = MaterialTheme.typography.bodySmall)
         Button(onClick = { installApk(context, file) }) {
             Icon(Icons.Rounded.InstallMobile, contentDescription = null)
-            Text("Atidaryti diegimo lange", modifier = Modifier.padding(start = 8.dp))
+            LText("Atidaryti diegimo lange", modifier = Modifier.padding(start = 8.dp))
         }
     }
 }
@@ -622,15 +629,19 @@ private fun ArchivePreview(
         Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(34.dp))
             Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Text(
-                    if (currentPath.isEmpty()) "Archyvo pradžia" else ArchiveBrowserIndex.folderName(currentPath),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text("${visibleEntries.size} elementų", style = MaterialTheme.typography.bodySmall)
+                if (currentPath.isEmpty()) {
+                    LText("Archyvo pradžia", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Text(
+                        ArchiveBrowserIndex.folderName(currentPath),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                LText("${visibleEntries.size} elementų", style = MaterialTheme.typography.bodySmall)
             }
-            FilledTonalButton(onClick = { askPassword = true }) { Text("Išpakuoti") }
+            FilledTonalButton(onClick = { askPassword = true }) { LText("Išpakuoti") }
         }
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             if (currentPath.isNotEmpty()) {
@@ -644,7 +655,7 @@ private fun ArchivePreview(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = null)
-                        Text("Aukštyn", modifier = Modifier.padding(start = 12.dp), fontWeight = FontWeight.Medium)
+                        LText("Aukštyn", modifier = Modifier.padding(start = 12.dp), fontWeight = FontWeight.Medium)
                     }
                     HorizontalDivider()
                 }
@@ -667,7 +678,7 @@ private fun ArchivePreview(
                     )
                     Text(entry.name, modifier = Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (!entry.directory && entry.sizeBytes >= 0) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-                    if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = "Atidaryti aplanką")
+                    if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
                 }
                 HorizontalDivider()
             }
@@ -677,19 +688,19 @@ private fun ArchivePreview(
         var password by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { askPassword = false },
-            title = { Text("Išpakuoti archyvą") },
+            title = { LText("Išpakuoti archyvą") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Slaptažodį palikite tuščią, jei archyvas nešifruotas.")
+                    LText("Slaptažodį palikite tuščią, jei archyvas nešifruotas.")
                     OutlinedTextField(value = password, onValueChange = { password = it }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
                 }
             },
             confirmButton = {
                 Button(onClick = { onExtract(file, password.takeIf(String::isNotBlank)?.toCharArray()); password = ""; askPassword = false }) {
-                    Text("Išpakuoti")
+                    LText("Išpakuoti")
                 }
             },
-            dismissButton = { TextButton(onClick = { askPassword = false }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { askPassword = false }) { LText("Atšaukti") } },
         )
     }
 }
@@ -705,21 +716,21 @@ private fun VaultPreview(target: PreviewTarget.Vault, onDecrypt: (FileEntry, Cha
         Icon(Icons.Rounded.LockOpen, contentDescription = null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
         Text(target.header.originalName, style = MaterialTheme.typography.titleLarge)
         Text(FileSystemRules.humanBytes(target.header.originalSize))
-        Text("AES-256-GCM · PBKDF2-HMAC-SHA256", style = MaterialTheme.typography.bodySmall)
-        Button(onClick = { askPassword = true }) { Text("Iššifruoti šalia originalo") }
+        LText("AES-256-GCM · PBKDF2-HMAC-SHA256", style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { askPassword = true }) { LText("Iššifruoti šalia originalo") }
     }
     if (askPassword) {
         var password by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { askPassword = false },
-            title = { Text("Įveskite slaptafrazę") },
+            title = { LText("Įveskite slaptafrazę") },
             text = { OutlinedTextField(value = password, onValueChange = { password = it }, visualTransformation = PasswordVisualTransformation(), singleLine = true) },
             confirmButton = {
                 Button(onClick = { onDecrypt(target.file, password.toCharArray()); password = ""; askPassword = false }, enabled = password.isNotEmpty()) {
-                    Text("Iššifruoti")
+                    LText("Iššifruoti")
                 }
             },
-            dismissButton = { TextButton(onClick = { askPassword = false }) { Text("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { askPassword = false }) { LText("Atšaukti") } },
         )
     }
 }
@@ -728,20 +739,20 @@ private fun VaultPreview(target: PreviewTarget.Vault, onDecrypt: (FileEntry, Cha
 private fun PropertiesPreview(source: PreviewSource, note: String? = null) {
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
         Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-        note?.let { Text(it, modifier = Modifier.padding(vertical = 10.dp)) }
+        note?.let { LText(it, modifier = Modifier.padding(vertical = 10.dp)) }
         PropertyRow("Pavadinimas", source.name)
         PropertyRow("Vieta", source.locationLabel)
-        PropertyRow("Dydis", source.sizeBytes?.let(FileSystemRules::humanBytes) ?: "Nežinomas")
+        PropertyRow("Dydis", source.sizeBytes?.let(FileSystemRules::humanBytes) ?: uiText("Nežinomas"))
         source.modifiedAtMillis?.let { PropertyRow("Pakeista", DateFormat.getDateTimeInstance().format(Date(it))) }
-        PropertyRow("Skaitomas", if (source.isReadable) "Taip" else "Ne")
-        PropertyRow("Įrašomas", if (source.isWritable) "Taip" else "Ne")
+        PropertyRow("Skaitomas", uiText(if (source.isReadable) "Taip" else "Ne"))
+        PropertyRow("Įrašomas", uiText(if (source.isWritable) "Taip" else "Ne"))
     }
 }
 
 @Composable
 private fun PropertyRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
-        Text(label, modifier = Modifier.weight(0.35f), style = MaterialTheme.typography.labelMedium)
+        LText(label, modifier = Modifier.weight(0.35f), style = MaterialTheme.typography.labelMedium)
         Text(value, modifier = Modifier.weight(0.65f), style = MaterialTheme.typography.bodyMedium)
     }
     HorizontalDivider()
