@@ -81,12 +81,19 @@ class WebDavRemoteClient private constructor(
         }
     }
 
-    override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) = withContext(Dispatchers.IO) {
+    override suspend fun download(
+        remotePath: String,
+        localDestination: File,
+        operation: OperationContext?,
+        maxBytes: Long?,
+    ) = withContext(Dispatchers.IO) {
         val normalized = RemotePath.normalize(remotePath)
+        val limit = RemoteDownloadLimit(maxBytes)
         val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
         try {
             execute(Request.Builder().url(url(normalized)).get().build(), expected = setOf(200)).use { response ->
                 val expected = response.body?.contentLength()?.takeIf { it >= 0 }
+                limit.checkExpected(expected)
                 requireNotNull(response.body).byteStream().use { input ->
                     partial.outputStream().buffered().use { output ->
                         val buffer = ByteArray(BUFFER_SIZE)
@@ -94,6 +101,7 @@ class WebDavRemoteClient private constructor(
                             operation?.checkpoint()
                             val read = input.read(buffer)
                             if (read < 0) break
+                            limit.record(read)
                             output.write(buffer, 0, read)
                             operation?.progress(byteDelta = read.toLong(), currentName = localDestination.name)
                         }

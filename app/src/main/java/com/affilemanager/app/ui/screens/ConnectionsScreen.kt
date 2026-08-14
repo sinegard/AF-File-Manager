@@ -188,7 +188,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onForward = viewModel::navigateRemoteForward,
                     onUp = viewModel::navigateRemoteUp,
                     onRefresh = { viewModel.refreshRemote() },
-                    onOpen = { entry -> if (entry.directory) viewModel.navigateRemote(entry.path) else viewModel.remoteDownload(entry) },
+                    onOpen = viewModel::openRemoteEntry,
                     onDownload = viewModel::remoteDownload,
                     onToggleSelection = viewModel::toggleRemoteSelection,
                     onClearSelection = viewModel::clearRemoteSelection,
@@ -449,6 +449,7 @@ internal fun RemoteBrowser(
                     entries = displayedEntries,
                     selectedPaths = state.selectedPaths,
                     selectionActive = state.selectedPaths.isNotEmpty(),
+                    openingPath = state.openingPath,
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
@@ -457,6 +458,7 @@ internal fun RemoteBrowser(
                     entries = displayedEntries,
                     selectedPaths = state.selectedPaths,
                     selectionActive = state.selectedPaths.isNotEmpty(),
+                    openingPath = state.openingPath,
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
@@ -701,6 +703,7 @@ private fun RemoteEntryList(
     entries: List<RemoteEntry>,
     selectedPaths: Set<String>,
     selectionActive: Boolean,
+    openingPath: String?,
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
@@ -713,6 +716,7 @@ private fun RemoteEntryList(
                 metadata = remoteEntryMeta(entry, dateFormat),
                 selected = entry.path in selectedPaths,
                 selectionActive = selectionActive,
+                opening = entry.path == openingPath,
                 onOpen = { onOpen(entry) },
                 onDownload = { onDownload(entry) },
                 onToggleSelection = { onToggleSelection(entry.path) },
@@ -726,6 +730,7 @@ private fun RemoteEntryGrid(
     entries: List<RemoteEntry>,
     selectedPaths: Set<String>,
     selectionActive: Boolean,
+    openingPath: String?,
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
@@ -740,6 +745,7 @@ private fun RemoteEntryGrid(
                 entry = entry,
                 selected = entry.path in selectedPaths,
                 selectionActive = selectionActive,
+                opening = entry.path == openingPath,
                 onOpen = { onOpen(entry) },
                 onDownload = { onDownload(entry) },
                 onToggleSelection = { onToggleSelection(entry.path) },
@@ -754,6 +760,7 @@ private fun RemoteEntryRow(
     metadata: String,
     selected: Boolean,
     selectionActive: Boolean,
+    opening: Boolean,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
@@ -773,6 +780,7 @@ private fun RemoteEntryRow(
                 },
             )
             .combinedClickable(
+                enabled = !opening,
                 onClick = { if (selectionActive) onToggleSelection() else onOpen() },
                 onLongClick = onToggleSelection,
             )
@@ -780,7 +788,14 @@ private fun RemoteEntryRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        RemoteFileVisual(entry = entry, modifier = Modifier.size(42.dp))
+        if (opening) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(32.dp).testTag("remote_opening_${entry.path}"),
+                strokeWidth = 3.dp,
+            )
+        } else {
+            RemoteFileVisual(entry = entry, modifier = Modifier.size(42.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (entry.directory) FontWeight.SemiBold else FontWeight.Normal)
             LText(metadata, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -795,6 +810,7 @@ private fun RemoteEntryTile(
     entry: RemoteEntry,
     selected: Boolean,
     selectionActive: Boolean,
+    opening: Boolean,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
@@ -806,6 +822,7 @@ private fun RemoteEntryTile(
             .testTag("remote_entry_${entry.path}")
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
             .combinedClickable(
+                enabled = !opening,
                 onClick = { if (selectionActive) onToggleSelection() else onOpen() },
                 onLongClick = onToggleSelection,
             ),
@@ -820,7 +837,14 @@ private fun RemoteEntryTile(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                RemoteFileVisual(entry = entry, modifier = Modifier.fillMaxWidth().height(76.dp))
+                if (opening) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(52.dp).testTag("remote_opening_${entry.path}"),
+                        strokeWidth = 4.dp,
+                    )
+                } else {
+                    RemoteFileVisual(entry = entry, modifier = Modifier.fillMaxWidth().height(76.dp))
+                }
                 Spacer(Modifier.height(6.dp))
                 Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                 if (!entry.directory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
@@ -846,10 +870,17 @@ private fun RemoteEntryActionsButton(
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
-                text = { LText(if (entry.directory) "Atidaryti aplanką" else "Kopijuoti į telefoną") },
-                leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.CloudDownload, contentDescription = null) },
-                onClick = { expanded = false; if (entry.directory) onOpen() else onDownload() },
+                text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
+                leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
+                onClick = { expanded = false; onOpen() },
             )
+            if (!entry.directory) {
+                DropdownMenuItem(
+                    text = { LText("Kopijuoti į telefoną") },
+                    leadingIcon = { Icon(Icons.Rounded.CloudDownload, contentDescription = null) },
+                    onClick = { expanded = false; onDownload() },
+                )
+            }
             DropdownMenuItem(
                 text = { LText("Pasirinkti") },
                 onClick = { expanded = false; onToggleSelection() },

@@ -140,7 +140,7 @@ fun FilePreviewDialog(
     var archivePath by remember(source.key) { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val navigateBack: () -> Unit = {
-        if (target is PreviewTarget.Archive && archivePath.isNotEmpty()) {
+        if ((target is PreviewTarget.Archive || target is PreviewTarget.RemoteArchive) && archivePath.isNotEmpty()) {
             archivePath = ArchiveBrowserIndex.parentOf(archivePath)
         } else {
             onClose()
@@ -230,8 +230,19 @@ fun FilePreviewDialog(
                         onPathChanged = { archivePath = it },
                         onExtract = onExtract,
                     )
+                    is PreviewTarget.RemoteArchive -> ArchivePreview(
+                        file = target.file,
+                        entries = target.entries,
+                        currentPath = archivePath,
+                        onPathChanged = { archivePath = it },
+                        onExtract = null,
+                    )
                     is PreviewTarget.Vault -> VaultPreview(target, onDecrypt)
-                    is PreviewTarget.LocalFile, is PreviewTarget.TrashFile, is PreviewTarget.ContentFile -> FileContentPreview(source)
+                    is PreviewTarget.LocalFile,
+                    is PreviewTarget.TrashFile,
+                    is PreviewTarget.ContentFile,
+                    is PreviewTarget.RemoteFile,
+                    -> FileContentPreview(source)
                 }
             }
         }
@@ -620,7 +631,7 @@ private fun ArchivePreview(
     entries: List<ArchiveEntryInfo>,
     currentPath: String,
     onPathChanged: (String) -> Unit,
-    onExtract: (FileEntry, CharArray?) -> Unit,
+    onExtract: ((FileEntry, CharArray?) -> Unit)?,
 ) {
     var askPassword by remember { mutableStateOf(false) }
     val browser = remember(entries) { ArchiveBrowserIndex.from(entries) }
@@ -641,7 +652,9 @@ private fun ArchivePreview(
                 }
                 LText("${visibleEntries.size} elementų", style = MaterialTheme.typography.bodySmall)
             }
-            FilledTonalButton(onClick = { askPassword = true }) { LText("Išpakuoti") }
+            if (onExtract != null) {
+                FilledTonalButton(onClick = { askPassword = true }) { LText("Išpakuoti") }
+            }
         }
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             if (currentPath.isNotEmpty()) {
@@ -684,7 +697,7 @@ private fun ArchivePreview(
             }
         }
     }
-    if (askPassword) {
+    if (askPassword && onExtract != null) {
         var password by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { askPassword = false },

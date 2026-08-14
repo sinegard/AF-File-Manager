@@ -44,6 +44,8 @@ class ConnectionsComponentsTest {
         val folder = RemoteEntry("remote-folder", "/remote-folder", true, 0, null)
         val file = RemoteEntry("remote.txt", "/remote.txt", false, 12, null)
         val pasteRequests = AtomicInteger()
+        val openRequests = AtomicInteger()
+        val downloadRequests = AtomicInteger()
         compose.setContent {
             MaterialTheme {
                 Column {
@@ -59,8 +61,8 @@ class ConnectionsComponentsTest {
                         onForward = {},
                         onUp = {},
                         onRefresh = {},
-                        onOpen = {},
-                        onDownload = {},
+                        onOpen = { openRequests.incrementAndGet() },
+                        onDownload = { downloadRequests.incrementAndGet() },
                         onToggleSelection = {},
                         onClearSelection = {},
                         onSelectAll = {},
@@ -87,8 +89,18 @@ class ConnectionsComponentsTest {
         compose.onNodeWithTag("remote_paste_local").assertIsEnabled().assertHasClickAction()
         compose.onNodeWithText("Paste (2)").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { pasteRequests.get() == 1 }
+        compose.onNodeWithTag("remote_entry_/remote.txt").performClick()
+        compose.runOnIdle {
+            assertEquals(1, openRequests.get())
+            assertEquals(0, downloadRequests.get())
+        }
         compose.onNodeWithContentDescription("File actions: remote.txt").performClick()
-        compose.onNodeWithText("Copy to phone").assertHasClickAction()
+        compose.onNodeWithText("Preview here").assertHasClickAction()
+        compose.onNodeWithText("Copy to phone").assertHasClickAction().performClick()
+        compose.runOnIdle {
+            assertEquals(1, openRequests.get())
+            assertEquals(1, downloadRequests.get())
+        }
     }
 
     @Test

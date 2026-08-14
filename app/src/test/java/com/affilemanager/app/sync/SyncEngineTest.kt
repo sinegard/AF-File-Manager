@@ -45,7 +45,7 @@ class SyncEngineTest {
             RemoteEntry(filePath.substringAfterLast('/'), filePath, false, bytes.size.toLong(), 1L)
         }
 
-        override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) {
+        override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?, maxBytes: Long?) {
             localDestination.writeBytes(requireNotNull(files[remotePath]))
         }
 

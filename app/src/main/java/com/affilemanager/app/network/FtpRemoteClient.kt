@@ -79,10 +79,16 @@ class FtpRemoteClient private constructor(
             .toList()
     }
 
-    override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) = withContext(Dispatchers.IO) {
+    override suspend fun download(
+        remotePath: String,
+        localDestination: File,
+        operation: OperationContext?,
+        maxBytes: Long?,
+    ) = withContext(Dispatchers.IO) {
         ensureControlAlive()
         val normalized = RemotePath.normalize(remotePath)
         val expectedSize = client.mlistFile(normalized)?.size?.takeIf { it >= 0 }
+        val limit = RemoteDownloadLimit(maxBytes).apply { checkExpected(expectedSize) }
         val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
         try {
             val input = client.retrieveFileStream(normalized) ?: throw IllegalStateException("FTP atsisiuntimas nepradėtas")
@@ -93,6 +99,7 @@ class FtpRemoteClient private constructor(
                         operation?.checkpoint()
                         val read = stream.read(buffer)
                         if (read < 0) break
+                        limit.record(read)
                         output.write(buffer, 0, read)
                         operation?.progress(byteDelta = read.toLong(), currentName = localDestination.name)
                     }

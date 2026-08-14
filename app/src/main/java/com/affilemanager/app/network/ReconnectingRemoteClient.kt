@@ -49,8 +49,12 @@ class ReconnectingRemoteClient(
 
     override suspend fun list(path: String): List<RemoteEntry> = retryOnce { client -> client.list(path) }
 
-    override suspend fun download(remotePath: String, localDestination: java.io.File, operation: OperationContext?) =
-        retryOnce { client -> client.download(remotePath, localDestination, operation) }
+    override suspend fun download(
+        remotePath: String,
+        localDestination: java.io.File,
+        operation: OperationContext?,
+        maxBytes: Long?,
+    ) = retryOnce { client -> client.download(remotePath, localDestination, operation, maxBytes) }
 
     override suspend fun upload(localSource: java.io.File, remotePath: String, operation: OperationContext?) =
         retryOnce { client -> client.upload(localSource, remotePath, operation) }
