@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -581,7 +582,9 @@ internal fun NetworkProfileDialog(
     val stateKey = existingProfile?.id ?: "new"
     var protocol by remember(stateKey) { mutableStateOf(existingProfile?.protocol ?: NetworkProtocol.SFTP) }
     var name by remember(stateKey) { mutableStateOf(existingProfile?.name.orEmpty().firstInputLine()) }
-    var host by remember(stateKey) { mutableStateOf(existingProfile?.host.orEmpty().firstInputLine()) }
+    var host by remember(stateKey) {
+        mutableStateOf(NetworkProfileRules.sanitizeHostInput(existingProfile?.host.orEmpty().firstInputLine()))
+    }
     var port by remember(stateKey) { mutableStateOf((existingProfile?.port ?: defaultPort(protocol)).toString()) }
     var username by remember(stateKey) { mutableStateOf(existingProfile?.username.orEmpty().firstInputLine()) }
     var password by remember(stateKey) { mutableStateOf("") }
@@ -640,6 +643,11 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = host,
                         onValueChange = { host = it },
+                        modifier = Modifier
+                            .testTag("network_host")
+                            .onFocusChanged { focus ->
+                                if (!focus.isFocused) host = NetworkProfileRules.sanitizeHostInput(host)
+                            },
                         label = { Text("Serveris") },
                         singleLine = true,
                         isError = hostProblem != null,

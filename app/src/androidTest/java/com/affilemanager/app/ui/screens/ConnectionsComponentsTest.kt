@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.network.NetworkProfile
@@ -117,6 +119,27 @@ class ConnectionsComponentsTest {
 
         compose.onAllNodesWithText(marker, substring = true).assertCountEquals(0)
         compose.onNodeWithText("Išsaugoti").assertIsEnabled()
+    }
+
+    @Test
+    fun networkProfileEditorRemovesServerAddressSpacesBeforeSaving() {
+        var savedProfile: NetworkProfile? = null
+        compose.setContent {
+            MaterialTheme {
+                NetworkProfileDialog(
+                    existingProfile = profile(),
+                    onDismiss = {},
+                    onSave = { saved, _, _ -> savedProfile = saved },
+                )
+            }
+        }
+
+        val hostField = compose.onNodeWithTag("network_host")
+        hostField.performTextClearance()
+        hostField.performTextInput(" 203 . 0 . 113 . 190 ")
+        compose.onNodeWithText("Išsaugoti").assertIsEnabled().performClick()
+
+        compose.runOnIdle { assertEquals("203.0.113.190", savedProfile?.host) }
     }
 
     @Test
