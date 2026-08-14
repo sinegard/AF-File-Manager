@@ -8,7 +8,12 @@ import java.io.File
 interface RemoteClient {
     val verifiedHostFingerprint: String? get() = null
     suspend fun list(path: String): List<RemoteEntry>
-    suspend fun download(remotePath: String, localDestination: File, operation: OperationContext? = null)
+    suspend fun download(
+        remotePath: String,
+        localDestination: File,
+        operation: OperationContext? = null,
+        maxBytes: Long? = null,
+    )
     suspend fun upload(localSource: File, remotePath: String, operation: OperationContext? = null)
     suspend fun createDirectory(path: String)
     suspend fun rename(fromPath: String, toPath: String)
@@ -25,8 +30,12 @@ class SerializedRemoteClient(private val delegate: RemoteClient) : RemoteClient 
 
     override suspend fun list(path: String): List<RemoteEntry> = guarded { delegate.list(path) }
 
-    override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) =
-        guarded { delegate.download(remotePath, localDestination, operation) }
+    override suspend fun download(
+        remotePath: String,
+        localDestination: File,
+        operation: OperationContext?,
+        maxBytes: Long?,
+    ) = guarded { delegate.download(remotePath, localDestination, operation, maxBytes) }
 
     override suspend fun upload(localSource: File, remotePath: String, operation: OperationContext?) =
         guarded { delegate.upload(localSource, remotePath, operation) }

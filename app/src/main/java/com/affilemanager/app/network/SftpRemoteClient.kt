@@ -88,10 +88,16 @@ class SftpRemoteClient private constructor(
             .toList()
     }
 
-    override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) = withContext(Dispatchers.IO) {
+    override suspend fun download(
+        remotePath: String,
+        localDestination: File,
+        operation: OperationContext?,
+        maxBytes: Long?,
+    ) = withContext(Dispatchers.IO) {
         val normalized = RemotePath.normalize(remotePath)
         val attributes = channel.stat(normalized)
         require(!attributes.isDir) { "Aplanką atsisiųskite sinchronizavimo funkcija" }
+        val limit = RemoteDownloadLimit(maxBytes).apply { checkExpected(attributes.size) }
         val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
         try {
             channel.get(normalized).use { input ->
@@ -101,6 +107,7 @@ class SftpRemoteClient private constructor(
                         operation?.checkpoint()
                         val read = input.read(buffer)
                         if (read < 0) break
+                        limit.record(read)
                         output.write(buffer, 0, read)
                         operation?.progress(byteDelta = read.toLong(), currentName = localDestination.name)
                     }

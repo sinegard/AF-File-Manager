@@ -126,7 +126,7 @@ class ReconnectingRemoteClientTest {
             }
         }
 
-        override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) {
+        override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?, maxBytes: Long?) {
             localDestination.writeBytes(state.files.getValue(RemotePath.normalize(remotePath)))
         }
 

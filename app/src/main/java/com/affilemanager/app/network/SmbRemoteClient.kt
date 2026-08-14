@@ -81,9 +81,15 @@ class SmbRemoteClient private constructor(
             .toList()
     }
 
-    override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) = withContext(Dispatchers.IO) {
+    override suspend fun download(
+        remotePath: String,
+        localDestination: File,
+        operation: OperationContext?,
+        maxBytes: Long?,
+    ) = withContext(Dispatchers.IO) {
         val smbPath = toSmbPath(RemotePath.normalize(remotePath))
         val expected = share.getFileInformation(smbPath).standardInformation.endOfFile
+        val limit = RemoteDownloadLimit(maxBytes).apply { checkExpected(expected) }
         val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
         try {
             share.openFile(
@@ -101,6 +107,7 @@ class SmbRemoteClient private constructor(
                             operation?.checkpoint()
                             val read = input.read(buffer)
                             if (read < 0) break
+                            limit.record(read)
                             output.write(buffer, 0, read)
                             operation?.progress(byteDelta = read.toLong(), currentName = localDestination.name)
                         }

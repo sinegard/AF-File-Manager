@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.affilemanager.app.AFFileManagerApplication
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveFormat
+import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafLocation
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.data.RecentItem
@@ -43,6 +44,7 @@ import com.affilemanager.app.network.RemotePath
 import com.affilemanager.app.network.ReconnectingRemoteClient
 import com.affilemanager.app.network.RemoteCopyEngine
 import com.affilemanager.app.operations.OperationStatus
+import com.affilemanager.app.operations.OperationContext
 import com.affilemanager.app.operations.BatchRenamePreview
 import com.affilemanager.app.operations.BatchRenameSpec
 import com.affilemanager.app.operations.BatchRenameUndo
@@ -56,10 +58,12 @@ import com.affilemanager.app.sync.SyncPreview
 import com.affilemanager.app.sync.SyncSchedule
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
+import com.affilemanager.app.ui.preview.RemotePreviewCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -161,6 +165,7 @@ data class NetworkUiState(
     val grid: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
+    val openingPath: String? = null,
     val loading: Boolean = false,
     val error: RemoteErrorInfo? = null,
 )
@@ -206,7 +211,20 @@ sealed interface PreviewTarget {
     data class LocalFile(val entry: FileEntry) : PreviewTarget
     data class TrashFile(val entry: FileEntry) : PreviewTarget
     data class ContentFile(val entry: ContentFileEntry) : PreviewTarget
+    data class RemoteFile(
+        val remote: RemoteEntry,
+        val cachedFile: File,
+        val profileId: String,
+        val connectionName: String,
+    ) : PreviewTarget
     data class Archive(val file: FileEntry, val entries: List<ArchiveEntryInfo>) : PreviewTarget
+    data class RemoteArchive(
+        val remote: RemoteEntry,
+        val file: FileEntry,
+        val profileId: String,
+        val connectionName: String,
+        val entries: List<ArchiveEntryInfo>,
+    ) : PreviewTarget
     data class Vault(val file: FileEntry, val header: VaultHeader) : PreviewTarget
 }
 
@@ -220,6 +238,7 @@ data class UiMessage(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as AFFileManagerApplication).graph
+    private val remotePreviewCache = RemotePreviewCache(application.cacheDir)
     private val initialPrimaryPath = Environment.getExternalStorageDirectory().absolutePath
     private val initialDownloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         .takeIf(File::isDirectory)?.absolutePath ?: initialPrimaryPath
@@ -321,6 +340,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var searchJob: Job? = null
     private var analysisJob: Job? = null
     private var batchRenamePreviewJob: Job? = null
+    private var remoteFileOpenJob: Job? = null
+    private var remoteFileOpenRequestId = 0L
     private var leftPanelRefreshJob: Job? = null
     private var rightPanelRefreshJob: Job? = null
     private val handledOperations = ArrayDeque<String>()
@@ -1534,6 +1555,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val target = RemotePath.normalize(path)
         val current = _networkState.value
         if (target == current.path) return false
+        cancelRemoteFileOpen()
         _networkState.update {
             it.copy(
                 path = target,
@@ -1552,6 +1574,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateRemoteBack(): Boolean {
         val current = _networkState.value
         val target = current.backHistory.lastOrNull() ?: return false
+        cancelRemoteFileOpen()
         _networkState.update {
             it.copy(
                 path = target,
@@ -1570,6 +1593,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateRemoteForward(): Boolean {
         val current = _networkState.value
         val target = current.forwardHistory.lastOrNull() ?: return false
+        cancelRemoteFileOpen()
         _networkState.update {
             it.copy(
                 path = target,
@@ -1589,6 +1613,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _networkState.value.path
         if (current == "/") return false
         return navigateRemote(RemotePath.normalize("$current/.."))
+    }
+
+    fun openRemoteEntry(entry: RemoteEntry) {
+        if (entry.directory) {
+            navigateRemote(entry.path)
+            return
+        }
+        val state = _networkState.value
+        val profile = state.connectedProfile ?: return
+        val client = remoteClient ?: return
+        if (entry.sizeBytes !in 0..RemotePreviewCache.MAX_FILE_BYTES) {
+            message("Nuotolinis failas per didelis greitajai peržiūrai. Naudokite „Kopijuoti į telefoną“.", true)
+            return
+        }
+
+        cancelRemoteFileOpen()
+        val requestId = ++remoteFileOpenRequestId
+        remoteFileOpenJob = viewModelScope.launch {
+            var destination: File? = null
+            _networkState.update { it.copy(openingPath = entry.path) }
+            try {
+                destination = withContext(Dispatchers.IO) {
+                    remotePreviewCache.createDestination(profile.id, entry)
+                }
+                client.download(
+                    remotePath = entry.path,
+                    localDestination = requireNotNull(destination),
+                    operation = OperationContext.background(),
+                    maxBytes = RemotePreviewCache.MAX_FILE_BYTES,
+                )
+                withContext(Dispatchers.IO) {
+                    remotePreviewCache.validateCompleted(requireNotNull(destination))
+                }
+                if (remoteClient !== client || _networkState.value.connectedProfile?.id != profile.id) {
+                    withContext(Dispatchers.IO) { remotePreviewCache.discard(destination) }
+                    return@launch
+                }
+
+                val cachedFile = requireNotNull(destination)
+                val kind = FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = false)
+                if (kind == com.affilemanager.app.model.EntryKind.ARCHIVE) {
+                    val previewEntry = FileEntry(
+                        absolutePath = cachedFile.absolutePath,
+                        name = entry.name,
+                        kind = kind,
+                        sizeBytes = cachedFile.length().coerceAtLeast(0),
+                        modifiedAtMillis = entry.modifiedAtMillis ?: cachedFile.lastModified().coerceAtLeast(0),
+                        isHidden = entry.name.startsWith('.'),
+                        isReadable = cachedFile.canRead(),
+                        isWritable = false,
+                    )
+                    val archiveEntries = graph.archives.list(cachedFile)
+                    _preview.value = PreviewTarget.RemoteArchive(
+                        remote = entry,
+                        file = previewEntry,
+                        profileId = profile.id,
+                        connectionName = profile.name,
+                        entries = archiveEntries,
+                    )
+                } else {
+                    _preview.value = PreviewTarget.RemoteFile(
+                        remote = entry,
+                        cachedFile = cachedFile,
+                        profileId = profile.id,
+                        connectionName = profile.name,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { remotePreviewCache.discard(destination) }
+                throw cancelled
+            } catch (_: Throwable) {
+                withContext(Dispatchers.IO) { remotePreviewCache.discard(destination) }
+                message("Nuotolinio failo atidaryti nepavyko", true)
+            } finally {
+                if (remoteFileOpenRequestId == requestId) {
+                    _networkState.update { it.copy(openingPath = null) }
+                    remoteFileOpenJob = null
+                }
+            }
+        }
     }
 
     fun toggleRemoteHidden() {
@@ -1956,6 +2060,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         workspaceSaveRequests.trySend(currentWorkspace())
         workspaceSaveRequests.close()
+        cancelRemoteFileOpen()
         remoteClient?.let { client -> graph.applicationScope.launch { client.close() } }
         remoteClient = null
         super.onCleared()
@@ -2083,6 +2188,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private suspend fun disconnectRemote() {
+        cancelRemoteFileOpen()
         val client = remoteClient
         remoteClient = null
         runCatching { client?.close() }
@@ -2094,12 +2200,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 selectedPaths = emptySet(),
                 backHistory = emptyList(),
                 forwardHistory = emptyList(),
+                openingPath = null,
                 loading = false,
                 error = null,
             )
         }
         _remoteClipboard.value = null
         _syncState.value = SyncUiState()
+    }
+
+    private fun cancelRemoteFileOpen() {
+        remoteFileOpenRequestId += 1
+        remoteFileOpenJob?.cancel()
+        remoteFileOpenJob = null
+        _networkState.update { state ->
+            if (state.openingPath == null) state else state.copy(openingPath = null)
+        }
     }
 
     private suspend fun openRemoteConnection(profile: NetworkProfile): RemoteClient {

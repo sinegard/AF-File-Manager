@@ -5,9 +5,11 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.ContentFileEntry
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.ui.PreviewTarget
 import java.io.File
 import java.io.InputStream
@@ -81,12 +83,47 @@ internal sealed interface PreviewSource {
             context.contentResolver.openInputStream(parsedUri),
         ) { "Failo srautas nepasiekiamas" }
     }
+
+    data class Remote(
+        val entry: RemoteEntry,
+        val cachedFile: File,
+        val profileId: String,
+        val connectionName: String,
+    ) : PreviewSource {
+        override val key: String = "remote|$profileId|${entry.path}|${cachedFile.absolutePath}"
+        override val name: String = entry.name
+        override val kind: EntryKind = FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = false)
+        override val extension: String = entry.name.substringAfterLast('.', "").lowercase()
+        override val sizeBytes: Long = cachedFile.length().coerceAtLeast(0)
+        override val modifiedAtMillis: Long? = entry.modifiedAtMillis?.takeIf { it > 0 }
+        override val isReadable: Boolean = cachedFile.isFile && cachedFile.canRead()
+        override val isWritable: Boolean = false
+        override val localFile: File = cachedFile
+        override val locationLabel: String = "$connectionName · ${entry.path}"
+
+        override fun mimeType(context: Context): String = MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(extension.lowercase()) ?: "application/octet-stream"
+
+        override fun uri(context: Context): Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.files",
+            cachedFile,
+        )
+
+        override fun openFileDescriptor(context: Context): ParcelFileDescriptor = requireNotNull(
+            ParcelFileDescriptor.open(cachedFile, ParcelFileDescriptor.MODE_READ_ONLY),
+        ) { "Failo srautas nepasiekiamas" }
+
+        override fun openInputStream(context: Context): InputStream = cachedFile.inputStream()
+    }
 }
 
 internal fun PreviewTarget.previewSource(): PreviewSource = when (this) {
     is PreviewTarget.LocalFile -> PreviewSource.Local(entry)
     is PreviewTarget.TrashFile -> PreviewSource.Local(entry)
     is PreviewTarget.ContentFile -> PreviewSource.Content(entry)
+    is PreviewTarget.RemoteFile -> PreviewSource.Remote(remote, cachedFile, profileId, connectionName)
     is PreviewTarget.Archive -> PreviewSource.Local(file)
+    is PreviewTarget.RemoteArchive -> PreviewSource.Remote(remote, file.file, profileId, connectionName)
     is PreviewTarget.Vault -> PreviewSource.Local(file)
 }

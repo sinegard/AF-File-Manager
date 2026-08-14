@@ -152,7 +152,7 @@ class RemoteCopyEngineTest {
             return children.sortedWith(compareByDescending<RemoteEntry> { it.directory }.thenBy { it.name })
         }
 
-        override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?) {
+        override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?, maxBytes: Long?) {
             val bytes = bytes(remotePath)
             localDestination.writeBytes(bytes)
             operation?.progress(itemDelta = 1, byteDelta = bytes.size.toLong(), currentName = localDestination.name)
