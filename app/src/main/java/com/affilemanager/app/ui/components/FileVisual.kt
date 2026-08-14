@@ -58,9 +58,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
+import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.network.RemoteEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -209,6 +211,22 @@ fun SafFileVisual(
         kind = entry.kind,
         extension = extension,
         visual = visual,
+        modifier = modifier,
+    )
+}
+
+/** Uses the same type icon and extension badge as local storage without downloading remote content. */
+@Composable
+fun RemoteFileVisual(
+    entry: RemoteEntry,
+    modifier: Modifier = Modifier,
+) {
+    val extension = entry.name.substringAfterLast('.', "").lowercase()
+    FileVisualFrame(
+        name = entry.name,
+        kind = FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = entry.directory),
+        extension = extension,
+        visual = null,
         modifier = modifier,
     )
 }

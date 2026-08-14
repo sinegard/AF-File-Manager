@@ -155,6 +155,12 @@ data class NetworkUiState(
     val path: String = "/",
     val entries: List<RemoteEntry> = emptyList(),
     val selectedPaths: Set<String> = emptySet(),
+    val backHistory: List<String> = emptyList(),
+    val forwardHistory: List<String> = emptyList(),
+    val includeHidden: Boolean = false,
+    val grid: Boolean = false,
+    val sortMode: SortMode = SortMode.NAME,
+    val sortDirection: SortDirection = SortDirection.ASCENDING,
     val loading: Boolean = false,
     val error: RemoteErrorInfo? = null,
 )
@@ -1499,7 +1505,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     refreshProfiles()
                 }
                 val path = RemotePath.normalize(normalizedProfile.basePath)
-                _networkState.update { it.copy(connectedProfile = normalizedProfile, path = path, loading = false) }
+                _networkState.update {
+                    it.copy(
+                        connectedProfile = normalizedProfile,
+                        path = path,
+                        entries = emptyList(),
+                        selectedPaths = emptySet(),
+                        backHistory = emptyList(),
+                        forwardHistory = emptyList(),
+                        loading = false,
+                        error = null,
+                    )
+                }
                 _syncState.update { it.copy(remoteRoot = path, localRoot = activePanelState().path, preview = null, error = null) }
                 refreshRemote(path)
             }.onFailure { error ->
@@ -1509,6 +1526,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         error = RemoteErrorPresenter.present(normalizedProfile.protocol, RemoteOperation.CONNECT, error),
                     )
                 }
+            }
+        }
+    }
+
+    fun navigateRemote(path: String): Boolean {
+        val target = RemotePath.normalize(path)
+        val current = _networkState.value
+        if (target == current.path) return false
+        _networkState.update {
+            it.copy(
+                path = target,
+                entries = emptyList(),
+                selectedPaths = emptySet(),
+                backHistory = (it.backHistory + it.path).takeLast(50),
+                forwardHistory = emptyList(),
+                loading = true,
+                error = null,
+            )
+        }
+        refreshRemote(target)
+        return true
+    }
+
+    fun navigateRemoteBack(): Boolean {
+        val current = _networkState.value
+        val target = current.backHistory.lastOrNull() ?: return false
+        _networkState.update {
+            it.copy(
+                path = target,
+                entries = emptyList(),
+                selectedPaths = emptySet(),
+                backHistory = it.backHistory.dropLast(1),
+                forwardHistory = (it.forwardHistory + it.path).takeLast(50),
+                loading = true,
+                error = null,
+            )
+        }
+        refreshRemote(target)
+        return true
+    }
+
+    fun navigateRemoteForward(): Boolean {
+        val current = _networkState.value
+        val target = current.forwardHistory.lastOrNull() ?: return false
+        _networkState.update {
+            it.copy(
+                path = target,
+                entries = emptyList(),
+                selectedPaths = emptySet(),
+                backHistory = (it.backHistory + it.path).takeLast(50),
+                forwardHistory = it.forwardHistory.dropLast(1),
+                loading = true,
+                error = null,
+            )
+        }
+        refreshRemote(target)
+        return true
+    }
+
+    fun navigateRemoteUp(): Boolean {
+        val current = _networkState.value.path
+        if (current == "/") return false
+        return navigateRemote(RemotePath.normalize("$current/.."))
+    }
+
+    fun toggleRemoteHidden() {
+        _networkState.update { state ->
+            val updated = state.copy(includeHidden = !state.includeHidden)
+            val available = visibleRemoteEntries(updated).map(RemoteEntry::path)
+            updated.copy(selectedPaths = RemoteSelectionRules.retainAvailable(updated.selectedPaths, available))
+        }
+    }
+
+    fun toggleRemoteGrid() {
+        _networkState.update { it.copy(grid = !it.grid) }
+    }
+
+    fun setRemoteSort(mode: SortMode) {
+        _networkState.update {
+            if (it.sortMode == mode) {
+                it.copy(
+                    sortDirection = if (it.sortDirection == SortDirection.ASCENDING) {
+                        SortDirection.DESCENDING
+                    } else {
+                        SortDirection.ASCENDING
+                    },
+                )
+            } else {
+                it.copy(sortMode = mode, sortDirection = SortDirection.ASCENDING)
             }
         }
     }
@@ -1528,13 +1634,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             runCatching { client.list(normalizedPath) }
                 .onSuccess { entries ->
-                    val available = entries.mapTo(HashSet(entries.size), RemoteEntry::path)
                     _networkState.update { state ->
-                        if (state.path != normalizedPath) state else state.copy(
-                            entries = entries,
-                            selectedPaths = RemoteSelectionRules.retainAvailable(state.selectedPaths, available),
-                            loading = false,
-                        )
+                        if (state.path != normalizedPath) {
+                            state
+                        } else {
+                            val updated = state.copy(entries = entries, loading = false)
+                            val available = visibleRemoteEntries(updated).map(RemoteEntry::path)
+                            updated.copy(
+                                selectedPaths = RemoteSelectionRules.retainAvailable(updated.selectedPaths, available),
+                            )
+                        }
                     }
                 }
                 .onFailure { error ->
@@ -1548,9 +1657,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleRemoteSelection(path: String) {
         var limitReached = false
         _networkState.update { state ->
+            val available = visibleRemoteEntries(state).map(RemoteEntry::path)
             val result = RemoteSelectionRules.toggle(
                 current = state.selectedPaths,
-                availablePaths = state.entries.map(RemoteEntry::path),
+                availablePaths = available,
                 path = path,
                 maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
             )
@@ -1564,7 +1674,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var limitReached = false
         _networkState.update { state ->
             val result = RemoteSelectionRules.selectAll(
-                availablePaths = state.entries.map(RemoteEntry::path),
+                availablePaths = visibleRemoteEntries(state).map(RemoteEntry::path),
                 maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
             )
             limitReached = result.limitReached
@@ -1707,17 +1817,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun remoteDelete(entry: RemoteEntry) {
+        remoteDelete(listOf(entry))
+    }
+
+    fun remoteDelete(entries: List<RemoteEntry>) {
         val client = remoteClient ?: return
         val protocol = _networkState.value.connectedProfile?.protocol ?: return
+        val selected = entries.distinctBy { RemotePath.normalize(it.path) }.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
+        if (selected.isEmpty()) return
         viewModelScope.launch {
             _networkState.update { it.copy(loading = true, error = null) }
-            runCatching { client.delete(entry.path, recursive = entry.directory) }
-                .onSuccess { refreshRemote() }
-                .onFailure { error ->
-                    _networkState.update {
-                        it.copy(loading = false, error = RemoteErrorPresenter.present(protocol, RemoteOperation.DELETE, error))
-                    }
+            var firstFailure: Throwable? = null
+            var deleted = 0
+            selected.forEach { entry ->
+                runCatching { client.delete(entry.path, recursive = entry.directory) }
+                    .onSuccess { deleted += 1 }
+                    .onFailure { if (firstFailure == null) firstFailure = it }
+            }
+            clearRemoteSelection()
+            val failure = firstFailure
+            if (failure == null) {
+                refreshRemote()
+            } else if (deleted > 0) {
+                refreshRemote()
+                message("Ištrinta: $deleted, nepavyko ištrinti: ${selected.size - deleted}", true)
+            } else {
+                _networkState.update {
+                    it.copy(
+                        loading = false,
+                        error = RemoteErrorPresenter.present(protocol, RemoteOperation.DELETE, failure),
+                    )
                 }
+            }
         }
     }
 
@@ -1944,12 +2075,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun visibleRemoteEntries(state: NetworkUiState): List<RemoteEntry> = RemoteBrowserRules.displayEntries(
+        entries = state.entries,
+        includeHidden = state.includeHidden,
+        sortMode = state.sortMode,
+        sortDirection = state.sortDirection,
+    )
+
     private suspend fun disconnectRemote() {
         val client = remoteClient
         remoteClient = null
         runCatching { client?.close() }
         _networkState.update {
-            it.copy(connectedProfile = null, entries = emptyList(), selectedPaths = emptySet(), loading = false, error = null)
+            it.copy(
+                connectedProfile = null,
+                path = "/",
+                entries = emptyList(),
+                selectedPaths = emptySet(),
+                backHistory = emptyList(),
+                forwardHistory = emptyList(),
+                loading = false,
+                error = null,
+            )
         }
         _remoteClipboard.value = null
         _syncState.value = SyncUiState()

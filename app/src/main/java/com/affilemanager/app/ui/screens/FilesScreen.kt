@@ -1505,7 +1505,7 @@ private fun TransferOptionsDialog(
     )
 }
 
-private fun sortLabel(mode: SortMode): String = when (mode) {
+internal fun sortLabel(mode: SortMode): String = when (mode) {
     SortMode.NAME -> "Pagal pavadinimą"
     SortMode.SIZE -> "Pagal dydį"
     SortMode.MODIFIED -> "Pagal datą"

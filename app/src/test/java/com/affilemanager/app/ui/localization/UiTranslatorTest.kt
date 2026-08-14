@@ -11,6 +11,15 @@ class UiTranslatorTest {
         assertEquals("Copy (4)", UiTranslator.translate("Kopijuoti (4)", AppLanguageManager.ENGLISH))
         assertEquals("Paste (2)", UiTranslator.translate("Įklijuoti (2)", AppLanguageManager.ENGLISH))
         assertEquals("Paste from server", UiTranslator.translate("Įklijuoti iš serverio", AppLanguageManager.ENGLISH))
+        assertEquals("Choose from phone", UiTranslator.translate("Pasirinkti iš telefono", AppLanguageManager.ENGLISH))
+        assertEquals("Delete selected items?", UiTranslator.translate("Ištrinti pasirinktus elementus?", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "3 items will be deleted from the remote server without using the local trash.",
+            UiTranslator.translate(
+                "3 elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės.",
+                AppLanguageManager.ENGLISH,
+            ),
+        )
         assertEquals(
             "3 items will be copied from the server to /storage/emulated/0/Download. Existing names will not be overwritten.",
             UiTranslator.translate(
