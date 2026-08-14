@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.FolderOff
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
@@ -64,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.EntryKind
+import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.DirectoryUsage
 import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.FileEntry
@@ -71,6 +73,7 @@ import com.affilemanager.app.model.SearchFilters
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.SelectionActionBar
 import java.util.Locale
 
 private const val MEBIBYTE = 1_024L * 1_024L
@@ -89,6 +92,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val rightPanel by viewModel.rightPanel.collectAsStateWithLifecycle()
     val renameUndo by viewModel.renameUndo.collectAsStateWithLifecycle()
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
+    val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) leftPanel.path else rightPanel.path
 
     var query by remember { mutableStateOf(searchState.filters.query) }
@@ -404,6 +408,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         onClose = viewModel::clearSearchSelection,
                         onSelectAll = viewModel::selectAllSearchResults,
                         onCopy = { viewModel.copySearchSelection(move = false) },
+                        canAddToClipboard = clipboard?.mode == ClipboardMode.COPY,
+                        onAddToClipboard = viewModel::addSearchSelectionToClipboard,
                         onMove = { viewModel.copySearchSelection(move = true) },
                         onBatchRename = viewModel::batchRenameSearchSelection,
                         onTrash = { confirmTrash = true },
@@ -611,23 +617,32 @@ private fun SearchSelectionToolbar(
     onClose: () -> Unit,
     onSelectAll: () -> Unit,
     onCopy: () -> Unit,
+    canAddToClipboard: Boolean,
+    onAddToClipboard: () -> Unit,
     onMove: () -> Unit,
     onBatchRename: () -> Unit,
     onTrash: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.large) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti")) }
-            LText("Pasirinkta: $count", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            IconButton(onClick = onSelectAll) { Icon(Icons.Rounded.CheckBox, contentDescription = uiText("Pasirinkti visus")) }
+    SelectionActionBar(
+        count = count,
+        allSelected = false,
+        onClose = onClose,
+        onToggleSelectAll = onSelectAll,
+        modifier = modifier,
+    ) {
             IconButton(onClick = onCopy) { Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti")) }
+            if (canAddToClipboard) {
+                TextButton(onClick = onAddToClipboard, modifier = Modifier.testTag("copy-more-search")) {
+                    Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Įtraukti į iškarpinę"))
+                    LText("Kopijuoti daugiau", modifier = Modifier.padding(start = 5.dp))
+                }
+            }
             IconButton(onClick = onMove) { Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti")) }
             IconButton(onClick = onBatchRename) {
                 Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = uiText("Masinis pervadinimas"))
             }
             IconButton(onClick = onTrash) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error) }
-        }
     }
 }
 

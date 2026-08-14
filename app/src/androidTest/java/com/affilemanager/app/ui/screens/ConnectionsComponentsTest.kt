@@ -197,6 +197,53 @@ class ConnectionsComponentsTest {
     }
 
     @Test
+    fun remoteSelectionOffersCopyMoreForTheExistingServerCopySet() {
+        val file = RemoteEntry("missed.txt", "/remote/missed.txt", false, 12, null)
+        val addRequests = AtomicInteger()
+        compose.setContent {
+            MaterialTheme {
+                RemoteBrowser(
+                    state = NetworkUiState(
+                        connectedProfile = profile(),
+                        path = "/remote",
+                        entries = listOf(file),
+                        selectedPaths = setOf(file.path),
+                    ),
+                    localDirectory = "/local/target",
+                    compactToolbar = true,
+                    onBack = {},
+                    onForward = {},
+                    onUp = {},
+                    onRefresh = {},
+                    onOpen = {},
+                    onDownload = {},
+                    onToggleSelection = {},
+                    onClearSelection = {},
+                    onSelectAll = {},
+                    onDownloadSelected = {},
+                    onCopySelected = {},
+                    canAddToRemoteClipboard = true,
+                    onAddToRemoteClipboard = { addRequests.incrementAndGet() },
+                    localClipboardCount = 0,
+                    onPasteLocalClipboard = {},
+                    onChooseUpload = {},
+                    onCreateFolder = {},
+                    onRename = {},
+                    onDelete = {},
+                    onSync = {},
+                    onToggleHidden = {},
+                    onToggleGrid = {},
+                    onSort = {},
+                    onDisconnect = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag("copy-more-remote").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, addRequests.get()) }
+    }
+
+    @Test
     fun remoteFolderUsesTheSameNavigationAndDisplayMenuPatternAsLocalStorage() {
         val back = AtomicInteger()
         val forward = AtomicInteger()

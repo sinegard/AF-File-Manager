@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.content.ContentResolver
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.affilemanager.app.AFFileManagerApplication
@@ -22,6 +23,12 @@ import com.affilemanager.app.data.WorkspaceSession
 import com.affilemanager.app.data.WorkspaceTab
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagSnapshot
+import com.affilemanager.app.editing.EditConflict
+import com.affilemanager.app.editing.EditOrigin
+import com.affilemanager.app.editing.EditSaveResult
+import com.affilemanager.app.editing.EditSession
+import com.affilemanager.app.editing.EditabilityRules
+import com.affilemanager.app.editing.FileRevision
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.ContentFileEntry
 import com.affilemanager.app.model.ClipboardState
@@ -48,6 +55,7 @@ import com.affilemanager.app.operations.OperationContext
 import com.affilemanager.app.operations.BatchRenamePreview
 import com.affilemanager.app.operations.BatchRenameSpec
 import com.affilemanager.app.operations.BatchRenameUndo
+import com.affilemanager.app.operations.DurableTransferPlanner
 import com.affilemanager.app.operations.TransferFailurePolicy
 import com.affilemanager.app.operations.TransferVerification
 import com.affilemanager.app.security.VaultHeader
@@ -59,6 +67,8 @@ import com.affilemanager.app.sync.SyncSchedule
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
 import com.affilemanager.app.ui.preview.RemotePreviewCache
+import com.affilemanager.app.ui.preview.PreviewSource
+import com.affilemanager.app.ui.preview.previewSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -76,6 +86,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileNotFoundException
 
 enum class AppSection {
     FILES,
@@ -207,6 +218,24 @@ data class SyncUiState(
     val error: String? = null,
 )
 
+data class FileEditUiState(
+    val sourceKey: String? = null,
+    val session: EditSession? = null,
+    val text: String? = null,
+    val stagedText: String? = null,
+    val textChanged: Boolean = false,
+    val preparing: Boolean = false,
+    val saving: Boolean = false,
+    val status: String? = null,
+    val error: String? = null,
+    val conflict: EditConflict? = null,
+    val confirmDiscard: Boolean = false,
+    val closeAfterSave: Boolean = false,
+) {
+    val hasOriginChanges: Boolean get() = textChanged || session?.hasOriginChanges == true
+    val hasUnsavedChanges: Boolean get() = textChanged || session?.hasUnsavedChanges == true
+}
+
 sealed interface PreviewTarget {
     data class LocalFile(val entry: FileEntry) : PreviewTarget
     data class TrashFile(val entry: FileEntry) : PreviewTarget
@@ -331,6 +360,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _preview = MutableStateFlow<PreviewTarget?>(null)
     val preview: StateFlow<PreviewTarget?> = _preview.asStateFlow()
 
+    private val _fileEditState = MutableStateFlow(FileEditUiState())
+    val fileEditState: StateFlow<FileEditUiState> = _fileEditState.asStateFlow()
+
     val operations = graph.operationManager.operations
 
     private val _messages = MutableSharedFlow<UiMessage>(extraBufferCapacity = 16)
@@ -342,6 +374,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var batchRenamePreviewJob: Job? = null
     private var remoteFileOpenJob: Job? = null
     private var remoteFileOpenRequestId = 0L
+    private var fileEditJob: Job? = null
+    private var fileEditRequestId = 0L
     private var leftPanelRefreshJob: Job? = null
     private var rightPanelRefreshJob: Job? = null
     private val handledOperations = ArrayDeque<String>()
@@ -831,10 +865,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun copySelection(panel: PanelId, move: Boolean) {
         val selected = panelFlow(panel).value.selectedPaths.toList()
         if (selected.isEmpty()) return
-        _clipboard.value = ClipboardState(selected, if (move) ClipboardMode.MOVE else ClipboardMode.COPY)
+        if (setLocalClipboard(selected, move = move, append = false)) clearSelection(panel)
+    }
+
+    fun addSelectionToClipboard(panel: PanelId) {
+        val selected = panelFlow(panel).value.selectedPaths.toList()
+        if (selected.isEmpty()) return
+        if (setLocalClipboard(selected, move = false, append = true)) clearSelection(panel)
+    }
+
+    private fun setLocalClipboard(paths: List<String>, move: Boolean, append: Boolean): Boolean {
+        val normalized = paths.mapNotNull { path ->
+            runCatching { File(path).canonicalPath }.getOrNull()
+        }
+        if (normalized.isEmpty()) return false
+        val mode = if (move) ClipboardMode.MOVE else ClipboardMode.COPY
+        val existing = if (append) {
+            val current = _clipboard.value
+            if (current == null) {
+                message("Nėra vietinio kopijavimo rinkinio, kurį būtų galima papildyti", true)
+                return false
+            }
+            if (current.mode != ClipboardMode.COPY) {
+                message("Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują kopijavimo rinkinį.", true)
+                return false
+            }
+            current.paths
+        } else {
+            emptyList()
+        }
+        val merged = ClipboardMergeRules.merge(
+            existing = existing,
+            additional = normalized,
+            maximum = DurableTransferPlanner.MAX_SOURCE_PATHS,
+            key = { path -> runCatching { File(path).canonicalPath }.getOrDefault(File(path).absolutePath) },
+        )
+        _clipboard.value = ClipboardState(merged.items, mode)
         _remoteClipboard.value = null
-        clearSelection(panel)
-        message(if (move) "Paruošta perkelti: ${selected.size}" else "Nukopijuota į iškarpinę: ${selected.size}")
+        if (append) {
+            message(
+                if (merged.addedCount == 0) {
+                    "Visi pasirinkti elementai jau buvo iškarpinėje (${merged.items.size} iš viso)"
+                } else {
+                    "Į iškarpinę įtraukta: ${merged.addedCount} · iš viso: ${merged.items.size}"
+                },
+            )
+        } else {
+            message(if (move) "Paruošta perkelti: ${merged.items.size}" else "Nukopijuota į iškarpinę: ${merged.items.size}")
+        }
+        if (merged.limitReached) {
+            message("Pasiekta iškarpinės riba: ${DurableTransferPlanner.MAX_SOURCE_PATHS} elementų", true)
+        }
+        return true
     }
 
     fun paste(
@@ -970,8 +1052,299 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun prepareFileEdit() {
+        val target = _preview.value ?: return
+        if (target is PreviewTarget.Archive || target is PreviewTarget.RemoteArchive || target is PreviewTarget.Vault) return
+        val source = target.previewSource()
+        val existing = _fileEditState.value
+        if (existing.sourceKey == source.key && (existing.session != null || existing.preparing)) return
+
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        val previousSession = existing.session
+        _fileEditState.value = FileEditUiState(sourceKey = source.key, preparing = true)
+        fileEditJob = viewModelScope.launch {
+            var prepared: EditSession? = null
+            try {
+                withContext(Dispatchers.IO) { graph.editSessions.discard(previousSession) }
+                val context = getApplication<Application>()
+                val mimeType = source.mimeType(context)
+                val internalTextEditor = EditabilityRules.supportsInternalText(source.name, mimeType, source.kind)
+                val origin = when (target) {
+                    is PreviewTarget.LocalFile -> EditOrigin.Local(target.entry.absolutePath, target.entry.isWritable)
+                    is PreviewTarget.TrashFile -> EditOrigin.Local(target.entry.absolutePath, target.entry.isWritable)
+                    is PreviewTarget.ContentFile -> EditOrigin.Content(target.entry.uri, target.entry.isWritable)
+                    is PreviewTarget.RemoteFile -> EditOrigin.Remote(
+                        profileId = target.profileId,
+                        connectionName = target.connectionName,
+                        path = target.remote.path,
+                    )
+                }
+                prepared = withContext(Dispatchers.IO) {
+                    when (source) {
+                        is PreviewSource.Content -> graph.editSessions.prepareFromStream(
+                            sourceKey = source.key,
+                            displayName = source.name,
+                            mimeType = mimeType,
+                            origin = origin,
+                            expectedSizeBytes = source.sizeBytes,
+                            modifiedAtMillis = source.modifiedAtMillis,
+                            internalTextEditor = internalTextEditor,
+                            openSource = { source.openInputStream(context) },
+                        )
+                        else -> graph.editSessions.prepareFromFile(
+                            sourceKey = source.key,
+                            displayName = source.name,
+                            mimeType = mimeType,
+                            sourceFile = requireNotNull(source.localFile) { "Source file is not available" },
+                            origin = origin,
+                            modifiedAtMillis = source.modifiedAtMillis,
+                            internalTextEditor = internalTextEditor,
+                        )
+                    }
+                }
+                val text = if (internalTextEditor) withContext(Dispatchers.IO) {
+                    graph.editSessions.readText(requireNotNull(prepared))
+                } else null
+                if (_preview.value !== target) {
+                    withContext(Dispatchers.IO) { graph.editSessions.discard(prepared) }
+                    return@launch
+                }
+                _fileEditState.value = FileEditUiState(
+                    sourceKey = source.key,
+                    session = prepared,
+                    text = text,
+                    stagedText = text,
+                    status = if (internalTextEditor) "Paruošta redaguoti" else "Redaguojama kopija paruošta",
+                )
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { graph.editSessions.discard(prepared) }
+                throw cancelled
+            } catch (error: Throwable) {
+                withContext(Dispatchers.IO) { graph.editSessions.discard(prepared) }
+                _fileEditState.value = FileEditUiState(
+                    sourceKey = source.key,
+                    error = error.message ?: "Nepavyko paruošti redaguojamos kopijos",
+                )
+            } finally {
+                if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
+    fun updateEditText(text: String) {
+        _fileEditState.update { state ->
+            if (state.session?.usesInternalTextEditor != true || state.saving) state
+            else state.copy(
+                text = text,
+                textChanged = text != state.stagedText,
+                status = null,
+                error = null,
+                conflict = null,
+            )
+        }
+    }
+
+    fun saveFileEdit(forceOverwrite: Boolean = false) {
+        val snapshot = _fileEditState.value
+        if (snapshot.session == null || snapshot.saving || snapshot.preparing) return
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null) }
+        fileEditJob = viewModelScope.launch {
+            try {
+                var session = requireNotNull(snapshot.session)
+                if (snapshot.textChanged) {
+                    val text = requireNotNull(snapshot.text) { "Editor content is unavailable" }
+                    session = withContext(Dispatchers.IO) { graph.editSessions.stageText(session, text) }
+                    _fileEditState.update { current ->
+                        if (current.session?.id == session.id) {
+                            current.copy(session = session, stagedText = text, textChanged = false)
+                        } else current
+                    }
+                } else {
+                    session = withContext(Dispatchers.IO) { graph.editSessions.refreshWorking(session) }
+                }
+
+                val result = when (session.origin) {
+                    is EditOrigin.Local -> withContext(Dispatchers.IO) {
+                        graph.editSessions.saveLocal(session, forceOverwrite)
+                    }
+                    is EditOrigin.Content -> withContext(Dispatchers.IO) {
+                        saveContentOrigin(session, forceOverwrite)
+                    }
+                    is EditOrigin.Remote -> saveRemoteOrigin(session, forceOverwrite)
+                }
+                when (result) {
+                    is EditSaveResult.Conflict -> _fileEditState.update { current ->
+                        if (current.session?.id == session.id) {
+                            current.copy(
+                                session = session,
+                                saving = false,
+                                conflict = result.details,
+                                closeAfterSave = false,
+                                status = null,
+                                error = null,
+                            )
+                        } else current
+                    }
+                    is EditSaveResult.Saved -> {
+                        val saved = withContext(Dispatchers.IO) {
+                            graph.editSessions.markOriginSaved(session, result.revision)
+                        }
+                        var shouldClose = false
+                        _fileEditState.update { current ->
+                            if (current.session?.id == session.id) {
+                                shouldClose = current.closeAfterSave
+                                current.copy(
+                                    session = saved,
+                                    saving = false,
+                                    textChanged = false,
+                                    conflict = null,
+                                    closeAfterSave = false,
+                                    status = "Išsaugota pradinėje vietoje",
+                                    error = null,
+                                )
+                            } else current
+                        }
+                        if (shouldClose) {
+                            fileEditJob = null
+                            closePreviewImmediately()
+                        }
+                        when (session.origin) {
+                            is EditOrigin.Local -> {
+                                refreshPanel(PanelId.LEFT)
+                                refreshPanel(PanelId.RIGHT)
+                            }
+                            is EditOrigin.Remote -> refreshRemote()
+                            is EditOrigin.Content -> Unit
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _fileEditState.update {
+                    it.copy(saving = false, closeAfterSave = false, error = error.message ?: "Failo išsaugoti nepavyko")
+                }
+            } finally {
+                if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
+    fun saveFileEditAs(destination: Uri) {
+        val snapshot = _fileEditState.value
+        if (snapshot.session == null || snapshot.saving || snapshot.preparing) return
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null) }
+        fileEditJob = viewModelScope.launch {
+            try {
+                var session = requireNotNull(snapshot.session)
+                if (snapshot.textChanged) {
+                    val text = requireNotNull(snapshot.text) { "Editor content is unavailable" }
+                    session = withContext(Dispatchers.IO) { graph.editSessions.stageText(session, text) }
+                } else {
+                    session = withContext(Dispatchers.IO) { graph.editSessions.refreshWorking(session) }
+                }
+                val verified = withContext(Dispatchers.IO) { writeContentDestination(session, destination) }
+                require(session.workingRevision.hasSameContent(verified)) { "Išsaugotos kopijos patikra nepavyko" }
+                val saved = withContext(Dispatchers.IO) { graph.editSessions.markSavedElsewhere(session) }
+                var shouldClose = false
+                _fileEditState.update { current ->
+                    if (current.session?.id == session.id) {
+                        shouldClose = current.closeAfterSave
+                        current.copy(
+                            session = saved,
+                            saving = false,
+                            stagedText = current.text,
+                            textChanged = false,
+                            conflict = null,
+                            closeAfterSave = false,
+                            status = "Patikrinta kopija išsaugota pasirinktoje vietoje",
+                            error = null,
+                        )
+                    } else current
+                }
+                if (shouldClose) {
+                    fileEditJob = null
+                    closePreviewImmediately()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _fileEditState.update {
+                    it.copy(saving = false, closeAfterSave = false, error = error.message ?: "Kopijos išsaugoti nepavyko")
+                }
+            } finally {
+                if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
+    fun refreshFileEditAfterExternalEditor() {
+        val snapshot = _fileEditState.value
+        val session = snapshot.session ?: return
+        if (snapshot.saving || snapshot.preparing) return
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        _fileEditState.update { it.copy(preparing = true, status = null, error = null) }
+        fileEditJob = viewModelScope.launch {
+            try {
+                val refreshed = withContext(Dispatchers.IO) { graph.editSessions.refreshWorking(session) }
+                val refreshedText = if (session.usesInternalTextEditor) withContext(Dispatchers.IO) {
+                    graph.editSessions.readText(refreshed)
+                } else snapshot.text
+                _fileEditState.update { current ->
+                    if (current.session?.id == session.id) {
+                        current.copy(
+                            session = refreshed,
+                            text = refreshedText,
+                            stagedText = refreshedText,
+                            textChanged = false,
+                            preparing = false,
+                            status = if (refreshed.workingRevision.hasSameContent(session.workingRevision)) {
+                                "Išorinis redaktorius uždarytas nepakeitus turinio"
+                            } else {
+                                "Išorinio redaktoriaus pakeitimus galima išsaugoti"
+                            },
+                            error = null,
+                        )
+                    } else current
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _fileEditState.update {
+                    it.copy(preparing = false, error = error.message ?: "Redaguotos kopijos perskaityti nepavyko")
+                }
+            } finally {
+                if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
+    fun dismissFileEditConflict() {
+        _fileEditState.update { it.copy(conflict = null) }
+    }
+
     fun closePreview() {
-        _preview.value = null
+        if (_fileEditState.value.saving) {
+            _fileEditState.update { it.copy(closeAfterSave = true) }
+        } else if (_fileEditState.value.hasUnsavedChanges) {
+            _fileEditState.update { it.copy(confirmDiscard = true) }
+        } else {
+            closePreviewImmediately()
+        }
+    }
+
+    fun keepEditing() {
+        _fileEditState.update { it.copy(confirmDiscard = false) }
+    }
+
+    fun discardFileEditAndClose() {
+        closePreviewImmediately()
     }
 
     fun openExternalUri(uri: Uri, mimeType: String?) {
@@ -1091,10 +1464,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun copySearchSelection(move: Boolean) {
         val selected = orderedSearchSelection()
         if (selected.isEmpty()) return
-        _clipboard.value = ClipboardState(selected, if (move) ClipboardMode.MOVE else ClipboardMode.COPY)
-        _remoteClipboard.value = null
-        clearSearchSelection()
-        message(if (move) "Paruošta perkelti: ${selected.size}" else "Nukopijuota į iškarpinę: ${selected.size}")
+        if (setLocalClipboard(selected, move = move, append = false)) clearSearchSelection()
+    }
+
+    fun addSearchSelectionToClipboard() {
+        val selected = orderedSearchSelection()
+        if (selected.isEmpty()) return
+        if (setLocalClipboard(selected, move = false, append = true)) clearSearchSelection()
     }
 
     fun trashSearchSelection() {
@@ -1797,18 +2173,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setRemoteClipboard(entries)
     }
 
+    fun addRemoteSelectionToClipboard() {
+        val state = _networkState.value
+        val entries = state.entries.filter { it.path in state.selectedPaths }
+        setRemoteClipboard(entries, append = true)
+    }
+
     fun copyRemoteEntry(entry: RemoteEntry) {
         setRemoteClipboard(listOf(entry))
     }
 
-    private fun setRemoteClipboard(entries: List<RemoteEntry>) {
+    private fun setRemoteClipboard(entries: List<RemoteEntry>, append: Boolean = false) {
         val profile = _networkState.value.connectedProfile ?: return
-        val selected = entries.distinctBy { RemotePath.normalize(it.path) }.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
-        if (selected.isEmpty()) return
-        _remoteClipboard.value = RemoteClipboardState(profile.id, selected)
+        val existing = if (append) {
+            val current = _remoteClipboard.value
+            if (current == null) {
+                message("Nėra serverio kopijavimo rinkinio, kurį būtų galima papildyti", true)
+                return
+            }
+            if (current.profileId != profile.id) {
+                message("„Kopijuoti daugiau“ galima tik iš tos pačios serverio jungties", true)
+                return
+            }
+            current.entries
+        } else {
+            emptyList()
+        }
+        val merged = ClipboardMergeRules.merge(
+            existing = existing,
+            additional = entries,
+            maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
+            key = { entry -> RemotePath.normalize(entry.path) },
+        )
+        if (merged.items.isEmpty()) return
+        _remoteClipboard.value = RemoteClipboardState(profile.id, merged.items)
         _clipboard.value = null
         clearRemoteSelection()
-        message("Nukopijuota iš serverio į iškarpinę: ${selected.size}")
+        if (append) {
+            message(
+                if (merged.addedCount == 0) {
+                    "Visi pasirinkti serverio elementai jau buvo iškarpinėje (${merged.items.size} iš viso)"
+                } else {
+                    "Iš serverio įtraukta: ${merged.addedCount} · iš viso: ${merged.items.size}"
+                },
+            )
+        } else {
+            message("Nukopijuota iš serverio į iškarpinę: ${merged.items.size}")
+        }
+        if (merged.limitReached) {
+            message("Pasiekta serverio iškarpinės riba: ${RemoteCopyEngine.MAX_SELECTED_ROOTS} elementų", true)
+        }
     }
 
     fun pasteRemoteClipboard(destinationPanel: PanelId = _activePanel.value): Boolean {
@@ -2061,6 +2475,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         workspaceSaveRequests.trySend(currentWorkspace())
         workspaceSaveRequests.close()
         cancelRemoteFileOpen()
+        fileEditRequestId += 1
+        fileEditJob?.cancel()
+        graph.editSessions.discard(_fileEditState.value.session)
+        _fileEditState.value = FileEditUiState()
         remoteClient?.let { client -> graph.applicationScope.launch { client.close() } }
         remoteClient = null
         super.onCleared()
@@ -2186,6 +2604,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sortMode = state.sortMode,
         sortDirection = state.sortDirection,
     )
+
+    private fun closePreviewImmediately() {
+        fileEditRequestId += 1
+        fileEditJob?.cancel()
+        fileEditJob = null
+        val session = _fileEditState.value.session
+        _fileEditState.value = FileEditUiState()
+        _preview.value = null
+        viewModelScope.launch(Dispatchers.IO) { graph.editSessions.discard(session) }
+    }
+
+    private fun saveContentOrigin(session: EditSession, forceOverwrite: Boolean): EditSaveResult {
+        val origin = session.origin as? EditOrigin.Content ?: error("Edit session is not a content URI")
+        val uri = Uri.parse(origin.uri)
+        val current = currentContentRevision(uri)
+        if (!forceOverwrite && !session.originRevision.hasSameContent(current)) {
+            return EditSaveResult.Conflict(EditConflict(origin.label, session.originRevision, current))
+        }
+        require(origin.canWrite) { "Originalas skirtas tik skaityti; naudokite „Išsaugoti kaip“" }
+        val verified = writeContentDestination(session, uri)
+        require(session.workingRevision.hasSameContent(verified)) { "Išsaugoto failo patikra nepavyko" }
+        return EditSaveResult.Saved(verified)
+    }
+
+    private fun currentContentRevision(uri: Uri): FileRevision? {
+        val resolver = getApplication<Application>().contentResolver
+        return try {
+            graph.editSessions.revisionFromStream(modifiedAtMillis = null) {
+                resolver.openInputStream(uri) ?: throw FileNotFoundException("Original content URI is unavailable")
+            }
+        } catch (_: FileNotFoundException) {
+            null
+        }
+    }
+
+    private fun writeContentDestination(session: EditSession, destination: Uri): FileRevision {
+        require(destination.scheme == "content") { "Pasirinkta vieta neįrašoma per Android dokumentų sistemą" }
+        val resolver = getApplication<Application>().contentResolver
+        graph.editSessions.writeWorkingCopy(session) {
+            openContentOutput(resolver, destination)
+        }
+        return graph.editSessions.revisionFromStream(modifiedAtMillis = null) {
+            resolver.openInputStream(destination) ?: throw FileNotFoundException("Išsaugoto failo patikrinti nepavyko")
+        }
+    }
+
+    private fun openContentOutput(resolver: ContentResolver, uri: Uri): java.io.OutputStream {
+        val readWriteTruncateOutput = runCatching { resolver.openOutputStream(uri, "rwt") }.getOrNull()
+        return readWriteTruncateOutput
+            ?: runCatching { resolver.openOutputStream(uri, "wt") }.getOrNull()
+            ?: throw FileNotFoundException("Pasirinkta vieta nesuteikė įrašomo srauto")
+    }
+
+    private suspend fun saveRemoteOrigin(session: EditSession, forceOverwrite: Boolean): EditSaveResult {
+        val origin = session.origin as? EditOrigin.Remote ?: error("Edit session is not remote")
+        val profile = _networkState.value.connectedProfile
+        val client = remoteClient
+        require(profile?.id == origin.profileId && client != null) {
+            "Prieš išsaugodami pradiniame serveryje vėl prisijunkite prie ${origin.connectionName}"
+        }
+        return graph.remoteEdits.saveOrigin(session, client, forceOverwrite)
+    }
 
     private suspend fun disconnectRemote() {
         cancelRemoteFileOpen()

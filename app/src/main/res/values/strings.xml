@@ -5,4 +5,6 @@
     <string name="language_description">App interface language. The window refreshes after a change.</string>
     <string name="language_english">English</string>
     <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Open “%1$s” with</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” with</string>
 </resources>

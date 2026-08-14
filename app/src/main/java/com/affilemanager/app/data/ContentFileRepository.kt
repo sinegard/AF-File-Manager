@@ -20,6 +20,9 @@ class ContentFileRepository(private val context: Context) {
             require(uri.scheme == "content") { "Palaikomos tik Android content nuorodos" }
             val resolver = context.contentResolver
             resolver.openFileDescriptor(uri, "r")?.use { } ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
+            val isWritable = runCatching {
+                resolver.openFileDescriptor(uri, "rw")?.use { true } ?: false
+            }.getOrDefault(false)
 
             var displayName: String? = null
             var sizeBytes: Long? = null
@@ -44,6 +47,7 @@ class ContentFileRepository(private val context: Context) {
                 mimeType = mimeType,
                 sizeBytes = sizeBytes,
                 modifiedAtMillis = null,
+                isWritable = isWritable,
             )
         }
     }

@@ -106,6 +106,43 @@ class FileNavigationUiTest {
     }
 
     @Test
+    fun copyMoreAppendsMissedItemsWithoutReplacingTheClipboard() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "copy-more-${System.nanoTime()}").apply { mkdirs() }
+        val first = File(directory, "first.txt").apply { writeText("first") }
+        val missed = File(directory, "missed.txt").apply { writeText("missed") }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val previousPath = viewModel.leftPanel.value.path
+
+        try {
+            navigateAndWait(viewModel, directory)
+            compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, first.canonicalPath) }
+            compose.onNodeWithContentDescription("Copy").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.clipboard.value?.paths == listOf(first.canonicalPath)
+            }
+
+            compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, missed.canonicalPath) }
+            compose.onNodeWithTag("copy-more-local").assertIsDisplayed().performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.clipboard.value?.paths == listOf(first.canonicalPath, missed.canonicalPath)
+            }
+
+            compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, first.canonicalPath) }
+            compose.onNodeWithTag("copy-more-local").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.clipboard.value?.paths == listOf(first.canonicalPath, missed.canonicalPath)
+            }
+        } finally {
+            compose.runOnUiThread {
+                viewModel.clearSelection(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, previousPath)
+            }
+            compose.waitForIdle()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun newTabStartsAtTopAndReturningToTheExistingTabRestoresItsPosition() {
         val directory = File(compose.activity.getExternalFilesDir(null), "tabs-${System.nanoTime()}").apply { mkdirs() }
         repeat(60) { index -> File(directory, "tab-${index.toString().padStart(3, '0')}.txt").writeText("tab") }

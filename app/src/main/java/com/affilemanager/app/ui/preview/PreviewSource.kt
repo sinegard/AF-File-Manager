@@ -6,6 +6,7 @@ import android.os.ParcelFileDescriptor
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.editing.EditSession
 import com.affilemanager.app.model.ContentFileEntry
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
@@ -68,7 +69,7 @@ internal sealed interface PreviewSource {
         override val sizeBytes: Long? = entry.sizeBytes
         override val modifiedAtMillis: Long? = entry.modifiedAtMillis
         override val isReadable: Boolean = true
-        override val isWritable: Boolean = false
+        override val isWritable: Boolean = entry.isWritable
         override val localFile: File? = null
         override val locationLabel: String = entry.uri
 
@@ -115,6 +116,36 @@ internal sealed interface PreviewSource {
         ) { "Failo srautas nepasiekiamas" }
 
         override fun openInputStream(context: Context): InputStream = cachedFile.inputStream()
+    }
+
+    data class Working(
+        val original: PreviewSource,
+        val session: EditSession,
+    ) : PreviewSource {
+        override val key: String = "edit|${session.id}|${session.workingRevision.sha256}"
+        override val name: String = session.displayName
+        override val kind: EntryKind = original.kind
+        override val extension: String = original.extension
+        override val sizeBytes: Long = session.workingRevision.sizeBytes
+        override val modifiedAtMillis: Long? = session.workingRevision.modifiedAtMillis
+        override val isReadable: Boolean = session.workingFile.isFile && session.workingFile.canRead()
+        override val isWritable: Boolean = true
+        override val localFile: File = session.workingFile
+        override val locationLabel: String = original.locationLabel
+
+        override fun mimeType(context: Context): String = session.mimeType
+
+        override fun uri(context: Context): Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.files",
+            session.workingFile,
+        )
+
+        override fun openFileDescriptor(context: Context): ParcelFileDescriptor = requireNotNull(
+            ParcelFileDescriptor.open(session.workingFile, ParcelFileDescriptor.MODE_READ_ONLY),
+        ) { "Editable copy is unavailable" }
+
+        override fun openInputStream(context: Context): InputStream = session.workingFile.inputStream()
     }
 }
 

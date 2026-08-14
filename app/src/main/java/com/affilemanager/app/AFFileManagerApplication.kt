@@ -9,6 +9,8 @@ import com.affilemanager.app.data.SafFileRepository
 import com.affilemanager.app.data.TrashRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagRepository
+import com.affilemanager.app.editing.EditSessionStore
+import com.affilemanager.app.editing.RemoteEditSaver
 import com.affilemanager.app.network.NetworkProfileStore
 import com.affilemanager.app.network.RemoteClientFactory
 import com.affilemanager.app.network.RemoteCopyEngine
@@ -51,6 +53,8 @@ class AppGraph(application: Application) {
     val navigation = NavigationRepository(application)
     val workspaceSession = WorkspaceSessionRepository(application)
     val fileTags = FileTagRepository.forApp(application)
+    val editSessions = EditSessionStore(application.cacheDir)
+    val remoteEdits = RemoteEditSaver(editSessions)
     val localFileOperator = LocalFileOperator()
     val batchRename = BatchRenameEngine()
     val operationManager = FileOperationManager(applicationScope)
