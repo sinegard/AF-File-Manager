@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+.idea/
+local.properties
+**/build/
+captures/
+dist/
+docs/CHANGE_CONTRACT.md
+*.iml
+*.jks
+*.keystore
+*.log

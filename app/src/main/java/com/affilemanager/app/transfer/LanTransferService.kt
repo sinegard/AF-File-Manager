@@ -1,0 +1,215 @@
+package com.affilemanager.app.transfer
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.affilemanager.app.MainActivity
+import com.affilemanager.app.R
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.util.Collections
+
+enum class LanTransferStatus { STOPPED, STARTING, RUNNING, ERROR }
+
+data class LanTransferState(
+    val status: LanTransferStatus = LanTransferStatus.STOPPED,
+    val rootPath: String? = null,
+    val rootName: String? = null,
+    val url: String? = null,
+    val code: String? = null,
+    val expiresAtMillis: Long? = null,
+    val message: String? = null,
+)
+
+object LanTransferController {
+    private val _state = MutableStateFlow(LanTransferState())
+    val state: StateFlow<LanTransferState> = _state.asStateFlow()
+
+    fun start(context: Context, rootPath: String, durationMinutes: Int = 15) {
+        val intent = Intent(context, LanTransferService::class.java)
+            .setAction(LanTransferService.ACTION_START)
+            .putExtra(LanTransferService.EXTRA_ROOT, rootPath)
+            .putExtra(LanTransferService.EXTRA_DURATION_MINUTES, durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES))
+        ContextCompat.startForegroundService(context, intent)
+    }
+
+    fun stop(context: Context) {
+        context.startService(Intent(context, LanTransferService::class.java).setAction(LanTransferService.ACTION_STOP))
+    }
+
+    internal fun publish(state: LanTransferState) {
+        _state.value = state
+    }
+}
+
+class LanTransferService : Service() {
+    companion object {
+        const val ACTION_START = "com.affilemanager.app.action.START_LAN_TRANSFER"
+        const val ACTION_STOP = "com.affilemanager.app.action.STOP_LAN_TRANSFER"
+        const val EXTRA_ROOT = "root"
+        const val EXTRA_DURATION_MINUTES = "duration_minutes"
+        private const val CHANNEL_ID = "lan_transfer"
+        private const val NOTIFICATION_ID = 41
+    }
+
+    private var server: LanHttpServer? = null
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopServer("Sustabdyta naudotojo")
+            return START_NOT_STICKY
+        }
+        if (intent?.action != ACTION_START) return START_NOT_STICKY
+        startAsForeground(startingNotification())
+        if (server != null) {
+            LanTransferController.publish(LanTransferController.state.value.copy(message = "LAN sesija jau veikia"))
+            return START_NOT_STICKY
+        }
+
+        val rootPath = intent.getStringExtra(EXTRA_ROOT).orEmpty()
+        val duration = intent.getIntExtra(EXTRA_DURATION_MINUTES, 15).coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES)
+        LanTransferController.publish(
+            LanTransferState(
+                status = LanTransferStatus.STARTING,
+                rootPath = rootPath,
+                rootName = File(rootPath).name,
+                message = "Ieškomas privatus vietinio tinklo adresas",
+            ),
+        )
+        runCatching {
+            val root = File(rootPath).canonicalFile
+            require(root.isDirectory && root.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
+            val address = privateLanAddress() ?: throw IllegalStateException("Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas")
+            LanHttpServer(root, address, durationMinutes = duration) { reason ->
+                LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
+                stopSelf()
+            }.also { server = it }.start()
+        }.onSuccess { session ->
+            LanTransferController.publish(
+                LanTransferState(
+                    status = LanTransferStatus.RUNNING,
+                    rootPath = rootPath,
+                    rootName = session.rootName,
+                    url = session.url,
+                    code = session.code,
+                    expiresAtMillis = session.expiresAtMillis,
+                    message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
+                ),
+            )
+            startAsForeground(runningNotification(session))
+        }.onFailure { error ->
+            server = null
+            LanTransferController.publish(
+                LanTransferState(
+                    status = LanTransferStatus.ERROR,
+                    rootPath = rootPath,
+                    rootName = File(rootPath).name,
+                    message = error.message ?: "LAN serverio paleisti nepavyko",
+                ),
+            )
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        server?.stop("LAN paslauga sustabdyta")
+        server = null
+        super.onDestroy()
+    }
+
+    private fun stopServer(reason: String) {
+        server?.stop(reason)
+        server = null
+        LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun startAsForeground(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun createChannel() {
+        val channel = NotificationChannel(CHANNEL_ID, "Failų perdavimas vietiniame tinkle", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Rodoma tik tada, kai pats naudotojas paleidžia LAN failų perdavimą"
+            setShowBadge(false)
+        }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun startingNotification(): Notification = notificationBuilder()
+        .setContentTitle("AF File Manager LAN perdavimas")
+        .setContentText("Serveris paleidžiamas…")
+        .build()
+
+    private fun runningNotification(session: LanServerSession): Notification = notificationBuilder()
+        .setContentTitle("AF File Manager LAN perdavimas veikia")
+        .setContentText(session.url)
+        .addAction(0, "Sustabdyti", stopPendingIntent())
+        .build()
+
+    private fun notificationBuilder(): NotificationCompat.Builder {
+        val openIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_app)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(openIntent)
+    }
+
+    private fun stopPendingIntent(): PendingIntent = PendingIntent.getService(
+        this,
+        1,
+        Intent(this, LanTransferService::class.java).setAction(ACTION_STOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun privateLanAddress(): InetAddress? {
+        val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+            .filter { runCatching { it.isUp && !it.isLoopback && !it.isVirtual }.getOrDefault(false) }
+            .sortedBy { network ->
+                when {
+                    network.name.startsWith("wlan", true) || network.name.startsWith("wifi", true) -> 0
+                    network.name.startsWith("eth", true) -> 1
+                    else -> 2
+                }
+            }
+        return interfaces.asSequence()
+            .flatMap { Collections.list(it.inetAddresses).asSequence() }
+            .filterIsInstance<Inet4Address>()
+            .firstOrNull(InetAddress::isSiteLocalAddress)
+    }
+}
