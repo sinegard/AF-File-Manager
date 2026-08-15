@@ -19,8 +19,9 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performTextClearance
-import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.AnnotatedString
 import androidx.core.graphics.createBitmap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
@@ -233,10 +234,10 @@ class FilePreviewLifecycleTest {
         try {
             compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(source)) }
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithText("original").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithTag("full-text-editor", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithTag("internal-text-editor").performTextClearance()
-            compose.onNodeWithTag("internal-text-editor").performTextInput("edited in AF")
+            replaceEditorText("edited in AF")
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.fileEditState.value.text == "edited in AF" }
             compose.runOnIdle { assertEquals("original", source.readText()) }
             compose.waitForIdle()
             captureRoot(File(validationRoot, "preview-text-editor.png"))
@@ -253,6 +254,69 @@ class FilePreviewLifecycleTest {
                 compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
             }
         } finally {
+            fixtureRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun textEditorSaveAsRebasesSubsequentSavesToTheChosenPhoneFile() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("edit-save-as")), "current")
+        fixtureRoot.deleteRecursively()
+        val sourceDirectory = File(fixtureRoot, "source").apply { mkdirs() }
+        val destinationDirectory = File(fixtureRoot, "destination").apply { mkdirs() }
+        val source = File(sourceDirectory, "original.txt").apply { writeText("original") }
+        val destination = File(destinationDirectory, "renamed.txt")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(source)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("full-text-editor", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            replaceEditorText("first saved version")
+            compose.runOnUiThread { viewModel.saveFileEditAsLocal(destinationDirectory.absolutePath, destination.name) }
+            compose.waitUntil(timeoutMillis = 10_000) { destination.isFile && destination.readText() == "first saved version" }
+            compose.runOnIdle {
+                assertEquals("original", source.readText())
+                assertEquals(destination.absolutePath, (viewModel.fileEditState.value.session?.origin as? com.affilemanager.app.editing.EditOrigin.Local)?.path)
+            }
+
+            replaceEditorText("second saved version")
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.fileEditState.value.text == "second saved version" }
+            compose.runOnUiThread { viewModel.saveFileEdit() }
+            compose.waitUntil(timeoutMillis = 10_000) { destination.readText() == "second saved version" }
+            compose.runOnIdle { assertEquals("original", source.readText()) }
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+            fixtureRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun fullTextEditorRendersItsPrimaryControls() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("editor-smoke")), "current")
+        fixtureRoot.deleteRecursively()
+        require(fixtureRoot.mkdirs())
+        val source = File(fixtureRoot, "sample.kt").apply { writeText("val answer = 42\n") }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(source)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("full-text-editor", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithContentDescription("Find and replace").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Go to line").assertIsDisplayed()
+            compose.onNodeWithText("UTF-8").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+            compose.waitForIdle()
             fixtureRoot.deleteRecursively()
         }
     }
@@ -299,6 +363,12 @@ class FilePreviewLifecycleTest {
             )
         }
         assertTrue(target.isFile && target.length() > 0)
+    }
+
+    private fun replaceEditorText(value: String) {
+        compose.onNodeWithTag("full-text-editor").performSemanticsAction(SemanticsActions.SetText) { action ->
+            assertTrue(action(AnnotatedString(value)))
+        }
     }
 
     private fun createImage(file: File) {

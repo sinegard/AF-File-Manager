@@ -5,7 +5,8 @@ import java.io.File
 
 object EditLimits {
     const val MAX_FILE_BYTES: Long = 256L * 1_024 * 1_024
-    const val MAX_TEXT_BYTES: Int = 2 * 1_024 * 1_024
+    const val MAX_TEXT_BYTES: Int = 8 * 1_024 * 1_024
+    const val MAX_TEXT_CHARS: Int = 4 * 1_024 * 1_024
     const val MIN_FREE_BYTES: Long = 32L * 1_024 * 1_024
 }
 
@@ -75,8 +76,74 @@ data class EditConflict(
 )
 
 sealed interface EditSaveResult {
-    data class Saved(val revision: FileRevision) : EditSaveResult
+    data class Saved(
+        val revision: FileRevision,
+        val warning: String? = null,
+    ) : EditSaveResult
     data class Conflict(val details: EditConflict) : EditSaveResult
+}
+
+enum class EditExistingPolicy {
+    ASK,
+    REPLACE,
+    KEEP_BOTH,
+}
+
+sealed interface EditDestination {
+    val label: String
+    val displayName: String
+
+    data class Local(val path: String) : EditDestination {
+        override val label: String = path
+        override val displayName: String = File(path).name
+    }
+
+    data class Content(val uri: String, override val displayName: String) : EditDestination {
+        override val label: String = uri
+    }
+
+    data class Remote(
+        val profileId: String,
+        val connectionName: String,
+        val path: String,
+    ) : EditDestination {
+        override val label: String = "$connectionName · $path"
+        override val displayName: String = path.substringAfterLast('/')
+    }
+}
+
+data class EditDestinationSnapshot(
+    val sizeBytes: Long,
+    val modifiedAtMillis: Long?,
+    val sha256: String? = null,
+)
+
+data class EditSaveAsConflict(
+    val destination: EditDestination,
+    val existing: EditDestinationSnapshot,
+)
+
+sealed interface EditSaveAsResult {
+    data class Saved(
+        val destination: EditDestination,
+        val revision: FileRevision,
+        val warning: String? = null,
+    ) : EditSaveAsResult
+
+    data class Conflict(val details: EditSaveAsConflict) : EditSaveAsResult
+}
+
+object EditDestinationRules {
+    private const val MAX_NAME_LENGTH = 255
+
+    fun validateFileName(raw: String): String {
+        val name = raw.trim()
+        require(name.isNotEmpty() && name.length <= MAX_NAME_LENGTH) { "Invalid file name" }
+        require(name != "." && name != "..") { "Invalid file name" }
+        require('/' !in name && '\\' !in name && '\u0000' !in name) { "Invalid file name" }
+        require(name.none { it.isISOControl() }) { "Invalid file name" }
+        return name
+    }
 }
 
 object EditabilityRules {

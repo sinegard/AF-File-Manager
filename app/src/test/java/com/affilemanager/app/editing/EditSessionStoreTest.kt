@@ -133,8 +133,8 @@ class EditSessionStoreTest {
         assertTrue(EditabilityRules.mayUseExternalEditor(EntryKind.IMAGE, "png"))
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun invalidUtf8IsRejectedInsteadOfSilentlyCorruptingText() {
+    @Test
+    fun nonUtf8TextUsesAReversibleSingleByteFallback() {
         val source = temporaryFolder.newFile("invalid.txt").apply {
             writeBytes(byteArrayOf(0xC3.toByte(), 0x28))
         }
@@ -149,6 +149,42 @@ class EditSessionStoreTest {
             internalTextEditor = true,
         )
 
-        store.readText(session)
+        val document = store.readTextDocument(session)
+
+        assertTrue(document.encoding == TextEncoding.WINDOWS_1252 || document.encoding == TextEncoding.ISO_8859_1)
+        val staged = store.stageText(session, document.text, document.encoding, document.lineEnding)
+        assertEquals(source.readBytes().toList(), staged.workingFile.readBytes().toList())
+    }
+
+    @Test
+    fun saveAsAsksBeforeReplacingAndCanKeepBoth() {
+        val directory = temporaryFolder.newFolder("save-as")
+        val source = File(directory, "notes.txt").apply { writeText("original") }
+        val occupied = File(directory, "copy.txt").apply { writeText("occupied") }
+        val store = EditSessionStore(temporaryFolder.newFolder("cache-save-as"))
+        val session = store.prepareFromFile(
+            sourceKey = "source",
+            displayName = source.name,
+            mimeType = "text/plain",
+            sourceFile = source,
+            origin = EditOrigin.Local(source.absolutePath, canWrite = true),
+            modifiedAtMillis = source.lastModified(),
+            internalTextEditor = true,
+        )
+        val staged = store.stageText(session, "edited")
+
+        val conflict = store.saveLocalAs(staged, directory.absolutePath, occupied.name, EditExistingPolicy.ASK)
+        assertTrue(conflict is EditSaveAsResult.Conflict)
+        assertEquals("occupied", occupied.readText())
+
+        val kept = store.saveLocalAs(staged, directory.absolutePath, occupied.name, EditExistingPolicy.KEEP_BOTH)
+            as EditSaveAsResult.Saved
+        val savedFile = File((kept.destination as EditDestination.Local).path)
+        assertEquals("copy (1).txt", savedFile.name)
+        assertEquals("edited", savedFile.readText())
+
+        val rebased = store.rebaseOrigin(staged, kept.destination, kept.revision)
+        assertEquals(savedFile.absolutePath, (rebased.origin as EditOrigin.Local).path)
+        assertFalse(rebased.hasUnsavedChanges)
     }
 }

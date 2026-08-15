@@ -111,13 +111,21 @@ import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.editing.EditConflict
+import com.affilemanager.app.editing.EditExistingPolicy
+import com.affilemanager.app.editing.EditOrigin
+import com.affilemanager.app.editing.EditSaveAsConflict
 import com.affilemanager.app.editing.EditSession
 import com.affilemanager.app.editing.EditabilityRules
 import com.affilemanager.app.editing.FileRevision
+import com.affilemanager.app.editing.LineEnding
+import com.affilemanager.app.editing.TextEncoding
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.ui.PreviewTarget
 import com.affilemanager.app.ui.FileEditUiState
+import com.affilemanager.app.ui.editor.EditSaveAsDialog
+import com.affilemanager.app.ui.editor.FullTextEditor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -142,8 +150,19 @@ fun FilePreviewDialog(
     onClose: () -> Unit,
     onPrepareEdit: () -> Unit,
     onEditTextChanged: (String) -> Unit,
+    onEditEncodingChanged: (TextEncoding) -> Unit,
+    onEditLineEndingChanged: (LineEnding) -> Unit,
     onSaveEdit: (Boolean) -> Unit,
     onSaveEditAs: (Uri) -> Unit,
+    onSaveEditAsLocal: (String, String) -> Unit,
+    onSaveEditAsRemote: (String, String) -> Unit,
+    onResolveSaveAsConflict: (EditExistingPolicy) -> Unit,
+    onDismissSaveAsConflict: () -> Unit,
+    initialLocalSavePath: String,
+    initialRemoteSavePath: String?,
+    remoteConnectionName: String?,
+    loadLocalSaveDirectory: suspend (String) -> Result<List<FileEntry>>,
+    loadRemoteSaveDirectory: suspend (String) -> Result<List<RemoteEntry>>,
     onExternalEditorReturned: () -> Unit,
     onDismissEditConflict: () -> Unit,
     onKeepEditing: () -> Unit,
@@ -158,6 +177,7 @@ fun FilePreviewDialog(
     var actionError by remember(source.key) { mutableStateOf<String?>(null) }
     var archivePath by remember(source.key) { mutableStateOf("") }
     var launchExternalEditorWhenReady by remember(source.key) { mutableStateOf(false) }
+    var showSaveAs by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val internalEditor = EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
     val externalEditorAvailable = remember(source.key) { canEditExternally(context, source) }
@@ -169,13 +189,17 @@ fun FilePreviewDialog(
     val externalEditorLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         onExternalEditorReturned()
     }
-    val launchSaveAs: () -> Unit = {
+    val launchSystemSaveAs: () -> Unit = {
         val session = editSession
         if (session == null) {
             actionError = "Redaguojama kopija dar neparuošta"
         } else {
             saveAsLauncher.launch(createSaveAsIntent(session))
         }
+    }
+    val launchSaveAs: () -> Unit = {
+        if (editSession == null) actionError = "Redaguojama kopija dar neparuošta"
+        else showSaveAs = true
     }
 
     LaunchedEffect(source.key, internalEditor) {
@@ -222,7 +246,7 @@ fun FilePreviewDialog(
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(source.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(editSession?.displayName ?: source.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(entrySummary(context, source), style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -334,6 +358,10 @@ fun FilePreviewDialog(
                         editState = activeEditState,
                         onPrepareEdit = onPrepareEdit,
                         onEditTextChanged = onEditTextChanged,
+                        onEditEncodingChanged = onEditEncodingChanged,
+                        onEditLineEndingChanged = onEditLineEndingChanged,
+                        onSave = { onSaveEdit(false) },
+                        onSaveAs = launchSaveAs,
                     )
                 }
             }
@@ -348,6 +376,51 @@ fun FilePreviewDialog(
             onOverwrite = { onSaveEdit(true) },
             onSaveAs = launchSaveAs,
             onKeepEditing = onDismissEditConflict,
+        )
+    }
+    activeEditState?.saveAsConflict?.let { conflict ->
+        EditSaveAsConflictDialog(
+            conflict = conflict,
+            saving = activeEditState.saving,
+            onReplace = { onResolveSaveAsConflict(EditExistingPolicy.REPLACE) },
+            onKeepBoth = { onResolveSaveAsConflict(EditExistingPolicy.KEEP_BOTH) },
+            onChooseAnother = {
+                onDismissSaveAsConflict()
+                showSaveAs = true
+            },
+            onDismiss = onDismissSaveAsConflict,
+        )
+    }
+    if (showSaveAs && editSession != null) {
+        EditSaveAsDialog(
+            initialFileName = editSession.displayName,
+            initialLocalPath = if (target is PreviewTarget.LocalFile) {
+                (editSession.origin as? EditOrigin.Local)
+                    ?.path
+                    ?.let(::File)
+                    ?.parentFile
+                    ?.absolutePath
+                    ?: initialLocalSavePath
+            } else {
+                initialLocalSavePath
+            },
+            initialRemotePath = initialRemoteSavePath,
+            remoteConnectionName = remoteConnectionName,
+            loadLocalDirectory = loadLocalSaveDirectory,
+            loadRemoteDirectory = loadRemoteSaveDirectory,
+            onSaveLocal = { directory, name ->
+                showSaveAs = false
+                onSaveEditAsLocal(directory, name)
+            },
+            onSaveRemote = { directory, name ->
+                showSaveAs = false
+                onSaveEditAsRemote(directory, name)
+            },
+            onOpenSystemPicker = {
+                showSaveAs = false
+                launchSystemSaveAs()
+            },
+            onDismiss = { showSaveAs = false },
         )
     }
     if (activeEditState?.confirmDiscard == true) {
@@ -373,6 +446,10 @@ private fun FileContentPreview(
     editState: FileEditUiState?,
     onPrepareEdit: () -> Unit,
     onEditTextChanged: (String) -> Unit,
+    onEditEncodingChanged: (TextEncoding) -> Unit,
+    onEditLineEndingChanged: (LineEnding) -> Unit,
+    onSave: () -> Unit,
+    onSaveAs: () -> Unit,
 ) {
     val context = LocalContext.current
     val displayedSource = editState?.session
@@ -389,6 +466,10 @@ private fun FileContentPreview(
             state = editState,
             onPrepareEdit = onPrepareEdit,
             onTextChanged = onEditTextChanged,
+            onEncodingChanged = onEditEncodingChanged,
+            onLineEndingChanged = onEditLineEndingChanged,
+            onSave = onSave,
+            onSaveAs = onSaveAs,
         )
         else -> PropertiesPreview(displayedSource)
     }
@@ -738,27 +819,37 @@ private fun TextPreview(
     state: FileEditUiState?,
     onPrepareEdit: () -> Unit,
     onTextChanged: (String) -> Unit,
+    onEncodingChanged: (TextEncoding) -> Unit,
+    onLineEndingChanged: (LineEnding) -> Unit,
+    onSave: () -> Unit,
+    onSaveAs: () -> Unit,
 ) {
     LaunchedEffect(state?.sourceKey) {
         if (state?.session == null && state?.preparing != true) onPrepareEdit()
     }
-    Column(modifier = Modifier.fillMaxSize().padding(10.dp)) {
-        LText("UTF-8 · iki 2 MB · redaguojama darbinė kopija", style = MaterialTheme.typography.bodySmall)
-        when {
-            state == null || state.preparing -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
-            state.session == null -> LText(
-                state.error ?: "Nepavyko paruošti vidinio redaktoriaus",
-                modifier = Modifier.padding(top = 12.dp),
-                color = MaterialTheme.colorScheme.error,
-            )
-            else -> OutlinedTextField(
-                value = state.text.orEmpty(),
-                onValueChange = onTextChanged,
-                modifier = Modifier.fillMaxSize().testTag("internal-text-editor"),
-                readOnly = state.saving,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            )
-        }
+    when {
+        state == null || state.preparing -> Column(
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) { CircularProgressIndicator() }
+        state.session == null -> LText(
+            state.error ?: "Nepavyko paruošti vidinio redaktoriaus",
+            modifier = Modifier.fillMaxSize().padding(18.dp),
+            color = MaterialTheme.colorScheme.error,
+        )
+        else -> FullTextEditor(
+            sourceKey = state.sourceKey.orEmpty(),
+            fileName = state.session.displayName,
+            text = state.text.orEmpty(),
+            readOnly = state.saving,
+            encoding = state.encoding ?: TextEncoding.UTF8,
+            lineEnding = state.lineEnding ?: LineEnding.LF,
+            onTextChanged = onTextChanged,
+            onEncodingChanged = onEncodingChanged,
+            onLineEndingChanged = onLineEndingChanged,
+            onSave = onSave,
+            onSaveAs = onSaveAs,
+        )
     }
 }
 
@@ -802,6 +893,44 @@ private fun EditConflictDialog(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = onSaveAs, enabled = !saving) { LText("Išsaugoti kaip") }
                 TextButton(onClick = onKeepEditing, enabled = !saving) { LText("Tęsti redagavimą") }
+            }
+        },
+    )
+}
+
+@Composable
+private fun EditSaveAsConflictDialog(
+    conflict: EditSaveAsConflict,
+    saving: Boolean,
+    onReplace: () -> Unit,
+    onKeepBoth: () -> Unit,
+    onChooseAnother: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { LText("Paskirties failas jau yra") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LText("AF File Manager nieko neperrašė. Pasirinkite, kaip išspręsti konfliktą.")
+                Text(conflict.destination.label, style = MaterialTheme.typography.bodySmall)
+                PropertyRow("Esamo failo dydis", FileSystemRules.humanBytes(conflict.existing.sizeBytes))
+                conflict.existing.modifiedAtMillis?.let { modified ->
+                    PropertyRow("Esamas failas pakeistas", DateFormat.getDateTimeInstance().format(Date(modified)))
+                }
+                conflict.existing.sha256?.let { sha ->
+                    PropertyRow("Esamo failo SHA-256", sha.take(16) + "…")
+                }
+                LText("„Perrašyti“ saugiai pakeis esamą failą. „Palikti abu“ parinks laisvą pavadinimą.")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onReplace, enabled = !saving) { LText("Perrašyti") }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                TextButton(onClick = onKeepBoth, enabled = !saving) { LText("Palikti abu") }
+                TextButton(onClick = onChooseAnother, enabled = !saving) { LText("Rinktis kitur") }
             }
         },
     )
