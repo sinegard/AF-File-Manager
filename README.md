@@ -1,6 +1,10 @@
 # AF File Manager
 
-AF File Manager is a privacy-first Android file manager with no ads, tracking SDKs, or mandatory account. It is built with Kotlin and Jetpack Compose for phones and tablets.
+**AF stands for Ad Free.**
+
+I started AF File Manager because I wanted a capable file manager for my own phone without banners, pop-ups, tracking, or an account. Too many otherwise useful file managers turn basic tasks into advertising space. This is simply the file manager I wanted to use myself, shared so other people can use it too.
+
+AF File Manager is built with Kotlin and Jetpack Compose for Android phones and tablets. It has no ads, analytics, telemetry, or tracking SDKs.
 
 ## Highlights
 
@@ -9,7 +13,7 @@ AF File Manager is a privacy-first Android file manager with no ads, tracking SD
 - local copy, move, rename, batch rename, recoverable trash, operation queue, pause/resume, retry, and SHA-256 verification;
 - continuous PDF viewing, image zoom, media/text/APK previews, Android `Open with`, and archive browsing;
 - a full built-in text and code editor with line numbers, syntax highlighting, find/replace, undo/redo, go-to-line, configurable wrapping and text size, UTF-8/UTF-16/Windows-1252/ISO-8859-1 support, and LF/CRLF/CR preservation;
-- transparent local and remote editing through private working copies, explicit Save or Save As to the phone, Android document providers, or the active server, revision conflicts, SHA-256 verification, and remote rollback protection;
+- transparent local and remote editing through private working copies, explicit Save or Save As to the phone, Android document providers, or the active server, revision conflicts, SHA-256 verification, remote rollback protection, and automatic removal of temporary remote-edit downloads;
 - ZIP, 7z, RAR, TAR, TAR.GZ, and GZIP support with extraction safety limits;
 - scoped search, saved searches, tags, ratings, folder-size analysis, large files, empty folders, and duplicate detection;
 - SMB 2/3, SFTP, HTTPS WebDAV, FTP, and FTPS connections with bidirectional recursive transfers;
@@ -25,9 +29,13 @@ AF File Manager is a privacy-first Android file manager with no ads, tracking SD
 
 The interface starts in English and can be switched to Lithuanian in **More → Language**. File names, folder names, paths, server names, and user-entered text are never translated.
 
-## Free and open source
+## Free for non-commercial use
 
-AF File Manager is fully open source and free of charge under the [MIT License](LICENSE). You may use, copy, modify, publish, distribute, sublicense, or sell copies, including for commercial purposes, subject to the license notice requirement.
+AF File Manager and its source code are available at no charge for personal and other non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may inspect the code, build it, change it, and share it as the license allows.
+
+Commercial use is not included. If you want to use AF File Manager for a commercial product, service, or business purpose, ask for separate permission first.
+
+The source is public, but the commercial-use restriction means this is **source-available software**, not open-source software in the OSI sense. Earlier releases remain governed by the license included with each of those releases.
 
 The software is provided **as is**, without warranty. The authors and copyright holders accept no liability for claims, damage, data loss, or other consequences arising from the software or its use. The complete legally controlling terms are in [LICENSE](LICENSE).
 

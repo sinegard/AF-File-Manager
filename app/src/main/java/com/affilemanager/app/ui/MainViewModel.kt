@@ -238,6 +238,7 @@ data class SyncUiState(
 
 data class FileEditUiState(
     val sourceKey: String? = null,
+    val temporaryDownload: Boolean = false,
     val session: EditSession? = null,
     val text: String? = null,
     val stagedText: String? = null,
@@ -1118,7 +1119,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
         val previousSession = existing.session
-        _fileEditState.value = FileEditUiState(sourceKey = source.key, preparing = true)
+        val temporaryDownload = source is PreviewSource.Remote
+        _fileEditState.value = FileEditUiState(
+            sourceKey = source.key,
+            temporaryDownload = temporaryDownload,
+            preparing = true,
+        )
         fileEditJob = viewModelScope.launch {
             var prepared: EditSession? = null
             try {
@@ -1168,6 +1174,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _fileEditState.value = FileEditUiState(
                     sourceKey = source.key,
+                    temporaryDownload = temporaryDownload,
                     session = prepared,
                     text = document?.text,
                     stagedText = document?.text,
@@ -1177,6 +1184,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     stagedLineEnding = document?.lineEnding,
                     status = if (internalTextEditor) "Paruošta redaguoti" else "Redaguojama kopija paruošta",
                 )
+                if (source is PreviewSource.Remote) {
+                    val removed = withContext(Dispatchers.IO) { remotePreviewCache.discard(source.cachedFile) }
+                    if (!removed) message("Laikinos pradinio failo kopijos pašalinti nepavyko", true)
+                }
             } catch (cancelled: CancellationException) {
                 withContext(NonCancellable + Dispatchers.IO) { graph.editSessions.discard(prepared) }
                 throw cancelled
@@ -1184,6 +1195,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) { graph.editSessions.discard(prepared) }
                 _fileEditState.value = FileEditUiState(
                     sourceKey = source.key,
+                    temporaryDownload = temporaryDownload,
                     error = error.message ?: "Nepavyko paruošti redaguojamos kopijos",
                 )
             } finally {
@@ -1277,10 +1289,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val saved = withContext(Dispatchers.IO) {
                             graph.editSessions.markOriginSaved(session, result.revision)
                         }
+                        val completionStatus = result.warning ?: "Išsaugota pradinėje vietoje"
                         var shouldClose = false
                         _fileEditState.update { current ->
                             if (current.session?.id == session.id) {
-                                shouldClose = current.closeAfterSave
+                                shouldClose = EditSessionLifecycleRules.closeAfterSuccessfulSave(
+                                    temporaryDownload = current.temporaryDownload,
+                                    closeRequested = current.closeAfterSave,
+                                )
                                 current.copy(
                                     session = saved,
                                     saving = false,
@@ -1290,12 +1306,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     conflict = null,
                                     saveAsConflict = null,
                                     closeAfterSave = false,
-                                    status = result.warning ?: "Išsaugota pradinėje vietoje",
+                                    status = completionStatus,
                                     error = null,
                                 )
                             } else current
                         }
                         if (shouldClose) {
+                            message(completionStatus)
                             fileEditJob = null
                             closePreviewImmediately()
                         }
@@ -1352,10 +1369,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         savedRevision = verified,
                     )
                 }
+                val completionStatus = "Išsaugota pasirinktoje vietoje"
                 var shouldClose = false
                 _fileEditState.update { current ->
                     if (current.session?.id == session.id) {
-                        shouldClose = current.closeAfterSave
+                        shouldClose = EditSessionLifecycleRules.closeAfterSuccessfulSave(
+                            temporaryDownload = current.temporaryDownload,
+                            closeRequested = current.closeAfterSave,
+                        )
                         current.copy(
                             session = saved,
                             saving = false,
@@ -1372,6 +1393,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else current
                 }
                 if (shouldClose) {
+                    message(completionStatus)
                     fileEditJob = null
                     closePreviewImmediately()
                 }
@@ -1512,10 +1534,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val saved = withContext(Dispatchers.IO) {
                             graph.editSessions.rebaseOrigin(session, result.destination, result.revision)
                         }
+                        val completionStatus = result.warning ?: "Išsaugota kaip ${result.destination.label}"
                         var shouldClose = false
                         _fileEditState.update { current ->
                             if (current.session?.id == session.id) {
-                                shouldClose = current.closeAfterSave
+                                shouldClose = EditSessionLifecycleRules.closeAfterSuccessfulSave(
+                                    temporaryDownload = current.temporaryDownload,
+                                    closeRequested = current.closeAfterSave,
+                                )
                                 current.copy(
                                     session = saved,
                                     saving = false,
@@ -1540,6 +1566,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             is EditDestination.Content -> Unit
                         }
                         if (shouldClose) {
+                            message(completionStatus)
                             fileEditJob = null
                             closePreviewImmediately()
                         }
@@ -2970,8 +2997,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         cancelRemoteFileOpen()
         fileEditRequestId += 1
         fileEditJob?.cancel()
-        graph.editSessions.discard(_fileEditState.value.session)
+        val editSession = _fileEditState.value.session
+        val previewTarget = _preview.value
         _fileEditState.value = FileEditUiState()
+        _preview.value = null
+        graph.applicationScope.launch {
+            graph.editSessions.discard(editSession)
+            remotePreviewCache.discard(previewTarget.remoteCachedFile())
+        }
         remoteClient?.let { client -> graph.applicationScope.launch { client.close() } }
         remoteClient = null
         super.onCleared()
@@ -3103,9 +3136,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fileEditJob?.cancel()
         fileEditJob = null
         val session = _fileEditState.value.session
+        val target = _preview.value
         _fileEditState.value = FileEditUiState()
         _preview.value = null
-        viewModelScope.launch(Dispatchers.IO) { graph.editSessions.discard(session) }
+        graph.applicationScope.launch {
+            val editRemoved = graph.editSessions.discard(session)
+            val previewRemoved = remotePreviewCache.discard(target.remoteCachedFile())
+            if (!editRemoved || !previewRemoved) {
+                message("Laikinos redagavimo kopijos pašalinti nepavyko", true)
+            }
+        }
+    }
+
+    private fun PreviewTarget?.remoteCachedFile(): File? = when (this) {
+        is PreviewTarget.RemoteFile -> cachedFile
+        is PreviewTarget.RemoteArchive -> file.file
+        else -> null
     }
 
     private fun saveContentOrigin(session: EditSession, forceOverwrite: Boolean): EditSaveResult {

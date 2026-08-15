@@ -6,6 +6,8 @@ AF File Manager has no advertising, analytics, telemetry, tracking SDK, or manda
 
 Thumbnails and file icons are generated on the device. File content is not sent over the network for preview generation, and the thumbnail cache is not written to disk.
 
+Files opened from a remote server are staged temporarily in the app's private cache. When editing starts, the redundant preview download is removed as soon as the private working copy is ready. Closing the preview or successfully saving a remote edit removes the remaining temporary copy. A separate file remains only when the user deliberately chooses a destination through Save as or a normal transfer. Stale staging files from an interrupted app process are removed the next time the app starts.
+
 The app stores the following locally:
 
 - user tags, history, saved searches, Storage Access Framework locations, and synchronization schedules;
@@ -30,4 +32,4 @@ Removing a network profile also removes its encrypted credential entry. Removing
 
 ## License and responsibility
 
-AF File Manager is free and open-source software under the [MIT License](LICENSE). It is provided as is, without warranty or liability, as stated in the license.
+AF File Manager is source-available and free of charge for non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). It is provided as is, without warranty or liability, as stated in the license.

@@ -17,6 +17,7 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 - Network passwords and private SSH keys are encrypted before storage with an AES-GCM key held by `AndroidKeyStore`.
 - Secret character and byte arrays are cleared after use where JVM and Android APIs permit it.
 - Thumbnails are generated locally and kept only in a process-memory LRU cache capped at 24 MiB. The app does not build a persistent thumbnail database or silently index the entire device.
+- Remote previews and editable working copies use bounded app-private staging. Redundant downloads are removed when editing starts, the remaining temporary copy is removed when the preview closes or a remote edit is saved, and stale staging is purged on the next app start.
 - SFTP host keys are verified by SHA-256 fingerprint. Trust on first use is available only after an explicit choice; the first key is stored and a later key change is blocked.
 - WebDAV requires HTTPS. FTPS validates the certificate chain and endpoint name. Plain FTP is intentionally an insecure legacy protocol and should never be used on an untrusted network.
 - The local terminal is a bounded PTY session running `/system/bin/sh` under the app's normal Android UID and SELinux policy. It never grants root, Shizuku, or ADB privileges.
@@ -47,4 +48,4 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 
 ## Warranty and liability
 
-AF File Manager is distributed under the [MIT License](LICENSE). It is provided **as is**, without warranty of any kind, and the authors or copyright holders are not liable for claims, damages, or other liability arising from the software or its use. See [LICENSE](LICENSE) for the complete terms.
+AF File Manager is distributed for non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). It is provided **as is**, without warranty of any kind, and the licensor is not liable for damages arising from the software or its use to the extent allowed by law. See [LICENSE](LICENSE) for the complete terms.

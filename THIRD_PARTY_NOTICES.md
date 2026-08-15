@@ -18,4 +18,4 @@ ConnectBot Terminal embeds libvterm for terminal emulation.
 - Copyright Paul Evans and contributors
 - License: MIT
 
-The notices above do not change AF File Manager's MIT license. Each third-party component remains governed by its own license.
+The notices above do not change AF File Manager's [PolyForm Noncommercial License 1.0.0](LICENSE). Each third-party component remains governed by its own license.

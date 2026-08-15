@@ -617,6 +617,7 @@ object UiTranslator {
         "Redaguojama kopija paruošta" to "The editable copy is ready",
         "Išsaugota pradinėje vietoje" to "Saved to the original location",
         "Patikrinta kopija išsaugota pasirinktoje vietoje" to "A verified copy was saved to the selected location",
+        "Išsaugota pasirinktoje vietoje" to "Saved to the selected location",
         "Išsaugota pasirinktoje vietoje; tai dabar aktyvus failas" to "Saved to the selected location; this is now the active file",
         "Išorinis redaktorius uždarytas nepakeitus turinio" to "The external editor closed without content changes",
         "Išorinio redaktoriaus pakeitimus galima išsaugoti" to "External editor changes are ready to save",
@@ -627,6 +628,8 @@ object UiTranslator {
         "Originalas skirtas tik skaityti; naudokite „Išsaugoti kaip“" to "The original is read-only; use Save as",
         "Pasirinkta vieta neįrašoma per Android dokumentų sistemą" to "The selected destination is not writable through Android Documents",
         "Išsaugotos kopijos patikra nepavyko" to "Saved-copy verification failed",
+        "Laikinos pradinio failo kopijos pašalinti nepavyko" to "The temporary source copy could not be removed",
+        "Laikinos redagavimo kopijos pašalinti nepavyko" to "The temporary editing copy could not be removed",
         "Išsaugoto failo patikra nepavyko" to "Saved-file verification failed",
         "Išsaugoto failo patikrinti nepavyko" to "The saved file could not be verified",
         "Pasirinkta vieta nesuteikė įrašomo srauto" to "The selected location did not provide a writable stream",
@@ -689,6 +692,7 @@ object UiTranslator {
             Regex("^Pažymėta simbolių: (\\d+)$") to { match: MatchResult -> "${match.groupValues[1]} selected" },
             Regex("^Pakeista: (\\d+)$") to { match: MatchResult -> "Replaced: ${match.groupValues[1]}" },
             Regex("^Išsaugota kaip (.+); tai dabar aktyvus failas$") to { match: MatchResult -> "Saved as ${match.groupValues[1]}; this is now the active file" },
+            Regex("^Išsaugota kaip (.+)$") to { match: MatchResult -> "Saved as ${match.groupValues[1]}" },
             Regex("^Prieš išsaugodami pradiniame serveryje vėl prisijunkite prie (.+)$") to { match: MatchResult ->
                 "Reconnect to ${match.groupValues[1]} before saving to the original server"
             },
