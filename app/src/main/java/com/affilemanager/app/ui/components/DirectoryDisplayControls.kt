@@ -1,0 +1,146 @@
+package com.affilemanager.app.ui.components
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
+
+/**
+ * The same view-mode control is used for every local and remote directory.
+ * A tap switches between list and grid; a long press opens the full settings.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun DirectoryLayoutButton(
+    grid: Boolean,
+    testTag: String,
+    onToggleLayout: () -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val toggleLabel = uiText(if (grid) "Rodyti sąrašą" else "Rodyti tinklelį")
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .testTag(testTag)
+            .clip(CircleShape)
+            .combinedClickable(
+                onClickLabel = toggleLabel,
+                onLongClickLabel = uiText("Rodinio nustatymai"),
+                onClick = onToggleLayout,
+                onLongClick = onOpenSettings,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView,
+            contentDescription = toggleLabel,
+        )
+    }
+}
+
+/** Common directory-view actions shared by local and remote folder menus. */
+@Composable
+fun DirectoryDisplayMenuItems(
+    grid: Boolean,
+    includeHidden: Boolean,
+    showThumbnails: Boolean,
+    thumbnailsAvailable: Boolean,
+    sortMode: SortMode,
+    sortDirection: SortDirection,
+    displaySettingsTestTag: String,
+    onToggleHidden: () -> Unit,
+    onToggleLayout: () -> Unit,
+    onToggleThumbnails: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onSort: (SortMode) -> Unit,
+    onDismissMenu: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { LText(if (includeHidden) "Slėpti paslėptus failus" else "Rodyti paslėptus failus") },
+        leadingIcon = {
+            Icon(if (includeHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, contentDescription = null)
+        },
+        onClick = {
+            onDismissMenu()
+            onToggleHidden()
+        },
+    )
+    DropdownMenuItem(
+        text = { LText(if (grid) "Rodyti sąrašą" else "Rodyti tinklelį") },
+        leadingIcon = {
+            Icon(if (grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView, contentDescription = null)
+        },
+        onClick = {
+            onDismissMenu()
+            onToggleLayout()
+        },
+    )
+    DropdownMenuItem(
+        text = { LText(if (showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras") },
+        leadingIcon = {
+            Icon(
+                if (showThumbnails) Icons.AutoMirrored.Rounded.InsertDriveFile else Icons.Rounded.PhotoLibrary,
+                contentDescription = null,
+            )
+        },
+        enabled = thumbnailsAvailable,
+        onClick = {
+            onDismissMenu()
+            onToggleThumbnails()
+        },
+    )
+    DropdownMenuItem(
+        text = { LText("Rodinio nustatymai") },
+        leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
+        modifier = Modifier.testTag(displaySettingsTestTag),
+        onClick = {
+            onDismissMenu()
+            onOpenSettings()
+        },
+    )
+    SortMode.entries.forEach { mode ->
+        val currentSuffix = if (sortMode == mode) {
+            if (sortDirection == SortDirection.ASCENDING) " ↑" else " ↓"
+        } else {
+            ""
+        }
+        DropdownMenuItem(
+            text = { LText("${sortLabel(mode)}$currentSuffix") },
+            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = null) },
+            onClick = {
+                onDismissMenu()
+                onSort(mode)
+            },
+        )
+    }
+}
+
+private fun sortLabel(mode: SortMode): String = when (mode) {
+    SortMode.NAME -> "Pagal pavadinimą"
+    SortMode.MODIFIED -> "Pagal datą"
+    SortMode.SIZE -> "Pagal dydį"
+    SortMode.TYPE -> "Pagal tipą"
+}

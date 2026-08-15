@@ -5,6 +5,7 @@ import com.affilemanager.app.archive.ArchiveEngine
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.data.ContentFileRepository
 import com.affilemanager.app.data.NavigationRepository
+import com.affilemanager.app.data.RecentFileRepository
 import com.affilemanager.app.data.SafFileRepository
 import com.affilemanager.app.data.TrashRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
@@ -26,6 +27,7 @@ import com.affilemanager.app.security.FileVaultEngine
 import com.affilemanager.app.sync.SyncEngine
 import com.affilemanager.app.sync.SyncScheduleRepository
 import com.affilemanager.app.update.AppUpdateManager
+import com.affilemanager.app.ui.theme.AppearanceRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,8 +51,10 @@ class AFFileManagerApplication : Application() {
 class AppGraph(application: Application) {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val localFiles = LocalFileRepository(application)
+    val recentFiles = RecentFileRepository(application, localFiles)
     val contentFiles = ContentFileRepository(application)
     val navigation = NavigationRepository(application)
+    val appearance = AppearanceRepository(application)
     val workspaceSession = WorkspaceSessionRepository(application)
     val fileTags = FileTagRepository.forApp(application)
     val editSessions = EditSessionStore(application.cacheDir)

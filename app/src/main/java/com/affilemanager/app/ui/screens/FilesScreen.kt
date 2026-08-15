@@ -1,7 +1,10 @@
 package com.affilemanager.app.ui.screens
 
 import android.os.Environment
+import android.text.format.DateUtils
 import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,10 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
-import androidx.compose.material.icons.automirrored.rounded.List
-import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.automirrored.rounded.Undo
-import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.automirrored.rounded.CompareArrows
 import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.rounded.ArrowUpward
@@ -53,11 +54,10 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.GridView
-import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.ContentPaste
@@ -66,10 +66,9 @@ import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -127,11 +126,13 @@ import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortMode
-import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.StorageRoot
 import com.affilemanager.app.data.PanelWorkspace
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.FileTagDefinition
 import com.affilemanager.app.data.RecentItem
+import com.affilemanager.app.data.RecentFileItem
 import com.affilemanager.app.data.TaggedFileRecord
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.FileScrollKey
@@ -139,6 +140,9 @@ import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.PanelUiState
 import com.affilemanager.app.ui.PanelComparisonStatus
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryLayoutButton
+import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.localization.LText
@@ -149,6 +153,7 @@ import com.affilemanager.app.operations.TransferVerification
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
+import kotlin.math.roundToInt
 
 @Composable
 fun FilesScreen(
@@ -162,6 +167,8 @@ fun FilesScreen(
     val leftTabs by viewModel.leftTabs.collectAsStateWithLifecycle()
     val rightTabs by viewModel.rightTabs.collectAsStateWithLifecycle()
     val roots by viewModel.roots.collectAsStateWithLifecycle()
+    val recentFiles by viewModel.recentFiles.collectAsStateWithLifecycle()
+    val filesHomeDisplaySettings by viewModel.filesHomeDisplaySettings.collectAsStateWithLifecycle()
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
@@ -176,6 +183,8 @@ fun FilesScreen(
     var archivePanel by remember { mutableStateOf<PanelId?>(null) }
     var pastePanel by remember { mutableStateOf<PanelId?>(null) }
     var tagPanel by remember { mutableStateOf<PanelId?>(null) }
+    var displayPanel by remember { mutableStateOf<PanelId?>(null) }
+    var showHomeDisplaySettings by remember { mutableStateOf(false) }
     val clipboardAvailable = clipboard != null || remoteClipboard != null
 
     LaunchedEffect(clipboardAvailable) {
@@ -236,7 +245,6 @@ fun FilesScreen(
             },
     ) {
         val dualPane = maxWidth >= 780.dp
-        val compactToolbar = (if (dualPane) maxWidth / 2 else maxWidth) < 600.dp
         Column(modifier = Modifier.fillMaxSize()) {
             if (!hasAllFilesAccess) {
                 PermissionBanner(onRequestAllFilesAccess)
@@ -244,7 +252,15 @@ fun FilesScreen(
             if (filesHomeVisible) {
                 FilesHome(
                     roots = roots,
+                    recentFiles = recentFiles.items,
+                    recentFilesLoading = recentFiles.loading,
+                    recentFilesError = recentFiles.error,
+                    displaySettings = filesHomeDisplaySettings,
                     onOpen = { path -> viewModel.navigate(activePanel, path) },
+                    onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
+                    onRefreshRecent = viewModel::refreshRecentFiles,
+                    onToggleLayout = viewModel::toggleFilesHomeLayout,
+                    onConfigureLayout = { showHomeDisplaySettings = true },
                 )
             } else if (dualPane) {
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -255,7 +271,6 @@ fun FilesScreen(
                         active = activePanel == PanelId.LEFT,
                         clipboardAvailable = clipboardAvailable,
                         batchRenameUndoAvailable = renameUndo != null,
-                        compactToolbar = compactToolbar,
                         modifier = Modifier.weight(1f),
                         viewModel = viewModel,
                         onCreate = { createFor = PanelId.LEFT },
@@ -266,6 +281,7 @@ fun FilesScreen(
                         onCopyToOther = { viewModel.copySelection(PanelId.LEFT, move = false); pastePanel = PanelId.RIGHT },
                         onPaste = { pastePanel = PanelId.LEFT },
                         onUndoBatchRename = viewModel::undoBatchRename,
+                        onDisplaySettings = { displayPanel = PanelId.LEFT },
                     )
                     VerticalDivider(modifier = Modifier.fillMaxHeight().width(1.dp))
                     FilePanel(
@@ -275,7 +291,6 @@ fun FilesScreen(
                         active = activePanel == PanelId.RIGHT,
                         clipboardAvailable = clipboardAvailable,
                         batchRenameUndoAvailable = renameUndo != null,
-                        compactToolbar = compactToolbar,
                         modifier = Modifier.weight(1f),
                         viewModel = viewModel,
                         onCreate = { createFor = PanelId.RIGHT },
@@ -286,6 +301,7 @@ fun FilesScreen(
                         onCopyToOther = { viewModel.copySelection(PanelId.RIGHT, move = false); pastePanel = PanelId.LEFT },
                         onPaste = { pastePanel = PanelId.RIGHT },
                         onUndoBatchRename = viewModel::undoBatchRename,
+                        onDisplaySettings = { displayPanel = PanelId.RIGHT },
                     )
                 }
             } else {
@@ -297,7 +313,6 @@ fun FilesScreen(
                     active = true,
                     clipboardAvailable = clipboardAvailable,
                     batchRenameUndoAvailable = renameUndo != null,
-                    compactToolbar = compactToolbar,
                     modifier = Modifier.fillMaxSize(),
                     viewModel = viewModel,
                     onCreate = { createFor = activePanel },
@@ -311,6 +326,7 @@ fun FilesScreen(
                     },
                     onPaste = { pastePanel = activePanel },
                     onUndoBatchRename = viewModel::undoBatchRename,
+                    onDisplaySettings = { displayPanel = activePanel },
                 )
             }
         }
@@ -404,6 +420,30 @@ fun FilesScreen(
             },
         )
     }
+    displayPanel?.let { panel ->
+        val state = if (panel == PanelId.LEFT) left else right
+        DirectoryDisplaySettingsDialog(
+            initialSettings = state.toDirectoryDisplaySettings(),
+            thumbnailsAvailable = true,
+            onDismiss = { displayPanel = null },
+            onApply = { settings ->
+                viewModel.setDirectoryDisplaySettings(panel, settings)
+                displayPanel = null
+            },
+        )
+    }
+    if (showHomeDisplaySettings) {
+        DirectoryDisplaySettingsDialog(
+            initialSettings = filesHomeDisplaySettings,
+            thumbnailsAvailable = false,
+            gridColumnRange = 4..6,
+            onDismiss = { showHomeDisplaySettings = false },
+            onApply = { settings ->
+                viewModel.setFilesHomeDisplaySettings(settings)
+                showHomeDisplaySettings = false
+            },
+        )
+    }
     if (panelComparison.open) {
         var onlyDifferences by remember(panelComparison.leftPath, panelComparison.rightPath) { mutableStateOf(true) }
         val visibleEntries = if (onlyDifferences) {
@@ -476,15 +516,27 @@ private fun PermissionBanner(onRequest: () -> Unit) {
 @Composable
 private fun FilesHome(
     roots: List<StorageRoot>,
+    recentFiles: List<RecentFileItem>,
+    recentFilesLoading: Boolean,
+    recentFilesError: String?,
+    displaySettings: DirectoryDisplaySettings,
     onOpen: (String) -> Unit,
+    onOpenRecent: (FileEntry) -> Unit,
+    onRefreshRecent: () -> Unit,
+    onToggleLayout: () -> Unit,
+    onConfigureLayout: () -> Unit,
 ) {
     val quickLocations = remember {
         listOf(
             QuickLocation("Atsisiuntimai", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath, Icons.Rounded.Download),
             QuickLocation("Dokumentai", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).absolutePath, Icons.Rounded.Description),
             QuickLocation("Nuotraukos", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).absolutePath, Icons.Rounded.PhotoLibrary),
+            QuickLocation("Vaizdo įrašai", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).absolutePath, Icons.Rounded.VideoLibrary),
+            QuickLocation("Muzika", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).absolutePath, Icons.Rounded.MusicNote),
         ).filter { File(it.path).isDirectory }
     }
+
+    var showAllRecent by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -500,31 +552,181 @@ private fun FilesHome(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LText("Naujausi failai", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                if (recentFiles.isNotEmpty()) {
+                    TextButton(onClick = { showAllRecent = true }) { LText("Rodyti visus") }
+                }
+                IconButton(onClick = onRefreshRecent, enabled = !recentFilesLoading) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti naujausius failus"))
+                }
+            }
+            when {
+                recentFilesLoading && recentFiles.isEmpty() -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                recentFilesError != null -> LText(
+                    recentFilesError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                recentFiles.isEmpty() -> LText(
+                    "Naujausių failų dar nėra",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> LazyRow(
+                    modifier = Modifier.fillMaxWidth().testTag("recent_files_row"),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                ) {
+                    items(recentFiles.take(8), key = { it.entry.absolutePath }) { item ->
+                        RecentFileCard(item = item, onOpen = { onOpenRecent(item.entry) })
+                    }
+                }
+            }
+
             LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             roots.forEach { root ->
+                val usageFraction = root.totalBytes.takeIf { it > 0L }?.let { total ->
+                    (total - root.freeBytes).coerceIn(0L, total).toFloat() / total.toFloat()
+                }
                 StorageLocationCard(
                     title = if (root.removable) root.title.ifBlank { "Išimama saugykla" } else "Vidinė atmintis",
                     description = "${FileSystemRules.humanBytes(root.freeBytes)} laisva iš ${FileSystemRules.humanBytes(root.totalBytes)}",
                     icon = if (root.removable) Icons.Rounded.SdStorage else Icons.Rounded.Storage,
+                    usageFraction = usageFraction,
                     onClick = { onOpen(root.path) },
                 )
             }
 
             if (quickLocations.isNotEmpty()) {
-                LText("Greitos vietos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-                quickLocations.forEach { location ->
-                    StorageLocationCard(
-                        title = location.title,
-                        description = location.path,
-                        icon = location.icon,
-                        onClick = { onOpen(location.path) },
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LText("Greitos vietos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    DirectoryLayoutButton(
+                        grid = displaySettings.layoutMode == DirectoryLayoutMode.GRID,
+                        testTag = "home_layout_toggle",
+                        onToggleLayout = onToggleLayout,
+                        onOpenSettings = onConfigureLayout,
                     )
+                }
+                if (displaySettings.layoutMode == DirectoryLayoutMode.GRID) {
+                    val columns = displaySettings.gridColumns.coerceIn(4, 6)
+                    val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
+                    quickLocations.chunked(columns).forEach { rowLocations ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                            rowLocations.forEach { location ->
+                                QuickLocationTile(
+                                    location = location,
+                                    iconScalePercent = displaySettings.iconScalePercent,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { onOpen(location.path) },
+                                )
+                            }
+                            repeat(columns - rowLocations.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                } else {
+                    quickLocations.forEach { location ->
+                        StorageLocationCard(
+                            title = location.title,
+                            description = location.path,
+                            icon = location.icon,
+                            onClick = { onOpen(location.path) },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(76.dp))
         }
     }
+
+    if (showAllRecent) {
+        AlertDialog(
+            onDismissRequest = { showAllRecent = false },
+            title = { LText("Naujausi failai") },
+            text = {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).testTag("recent_files_all"),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(recentFiles, key = { it.entry.absolutePath }) { item ->
+                        RecentFileListItem(
+                            item = item,
+                            onOpen = {
+                                showAllRecent = false
+                                onOpenRecent(item.entry)
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAllRecent = false }) { LText("Uždaryti") } },
+        )
+    }
 }
+
+@Composable
+private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
+    ElevatedCard(onClick = onOpen, modifier = Modifier.width(188.dp).height(172.dp)) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            LocalFileVisual(
+                entry = item.entry,
+                targetWidth = 72.dp,
+                targetHeight = 68.dp,
+                showThumbnails = true,
+                modifier = Modifier.fillMaxWidth().height(68.dp),
+            )
+            Text(item.entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(FileSystemRules.humanBytes(item.entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.weight(1f))
+                Text(recentTimeLabel(item.recentAtMillis), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
+    ElevatedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            LocalFileVisual(
+                entry = item.entry,
+                targetWidth = 44.dp,
+                targetHeight = 44.dp,
+                showThumbnails = true,
+                modifier = Modifier.size(44.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "${FileSystemRules.humanBytes(item.entry.sizeBytes)} · ${recentTimeLabel(item.recentAtMillis)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+private fun recentTimeLabel(timestampMillis: Long): String = DateUtils.getRelativeTimeSpanString(
+    timestampMillis,
+    System.currentTimeMillis(),
+    DateUtils.MINUTE_IN_MILLIS,
+    DateUtils.FORMAT_ABBREV_RELATIVE,
+).toString()
 
 private data class QuickLocation(
     val title: String,
@@ -533,12 +735,44 @@ private data class QuickLocation(
 )
 
 @Composable
+private fun QuickLocationTile(
+    location: QuickLocation,
+    iconScalePercent: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val iconSize = (32f * iconScalePercent / 100f).dp
+    ElevatedCard(onClick = onClick, modifier = modifier.height(92.dp)) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 9.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(location.icon, contentDescription = null, modifier = Modifier.size(iconSize), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(5.dp))
+            LText(
+                location.title,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun StorageLocationCard(
     title: String,
     description: String,
     icon: ImageVector,
+    usageFraction: Float? = null,
     onClick: () -> Unit,
 ) {
+    val animatedUsage by animateFloatAsState(
+        targetValue = usageFraction?.coerceIn(0f, 1f) ?: 0f,
+        animationSpec = spring(),
+        label = "storage usage",
+    )
     ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
@@ -555,10 +789,34 @@ private fun StorageLocationCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                usageFraction?.let {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        LinearProgressIndicator(
+                            progress = { animatedUsage },
+                            modifier = Modifier.weight(1f).height(10.dp).padding(top = 3.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        )
+                        LText(
+                            "${(it.coerceIn(0f, 1f) * 100f).roundToInt()}% užimta",
+                            modifier = Modifier.padding(start = 9.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
             }
         }
     }
 }
+
+private fun PanelUiState.toDirectoryDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
+    layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+    iconScalePercent = iconScalePercent,
+    spacingScalePercent = spacingScalePercent,
+    gridColumns = gridColumns,
+    showThumbnails = showThumbnails,
+)
 
 @Composable
 private fun FilePanel(
@@ -568,7 +826,6 @@ private fun FilePanel(
     active: Boolean,
     clipboardAvailable: Boolean,
     batchRenameUndoAvailable: Boolean,
-    compactToolbar: Boolean,
     modifier: Modifier,
     viewModel: MainViewModel,
     onCreate: () -> Unit,
@@ -579,9 +836,8 @@ private fun FilePanel(
     onCopyToOther: () -> Unit,
     onPaste: () -> Unit,
     onUndoBatchRename: () -> Unit,
+    onDisplaySettings: () -> Unit,
 ) {
-    var sortMenu by remember { mutableStateOf(false) }
-    var quickMenu by remember { mutableStateOf(false) }
     var compactMenu by remember { mutableStateOf(false) }
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val recents by viewModel.recents.collectAsStateWithLifecycle()
@@ -664,96 +920,26 @@ private fun FilePanel(
                     )
                     Text(state.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (compactToolbar) {
-                    CompactPanelActions(
-                        expanded = compactMenu,
-                        onExpandedChange = { compactMenu = it },
-                        panelId = panelId,
-                        state = state,
-                        favorites = favorites,
-                        recents = recents,
-                        clipboardAvailable = clipboardAvailable,
-                        batchRenameUndoAvailable = batchRenameUndoAvailable,
-                        viewModel = viewModel,
-                        onPaste = onPaste,
-                        onUndoBatchRename = onUndoBatchRename,
-                    )
-                } else {
-                if (clipboardAvailable) {
-                    IconButton(onClick = onPaste) { Icon(Icons.Rounded.ContentPaste, contentDescription = uiText("Įklijuoti")) }
-                }
-                if (batchRenameUndoAvailable) {
-                    IconButton(onClick = onUndoBatchRename) {
-                        Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = uiText("Atšaukti paskutinį masinį pervadinimą"))
-                    }
-                }
-                IconButton(onClick = { viewModel.toggleFavorite(state.path) }) {
-                    Icon(
-                        if (state.path in favorites) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                        contentDescription = uiText(if (state.path in favorites) "Pašalinti žymą" else "Pridėti žymą"),
-                    )
-                }
-                Box {
-                    IconButton(onClick = { quickMenu = true }) { Icon(Icons.Rounded.History, contentDescription = uiText("Žymos ir istorija")) }
-                    DropdownMenu(expanded = quickMenu, onDismissRequest = { quickMenu = false }) {
-                        if (favorites.isEmpty() && recents.isEmpty()) {
-                            DropdownMenuItem(text = { LText("Žymų ir istorijos dar nėra") }, onClick = { quickMenu = false })
-                        }
-                        favorites.take(12).forEach { path ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        LText("★ ${File(path).name.ifBlank { path }}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Text(path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                },
-                                onClick = { viewModel.openQuickPath(path, panelId); quickMenu = false },
-                            )
-                        }
-                        recents.take(12).forEach { recent ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(File(recent.path).name.ifBlank { recent.path }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        LText("Neseniai · ${recent.path}", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                },
-                                onClick = { viewModel.openQuickPath(recent.path, panelId); quickMenu = false },
-                            )
-                        }
-                    }
-                }
-                IconButton(onClick = { viewModel.toggleHidden(panelId) }) {
-                    Icon(
-                        if (state.includeHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
-                        contentDescription = uiText("Paslėpti failai"),
-                    )
-                }
-                IconButton(onClick = { viewModel.toggleGrid(panelId) }) {
-                    Icon(if (state.grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView, contentDescription = uiText("Rodinys"))
-                }
-                IconButton(onClick = { viewModel.toggleThumbnails(panelId) }) {
-                    Icon(
-                        if (state.showThumbnails) Icons.AutoMirrored.Rounded.InsertDriveFile else Icons.Rounded.PhotoLibrary,
-                        contentDescription = uiText(if (state.showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras"),
-                    )
-                }
-                Box {
-                    IconButton(onClick = { sortMenu = true }) { Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = uiText("Rikiuoti")) }
-                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                        SortMode.entries.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { LText(sortLabel(mode)) },
-                                onClick = { viewModel.setSort(panelId, mode); sortMenu = false },
-                            )
-                        }
-                    }
-                }
-                IconButton(onClick = { viewModel.refreshPanel(panelId) }) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti")) }
-                IconButton(onClick = { viewModel.openLocalTerminal(panelId) }) {
-                    Icon(Icons.Rounded.Terminal, contentDescription = uiText("Atidaryti terminalą šiame aplanke"))
-                }
-                }
+                DirectoryLayoutButton(
+                    grid = state.grid,
+                    testTag = "directory_layout_local_$panelId",
+                    onToggleLayout = { viewModel.toggleGrid(panelId) },
+                    onOpenSettings = onDisplaySettings,
+                )
+                CompactPanelActions(
+                    expanded = compactMenu,
+                    onExpandedChange = { compactMenu = it },
+                    panelId = panelId,
+                    state = state,
+                    favorites = favorites,
+                    recents = recents,
+                    clipboardAvailable = clipboardAvailable,
+                    batchRenameUndoAvailable = batchRenameUndoAvailable,
+                    viewModel = viewModel,
+                    onPaste = onPaste,
+                    onUndoBatchRename = onUndoBatchRename,
+                    onDisplaySettings = onDisplaySettings,
+                )
             }
         }
 
@@ -807,6 +993,7 @@ private fun CompactPanelActions(
     viewModel: MainViewModel,
     onPaste: () -> Unit,
     onUndoBatchRename: () -> Unit,
+    onDisplaySettings: () -> Unit,
 ) {
     Box {
         IconButton(onClick = { onExpandedChange(true) }) {
@@ -857,33 +1044,21 @@ private fun CompactPanelActions(
                 )
             }
             HorizontalDivider()
-            DropdownMenuItem(
-                text = { LText(if (state.includeHidden) "Slėpti paslėptus failus" else "Rodyti paslėptus failus") },
-                leadingIcon = { Icon(if (state.includeHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, contentDescription = null) },
-                onClick = { viewModel.toggleHidden(panelId); onExpandedChange(false) },
+            DirectoryDisplayMenuItems(
+                grid = state.grid,
+                includeHidden = state.includeHidden,
+                showThumbnails = state.showThumbnails,
+                thumbnailsAvailable = true,
+                sortMode = state.sortMode,
+                sortDirection = state.sortDirection,
+                displaySettingsTestTag = "display_settings_$panelId",
+                onToggleHidden = { viewModel.toggleHidden(panelId) },
+                onToggleLayout = { viewModel.toggleGrid(panelId) },
+                onToggleThumbnails = { viewModel.toggleThumbnails(panelId) },
+                onOpenSettings = onDisplaySettings,
+                onSort = { viewModel.setSort(panelId, it) },
+                onDismissMenu = { onExpandedChange(false) },
             )
-            DropdownMenuItem(
-                text = { LText(if (state.grid) "Rodyti sąrašą" else "Rodyti tinklelį") },
-                leadingIcon = { Icon(if (state.grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView, contentDescription = null) },
-                onClick = { viewModel.toggleGrid(panelId); onExpandedChange(false) },
-            )
-            DropdownMenuItem(
-                text = { LText(if (state.showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras") },
-                leadingIcon = {
-                    Icon(if (state.showThumbnails) Icons.AutoMirrored.Rounded.InsertDriveFile else Icons.Rounded.PhotoLibrary, contentDescription = null)
-                },
-                onClick = { viewModel.toggleThumbnails(panelId); onExpandedChange(false) },
-            )
-            SortMode.entries.forEach { mode ->
-                val currentSuffix = if (state.sortMode == mode) {
-                    if (state.sortDirection == SortDirection.ASCENDING) " ↑" else " ↓"
-                } else ""
-                DropdownMenuItem(
-                    text = { LText("${sortLabel(mode)}$currentSuffix") },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = null) },
-                    onClick = { viewModel.setSort(panelId, mode); onExpandedChange(false) },
-                )
-            }
             HorizontalDivider()
             DropdownMenuItem(
                 text = { LText("Atidaryti terminalą šiame aplanke") },
@@ -1041,6 +1216,8 @@ private fun FileList(
                 tagText = tagText,
                 selected = entry.absolutePath in state.selectedPaths,
                 showThumbnails = state.showThumbnails,
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
                 onClick = { handleEntryClick(panel, state, entry, viewModel) },
                 onLongClick = { viewModel.toggleSelection(panel, entry.absolutePath) },
                 onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
@@ -1101,10 +1278,12 @@ private fun FileGrid(
         }
     }
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(124.dp),
+        columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
         state = gridState,
         modifier = Modifier.testTag("file-grid-$panel"),
         contentPadding = PaddingValues(8.dp, 6.dp, 8.dp, 88.dp),
+        horizontalArrangement = Arrangement.spacedBy((5f * state.spacingScalePercent / 100f).dp),
+        verticalArrangement = Arrangement.spacedBy((5f * state.spacingScalePercent / 100f).dp),
     ) {
         items(state.entries, key = FileEntry::absolutePath, contentType = FileEntry::kind) { entry ->
             val tagRecord = tagsByPath[entry.absolutePath]
@@ -1114,6 +1293,8 @@ private fun FileGrid(
                 tagText = tagText,
                 selected = entry.absolutePath in state.selectedPaths,
                 showThumbnails = state.showThumbnails,
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
                 onClick = { handleEntryClick(panel, state, entry, viewModel) },
                 onLongClick = { viewModel.toggleSelection(panel, entry.absolutePath) },
                 onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
@@ -1140,6 +1321,8 @@ private fun FileRow(
     tagText: String?,
     selected: Boolean,
     showThumbnails: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPreview: () -> Unit,
@@ -1147,6 +1330,9 @@ private fun FileRow(
     onSelect: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(8.dp)
+    val iconSize = (42f * iconScalePercent / 100f).dp
+    val verticalPadding = (9f * spacingScalePercent / 100f).dp
+    val itemSpacing = (12f * spacingScalePercent / 100f).dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1160,16 +1346,16 @@ private fun FileRow(
                 },
             )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(itemSpacing),
     ) {
         LocalFileVisual(
             entry = entry,
-            targetWidth = 42.dp,
-            targetHeight = 42.dp,
+            targetWidth = iconSize,
+            targetHeight = iconSize,
             showThumbnails = showThumbnails,
-            modifier = Modifier.size(42.dp),
+            modifier = Modifier.size(iconSize),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (entry.isDirectory) FontWeight.SemiBold else FontWeight.Normal)
@@ -1181,7 +1367,10 @@ private fun FileRow(
         if (!entry.isReadable) LText("Neprieinama", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         EntryActionsButton(entry, onPreview, onOpenWith, onSelect)
     }
-    HorizontalDivider(modifier = Modifier.padding(start = 66.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    HorizontalDivider(
+        modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1191,6 +1380,8 @@ private fun FileTile(
     tagText: String?,
     selected: Boolean,
     showThumbnails: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPreview: () -> Unit,
@@ -1198,9 +1389,11 @@ private fun FileTile(
     onSelect: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
+    val visualHeight = (76f * iconScalePercent / 100f).dp
+    val cardHeight = 158.dp + (visualHeight - 76.dp)
+    val innerPadding = (9f * spacingScalePercent / 100f).dp
     Card(
         modifier = Modifier
-            .padding(5.dp)
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = selectionShape,
@@ -1208,18 +1401,18 @@ private fun FileTile(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(158.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().height(cardHeight)) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(9.dp),
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
                 LocalFileVisual(
                     entry = entry,
-                    targetWidth = 96.dp,
-                    targetHeight = 76.dp,
+                    targetWidth = (96f * iconScalePercent / 100f).dp,
+                    targetHeight = visualHeight,
                     showThumbnails = showThumbnails,
-                    modifier = Modifier.fillMaxWidth().height(76.dp),
+                    modifier = Modifier.fillMaxWidth().height(visualHeight),
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)

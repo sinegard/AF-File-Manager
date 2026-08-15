@@ -10,7 +10,7 @@ Files opened from a remote server are staged temporarily in the app's private ca
 
 The app stores the following locally:
 
-- user tags, history, saved searches, Storage Access Framework locations, and synchronization schedules;
+- user tags, navigation history, a bounded recent-file path list, saved searches, Storage Access Framework locations, and synchronization schedules;
 - network-profile metadata;
 - passwords and optional private SSH keys encrypted through Android Keystore;
 - files placed in the app's recoverable trash and the metadata needed to restore them;

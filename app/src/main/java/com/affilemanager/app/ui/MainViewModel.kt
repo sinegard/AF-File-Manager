@@ -17,6 +17,7 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafLocation
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.data.RecentItem
+import com.affilemanager.app.data.RecentFileItem
 import com.affilemanager.app.data.SavedSearch
 import com.affilemanager.app.data.TrashBrowserEntry
 import com.affilemanager.app.data.TrashItem
@@ -26,6 +27,8 @@ import com.affilemanager.app.data.WorkspaceSession
 import com.affilemanager.app.data.WorkspaceTab
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagSnapshot
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.editing.EditConflict
 import com.affilemanager.app.editing.EditDestination
 import com.affilemanager.app.editing.EditDestinationRules
@@ -86,6 +89,8 @@ import com.affilemanager.app.update.AppUpdateState
 import com.affilemanager.app.ui.preview.RemotePreviewCache
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.preview.previewSource
+import com.affilemanager.app.ui.theme.AppColorPalette
+import com.affilemanager.app.ui.theme.AppThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -127,6 +132,9 @@ data class PanelUiState(
     val includeHidden: Boolean = false,
     val grid: Boolean = false,
     val showThumbnails: Boolean = false,
+    val iconScalePercent: Int = 100,
+    val spacingScalePercent: Int = 100,
+    val gridColumns: Int = 3,
     val loading: Boolean = false,
     val listingScannedEntries: Int = 0,
     val listingMetadataEntries: Int = 0,
@@ -144,6 +152,12 @@ data class SearchUiState(
     val scannedEntries: Int = 0,
     val truncated: Boolean = false,
     val running: Boolean = false,
+    val error: String? = null,
+)
+
+data class RecentFilesUiState(
+    val items: List<RecentFileItem> = emptyList(),
+    val loading: Boolean = false,
     val error: String? = null,
 )
 
@@ -192,6 +206,9 @@ data class NetworkUiState(
     val forwardHistory: List<String> = emptyList(),
     val includeHidden: Boolean = false,
     val grid: Boolean = false,
+    val iconScalePercent: Int = 100,
+    val spacingScalePercent: Int = 100,
+    val gridColumns: Int = 3,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val openingPath: String? = null,
@@ -318,6 +335,7 @@ data class UiMessage(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as AFFileManagerApplication).graph
+    private val filesHomeDisplayIdentity = "virtual:files-home"
     private val remotePreviewCache = RemotePreviewCache(application.cacheDir)
     private val initialPrimaryPath = Environment.getExternalStorageDirectory().absolutePath
     private val initialDownloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -328,9 +346,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val section: StateFlow<AppSection> = _section.asStateFlow()
 
     val updateState: StateFlow<AppUpdateState> = graph.updates.state
+    val appearanceSettings = graph.appearance.settings
 
     private val _filesHomeVisible = MutableStateFlow(true)
     val filesHomeVisible: StateFlow<Boolean> = _filesHomeVisible.asStateFlow()
+
+    private val _filesHomeDisplaySettings = MutableStateFlow(
+        runCatching { graph.navigation.directoryDisplaySettings(filesHomeDisplayIdentity) }.getOrNull()
+            ?: DirectoryDisplaySettings(gridColumns = 4),
+    )
+    val filesHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _filesHomeDisplaySettings.asStateFlow()
 
     private val _activePanel = MutableStateFlow(PanelId.LEFT)
     val activePanel: StateFlow<PanelId> = _activePanel.asStateFlow()
@@ -351,6 +376,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _roots = MutableStateFlow<List<StorageRoot>>(emptyList())
     val roots: StateFlow<List<StorageRoot>> = _roots.asStateFlow()
+
+    private val _recentFiles = MutableStateFlow(RecentFilesUiState())
+    val recentFiles: StateFlow<RecentFilesUiState> = _recentFiles.asStateFlow()
 
     private val _clipboard = MutableStateFlow<ClipboardState?>(null)
     val clipboard: StateFlow<ClipboardState?> = _clipboard.asStateFlow()
@@ -425,6 +453,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var remoteClient: RemoteClient? = null
     private var searchJob: Job? = null
     private var analysisJob: Job? = null
+    private var recentFilesJob: Job? = null
     private var batchRenamePreviewJob: Job? = null
     private var remoteFileOpenJob: Job? = null
     private var remoteFileOpenRequestId = 0L
@@ -450,6 +479,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshTrash()
         refreshSafLocations()
         refreshNavigationState()
+        refreshRecentFiles()
         refreshTags()
         refreshSyncSchedules()
         viewModelScope.launch {
@@ -462,6 +492,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     refreshPanel(PanelId.LEFT)
                     refreshPanel(PanelId.RIGHT)
                     refreshTrash()
+                    refreshRecentFiles()
                     if (_safBrowser.value.location != null) refreshSafBrowser()
                 }
             }
@@ -470,7 +501,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSection(section: AppSection) {
         _section.value = section
-        if (section == AppSection.FILES) _filesHomeVisible.value = true
+        if (section == AppSection.FILES) {
+            _filesHomeVisible.value = true
+            refreshRecentFiles()
+        }
         if (section == AppSection.TOOLS) {
             refreshTrash()
             refreshSafLocations()
@@ -478,8 +512,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setThemeMode(mode: AppThemeMode) {
+        runCatching { graph.appearance.setThemeMode(mode) }
+            .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setColorPalette(palette: AppColorPalette) {
+        runCatching { graph.appearance.setColorPalette(palette) }
+            .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setAmoledBlack(enabled: Boolean) {
+        runCatching { graph.appearance.setAmoledBlack(enabled) }
+            .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
     fun activatePanel(panel: PanelId) {
         _activePanel.value = panel
+    }
+
+    fun refreshRecentFiles() {
+        recentFilesJob?.cancel()
+        recentFilesJob = viewModelScope.launch {
+            _recentFiles.update { it.copy(loading = true, error = null) }
+            runCatching { graph.recentFiles.latest() }
+                .onSuccess { items -> _recentFiles.value = RecentFilesUiState(items = items) }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    _recentFiles.value = RecentFilesUiState(error = error.message ?: "Naujausių failų įkelti nepavyko")
+                }
+        }
+    }
+
+    fun toggleFilesHomeLayout() {
+        val current = _filesHomeDisplaySettings.value
+        setFilesHomeDisplaySettings(
+            current.copy(
+                layoutMode = if (current.layoutMode == DirectoryLayoutMode.GRID) {
+                    DirectoryLayoutMode.LIST
+                } else {
+                    DirectoryLayoutMode.GRID
+                },
+                showThumbnails = false,
+            ),
+        )
+    }
+
+    fun setFilesHomeDisplaySettings(settings: DirectoryDisplaySettings) {
+        val homeSettings = settings.copy(showThumbnails = false)
+        runCatching { graph.navigation.setDirectoryDisplaySettings(filesHomeDisplayIdentity, homeSettings) }
+            .onSuccess { _filesHomeDisplaySettings.value = homeSettings }
+            .onFailure { message(it.message ?: "Pradžios rodinio nustatymo išsaugoti nepavyko", true) }
     }
 
     fun refreshPermissionDependentState() {
@@ -496,7 +579,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _filesHomeVisible.value = false
-        val showThumbnails = savedThumbnailMode(target)
+        val displaySettings = savedDirectoryDisplaySettings(target)
         val currentState = panelFlow(panel).value
         if (currentState.path != target) {
             fileScrollPositions.reset(tabsFlow(panel).value.activeTabId, target)
@@ -506,7 +589,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(
                 path = target,
                 entries = emptyList(),
-                showThumbnails = showThumbnails,
                 selectedPaths = emptySet(),
                 loading = true,
                 listingScannedEntries = 0,
@@ -515,7 +597,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = null,
                 backHistory = if (rememberHistory) (state.backHistory + state.path).takeLast(50) else state.backHistory,
                 forwardHistory = if (rememberHistory) emptyList() else state.forwardHistory,
-            )
+            ).withDirectoryDisplaySettings(displaySettings)
         }
         syncActiveTab(panel)
         refreshPanel(panel)
@@ -531,12 +613,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val flow = panelFlow(panel)
         val state = flow.value
         val target = state.backHistory.lastOrNull() ?: return false
-        val showThumbnails = savedThumbnailMode(target)
+        val displaySettings = savedDirectoryDisplaySettings(target)
         flow.update {
             it.copy(
                 path = target,
                 entries = emptyList(),
-                showThumbnails = showThumbnails,
                 selectedPaths = emptySet(),
                 loading = true,
                 listingScannedEntries = 0,
@@ -545,7 +626,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = null,
                 backHistory = it.backHistory.dropLast(1),
                 forwardHistory = (it.forwardHistory + it.path).takeLast(50),
-            )
+            ).withDirectoryDisplaySettings(displaySettings)
         }
         syncActiveTab(panel)
         refreshPanel(panel)
@@ -556,12 +637,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val flow = panelFlow(panel)
         val state = flow.value
         val target = state.forwardHistory.lastOrNull() ?: return false
-        val showThumbnails = savedThumbnailMode(target)
+        val displaySettings = savedDirectoryDisplaySettings(target)
         flow.update {
             it.copy(
                 path = target,
                 entries = emptyList(),
-                showThumbnails = showThumbnails,
                 selectedPaths = emptySet(),
                 loading = true,
                 listingScannedEntries = 0,
@@ -570,7 +650,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = null,
                 backHistory = (it.backHistory + it.path).takeLast(50),
                 forwardHistory = it.forwardHistory.dropLast(1),
-            )
+            ).withDirectoryDisplaySettings(displaySettings)
         }
         syncActiveTab(panel)
         refreshPanel(panel)
@@ -650,22 +730,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleGrid(panel: PanelId) {
-        panelFlow(panel).update { it.copy(grid = !it.grid) }
-        syncActiveTab(panel)
+        val current = panelFlow(panel).value
+        setDirectoryDisplaySettings(
+            panel,
+            current.directoryDisplaySettings().copy(
+                layoutMode = if (current.grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+            ),
+        )
     }
 
     fun toggleThumbnails(panel: PanelId) {
-        val flow = panelFlow(panel)
-        val snapshot = flow.value
-        val enabled = !snapshot.showThumbnails
-        runCatching { graph.navigation.setThumbnailsEnabled(snapshot.path, enabled) }
+        val snapshot = panelFlow(panel).value
+        setDirectoryDisplaySettings(panel, snapshot.directoryDisplaySettings().copy(showThumbnails = !snapshot.showThumbnails))
+    }
+
+    fun setDirectoryDisplaySettings(panel: PanelId, settings: DirectoryDisplaySettings) {
+        val snapshot = panelFlow(panel).value
+        runCatching { graph.navigation.setDirectoryDisplaySettings(snapshot.path, settings) }
             .onSuccess {
                 _leftPanel.update { current ->
-                    if (current.path == snapshot.path) current.copy(showThumbnails = enabled) else current
+                    if (current.path == snapshot.path) current.withDirectoryDisplaySettings(settings) else current
                 }
                 _rightPanel.update { current ->
-                    if (current.path == snapshot.path) current.copy(showThumbnails = enabled) else current
+                    if (current.path == snapshot.path) current.withDirectoryDisplaySettings(settings) else current
                 }
+                if (_leftPanel.value.path == snapshot.path) syncActiveTab(PanelId.LEFT)
+                if (_rightPanel.value.path == snapshot.path) syncActiveTab(PanelId.RIGHT)
             }
             .onFailure { message(it.message ?: "Katalogo vaizdo nustatymo išsaugoti nepavyko", true) }
     }
@@ -1021,7 +1111,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun createFile(panel: PanelId, name: String) {
         viewModelScope.launch {
             graph.localFiles.createEmptyFile(panelFlow(panel).value.path, name).fold(
-                onSuccess = { refreshPanel(panel) },
+                onSuccess = { created ->
+                    runCatching { graph.recentFiles.record(created.absolutePath) }
+                        .onFailure { message(it.message ?: "Naujausių failų įrašo išsaugoti nepavyko", true) }
+                    refreshPanel(panel)
+                    refreshRecentFiles()
+                },
                 onFailure = { message(it.message ?: "Failo sukurti nepavyko", true) },
             )
         }
@@ -1093,6 +1188,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         runCatching { _recents.value = graph.navigation.recordRecent(entry.absolutePath) }
             .onFailure { message(it.message ?: "Istorijos įrašyti nepavyko", true) }
+        viewModelScope.launch {
+            runCatching { graph.recentFiles.record(entry.absolutePath) }
+                .onSuccess { refreshRecentFiles() }
+                .onFailure { message(it.message ?: "Naujausių failų įrašo išsaugoti nepavyko", true) }
+        }
         viewModelScope.launch {
             if (entry.extension == "afvault") {
                 runCatching { graph.fileVault.inspect(entry.file) }
@@ -2416,6 +2516,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     refreshProfiles()
                 }
                 val path = RemotePath.normalize(normalizedProfile.basePath)
+                val displaySettings = savedDirectoryDisplaySettings(remoteDirectoryIdentity(normalizedProfile.id, path))
                 _networkState.update {
                     it.copy(
                         connectedProfile = normalizedProfile,
@@ -2426,7 +2527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         forwardHistory = emptyList(),
                         loading = false,
                         error = null,
-                    )
+                    ).withDirectoryDisplaySettings(displaySettings)
                 }
                 _syncState.update { it.copy(remoteRoot = path, localRoot = activePanelState().path, preview = null, error = null) }
                 refreshRemote(path)
@@ -2445,6 +2546,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val target = RemotePath.normalize(path)
         val current = _networkState.value
         if (target == current.path) return false
+        val profileId = current.connectedProfile?.id ?: return false
+        val displaySettings = savedDirectoryDisplaySettings(remoteDirectoryIdentity(profileId, target))
         cancelRemoteFileOpen()
         _networkState.update {
             it.copy(
@@ -2455,7 +2558,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 forwardHistory = emptyList(),
                 loading = true,
                 error = null,
-            )
+            ).withDirectoryDisplaySettings(displaySettings)
         }
         refreshRemote(target)
         return true
@@ -2464,6 +2567,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateRemoteBack(): Boolean {
         val current = _networkState.value
         val target = current.backHistory.lastOrNull() ?: return false
+        val profileId = current.connectedProfile?.id ?: return false
+        val displaySettings = savedDirectoryDisplaySettings(remoteDirectoryIdentity(profileId, target))
         cancelRemoteFileOpen()
         _networkState.update {
             it.copy(
@@ -2474,7 +2579,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 forwardHistory = (it.forwardHistory + it.path).takeLast(50),
                 loading = true,
                 error = null,
-            )
+            ).withDirectoryDisplaySettings(displaySettings)
         }
         refreshRemote(target)
         return true
@@ -2483,6 +2588,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateRemoteForward(): Boolean {
         val current = _networkState.value
         val target = current.forwardHistory.lastOrNull() ?: return false
+        val profileId = current.connectedProfile?.id ?: return false
+        val displaySettings = savedDirectoryDisplaySettings(remoteDirectoryIdentity(profileId, target))
         cancelRemoteFileOpen()
         _networkState.update {
             it.copy(
@@ -2493,7 +2600,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 forwardHistory = it.forwardHistory.dropLast(1),
                 loading = true,
                 error = null,
-            )
+            ).withDirectoryDisplaySettings(displaySettings)
         }
         refreshRemote(target)
         return true
@@ -2594,7 +2701,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleRemoteGrid() {
-        _networkState.update { it.copy(grid = !it.grid) }
+        val current = _networkState.value
+        setRemoteDirectoryDisplaySettings(
+            current.directoryDisplaySettings().copy(
+                layoutMode = if (current.grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+                showThumbnails = false,
+            ),
+        )
+    }
+
+    fun setRemoteDirectoryDisplaySettings(settings: DirectoryDisplaySettings) {
+        val current = _networkState.value
+        val profileId = current.connectedProfile?.id ?: return
+        val remoteSettings = settings.copy(showThumbnails = false)
+        val identity = remoteDirectoryIdentity(profileId, current.path)
+        runCatching { graph.navigation.setDirectoryDisplaySettings(identity, remoteSettings) }
+            .onSuccess { _networkState.update { it.withDirectoryDisplaySettings(remoteSettings) } }
+            .onFailure { message(it.message ?: "Katalogo vaizdo nustatymo išsaugoti nepavyko", true) }
     }
 
     fun setRemoteSort(mode: SortMode) {
@@ -2616,15 +2739,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshRemote(path: String = _networkState.value.path) {
         val client = remoteClient ?: return
         val protocol = _networkState.value.connectedProfile?.protocol ?: return
+        val profileId = _networkState.value.connectedProfile?.id ?: return
         val normalizedPath = RemotePath.normalize(path)
+        val displaySettings = savedDirectoryDisplaySettings(remoteDirectoryIdentity(profileId, normalizedPath))
         viewModelScope.launch {
             _networkState.update { state ->
-                state.copy(
+                val updated = state.copy(
                     path = normalizedPath,
                     selectedPaths = if (state.path == normalizedPath) state.selectedPaths else emptySet(),
                     loading = true,
                     error = null,
                 )
+                if (state.path == normalizedPath) updated else updated.withDirectoryDisplaySettings(displaySettings)
             }
             runCatching { client.list(normalizedPath) }
                 .onSuccess { entries ->
@@ -2780,6 +2906,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 note("Nukopijuota į ${destination.absolutePath}")
             }
             if (result.copiedRoots > 0) refreshPanel(destinationPanel)
+            entries.asSequence()
+                .filterNot(RemoteEntry::directory)
+                .map { entry -> File(destination, entry.name) }
+                .filter(File::isFile)
+                .forEach { copied -> runCatching { graph.recentFiles.record(copied.absolutePath) } }
+            if (result.copiedRoots > 0) refreshRecentFiles()
         }.onFailure { message(it.message ?: "Atsisiuntimo pradėti nepavyko", true) }.isSuccess
     }
 
@@ -2988,6 +3120,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         workspaceSaveRequests.trySend(currentWorkspace())
         workspaceSaveRequests.close()
+        recentFilesJob?.cancel()
+        recentFilesJob = null
         terminalRequestId += 1
         terminalOpenJob?.cancel()
         terminalOpenJob = null
@@ -3016,21 +3150,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         message(it.message ?: "Katalogo vaizdo nustatymo perskaityti nepavyko", true)
     }.getOrDefault(false)
 
+    private fun savedDirectoryDisplaySettings(
+        directoryIdentity: String,
+        fallbackGrid: Boolean = false,
+    ): DirectoryDisplaySettings {
+        val saved = runCatching { graph.navigation.directoryDisplaySettings(directoryIdentity) }
+            .onFailure { message(it.message ?: "Katalogo vaizdo nustatymo perskaityti nepavyko", true) }
+            .getOrNull()
+        return saved ?: DirectoryDisplaySettings(
+            layoutMode = if (fallbackGrid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+            showThumbnails = savedThumbnailMode(directoryIdentity),
+        )
+    }
+
+    private fun remoteDirectoryIdentity(profileId: String, path: String): String =
+        "remote:$profileId:${RemotePath.normalize(path)}"
+
     private fun trashDirectoryIdentity(itemId: String?, relativePath: String): String = if (itemId == null) {
         "virtual:trash/root"
     } else {
         "virtual:trash/$itemId/${TrashPathRules.normalize(relativePath)}"
     }
 
-    private fun WorkspaceTab.toPanelUiState(): PanelUiState = PanelUiState(
-        path = path,
-        sortMode = sortMode,
-        sortDirection = sortDirection,
-        includeHidden = includeHidden,
-        grid = grid,
-        showThumbnails = runCatching { graph.navigation.thumbnailsEnabled(path) }.getOrDefault(false),
-        backHistory = backHistory,
-        forwardHistory = forwardHistory,
+    private fun WorkspaceTab.toPanelUiState(): PanelUiState {
+        val saved = runCatching { graph.navigation.directoryDisplaySettings(path) }.getOrNull()
+        val settings = saved ?: DirectoryDisplaySettings(
+            layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+            showThumbnails = runCatching { graph.navigation.thumbnailsEnabled(path) }.getOrDefault(false),
+        )
+        return PanelUiState(
+            path = path,
+            sortMode = sortMode,
+            sortDirection = sortDirection,
+            includeHidden = includeHidden,
+            backHistory = backHistory,
+            forwardHistory = forwardHistory,
+        ).withDirectoryDisplaySettings(settings)
+    }
+
+    private fun PanelUiState.directoryDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
+        layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+        iconScalePercent = iconScalePercent,
+        spacingScalePercent = spacingScalePercent,
+        gridColumns = gridColumns,
+        showThumbnails = showThumbnails,
+    )
+
+    private fun PanelUiState.withDirectoryDisplaySettings(settings: DirectoryDisplaySettings): PanelUiState = copy(
+        grid = settings.layoutMode == DirectoryLayoutMode.GRID,
+        iconScalePercent = settings.iconScalePercent,
+        spacingScalePercent = settings.spacingScalePercent,
+        gridColumns = settings.gridColumns,
+        showThumbnails = settings.showThumbnails,
+    )
+
+    private fun NetworkUiState.directoryDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
+        layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+        iconScalePercent = iconScalePercent,
+        spacingScalePercent = spacingScalePercent,
+        gridColumns = gridColumns,
+        showThumbnails = false,
+    )
+
+    private fun NetworkUiState.withDirectoryDisplaySettings(settings: DirectoryDisplaySettings): NetworkUiState = copy(
+        grid = settings.layoutMode == DirectoryLayoutMode.GRID,
+        iconScalePercent = settings.iconScalePercent,
+        spacingScalePercent = settings.spacingScalePercent,
+        gridColumns = settings.gridColumns,
     )
 
     private fun tabsFlow(panel: PanelId): MutableStateFlow<PanelWorkspace> = if (panel == PanelId.LEFT) _leftTabs else _rightTabs
