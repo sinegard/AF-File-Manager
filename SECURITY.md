@@ -17,6 +17,7 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 - Network passwords and private SSH keys are encrypted before storage with an AES-GCM key held by `AndroidKeyStore`.
 - Secret character and byte arrays are cleared after use where JVM and Android APIs permit it.
 - Thumbnails are generated locally and kept only in a process-memory LRU cache capped at 24 MiB. The app does not build a persistent thumbnail database or silently index the entire device.
+- The home screen reads at most 200 recent MediaStore rows at a time and keeps at most 200 paths for files explicitly touched by AF File Manager. Missing and unreadable files are filtered, and nothing from this list leaves the device.
 - Remote previews and editable working copies use bounded app-private staging. Redundant downloads are removed when editing starts, the remaining temporary copy is removed when the preview closes or a remote edit is saved, and stale staging is purged on the next app start.
 - SFTP host keys are verified by SHA-256 fingerprint. Trust on first use is available only after an explicit choice; the first key is stored and a later key change is blocked.
 - WebDAV requires HTTPS. FTPS validates the certificate chain and endpoint name. Plain FTP is intentionally an insecure legacy protocol and should never be used on an untrusted network.

@@ -58,7 +58,6 @@ class ConnectionsComponentsTest {
                             entries = listOf(folder, file),
                         ),
                         localDirectory = "/local/target",
-                        compactToolbar = true,
                         onBack = {},
                         onForward = {},
                         onUp = {},
@@ -126,7 +125,6 @@ class ConnectionsComponentsTest {
                     RemoteBrowser(
                         state = state,
                         localDirectory = "/local/target",
-                        compactToolbar = true,
                         onBack = {},
                         onForward = {},
                         onUp = {},
@@ -212,7 +210,6 @@ class ConnectionsComponentsTest {
                         selectedPaths = setOf(file.path),
                     ),
                     localDirectory = "/local/target",
-                    compactToolbar = true,
                     onBack = {},
                     onForward = {},
                     onUp = {},
@@ -252,6 +249,7 @@ class ConnectionsComponentsTest {
         val up = AtomicInteger()
         val hidden = AtomicInteger()
         val grid = AtomicInteger()
+        val displaySettings = AtomicInteger()
         val sort = AtomicInteger()
         val refresh = AtomicInteger()
         val disconnect = AtomicInteger()
@@ -266,7 +264,6 @@ class ConnectionsComponentsTest {
                         forwardHistory = listOf("/future"),
                     ),
                     localDirectory = "/local/target",
-                    compactToolbar = true,
                     onBack = { back.incrementAndGet() },
                     onForward = { forward.incrementAndGet() },
                     onUp = { up.incrementAndGet() },
@@ -287,6 +284,7 @@ class ConnectionsComponentsTest {
                     onSync = {},
                     onToggleHidden = { hidden.incrementAndGet() },
                     onToggleGrid = { grid.incrementAndGet() },
+                    onDisplaySettings = { displaySettings.incrementAndGet() },
                     onSort = { sort.incrementAndGet() },
                     onDisconnect = { disconnect.incrementAndGet() },
                 )
@@ -296,6 +294,8 @@ class ConnectionsComponentsTest {
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithContentDescription("Forward").performClick()
         compose.onNodeWithContentDescription("Up").performClick()
+        compose.onNodeWithTag("directory_layout_remote").performClick()
+        compose.onNodeWithTag("directory_layout_remote").performTouchInput { longClick() }
         clickFolderMenuItem("Show hidden files")
         clickFolderMenuItem("Show grid")
         clickFolderMenuItem("By size")
@@ -307,7 +307,8 @@ class ConnectionsComponentsTest {
             assertEquals(1, forward.get())
             assertEquals(1, up.get())
             assertEquals(1, hidden.get())
-            assertEquals(1, grid.get())
+            assertEquals(2, grid.get())
+            assertEquals(1, displaySettings.get())
             assertEquals(1, sort.get())
             assertEquals(1, refresh.get())
             assertEquals(1, disconnect.get())

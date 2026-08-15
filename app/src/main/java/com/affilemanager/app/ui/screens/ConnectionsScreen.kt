@@ -10,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,19 +39,15 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
-import androidx.compose.material.icons.automirrored.rounded.List
-import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -91,9 +86,10 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.ClipboardMode
-import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
@@ -103,6 +99,9 @@ import com.affilemanager.app.network.RemoteErrorInfo
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.RemoteBrowserRules
 import com.affilemanager.app.ui.components.RemoteFileVisual
+import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryLayoutButton
+import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
@@ -134,6 +133,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var deleteRemote by remember { mutableStateOf<List<RemoteEntry>?>(null) }
     var showSync by remember { mutableStateOf(false) }
     var showUploadPicker by remember { mutableStateOf(false) }
+    var showDisplaySettings by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         if (state.connectedProfile == null) {
@@ -182,11 +182,10 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 }
             }
         } else {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxSize()) {
                 RemoteBrowser(
                     state = state,
                     localDirectory = activeLocalState.path,
-                    compactToolbar = maxWidth < 600.dp,
                     onBack = viewModel::navigateRemoteBack,
                     onForward = viewModel::navigateRemoteForward,
                     onUp = viewModel::navigateRemoteUp,
@@ -209,6 +208,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onSync = { showSync = true },
                     onToggleHidden = viewModel::toggleRemoteHidden,
                     onToggleGrid = viewModel::toggleRemoteGrid,
+                    onDisplaySettings = { showDisplaySettings = true },
                     onSort = viewModel::setRemoteSort,
                     onDisconnect = viewModel::disconnectNetwork,
                     onOpenTerminal = viewModel::openRemoteTerminal,
@@ -304,6 +304,17 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             },
         )
     }
+    if (showDisplaySettings && state.connectedProfile != null) {
+        DirectoryDisplaySettingsDialog(
+            initialSettings = state.toDirectoryDisplaySettings(),
+            thumbnailsAvailable = false,
+            onDismiss = { showDisplaySettings = false },
+            onApply = { settings ->
+                viewModel.setRemoteDirectoryDisplaySettings(settings)
+                showDisplaySettings = false
+            },
+        )
+    }
 }
 
 @Composable
@@ -355,7 +366,6 @@ internal fun ProfileCard(
 internal fun RemoteBrowser(
     state: com.affilemanager.app.ui.NetworkUiState,
     localDirectory: String,
-    compactToolbar: Boolean,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onUp: () -> Unit,
@@ -378,6 +388,7 @@ internal fun RemoteBrowser(
     onSync: () -> Unit,
     onToggleHidden: () -> Unit,
     onToggleGrid: () -> Unit,
+    onDisplaySettings: () -> Unit = {},
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit = {},
@@ -435,7 +446,6 @@ internal fun RemoteBrowser(
                 state = state,
                 localDirectory = localDirectory,
                 localClipboardCount = localClipboardCount,
-                compactToolbar = compactToolbar,
                 onBack = onBack,
                 onForward = onForward,
                 onUp = onUp,
@@ -445,6 +455,7 @@ internal fun RemoteBrowser(
                 onSync = onSync,
                 onToggleHidden = onToggleHidden,
                 onToggleGrid = onToggleGrid,
+                onDisplaySettings = onDisplaySettings,
                 onSort = onSort,
                 onDisconnect = onDisconnect,
                 onOpenTerminal = onOpenTerminal,
@@ -470,6 +481,9 @@ internal fun RemoteBrowser(
                     selectedPaths = state.selectedPaths,
                     selectionActive = state.selectedPaths.isNotEmpty(),
                     openingPath = state.openingPath,
+                    iconScalePercent = state.iconScalePercent,
+                    spacingScalePercent = state.spacingScalePercent,
+                    gridColumns = state.gridColumns,
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
@@ -479,6 +493,8 @@ internal fun RemoteBrowser(
                     selectedPaths = state.selectedPaths,
                     selectionActive = state.selectedPaths.isNotEmpty(),
                     openingPath = state.openingPath,
+                    iconScalePercent = state.iconScalePercent,
+                    spacingScalePercent = state.spacingScalePercent,
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
@@ -499,7 +515,6 @@ private fun RemoteFolderToolbar(
     state: com.affilemanager.app.ui.NetworkUiState,
     localDirectory: String,
     localClipboardCount: Int,
-    compactToolbar: Boolean,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onUp: () -> Unit,
@@ -509,11 +524,11 @@ private fun RemoteFolderToolbar(
     onSync: () -> Unit,
     onToggleHidden: () -> Unit,
     onToggleGrid: () -> Unit,
+    onDisplaySettings: () -> Unit,
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit,
 ) {
-    var sortMenu by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -536,45 +551,22 @@ private fun RemoteFolderToolbar(
             )
             Text(state.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (!compactToolbar) {
-            if (localClipboardCount > 0) {
-                IconButton(
-                    onClick = onPasteLocalClipboard,
-                    enabled = !state.loading,
-                    modifier = Modifier.testTag("remote_paste_local"),
-                ) {
-                    Icon(Icons.Rounded.ContentPaste, contentDescription = uiText("Įklijuoti"))
-                }
-            }
-            IconButton(onClick = onToggleHidden) {
-                Icon(
-                    if (state.includeHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
-                    contentDescription = uiText("Paslėpti failai"),
-                )
-            }
-            IconButton(onClick = onToggleGrid) {
-                Icon(if (state.grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView, contentDescription = uiText("Rodinys"))
-            }
-            Box {
-                IconButton(onClick = { sortMenu = true }) {
-                    Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = uiText("Rikiuoti"))
-                }
-                RemoteSortMenu(state, sortMenu, { sortMenu = false }, onSort)
-            }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti"))
-            }
-        }
+        DirectoryLayoutButton(
+            grid = state.grid,
+            testTag = "directory_layout_remote",
+            onToggleLayout = onToggleGrid,
+            onOpenSettings = onDisplaySettings,
+        )
         RemoteFolderActionsMenu(
             state = state,
             localDirectory = localDirectory,
             localClipboardCount = localClipboardCount,
-            includeDisplayActions = compactToolbar,
             onPasteLocalClipboard = onPasteLocalClipboard,
             onChooseUpload = onChooseUpload,
             onSync = onSync,
             onToggleHidden = onToggleHidden,
             onToggleGrid = onToggleGrid,
+            onDisplaySettings = onDisplaySettings,
             onSort = onSort,
             onRefresh = onRefresh,
             onDisconnect = onDisconnect,
@@ -588,12 +580,12 @@ private fun RemoteFolderActionsMenu(
     state: com.affilemanager.app.ui.NetworkUiState,
     localDirectory: String,
     localClipboardCount: Int,
-    includeDisplayActions: Boolean,
     onPasteLocalClipboard: () -> Unit,
     onChooseUpload: () -> Unit,
     onSync: () -> Unit,
     onToggleHidden: () -> Unit,
     onToggleGrid: () -> Unit,
+    onDisplaySettings: () -> Unit,
     onSort: (SortMode) -> Unit,
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
@@ -605,7 +597,7 @@ private fun RemoteFolderActionsMenu(
             Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            if (localClipboardCount > 0 && includeDisplayActions) {
+            if (localClipboardCount > 0) {
                 DropdownMenuItem(
                     text = { LText("Įklijuoti ($localClipboardCount)") },
                     leadingIcon = { Icon(Icons.Rounded.ContentPaste, contentDescription = null) },
@@ -627,6 +619,23 @@ private fun RemoteFolderActionsMenu(
                 enabled = !state.loading,
                 onClick = { expanded = false; onSync() },
             )
+            HorizontalDivider()
+            DirectoryDisplayMenuItems(
+                grid = state.grid,
+                includeHidden = state.includeHidden,
+                showThumbnails = false,
+                thumbnailsAvailable = false,
+                sortMode = state.sortMode,
+                sortDirection = state.sortDirection,
+                displaySettingsTestTag = "remote_display_settings",
+                onToggleHidden = onToggleHidden,
+                onToggleLayout = onToggleGrid,
+                onToggleThumbnails = {},
+                onOpenSettings = onDisplaySettings,
+                onSort = onSort,
+                onDismissMenu = { expanded = false },
+            )
+            HorizontalDivider()
             DropdownMenuItem(
                 text = { LText("Atidaryti serverio terminalą") },
                 leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
@@ -634,39 +643,11 @@ private fun RemoteFolderActionsMenu(
                 modifier = Modifier.testTag("remote_open_terminal"),
                 onClick = { expanded = false; onOpenTerminal() },
             )
-            if (includeDisplayActions) {
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = { LText(if (state.includeHidden) "Slėpti paslėptus failus" else "Rodyti paslėptus failus") },
-                    leadingIcon = {
-                        Icon(if (state.includeHidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, contentDescription = null)
-                    },
-                    onClick = { expanded = false; onToggleHidden() },
-                )
-                DropdownMenuItem(
-                    text = { LText(if (state.grid) "Rodyti sąrašą" else "Rodyti tinklelį") },
-                    leadingIcon = { Icon(if (state.grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView, contentDescription = null) },
-                    onClick = { expanded = false; onToggleGrid() },
-                )
-                SortMode.entries.forEach { mode ->
-                    val suffix = if (state.sortMode == mode) {
-                        if (state.sortDirection == SortDirection.ASCENDING) " ↑" else " ↓"
-                    } else {
-                        ""
-                    }
-                    DropdownMenuItem(
-                        text = { LText("${sortLabel(mode)}$suffix") },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = null) },
-                        onClick = { expanded = false; onSort(mode) },
-                    )
-                }
-                DropdownMenuItem(
-                    text = { LText("Atnaujinti") },
-                    leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                    onClick = { expanded = false; onRefresh() },
-                )
-            }
-            HorizontalDivider()
+            DropdownMenuItem(
+                text = { LText("Atnaujinti") },
+                leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                onClick = { expanded = false; onRefresh() },
+            )
             DropdownMenuItem(
                 text = { LText("Iš serverio → $localDirectory") },
                 enabled = false,
@@ -676,28 +657,6 @@ private fun RemoteFolderActionsMenu(
                 text = { LText("Atjungti") },
                 leadingIcon = { Icon(Icons.Rounded.CloudOff, contentDescription = null) },
                 onClick = { expanded = false; onDisconnect() },
-            )
-        }
-    }
-}
-
-@Composable
-private fun RemoteSortMenu(
-    state: com.affilemanager.app.ui.NetworkUiState,
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    onSort: (SortMode) -> Unit,
-) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        SortMode.entries.forEach { mode ->
-            val suffix = if (state.sortMode == mode) {
-                if (state.sortDirection == SortDirection.ASCENDING) " ↑" else " ↓"
-            } else {
-                ""
-            }
-            DropdownMenuItem(
-                text = { LText("${sortLabel(mode)}$suffix") },
-                onClick = { onDismiss(); onSort(mode) },
             )
         }
     }
@@ -734,6 +693,8 @@ private fun RemoteEntryList(
     selectedPaths: Set<String>,
     selectionActive: Boolean,
     openingPath: String?,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
@@ -747,6 +708,8 @@ private fun RemoteEntryList(
                 selected = entry.path in selectedPaths,
                 selectionActive = selectionActive,
                 opening = entry.path == openingPath,
+                iconScalePercent = iconScalePercent,
+                spacingScalePercent = spacingScalePercent,
                 onOpen = { onOpen(entry) },
                 onDownload = { onDownload(entry) },
                 onToggleSelection = { onToggleSelection(entry.path) },
@@ -761,14 +724,19 @@ private fun RemoteEntryGrid(
     selectedPaths: Set<String>,
     selectionActive: Boolean,
     openingPath: String?,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
+    gridColumns: Int,
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(124.dp),
+        columns = GridCells.Fixed(gridColumns.coerceIn(1, 6)),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(8.dp, 6.dp, 8.dp, 88.dp),
+        horizontalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
+        verticalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
     ) {
         items(entries, key = RemoteEntry::path) { entry ->
             RemoteEntryTile(
@@ -776,6 +744,8 @@ private fun RemoteEntryGrid(
                 selected = entry.path in selectedPaths,
                 selectionActive = selectionActive,
                 opening = entry.path == openingPath,
+                iconScalePercent = iconScalePercent,
+                spacingScalePercent = spacingScalePercent,
                 onOpen = { onOpen(entry) },
                 onDownload = { onDownload(entry) },
                 onToggleSelection = { onToggleSelection(entry.path) },
@@ -791,11 +761,16 @@ private fun RemoteEntryRow(
     selected: Boolean,
     selectionActive: Boolean,
     opening: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(8.dp)
+    val iconSize = (42f * iconScalePercent / 100f).dp
+    val itemSpacing = (12f * spacingScalePercent / 100f).dp
+    val verticalPadding = (9f * spacingScalePercent / 100f).dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -814,17 +789,17 @@ private fun RemoteEntryRow(
                 onClick = { if (selectionActive) onToggleSelection() else onOpen() },
                 onLongClick = onToggleSelection,
             )
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(itemSpacing),
     ) {
         if (opening) {
             CircularProgressIndicator(
-                modifier = Modifier.size(32.dp).testTag("remote_opening_${entry.path}"),
+                modifier = Modifier.size(iconSize.coerceAtMost(40.dp)).testTag("remote_opening_${entry.path}"),
                 strokeWidth = 3.dp,
             )
         } else {
-            RemoteFileVisual(entry = entry, modifier = Modifier.size(42.dp))
+            RemoteFileVisual(entry = entry, modifier = Modifier.size(iconSize))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (entry.directory) FontWeight.SemiBold else FontWeight.Normal)
@@ -832,7 +807,10 @@ private fun RemoteEntryRow(
         }
         RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection)
     }
-    HorizontalDivider(modifier = Modifier.padding(start = 66.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    HorizontalDivider(
+        modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+    )
 }
 
 @Composable
@@ -841,14 +819,18 @@ private fun RemoteEntryTile(
     selected: Boolean,
     selectionActive: Boolean,
     opening: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
+    val visualHeight = (76f * iconScalePercent / 100f).dp
+    val cardHeight = 158.dp + (visualHeight - 76.dp)
+    val innerPadding = (9f * spacingScalePercent / 100f).dp
     Card(
         modifier = Modifier
-            .padding(5.dp)
             .testTag("remote_entry_${entry.path}")
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
             .combinedClickable(
@@ -861,19 +843,19 @@ private fun RemoteEntryTile(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(158.dp)) {
+        Box(modifier = Modifier.fillMaxWidth().height(cardHeight)) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(9.dp),
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
                 if (opening) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(52.dp).testTag("remote_opening_${entry.path}"),
+                        modifier = Modifier.size(visualHeight.coerceAtMost(58.dp)).testTag("remote_opening_${entry.path}"),
                         strokeWidth = 4.dp,
                     )
                 } else {
-                    RemoteFileVisual(entry = entry, modifier = Modifier.fillMaxWidth().height(76.dp))
+                    RemoteFileVisual(entry = entry, modifier = Modifier.fillMaxWidth().height(visualHeight))
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
@@ -937,6 +919,15 @@ private fun remoteEntryMeta(entry: RemoteEntry, dateFormat: DateFormat): String 
     val date = entry.modifiedAtMillis?.takeIf { it > 0 }?.let { dateFormat.format(Date(it)) }
     return listOfNotNull(if (entry.directory) "Aplankas" else FileSystemRules.humanBytes(entry.sizeBytes), date).joinToString(" · ")
 }
+
+private fun com.affilemanager.app.ui.NetworkUiState.toDirectoryDisplaySettings(): DirectoryDisplaySettings =
+    DirectoryDisplaySettings(
+        layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+        iconScalePercent = iconScalePercent,
+        spacingScalePercent = spacingScalePercent,
+        gridColumns = gridColumns,
+        showThumbnails = false,
+    )
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

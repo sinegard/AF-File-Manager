@@ -3,17 +3,23 @@ package com.affilemanager.app.ui.screens
 import android.content.pm.PackageManager
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.os.Build
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Cancel
@@ -72,6 +78,11 @@ import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.theme.AppColorPalette
+import com.affilemanager.app.ui.theme.AppThemeMode
+import com.affilemanager.app.ui.theme.AppearanceRules
+import com.affilemanager.app.ui.theme.AppearanceSettings
+import com.affilemanager.app.ui.theme.palettePreviewColors
 import com.affilemanager.app.transfer.LanTransferController
 import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.update.AppUpdateState
@@ -95,6 +106,7 @@ fun ToolsScreen(
     val syncSchedules by viewModel.syncSchedules.collectAsStateWithLifecycle()
     val lanTransfer by LanTransferController.state.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val appearanceSettings by viewModel.appearanceSettings.collectAsStateWithLifecycle()
     val active = viewModel.activePanelState()
     val selectedEntry = active.entries.singleOrNull { it.absolutePath in active.selectedPaths }
     val context = LocalContext.current
@@ -145,6 +157,15 @@ fun ToolsScreen(
                     }
                 }
             }
+        }
+
+        item {
+            AppearanceSettingsCard(
+                settings = appearanceSettings,
+                onThemeMode = viewModel::setThemeMode,
+                onPalette = viewModel::setColorPalette,
+                onAmoledBlack = viewModel::setAmoledBlack,
+            )
         }
 
         item { SectionHeader("Operacijų centras", operations.size.toString()) }
@@ -409,6 +430,110 @@ fun ToolsScreen(
             viewModel = viewModel,
             onDismiss = viewModel::closeTrashBrowser,
         )
+    }
+}
+
+@Composable
+private fun AppearanceSettingsCard(
+    settings: AppearanceSettings,
+    onThemeMode: (AppThemeMode) -> Unit,
+    onPalette: (AppColorPalette) -> Unit,
+    onAmoledBlack: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("appearance_settings"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            LText("Išvaizda", fontWeight = FontWeight.SemiBold)
+            LText("Temos režimas", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                AppThemeMode.entries.forEach { mode ->
+                    val label = when (mode) {
+                        AppThemeMode.SYSTEM -> "Sistema"
+                        AppThemeMode.LIGHT -> "Šviesi"
+                        AppThemeMode.DARK -> "Tamsi"
+                    }
+                    FilterChip(
+                        selected = settings.themeMode == mode,
+                        onClick = { onThemeMode(mode) },
+                        label = { LText(label) },
+                        modifier = Modifier.testTag("theme_mode_${mode.name.lowercase()}"),
+                    )
+                }
+            }
+
+            LText("Spalvų paletė", style = MaterialTheme.typography.labelLarge)
+            AppColorPalette.entries.chunked(2).forEach { paletteRow ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    paletteRow.forEach { palette ->
+                        val supported = AppearanceRules.paletteSupported(palette, Build.VERSION.SDK_INT)
+                        val selected = settings.colorPalette == palette
+                        Card(
+                            onClick = { onPalette(palette) },
+                            enabled = supported,
+                            modifier = Modifier
+                                .weight(1f)
+                                .then(
+                                    if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                                    else Modifier,
+                                )
+                                .testTag("palette_${palette.name.lowercase()}"),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            ),
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().height(24.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    palettePreviewColors(palette).forEach { color ->
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(24.dp)
+                                                .background(color, RoundedCornerShape(6.dp)),
+                                        )
+                                    }
+                                }
+                                LText(
+                                    when (palette) {
+                                        AppColorPalette.DEFAULT -> "Numatytoji"
+                                        AppColorPalette.DYNAMIC -> "Dinaminė"
+                                        AppColorPalette.CATPPUCCIN -> "Catppuccin"
+                                        AppColorPalette.ORANGE -> "Oranžinė"
+                                    },
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                                if (!supported) {
+                                    LText("Reikia Android 12+", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    LText("AMOLED juodas režimas", fontWeight = FontWeight.Medium)
+                    LText("Tamsioje temoje fonas tampa visiškai juodas.", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(
+                    checked = settings.amoledBlack,
+                    onCheckedChange = onAmoledBlack,
+                    modifier = Modifier.testTag("amoled_black"),
+                )
+            }
+        }
     }
 }
 

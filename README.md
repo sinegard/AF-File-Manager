@@ -8,8 +8,9 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 
 ## Highlights
 
-- single- and dual-pane browsing with independent tabs, history, and per-folder view settings;
-- folders-first sorting, list/grid layouts, real file icons, and optional asynchronous thumbnails;
+- single- and dual-pane browsing with independent tabs, history, and per-folder list/grid settings for icon size, spacing, one to six columns, real file icons, and optional asynchronous thumbnails;
+- a home screen with bounded recent files, storage usage percentages, and Quick Locations that switch between list and four-to-six-column grid layouts;
+- system, light, and dark themes; Default, Material You, Catppuccin, and Orange palettes; plus an optional AMOLED-black background;
 - local copy, move, rename, batch rename, recoverable trash, operation queue, pause/resume, retry, and SHA-256 verification;
 - continuous PDF viewing, image zoom, media/text/APK previews, Android `Open with`, and archive browsing;
 - a full built-in text and code editor with line numbers, syntax highlighting, find/replace, undo/redo, go-to-line, configurable wrapping and text size, UTF-8/UTF-16/Windows-1252/ISO-8859-1 support, and LF/CRLF/CR preservation;

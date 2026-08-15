@@ -6,6 +6,7 @@ import com.affilemanager.app.model.EntryKind
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 
 data class RecentItem(
@@ -49,12 +50,16 @@ class NavigationRepository(context: Context) {
         private const val KEY_RECENTS = "recents"
         private const val KEY_SEARCHES = "saved_searches"
         private const val KEY_THUMBNAIL_DIRECTORIES = "thumbnail_directories"
+        private const val KEY_DIRECTORY_DISPLAY_INDEX = "directory_display_index"
+        private const val KEY_DIRECTORY_DISPLAY_PREFIX = "directory_display_"
         private const val MAX_FAVORITES = 100
         private const val MAX_RECENTS = 100
         private const val MAX_SEARCHES = 50
         private const val MAX_SEARCH_ROOTS = 32
         private const val MAX_THUMBNAIL_DIRECTORIES = 2_000
+        private const val MAX_DIRECTORY_DISPLAY_SETTINGS = 2_000
         private const val MAX_DIRECTORY_IDENTITY_LENGTH = 4_096
+        private const val MAX_DIRECTORY_DISPLAY_BYTES = 32_768
     }
 
     private val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -96,16 +101,83 @@ class NavigationRepository(context: Context) {
 
     fun thumbnailsEnabled(directoryIdentity: String): Boolean {
         val identity = validateDirectoryIdentity(directoryIdentity)
+        directoryDisplaySettings(identity)?.let { return it.showThumbnails }
         return identity in readStringArray(KEY_THUMBNAIL_DIRECTORIES, MAX_THUMBNAIL_DIRECTORIES)
     }
 
     fun setThumbnailsEnabled(directoryIdentity: String, enabled: Boolean) {
         val identity = validateDirectoryIdentity(directoryIdentity)
+        directoryDisplaySettings(identity)?.let { current ->
+            setDirectoryDisplaySettings(identity, current.copy(showThumbnails = enabled))
+            return
+        }
         val current = readStringArray(KEY_THUMBNAIL_DIRECTORIES, MAX_THUMBNAIL_DIRECTORIES)
         val updated = current.filterNot { it == identity }.toMutableList()
         if (enabled) updated += identity
         while (updated.size > MAX_THUMBNAIL_DIRECTORIES) updated.removeAt(0)
         if (updated != current) writeStringArray(KEY_THUMBNAIL_DIRECTORIES, updated)
+    }
+
+    fun directoryDisplaySettings(directoryIdentity: String): DirectoryDisplaySettings? {
+        val identity = validateDirectoryIdentity(directoryIdentity)
+        val storageKey = directoryDisplayStorageKey(identity)
+        val raw = preferences.getString(storageKey, null) ?: return null
+        require(raw.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Katalogo rodinio nustatymas per didelis" }
+        val item = JSONObject(raw)
+        require(item.getString("identity") == identity) { "Katalogo rodinio tapatybė nesutampa" }
+        val settings = DirectoryDisplaySettings(
+            layoutMode = runCatching {
+                DirectoryLayoutMode.valueOf(item.optString("layout", DirectoryLayoutMode.LIST.name))
+            }.getOrDefault(DirectoryLayoutMode.LIST),
+            iconScalePercent = item.optInt("iconScale", 100),
+            spacingScalePercent = item.optInt("spacingScale", 100),
+            gridColumns = item.optInt("gridColumns", 3),
+            showThumbnails = item.optBoolean("thumbnails", false),
+        )
+        return DirectoryDisplayRules.requireValid(settings)
+    }
+
+    @Synchronized
+    fun setDirectoryDisplaySettings(directoryIdentity: String, settings: DirectoryDisplaySettings) {
+        val identity = validateDirectoryIdentity(directoryIdentity)
+        val valid = DirectoryDisplayRules.requireValid(settings)
+        if (directoryDisplaySettings(identity) == valid) return
+        val digest = directoryDisplayDigest(identity)
+        val storageKey = "$KEY_DIRECTORY_DISPLAY_PREFIX$digest"
+        preferences.getString(storageKey, null)?.let { existing ->
+            require(JSONObject(existing).getString("identity") == identity) { "Katalogo rodinio rakto kolizija" }
+        }
+        val index = readStringArray(KEY_DIRECTORY_DISPLAY_INDEX, MAX_DIRECTORY_DISPLAY_SETTINGS)
+            .filterNot { it == digest }
+            .toMutableList()
+        index += digest
+        val evicted = mutableListOf<String>()
+        while (index.size > MAX_DIRECTORY_DISPLAY_SETTINGS) evicted += index.removeAt(0)
+        val item = JSONObject()
+            .put("identity", identity)
+            .put("layout", valid.layoutMode.name)
+            .put("iconScale", valid.iconScalePercent)
+            .put("spacingScale", valid.spacingScalePercent)
+            .put("gridColumns", valid.gridColumns)
+            .put("thumbnails", valid.showThumbnails)
+        val editor = preferences.edit()
+            .putString(storageKey, item.toString())
+            .putString(KEY_DIRECTORY_DISPLAY_INDEX, JSONArray().apply { index.forEach(::put) }.toString())
+        evicted.forEach { editor.remove("$KEY_DIRECTORY_DISPLAY_PREFIX$it") }
+        check(editor.commit()) { "Katalogo rodinio nustatymo įrašyti nepavyko" }
+    }
+
+    @Synchronized
+    fun clearDirectoryDisplaySettings(directoryIdentity: String) {
+        val identity = validateDirectoryIdentity(directoryIdentity)
+        val digest = directoryDisplayDigest(identity)
+        val index = readStringArray(KEY_DIRECTORY_DISPLAY_INDEX, MAX_DIRECTORY_DISPLAY_SETTINGS)
+        val updated = index.filterNot { it == digest }
+        val editor = preferences.edit().remove("$KEY_DIRECTORY_DISPLAY_PREFIX$digest")
+        if (updated != index) {
+            editor.putString(KEY_DIRECTORY_DISPLAY_INDEX, JSONArray().apply { updated.forEach(::put) }.toString())
+        }
+        check(editor.commit()) { "Katalogo rodinio nustatymo pašalinti nepavyko" }
     }
 
     fun savedSearches(): List<SavedSearch> {
@@ -206,6 +278,13 @@ class NavigationRepository(context: Context) {
         require(identity.length <= MAX_DIRECTORY_IDENTITY_LENGTH) { "Katalogo tapatybė per ilga" }
         return identity
     }
+
+    private fun directoryDisplayStorageKey(identity: String): String =
+        "$KEY_DIRECTORY_DISPLAY_PREFIX${directoryDisplayDigest(identity)}"
+
+    private fun directoryDisplayDigest(identity: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(identity.toByteArray(Charsets.UTF_8))
+        .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
     private fun readStringArray(key: String, limit: Int): List<String> {
         val array = readArray(key, limit)

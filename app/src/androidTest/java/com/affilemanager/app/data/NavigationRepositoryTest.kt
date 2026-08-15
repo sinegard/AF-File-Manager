@@ -34,6 +34,36 @@ class NavigationRepositoryTest {
     }
 
     @Test
+    fun directoryDisplaySettingsPersistPerDirectoryAndCanBeCleared() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val firstIdentity = "instrumentation:display:first:${System.nanoTime()}"
+        val secondIdentity = "instrumentation:display:second:${System.nanoTime()}"
+        val repository = NavigationRepository(application)
+        val settings = DirectoryDisplaySettings(
+            layoutMode = DirectoryLayoutMode.GRID,
+            iconScalePercent = 130,
+            spacingScalePercent = 70,
+            gridColumns = 5,
+            showThumbnails = true,
+        )
+        try {
+            assertEquals(null, repository.directoryDisplaySettings(firstIdentity))
+            assertEquals(null, repository.directoryDisplaySettings(secondIdentity))
+
+            repository.setDirectoryDisplaySettings(firstIdentity, settings)
+
+            assertEquals(settings, NavigationRepository(application).directoryDisplaySettings(firstIdentity))
+            assertEquals(null, NavigationRepository(application).directoryDisplaySettings(secondIdentity))
+
+            repository.clearDirectoryDisplaySettings(firstIdentity)
+            assertEquals(null, NavigationRepository(application).directoryDisplaySettings(firstIdentity))
+        } finally {
+            repository.clearDirectoryDisplaySettings(firstIdentity)
+            repository.clearDirectoryDisplaySettings(secondIdentity)
+        }
+    }
+
+    @Test
     fun savedSearchPersistsMultipleRootsAndAdvancedFilters() {
         val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val repository = NavigationRepository(application)

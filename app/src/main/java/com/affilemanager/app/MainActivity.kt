@@ -7,7 +7,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.affilemanager.app.ui.AFFileManagerApp
+import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.theme.AFFileManagerTheme
 import com.affilemanager.app.ui.localization.AppLanguageManager
 
@@ -22,8 +25,11 @@ class MainActivity : AppCompatActivity() {
         pendingViewRequest.value = intent.toIncomingViewRequest()
         enableEdgeToEdge()
         setContent {
-            AFFileManagerTheme {
+            val mainViewModel: MainViewModel = viewModel()
+            val appearance = mainViewModel.appearanceSettings.collectAsStateWithLifecycle()
+            AFFileManagerTheme(settings = appearance.value) {
                 AFFileManagerApp(
+                    viewModel = mainViewModel,
                     incomingViewRequest = pendingViewRequest.value,
                     onIncomingViewRequestConsumed = { pendingViewRequest.value = null },
                 )

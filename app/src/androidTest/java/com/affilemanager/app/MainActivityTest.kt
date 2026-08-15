@@ -5,16 +5,25 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import android.os.Build
 import android.os.Environment
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.ViewModelProvider
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
+import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
+import com.affilemanager.app.ui.theme.AppColorPalette
+import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProtocol
 import kotlinx.coroutines.runBlocking
@@ -54,6 +63,7 @@ class MainActivityTest {
             compose.onAllNodesWithText("Internal storage").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithText("File locations").fetchSemanticsNode()
+        assertTrue(compose.onAllNodesWithText("% used", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(compose.onAllNodesWithText("Kairysis:").fetchSemanticsNodes().isEmpty())
     }
 
@@ -169,6 +179,94 @@ class MainActivityTest {
             compose.runOnUiThread {
                 AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.ENGLISH)
             }
+        }
+    }
+
+    @Test
+    fun appearanceControlsApplyThemePaletteAndAmoledSetting() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.onNodeWithText("More").performClick()
+            compose.onNodeWithTag("appearance_settings").performScrollTo()
+            compose.onNodeWithTag("theme_mode_dark").performClick()
+            compose.onNodeWithTag("palette_catppuccin").performClick()
+            compose.onNodeWithTag("amoled_black").performClick()
+
+            compose.waitUntil(timeoutMillis = 5_000) {
+                val settings = viewModel.appearanceSettings.value
+                settings.themeMode == AppThemeMode.DARK &&
+                    settings.colorPalette == AppColorPalette.CATPPUCCIN &&
+                    settings.amoledBlack
+            }
+        } finally {
+            compose.runOnUiThread {
+                viewModel.setThemeMode(AppThemeMode.SYSTEM)
+                viewModel.setColorPalette(AppColorPalette.DEFAULT)
+                viewModel.setAmoledBlack(false)
+            }
+        }
+    }
+
+    @Test
+    fun homeLayoutButtonTogglesAndLongPressOpensFourToSixColumnSettings() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.setFilesHomeDisplaySettings(
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 4),
+                )
+            }
+            compose.onNodeWithTag("home_layout_toggle").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.filesHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.GRID
+            }
+
+            compose.onNodeWithTag("home_layout_toggle").performTouchInput { longClick() }
+            compose.onNodeWithTag("display_settings_dialog").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_4").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_5").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_6").performClick()
+            compose.onNodeWithTag("display_apply").performClick()
+
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.filesHomeDisplaySettings.value.gridColumns == 6
+            }
+        } finally {
+            compose.runOnUiThread {
+                viewModel.setFilesHomeDisplaySettings(
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 4),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun localFolderLayoutButtonTogglesAndLongPressOpensTheSameSettings() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "layout-${System.nanoTime()}").apply { mkdirs() }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 3),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                !viewModel.filesHomeVisible.value && viewModel.leftPanel.value.path == directory.canonicalPath
+            }
+
+            compose.onNodeWithTag("directory_layout_local_LEFT").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.grid }
+
+            compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
+            compose.onNodeWithTag("display_settings_dialog").fetchSemanticsNode()
+            compose.onNodeWithText("Cancel").performClick()
+        } finally {
+            directory.deleteRecursively()
         }
     }
 }
