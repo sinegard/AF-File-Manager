@@ -12,18 +12,29 @@ val hasReleaseSigning = listOf(releaseStorePath, releaseStorePassword, releaseKe
 android {
     namespace = "com.affilemanager.app"
     compileSdk = 36
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.11.0"
+        versionCode = 20
+        versionName = "0.12.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        ndkBuild {
+            path = file("src/main/cpp/Android.mk")
+        }
     }
 
     signingConfigs {
@@ -108,6 +119,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("org.connectbot:termlib:0.1.0")
 
     implementation("com.github.mwiede:jsch:2.28.6")
     implementation("com.hierynomus:smbj:0.14.0")

@@ -19,6 +19,9 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 - Thumbnails are generated locally and kept only in a process-memory LRU cache capped at 24 MiB. The app does not build a persistent thumbnail database or silently index the entire device.
 - SFTP host keys are verified by SHA-256 fingerprint. Trust on first use is available only after an explicit choice; the first key is stored and a later key change is blocked.
 - WebDAV requires HTTPS. FTPS validates the certificate chain and endpoint name. Plain FTP is intentionally an insecure legacy protocol and should never be used on an untrusted network.
+- The local terminal is a bounded PTY session running `/system/bin/sh` under the app's normal Android UID and SELinux policy. It never grants root, Shizuku, or ADB privileges.
+- The server terminal is offered only for SFTP/SSH profiles. It creates a separate SSH shell with the saved encrypted credential and the same pinned host-key policy; credentials and terminal output are not written to app logs.
+- Closing a terminal tears down its PTY or SSH channel and process group. Terminal input queues, paste size, dimensions, and renderer scrollback are bounded.
 
 ## File integrity
 

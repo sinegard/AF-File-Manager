@@ -18,6 +18,7 @@ AF File Manager is a privacy-first Android file manager with no ads, tracking SD
 - the same long-press selection, clear/select-all toggle, strong highlight, and grouped copy flow for local and remote files;
 - one consistent local and remote browser layout with back/forward/up history, breadcrumbs, list/grid views, hidden-file controls, folders-first sorting, file-type icons, and matching action menus;
 - editable network profiles, Android Keystore-protected secrets, SFTP host-key pinning, and safe reconnect after transient transport failures;
+- a full-screen, touch-friendly terminal in the current folder: a real local Android PTY on the phone, or an SSH shell that reuses the active SFTP profile and opens at the current server path;
 - local Wi-Fi file transfer page with a one-time code and an automatic expiry;
 - self-update from signed [GitHub Releases](https://github.com/sinegard/AF-File-Manager/releases).
 
@@ -50,9 +51,11 @@ Full local browsing on Android 11+ uses the special **All files access** permiss
 
 Root and Shizuku actions are not performed automatically.
 
+The phone terminal runs `/system/bin/sh` as AF File Manager's ordinary Android app user. It does not bypass Android permissions and it is not a root shell or a packaged Linux distribution. A remote shell is available only for SFTP/SSH profiles because FTP, FTPS, SMB, and WebDAV do not provide a shell protocol.
+
 ## Build
 
-Requirements: JDK 17 and Android SDK 36.
+Requirements: JDK 17, Android SDK 36, and Android NDK `27.3.13750724`.
 
 ```powershell
 $env:JAVA_HOME = 'path-to-jdk-17'
@@ -72,6 +75,6 @@ Pushing a stable `vMAJOR.MINOR.PATCH` tag runs the full JVM/lint/release build a
 
 ## Privacy and security
 
-See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md). File names and file contents are never sent to GitHub by the updater. GitHub receives only an ordinary release metadata request and APK download request.
+See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). File names and file contents are never sent to GitHub by the updater. GitHub receives only an ordinary release metadata request and APK download request.
 
 Contributions are welcome through GitHub issues and pull requests. Never include passwords, private keys, personal file names, or live server details in a report.

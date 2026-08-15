@@ -1,6 +1,8 @@
 package com.affilemanager.app.ui
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
@@ -42,6 +44,7 @@ import com.affilemanager.app.model.StorageAnalysis
 import com.affilemanager.app.model.StorageRoot
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
+import com.affilemanager.app.network.NetworkProtocol
 import com.affilemanager.app.network.RemoteClient
 import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.network.RemoteErrorInfo
@@ -64,6 +67,12 @@ import com.affilemanager.app.sync.SyncConflictPolicy
 import com.affilemanager.app.sync.SyncMode
 import com.affilemanager.app.sync.SyncPreview
 import com.affilemanager.app.sync.SyncSchedule
+import com.affilemanager.app.terminal.LocalPtyBackend
+import com.affilemanager.app.terminal.SshTerminalBackend
+import com.affilemanager.app.terminal.TerminalBackend
+import com.affilemanager.app.terminal.TerminalLimits
+import com.affilemanager.app.terminal.TerminalModifierState
+import com.affilemanager.app.terminal.TerminalSessionController
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
 import com.affilemanager.app.ui.preview.RemotePreviewCache
@@ -87,6 +96,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
+import org.connectbot.terminal.TerminalEmulator
 
 enum class AppSection {
     FILES,
@@ -236,6 +246,32 @@ data class FileEditUiState(
     val hasUnsavedChanges: Boolean get() = textChanged || session?.hasUnsavedChanges == true
 }
 
+enum class TerminalLocation {
+    PHONE,
+    SERVER,
+}
+
+data class TerminalFailureUi(
+    val title: String,
+    val detail: String,
+    val suggestion: String,
+    val diagnosticCode: String,
+)
+
+data class TerminalUiState(
+    val visible: Boolean = false,
+    val starting: Boolean = false,
+    val running: Boolean = false,
+    val location: TerminalLocation = TerminalLocation.PHONE,
+    val title: String = "",
+    val path: String = "",
+    val emulator: TerminalEmulator? = null,
+    val modifiers: TerminalModifierState? = null,
+    val failure: TerminalFailureUi? = null,
+    val endedMessage: String? = null,
+    val confirmClose: Boolean = false,
+)
+
 sealed interface PreviewTarget {
     data class LocalFile(val entry: FileEntry) : PreviewTarget
     data class TrashFile(val entry: FileEntry) : PreviewTarget
@@ -363,6 +399,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _fileEditState = MutableStateFlow(FileEditUiState())
     val fileEditState: StateFlow<FileEditUiState> = _fileEditState.asStateFlow()
 
+    private val _terminalState = MutableStateFlow(TerminalUiState())
+    val terminalState: StateFlow<TerminalUiState> = _terminalState.asStateFlow()
+
     val operations = graph.operationManager.operations
 
     private val _messages = MutableSharedFlow<UiMessage>(extraBufferCapacity = 16)
@@ -376,6 +415,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var remoteFileOpenRequestId = 0L
     private var fileEditJob: Job? = null
     private var fileEditRequestId = 0L
+    private var terminalSession: TerminalSessionController? = null
+    private var terminalOpenJob: Job? = null
+    private var terminalRequestId = 0L
     private var leftPanelRefreshJob: Job? = null
     private var rightPanelRefreshJob: Job? = null
     private val handledOperations = ArrayDeque<String>()
@@ -1839,6 +1881,214 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _safBrowser.value = SafBrowserUiState()
     }
 
+    fun openLocalTerminal(panel: PanelId = _activePanel.value) {
+        val directory = File(panelFlow(panel).value.path)
+        beginTerminal(
+            location = TerminalLocation.PHONE,
+            title = "Telefono terminalas",
+            path = directory.absolutePath,
+            openBackend = {
+                val application = getApplication<Application>()
+                LocalPtyBackend.open(
+                    workingDirectory = directory,
+                    homeDirectory = File(application.filesDir, "terminal-home"),
+                    temporaryDirectory = File(application.cacheDir, "terminal-tmp"),
+                )
+            },
+            errorInfo = { error ->
+                TerminalFailureUi(
+                    title = "Telefono terminalo atidaryti nepavyko",
+                    detail = when (error) {
+                        is SecurityException -> "Android saugos politika neleido terminalui pasiekti šio aplanko."
+                        is IllegalArgumentException,
+                        is IllegalStateException,
+                        -> "Dabartinis aplankas terminalui nepasiekiamas arba nebegalioja."
+                        else -> "Android terminalo proceso paleisti nepavyko."
+                    },
+                    suggestion = "Atverkite kitą telefono aplanką ir bandykite dar kartą.",
+                    diagnosticCode = "LOCAL-PTY-${error.javaClass.simpleName.uppercase().filter(Char::isLetterOrDigit).take(24).ifBlank { "UNKNOWN" }}",
+                )
+            },
+        )
+    }
+
+    fun openRemoteTerminal() {
+        val snapshot = _networkState.value
+        val connected = snapshot.connectedProfile ?: return
+        if (connected.protocol != NetworkProtocol.SFTP) {
+            message("Serverio terminalas pasiekiamas tik per SFTP/SSH jungtį", true)
+            return
+        }
+        val profileId = connected.id
+        val remotePath = snapshot.path
+        beginTerminal(
+            location = TerminalLocation.SERVER,
+            title = connected.name,
+            path = remotePath,
+            openBackend = {
+                val latest = graph.networkProfiles.list().firstOrNull { it.id == profileId }
+                    ?: throw IllegalArgumentException("Išsaugotas SFTP/SSH profilis nebeegzistuoja")
+                val backend = graph.networkProfiles.secret(profileId).getOrThrow().use { secret ->
+                    SshTerminalBackend.open(
+                        profile = latest,
+                        password = secret.password.copyOf(),
+                        privateKeyPem = secret.privateKeyPem.copyOf(),
+                        workingDirectory = remotePath,
+                    )
+                }
+                if (latest.expectedHostKeySha256 == null) {
+                    graph.networkProfiles.updateSftpFingerprint(profileId, backend.trustedFingerprint).getOrThrow()
+                    refreshProfiles()
+                }
+                backend
+            },
+            errorInfo = { error ->
+                val info = RemoteErrorPresenter.present(NetworkProtocol.SFTP, RemoteOperation.CONNECT, error)
+                TerminalFailureUi(
+                    title = info.title,
+                    detail = info.detail,
+                    suggestion = info.suggestion,
+                    diagnosticCode = info.diagnosticCode,
+                )
+            },
+        )
+    }
+
+    fun requestTerminalClose() {
+        val state = _terminalState.value
+        if (!state.visible) return
+        if (state.running || state.starting) {
+            _terminalState.update { it.copy(confirmClose = true) }
+        } else {
+            closeTerminalNow()
+        }
+    }
+
+    fun dismissTerminalCloseConfirmation() {
+        _terminalState.update { it.copy(confirmClose = false) }
+    }
+
+    fun confirmTerminalClose() {
+        closeTerminalNow()
+    }
+
+    fun pasteIntoTerminal(text: String) {
+        if (text.isEmpty()) return
+        val size = text.toByteArray(Charsets.UTF_8).size
+        if (size > TerminalLimits.MAX_PASTE_BYTES) {
+            message("Iškarpinės turinys viršija 64 KiB terminalo įklijavimo ribą", true)
+            return
+        }
+        if (terminalSession?.paste(text) != true) {
+            message("Terminalo įvestis užimta; bandykite įklijuoti dar kartą", true)
+        }
+    }
+
+    fun dispatchTerminalKey(key: Int) {
+        terminalSession?.dispatchKey(key)
+    }
+
+    fun toggleTerminalCtrl() {
+        terminalSession?.modifiers?.toggleCtrl()
+    }
+
+    fun toggleTerminalAlt() {
+        terminalSession?.modifiers?.toggleAlt()
+    }
+
+    private fun beginTerminal(
+        location: TerminalLocation,
+        title: String,
+        path: String,
+        openBackend: suspend () -> TerminalBackend,
+        errorInfo: (Throwable) -> TerminalFailureUi,
+    ) {
+        if (_terminalState.value.visible) return
+        val requestId = ++terminalRequestId
+        _terminalState.value = TerminalUiState(
+            visible = true,
+            starting = true,
+            location = location,
+            title = title,
+            path = path,
+        )
+        terminalOpenJob = viewModelScope.launch {
+            var backend: TerminalBackend? = null
+            var controller: TerminalSessionController? = null
+            try {
+                backend = openBackend()
+                if (requestId != terminalRequestId) return@launch
+                controller = TerminalSessionController.create(
+                    backend = requireNotNull(backend),
+                    parentScope = viewModelScope,
+                    onClipboardCopy = ::copyTerminalText,
+                    onTransportEnded = { transportError ->
+                        if (requestId == terminalRequestId) {
+                            _terminalState.update { state ->
+                                state.copy(
+                                    starting = false,
+                                    running = false,
+                                    endedMessage = transportError,
+                                )
+                            }
+                        }
+                    },
+                )
+                backend = null
+                if (requestId != terminalRequestId) {
+                    controller.close()
+                    return@launch
+                }
+                terminalSession = controller
+                _terminalState.update {
+                    it.copy(
+                        starting = false,
+                        running = true,
+                        emulator = controller.emulator,
+                        modifiers = controller.modifiers,
+                        failure = null,
+                        endedMessage = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                controller?.close()
+                withContext(NonCancellable + Dispatchers.IO) { backend?.close() }
+                throw cancelled
+            } catch (error: Throwable) {
+                controller?.close()
+                withContext(Dispatchers.IO) { backend?.close() }
+                if (requestId == terminalRequestId) {
+                    _terminalState.update {
+                        it.copy(starting = false, running = false, failure = errorInfo(error))
+                    }
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { backend?.close() }
+                if (requestId == terminalRequestId) terminalOpenJob = null
+            }
+        }
+    }
+
+    private fun copyTerminalText(text: String) {
+        if (text.isEmpty()) return
+        if (text.toByteArray(Charsets.UTF_8).size > TerminalLimits.MAX_CLIPBOARD_COPY_BYTES) {
+            message("Pažymėtas terminalo tekstas viršija 64 KiB kopijavimo ribą", true)
+            return
+        }
+        val clipboard = getApplication<Application>().getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("AF File Manager terminal", text))
+    }
+
+    private fun closeTerminalNow() {
+        terminalRequestId += 1
+        val session = terminalSession
+        terminalSession = null
+        terminalOpenJob?.cancel()
+        terminalOpenJob = null
+        _terminalState.value = TerminalUiState()
+        if (session != null) viewModelScope.launch { session.close() }
+    }
+
     fun refreshProfiles() {
         viewModelScope.launch {
             runCatching { graph.networkProfiles.list() }
@@ -2474,6 +2724,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         workspaceSaveRequests.trySend(currentWorkspace())
         workspaceSaveRequests.close()
+        terminalRequestId += 1
+        terminalOpenJob?.cancel()
+        terminalOpenJob = null
+        terminalSession?.let { session -> graph.applicationScope.launch { session.close() } }
+        terminalSession = null
+        _terminalState.value = TerminalUiState()
         cancelRemoteFileOpen()
         fileEditRequestId += 1
         fileEditJob?.cancel()
