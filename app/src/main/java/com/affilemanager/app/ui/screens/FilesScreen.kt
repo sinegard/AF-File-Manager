@@ -69,6 +69,7 @@ import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -749,6 +750,9 @@ private fun FilePanel(
                     }
                 }
                 IconButton(onClick = { viewModel.refreshPanel(panelId) }) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti")) }
+                IconButton(onClick = { viewModel.openLocalTerminal(panelId) }) {
+                    Icon(Icons.Rounded.Terminal, contentDescription = uiText("Atidaryti terminalą šiame aplanke"))
+                }
                 }
             }
         }
@@ -881,6 +885,11 @@ private fun CompactPanelActions(
                 )
             }
             HorizontalDivider()
+            DropdownMenuItem(
+                text = { LText("Atidaryti terminalą šiame aplanke") },
+                leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
+                onClick = { viewModel.openLocalTerminal(panelId); onExpandedChange(false) },
+            )
             DropdownMenuItem(
                 text = { LText("Atnaujinti") },
                 leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },

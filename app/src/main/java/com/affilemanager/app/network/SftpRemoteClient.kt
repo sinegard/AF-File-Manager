@@ -1,17 +1,12 @@
 package com.affilemanager.app.network
 
 import com.jcraft.jsch.ChannelSftp
-import com.jcraft.jsch.HostKey
-import com.jcraft.jsch.HostKeyRepository
-import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SftpATTRS
 import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.security.MessageDigest
-import java.util.Base64
 import java.util.Vector
 
 class SftpRemoteClient private constructor(
@@ -30,48 +25,15 @@ class SftpRemoteClient private constructor(
 
         suspend fun connect(profile: NetworkProfile, password: CharArray, privateKeyPem: CharArray): SftpRemoteClient = withContext(Dispatchers.IO) {
             require(profile.protocol == NetworkProtocol.SFTP)
-            val repository = FingerprintHostKeyRepository(
-                expected = profile.expectedHostKeySha256,
-                allowFirstUse = profile.allowFirstUseTrust,
-            )
-            val jsch = JSch().apply { hostKeyRepository = repository }
-            val session = jsch.getSession(profile.username, profile.host, profile.port)
-            session.setServerAliveInterval(15_000)
-            session.setServerAliveCountMax(3)
-            val passwordBytes = password.concatToString().toByteArray(Charsets.UTF_8)
-            val privateKeyBytes = privateKeyPem.concatToString().toByteArray(Charsets.UTF_8)
+            val verified = VerifiedSshSessionFactory.connect(profile, password, privateKeyPem)
+            val session = verified.session
             try {
-                if (privateKeyBytes.isNotEmpty()) {
-                    jsch.addIdentity(
-                        "af-file-manager-${profile.id}",
-                        privateKeyBytes,
-                        null,
-                        passwordBytes.takeIf(ByteArray::isNotEmpty),
-                    )
-                } else {
-                    require(passwordBytes.isNotEmpty()) { "Reikalingas SFTP slaptažodis arba privatus SSH raktas" }
-                    session.setPassword(passwordBytes)
-                }
-                session.setConfig("StrictHostKeyChecking", "yes")
-                session.setConfig(
-                    "PreferredAuthentications",
-                    if (privateKeyBytes.isNotEmpty()) "publickey" else "password,keyboard-interactive",
-                )
-                session.timeout = CONNECT_TIMEOUT_MS
-                session.connect(CONNECT_TIMEOUT_MS)
                 val channel = session.openChannel("sftp") as ChannelSftp
                 channel.connect(CONNECT_TIMEOUT_MS)
-                val fingerprint = repository.observed
-                    ?: throw SecurityException("SSH serverio raktas nepatikrintas")
-                SftpRemoteClient(session, channel, fingerprint)
+                SftpRemoteClient(session, channel, verified.fingerprint)
             } catch (error: Throwable) {
                 session.disconnect()
                 throw error
-            } finally {
-                passwordBytes.fill(0)
-                privateKeyBytes.fill(0)
-                password.fill('\u0000')
-                privateKeyPem.fill('\u0000')
             }
         }
     }
@@ -197,38 +159,4 @@ class SftpRemoteClient private constructor(
     }
 
     private class Counter(var value: Int = 0)
-}
-
-private class FingerprintHostKeyRepository(
-    private val expected: String?,
-    private val allowFirstUse: Boolean,
-) : HostKeyRepository {
-    @Volatile
-    var observed: String? = null
-        private set
-
-    override fun check(host: String?, key: ByteArray): Int {
-        val actual = "SHA256:" + Base64.getEncoder().withoutPadding()
-            .encodeToString(MessageDigest.getInstance("SHA-256").digest(key))
-        observed = actual
-        return when {
-            expected != null && constantTimeEquals(expected, actual) -> HostKeyRepository.OK
-            expected == null && allowFirstUse -> HostKeyRepository.OK
-            expected != null -> HostKeyRepository.CHANGED
-            else -> HostKeyRepository.NOT_INCLUDED
-        }
-    }
-
-    override fun add(hostkey: HostKey?, userinfo: com.jcraft.jsch.UserInfo?) = Unit
-    override fun remove(host: String?, type: String?) = Unit
-    override fun remove(host: String?, type: String?, key: ByteArray?) = Unit
-    override fun getKnownHostsRepositoryID(): String = "AF File Manager SHA-256 pinning"
-    override fun getHostKey(): Array<HostKey> = emptyArray()
-    override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
-
-    private fun constantTimeEquals(left: String, right: String): Boolean {
-        val leftBytes = left.toByteArray(Charsets.US_ASCII)
-        val rightBytes = right.toByteArray(Charsets.US_ASCII)
-        return MessageDigest.isEqual(leftBytes, rightBytes)
-    }
 }

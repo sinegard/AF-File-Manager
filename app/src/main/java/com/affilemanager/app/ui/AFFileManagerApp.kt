@@ -77,6 +77,7 @@ import com.affilemanager.app.ui.screens.AnalyzeScreen
 import com.affilemanager.app.ui.screens.ConnectionsScreen
 import com.affilemanager.app.ui.screens.FilesScreen
 import com.affilemanager.app.ui.screens.ToolsScreen
+import com.affilemanager.app.ui.terminal.TerminalOverlay
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
 
@@ -107,6 +108,7 @@ fun AFFileManagerApp(
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     val fileEditState by viewModel.fileEditState.collectAsStateWithLifecycle()
+    val terminalState by viewModel.terminalState.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val leftPanel by viewModel.leftPanel.collectAsStateWithLifecycle()
     val rightPanel by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -140,7 +142,7 @@ fun AFFileManagerApp(
     )
 
     BackHandler(
-        enabled = (!appLockEnabled || unlocked) && systemBackAction != SystemBackAction.DEFER_TO_SYSTEM,
+        enabled = (!appLockEnabled || unlocked) && !terminalState.visible && systemBackAction != SystemBackAction.DEFER_TO_SYSTEM,
     ) {
         when (systemBackAction) {
             SystemBackAction.CLOSE_PREVIEW -> viewModel.closePreview()
@@ -309,6 +311,17 @@ fun AFFileManagerApp(
     }
 
     BatchRenameDialog(viewModel)
+
+    TerminalOverlay(
+        state = terminalState,
+        onRequestClose = viewModel::requestTerminalClose,
+        onConfirmClose = viewModel::confirmTerminalClose,
+        onDismissCloseConfirmation = viewModel::dismissTerminalCloseConfirmation,
+        onPaste = viewModel::pasteIntoTerminal,
+        onKey = viewModel::dispatchTerminalKey,
+        onToggleCtrl = viewModel::toggleTerminalCtrl,
+        onToggleAlt = viewModel::toggleTerminalAlt,
+    )
 
     val offeredRelease = when (val update = updateState) {
         is AppUpdateState.Available -> update.release

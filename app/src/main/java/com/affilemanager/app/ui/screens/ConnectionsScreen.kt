@@ -53,6 +53,7 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -210,6 +211,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onToggleGrid = viewModel::toggleRemoteGrid,
                     onSort = viewModel::setRemoteSort,
                     onDisconnect = viewModel::disconnectNetwork,
+                    onOpenTerminal = viewModel::openRemoteTerminal,
                 )
             }
         }
@@ -378,6 +380,7 @@ internal fun RemoteBrowser(
     onToggleGrid: () -> Unit,
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
+    onOpenTerminal: () -> Unit = {},
 ) {
     val displayedEntries = remember(state.entries, state.includeHidden, state.sortMode, state.sortDirection) {
         RemoteBrowserRules.displayEntries(
@@ -444,6 +447,7 @@ internal fun RemoteBrowser(
                 onToggleGrid = onToggleGrid,
                 onSort = onSort,
                 onDisconnect = onDisconnect,
+                onOpenTerminal = onOpenTerminal,
             )
         }
         RemoteBreadcrumbs(state.path) { onPath ->
@@ -507,6 +511,7 @@ private fun RemoteFolderToolbar(
     onToggleGrid: () -> Unit,
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
+    onOpenTerminal: () -> Unit,
 ) {
     var sortMenu by remember { mutableStateOf(false) }
     Row(
@@ -573,6 +578,7 @@ private fun RemoteFolderToolbar(
             onSort = onSort,
             onRefresh = onRefresh,
             onDisconnect = onDisconnect,
+            onOpenTerminal = onOpenTerminal,
         )
     }
 }
@@ -591,6 +597,7 @@ private fun RemoteFolderActionsMenu(
     onSort: (SortMode) -> Unit,
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
+    onOpenTerminal: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -619,6 +626,13 @@ private fun RemoteFolderActionsMenu(
                 leadingIcon = { Icon(Icons.Rounded.Sync, contentDescription = null) },
                 enabled = !state.loading,
                 onClick = { expanded = false; onSync() },
+            )
+            DropdownMenuItem(
+                text = { LText("Atidaryti serverio terminalą") },
+                leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
+                enabled = !state.loading,
+                modifier = Modifier.testTag("remote_open_terminal"),
+                onClick = { expanded = false; onOpenTerminal() },
             )
             if (includeDisplayActions) {
                 HorizontalDivider()

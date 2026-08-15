@@ -59,6 +59,22 @@ class UiTranslatorTest {
         )
         assertEquals("Local file is missing", UiTranslator.translate("Trūksta vietinio failo", AppLanguageManager.ENGLISH))
         assertEquals(
+            "Open terminal in this folder",
+            UiTranslator.translate("Atidaryti terminalą šiame aplanke", AppLanguageManager.ENGLISH),
+        )
+        assertEquals("Close terminal?", UiTranslator.translate("Uždaryti terminalą?", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Could not open the phone terminal",
+            UiTranslator.translate("Telefono terminalo atidaryti nepavyko", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "What to do: Open another phone folder and try again.",
+            UiTranslator.translate(
+                "Ką daryti: Atverkite kitą telefono aplanką ir bandykite dar kartą.",
+                AppLanguageManager.ENGLISH,
+            ),
+        )
+        assertEquals(
             "Failed: The network profile was removed",
             UiTranslator.translate("Nepavyko: Tinklo profilis pašalintas", AppLanguageManager.ENGLISH),
         )
