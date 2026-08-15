@@ -55,7 +55,7 @@ jobs:
           AF_KEYSTORE_PASSWORD: ${{ secrets.AF_KEYSTORE_PASSWORD }}
           AF_KEY_ALIAS: ${{ secrets.AF_KEY_ALIAS }}
           AF_KEY_PASSWORD: ${{ secrets.AF_KEY_PASSWORD }}
-        run: ./gradlew testDebugUnitTest lintDebug assembleRelease --no-daemon
+        run: ./gradlew testDebugUnitTest lintDebug verifyReleaseDynamicRuntimeClasses --no-daemon
 
       - name: Prepare release assets
         shell: bash

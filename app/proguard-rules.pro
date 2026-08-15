@@ -4,6 +4,25 @@
 -dontwarn javax.naming.**
 -dontwarn org.apache.commons.compress.archivers.sevenz.**
 
+# JSch selects authentication, key-exchange, cipher, signature, and key parsing
+# implementations from fully qualified class-name strings at runtime. Preserve
+# the Android/JCE implementations AF File Manager can actually use; optional
+# desktop integrations such as Pageant, JNA, Log4j, and Unix-domain agents stay
+# removable.
+-keep,allowoptimization class com.jcraft.jsch.JSchException { *; }
+-keep,allowoptimization class com.jcraft.jsch.CipherNone { *; }
+-keep,allowoptimization class com.jcraft.jsch.UserAuthNone { *; }
+-keep,allowoptimization class com.jcraft.jsch.UserAuthPassword { *; }
+-keep,allowoptimization class com.jcraft.jsch.UserAuthKeyboardInteractive { *; }
+-keep,allowoptimization class com.jcraft.jsch.UserAuthPublicKey { *; }
+-keep,allowoptimization class com.jcraft.jsch.DH** { *; }
+-keep,allowoptimization class com.jcraft.jsch.jce.** { *; }
+
+# Release instrumentation calls this non-exported verification seam from a
+# separately optimized test APK, so its binary name and method signature form a
+# stable cross-APK contract.
+-keep class com.affilemanager.app.network.SftpRuntimeVerifier { *; }
+
 # SMBJ optionally supports Kerberos/GSS and mbassador EL filters. AF File Manager
 # uses username/password NTLM and no expression-language filters, so those
 # desktop-only optional classes are intentionally absent on Android.

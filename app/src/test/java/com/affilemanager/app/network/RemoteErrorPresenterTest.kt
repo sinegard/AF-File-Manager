@@ -1,5 +1,6 @@
 package com.affilemanager.app.network
 
+import com.jcraft.jsch.JSchException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -43,7 +44,21 @@ class RemoteErrorPresenterTest {
     }
 
     @Test
-    fun unknownFailureUsesOnlySafeTypeBasedDiagnostic() {
+    fun jschFailureUsesStableDiagnosticWithoutEchoingItsMessage() {
+        val marker = "TOP_SECRET_MARKER"
+        val shown = RemoteErrorPresenter.present(
+            NetworkProtocol.SFTP,
+            RemoteOperation.CONNECT,
+            JSchException(marker),
+        )
+        val visible = listOf(shown.title, shown.detail, shown.suggestion, shown.diagnosticCode).joinToString(" ")
+
+        assertEquals("SFTP-CONNECT-SSH", shown.diagnosticCode)
+        assertFalse(marker in visible)
+    }
+
+    @Test
+    fun unknownFailureUsesStableDiagnosticIndependentOfExceptionClassName() {
         val marker = "TOP_SECRET_MARKER"
         val shown = RemoteErrorPresenter.present(
             NetworkProtocol.FTP,
@@ -53,6 +68,7 @@ class RemoteErrorPresenterTest {
         val visible = listOf(shown.title, shown.detail, shown.suggestion, shown.diagnosticCode).joinToString(" ")
 
         assertFalse(marker in visible)
-        assertTrue(shown.diagnosticCode.startsWith("FTP-CONNECT-"))
+        assertEquals("FTP-CONNECT-UNEXPECTED", shown.diagnosticCode)
+        assertFalse("ILLEGALSTATE" in shown.diagnosticCode)
     }
 }

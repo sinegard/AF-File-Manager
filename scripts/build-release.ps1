@@ -22,7 +22,7 @@ try {
     $env:AF_KEY_ALIAS = 'af-file-manager-release'
     $env:AF_KEY_PASSWORD = $plainPassword
 
-    & (Join-Path $projectDirectory 'gradlew.bat') testDebugUnitTest lintDebug assembleRelease --no-daemon
+    & (Join-Path $projectDirectory 'gradlew.bat') testDebugUnitTest lintDebug verifyReleaseDynamicRuntimeClasses --no-daemon
     if ($LASTEXITCODE -ne 0) {
         throw "Release build failed with exit code $LASTEXITCODE"
     }

@@ -1,5 +1,6 @@
 package com.affilemanager.app.network
 
+import com.jcraft.jsch.JSchException
 import org.apache.commons.net.ftp.FTPConnectionClosedException
 import java.io.IOException
 import java.net.ConnectException
@@ -142,17 +143,20 @@ object RemoteErrorPresenter {
                 diagnosticCode = "${protocol.name}-${operation.diagnosticPart}-SOCKET",
             )
         }
+        if (causes.any { it is JSchException }) {
+            return RemoteErrorInfo(
+                title = if (operation == RemoteOperation.CONNECT) "SSH ryšio užmegzti nepavyko" else "SSH veiksmas nepavyko",
+                detail = "SSH biblioteka negalėjo užbaigti saugaus ryšio veiksmo.",
+                suggestion = "Patikrinkite SFTP jungties nustatymus ir pateikite diagnostikos kodą, jei klaida kartojasi.",
+                diagnosticCode = "${protocol.name}-${operation.diagnosticPart}-SSH",
+            )
+        }
 
-        val type = error.javaClass.simpleName
-            .uppercase()
-            .filter(Char::isLetterOrDigit)
-            .take(24)
-            .ifBlank { "UNKNOWN" }
         return RemoteErrorInfo(
             title = if (operation == RemoteOperation.CONNECT) "Prisijungti nepavyko" else "Nuotolinis veiksmas nepavyko",
             detail = "Gauta netikėta ryšio klaida; prisijungimo duomenys saugumo sumetimais nerodomi.",
             suggestion = "Patikrinkite jungties nustatymus ir pateikite diagnostikos kodą, jei klaida kartojasi.",
-            diagnosticCode = "${protocol.name}-${operation.diagnosticPart}-$type",
+            diagnosticCode = "${protocol.name}-${operation.diagnosticPart}-UNEXPECTED",
         )
     }
 
