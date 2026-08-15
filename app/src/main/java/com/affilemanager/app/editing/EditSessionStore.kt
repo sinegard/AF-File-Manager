@@ -16,6 +16,12 @@ class EditSessionStore(cacheDirectory: File) {
     private val root = File(cacheDirectory, "edit-sessions")
     private class OriginChangedDuringSave(val revision: FileRevision?) : IllegalStateException()
 
+    init {
+        // Editable copies are session-scoped. Remove anything left behind by a
+        // process death before accepting a new editing session.
+        resetRoot()
+    }
+
     fun prepareFromFile(
         sourceKey: String,
         displayName: String,
@@ -266,10 +272,11 @@ class EditSessionStore(cacheDirectory: File) {
         if (canonicalFile.toPath().startsWith(canonicalRoot.toPath()) && canonicalFile.isFile) canonicalFile.delete()
     }
 
-    fun discard(session: EditSession?) {
-        if (session == null) return
-        val directory = runCatching { requireSessionDirectory(session) }.getOrNull() ?: return
-        directory.deleteRecursively()
+    fun discard(session: EditSession?): Boolean {
+        if (session == null) return true
+        val directory = runCatching { requireSessionDirectory(session) }.getOrNull() ?: return false
+        if (!directory.exists()) return true
+        return directory.deleteRecursively()
     }
 
     private fun prepare(

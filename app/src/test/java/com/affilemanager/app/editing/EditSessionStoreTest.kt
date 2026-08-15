@@ -187,4 +187,38 @@ class EditSessionStoreTest {
         assertEquals(savedFile.absolutePath, (rebased.origin as EditOrigin.Local).path)
         assertFalse(rebased.hasUnsavedChanges)
     }
+
+    @Test
+    fun newStoreRemovesAnEditSessionLeftByAPreviousProcess() {
+        val cache = temporaryFolder.newFolder("cache-stale-session")
+        val stale = File(cache, "edit-sessions/old-session/working.txt")
+        assertTrue(requireNotNull(stale.parentFile).mkdirs())
+        stale.writeText("private temporary copy")
+
+        EditSessionStore(cache)
+
+        assertFalse(stale.exists())
+        assertFalse(File(cache, "edit-sessions").exists())
+    }
+
+    @Test
+    fun discardRemovesThePrivateWorkingCopy() {
+        val cache = temporaryFolder.newFolder("cache-discard-session")
+        val source = temporaryFolder.newFile("discard-source.txt").apply { writeText("original") }
+        val store = EditSessionStore(cache)
+        val session = store.prepareFromFile(
+            sourceKey = "source",
+            displayName = source.name,
+            mimeType = "text/plain",
+            sourceFile = source,
+            origin = EditOrigin.Local(source.absolutePath, canWrite = true),
+            modifiedAtMillis = source.lastModified(),
+            internalTextEditor = true,
+        )
+
+        assertTrue(session.workingFile.exists())
+        assertTrue(store.discard(session))
+        assertFalse(session.workingFile.exists())
+        assertEquals("original", source.readText())
+    }
 }

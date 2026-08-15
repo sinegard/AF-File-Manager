@@ -183,6 +183,9 @@ fun FilePreviewDialog(
     val externalEditorAvailable = remember(source.key) { canEditExternally(context, source) }
     val activeEditState = editState.takeIf { it.sourceKey == source.key }
     val editSession = activeEditState?.session
+    val actionSource = editSession
+        ?.let { PreviewSource.Working(source, it) }
+        ?: source
     val saveAsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.data?.let(onSaveEditAs)
     }
@@ -261,7 +264,7 @@ fun FilePreviewDialog(
                 ) {
                     FilledTonalButton(
                         onClick = {
-                            runCatching { openWith(context, source) }
+                            runCatching { openWith(context, actionSource) }
                                 .onFailure { actionError = it.message ?: "Programų pasirinkiklio atidaryti nepavyko" }
                         },
                         modifier = Modifier.testTag("open-with-action"),
@@ -294,7 +297,7 @@ fun FilePreviewDialog(
                     }
                     TextButton(
                         onClick = {
-                            runCatching { shareFile(context, source) }
+                            runCatching { shareFile(context, actionSource) }
                                 .onFailure { actionError = it.message ?: "Dalijimosi programos atidaryti nepavyko" }
                         },
                     ) {
@@ -306,7 +309,7 @@ fun FilePreviewDialog(
                         onClick = {
                             hashRunning = true
                             scope.launch {
-                                val result = withContext(Dispatchers.IO) { runCatching { sha256(context, source) } }
+                                val result = withContext(Dispatchers.IO) { runCatching { sha256(context, actionSource) } }
                                 result.onSuccess { hash = it }.onFailure { actionError = it.message ?: "SHA-256 apskaičiuoti nepavyko" }
                                 hashRunning = false
                             }

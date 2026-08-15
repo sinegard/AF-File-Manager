@@ -2,6 +2,7 @@ package com.affilemanager.app.ui.preview
 
 import com.affilemanager.app.network.RemoteEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,19 +39,37 @@ class RemotePreviewCacheTest {
     }
 
     @Test
-    fun keepsAtMostTheConfiguredNumberOfCompletedPreviews() = withTemporaryDirectory { cacheRoot ->
+    fun openingAnotherPreviewRemovesThePreviousStagingCopy() = withTemporaryDirectory { cacheRoot ->
         var token = 0
         val cache = RemotePreviewCache(cacheRoot) { "request-${token++}" }
 
-        repeat(RemotePreviewCache.MAX_CACHE_ENTRIES + 3) { index ->
-            val remote = entry(name = "file-$index.txt", sizeBytes = 1)
-            val destination = cache.createDestination("profile", remote)
-            destination.writeBytes(byteArrayOf(index.toByte()))
-            cache.validateCompleted(destination)
-        }
+        val first = cache.createDestination("profile", entry(name = "first.txt", sizeBytes = 1))
+        first.writeBytes(byteArrayOf(1))
+        cache.validateCompleted(first)
 
-        val retained = cacheRoot.resolve("remote-previews").listFiles().orEmpty().filter { it.isDirectory }
-        assertTrue(retained.size <= RemotePreviewCache.MAX_CACHE_ENTRIES)
+        val second = cache.createDestination("profile", entry(name = "second.txt", sizeBytes = 1))
+
+        assertFalse(first.exists())
+        assertTrue(second.parentFile?.isDirectory == true)
+    }
+
+    @Test
+    fun discardAndNewStoreRemovePrivateStagingCopies() = withTemporaryDirectory { cacheRoot ->
+        val cache = RemotePreviewCache(cacheRoot) { "active" }
+        val active = cache.createDestination("profile", entry(name = "active.txt", sizeBytes = 1))
+        active.writeBytes(byteArrayOf(1))
+        cache.validateCompleted(active)
+
+        assertTrue(cache.discard(active))
+        assertFalse(active.exists())
+
+        val stale = cache.createDestination("profile", entry(name = "stale.txt", sizeBytes = 1))
+        stale.writeBytes(byteArrayOf(2))
+        cache.validateCompleted(stale)
+
+        RemotePreviewCache(cacheRoot)
+
+        assertFalse(stale.exists())
     }
 
     private fun entry(name: String, sizeBytes: Long, directory: Boolean = false) = RemoteEntry(

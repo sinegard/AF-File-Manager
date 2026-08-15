@@ -15,19 +15,24 @@ internal class RemotePreviewCache(
 ) {
     companion object {
         const val MAX_FILE_BYTES: Long = 256L * 1_024L * 1_024L
-        const val MAX_CACHE_BYTES: Long = 512L * 1_024L * 1_024L
-        const val MAX_CACHE_ENTRIES: Int = 8
         private const val MIN_FREE_SPACE_BYTES: Long = 32L * 1_024L * 1_024L
     }
 
     private val root = File(cacheDirectory, "remote-previews")
 
+    init {
+        // A process may have been killed before its normal close path ran. Remote
+        // previews are staging files, not a persistent cache, so never retain them
+        // for a later app session.
+        clearStale()
+    }
+
     fun createDestination(profileId: String, entry: RemoteEntry): File {
         require(profileId.isNotBlank()) { "Remote preview profile is missing" }
         require(!entry.directory) { "Folders cannot be opened as files" }
         require(entry.sizeBytes in 0..MAX_FILE_BYTES) { "Remote preview file exceeds the size limit" }
+        require(clearStale()) { "Could not clear the previous remote preview" }
         ensureRoot()
-        prune()
 
         val usable = root.usableSpace
         if (usable > 0) {
@@ -64,41 +69,15 @@ internal class RemotePreviewCache(
         val actualBytes = destination.length()
         require(actualBytes in 0..MAX_FILE_BYTES) { "Remote preview file exceeds the size limit" }
         destination.parentFile?.setLastModified(System.currentTimeMillis())
-        prune(keepDirectory = destination.parentFile)
     }
 
-    fun discard(destination: File?) {
-        val directory = destination?.parentFile ?: return
-        if (isDirectChild(directory)) directory.deleteRecursively()
+    fun discard(destination: File?): Boolean {
+        val directory = destination?.parentFile ?: return true
+        if (!directory.exists()) return true
+        return isDirectChild(directory) && directory.deleteRecursively()
     }
 
-    fun prune(keepDirectory: File? = null) {
-        if (!root.isDirectory) return
-        val keep = keepDirectory?.canonicalFile
-        val entries = root.listFiles()
-            .orEmpty()
-            .filter(File::isDirectory)
-            .sortedByDescending(File::lastModified)
-        val retained = entries.firstOrNull { directory ->
-            keep != null && runCatching { directory.canonicalFile }.getOrNull() == keep
-        }
-        var retainedCount = if (retained == null) 0 else 1
-        var retainedBytes = retained?.let(::directorySize) ?: 0L
-        entries.filterNot { it == retained }.forEach { directory ->
-            val canonical = runCatching { directory.canonicalFile }.getOrNull() ?: return@forEach
-            val bytes = directorySize(directory)
-            val shouldRetain = canonical == keep || (
-                retainedCount < MAX_CACHE_ENTRIES &&
-                    bytes <= MAX_CACHE_BYTES - retainedBytes
-                )
-            if (shouldRetain) {
-                retainedCount += 1
-                retainedBytes += bytes
-            } else if (isDirectChild(directory)) {
-                directory.deleteRecursively()
-            }
-        }
-    }
+    fun clearStale(): Boolean = !root.exists() || root.deleteRecursively()
 
     private fun ensureRoot() {
         if (!root.exists()) require(root.mkdirs()) { "Could not create the remote preview cache" }
@@ -108,15 +87,6 @@ internal class RemotePreviewCache(
     private fun isDirectChild(directory: File): Boolean = runCatching {
         directory.canonicalFile.parentFile == root.canonicalFile
     }.getOrDefault(false)
-
-    private fun directorySize(directory: File): Long = directory.listFiles()
-        .orEmpty()
-        .asSequence()
-        .filter(File::isFile)
-        .fold(0L) { total, file ->
-            val length = file.length().coerceAtLeast(0)
-            if (Long.MAX_VALUE - total < length) Long.MAX_VALUE else total + length
-        }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))

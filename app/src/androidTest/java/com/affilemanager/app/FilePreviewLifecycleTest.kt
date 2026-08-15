@@ -321,6 +321,38 @@ class FilePreviewLifecycleTest {
         }
     }
 
+    @Test
+    fun closingEditorRemovesItsPrivateWorkingCopy() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("editor-cleanup")), "current")
+        fixtureRoot.deleteRecursively()
+        require(fixtureRoot.mkdirs())
+        val source = File(fixtureRoot, "temporary.txt").apply { writeText("temporary edit source") }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        var workingCopy: File? = null
+        try {
+            compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(source)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                viewModel.fileEditState.value.session?.workingFile?.isFile == true
+            }
+            compose.runOnIdle {
+                workingCopy = requireNotNull(viewModel.fileEditState.value.session).workingFile
+                assertTrue(requireNotNull(workingCopy).isFile)
+            }
+
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { requireNotNull(workingCopy).exists().not() }
+            assertTrue(source.isFile)
+            assertEquals("temporary edit source", source.readText())
+        } finally {
+            if (viewModel.preview.value != null) compose.runOnUiThread { viewModel.closePreview() }
+            fixtureRoot.deleteRecursively()
+        }
+    }
+
     private fun openAndClose(
         viewModel: MainViewModel,
         entry: com.affilemanager.app.model.FileEntry,

@@ -58,6 +58,11 @@ class UiTranslatorTest {
             UiTranslator.translate("Paskirties failas jau yra", AppLanguageManager.ENGLISH),
         )
         assertEquals("Your edited copy", UiTranslator.translate("Jūsų redaguojama kopija", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "The temporary editing copy could not be removed",
+            UiTranslator.translate("Laikinos redagavimo kopijos pašalinti nepavyko", AppLanguageManager.ENGLISH),
+        )
+        assertEquals("Saved as /notes.txt", UiTranslator.translate("Išsaugota kaip /notes.txt", AppLanguageManager.ENGLISH))
         assertEquals("Add to clipboard", UiTranslator.translate("Įtraukti į iškarpinę", AppLanguageManager.ENGLISH))
         assertEquals(
             "Added to clipboard: 2 · total: 5",
