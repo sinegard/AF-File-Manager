@@ -50,6 +50,57 @@ class RemoteEditSaverTest {
         assertTrue(remote.uploadCount == 1)
     }
 
+    @Test
+    fun saveAsReportsExistingTargetAndKeepBothChoosesANewName() = runBlocking {
+        val original = "server version".toByteArray()
+        val remote = FakeRemoteClient("/notes.txt", original).apply {
+            add("/copy.txt", "occupied".toByteArray())
+        }
+        val store = EditSessionStore(temporaryFolder.newFolder("cache-save-as"))
+        val edited = store.stageText(remoteSession(store, original), "my edit")
+        val saver = RemoteEditSaver(store)
+
+        val conflict = saver.saveAs(
+            session = edited,
+            client = remote,
+            profileId = "profile",
+            connectionName = "Test server",
+            directoryPath = "/",
+            requestedName = "copy.txt",
+            policy = EditExistingPolicy.ASK,
+        )
+        assertTrue(conflict is EditSaveAsResult.Conflict)
+        assertArrayEquals("occupied".toByteArray(), remote.bytes("/copy.txt"))
+
+        val saved = saver.saveAs(
+            session = edited,
+            client = remote,
+            profileId = "profile",
+            connectionName = "Test server",
+            directoryPath = "/",
+            requestedName = "copy.txt",
+            policy = EditExistingPolicy.KEEP_BOTH,
+        ) as EditSaveAsResult.Saved
+        assertTrue((saved.destination as EditDestination.Remote).path == "/copy (1).txt")
+        assertArrayEquals("my edit".toByteArray(), remote.bytes("/copy (1).txt"))
+    }
+
+    @Test
+    fun changeWhileStagingStillStopsTheRemoteReplacement() = runBlocking {
+        val original = "server version".toByteArray()
+        val changedDuringSave = "changed during save".toByteArray()
+        val remote = FakeRemoteClient("/notes.txt", original).apply {
+            replaceOriginalAfterNextUpload(changedDuringSave)
+        }
+        val store = EditSessionStore(temporaryFolder.newFolder("cache-race"))
+        val edited = store.stageText(remoteSession(store, original), "my edit")
+
+        val result = RemoteEditSaver(store).saveOrigin(edited, remote, forceOverwrite = false)
+
+        assertTrue(result is EditSaveResult.Conflict)
+        assertArrayEquals(changedDuringSave, remote.bytes())
+    }
+
     private fun remoteSession(store: EditSessionStore, original: ByteArray): EditSession {
         val downloaded = temporaryFolder.newFile("download-${System.nanoTime()}.txt").apply {
             writeBytes(original)
@@ -74,29 +125,42 @@ class RemoteEditSaverTest {
         private val remotePath: String,
         initialBytes: ByteArray,
     ) : RemoteClient {
-        private var content = initialBytes.copyOf()
-        private var modifiedAtMillis = 1_000L
+        private val files = linkedMapOf(RemotePath.normalize(remotePath) to initialBytes.copyOf())
+        private val modified = linkedMapOf(RemotePath.normalize(remotePath) to 1_000L)
+        private var clock = 1_000L
+        private var replaceAfterUpload: ByteArray? = null
         var uploadCount: Int = 0
             private set
 
         fun replace(bytes: ByteArray) {
-            content = bytes.copyOf()
-            modifiedAtMillis += 1_000L
+            add(remotePath, bytes)
         }
 
-        fun bytes(): ByteArray = content.copyOf()
+        fun add(path: String, bytes: ByteArray) {
+            clock += 1_000L
+            val normalized = RemotePath.normalize(path)
+            files[normalized] = bytes.copyOf()
+            modified[normalized] = clock
+        }
+
+        fun bytes(path: String = remotePath): ByteArray = requireNotNull(files[RemotePath.normalize(path)]).copyOf()
+
+        fun replaceOriginalAfterNextUpload(bytes: ByteArray) {
+            replaceAfterUpload = bytes.copyOf()
+        }
 
         override suspend fun list(path: String): List<RemoteEntry> {
-            require(RemotePath.normalize(path) == RemotePath.normalize("$remotePath/.."))
-            return listOf(
+            val parent = RemotePath.normalize(path)
+            return files.mapNotNull { (filePath, content) ->
+                if (RemotePath.normalize("$filePath/..") != parent) return@mapNotNull null
                 RemoteEntry(
-                    name = RemotePath.normalize(remotePath).substringAfterLast('/'),
-                    path = RemotePath.normalize(remotePath),
+                    name = filePath.substringAfterLast('/'),
+                    path = filePath,
                     directory = false,
                     sizeBytes = content.size.toLong(),
-                    modifiedAtMillis = modifiedAtMillis,
-                ),
-            )
+                    modifiedAtMillis = modified[filePath],
+                )
+            }
         }
 
         override suspend fun download(
@@ -105,21 +169,36 @@ class RemoteEditSaverTest {
             operation: OperationContext?,
             maxBytes: Long?,
         ) {
-            require(RemotePath.normalize(remotePath) == RemotePath.normalize(this.remotePath))
+            val content = requireNotNull(files[RemotePath.normalize(remotePath)])
             require(maxBytes == null || content.size <= maxBytes)
             localDestination.writeBytes(content)
         }
 
         override suspend fun upload(localSource: File, remotePath: String, operation: OperationContext?) {
-            require(RemotePath.normalize(remotePath) == RemotePath.normalize(this.remotePath))
-            content = localSource.readBytes()
-            modifiedAtMillis += 1_000L
+            add(remotePath, localSource.readBytes())
             uploadCount += 1
+            replaceAfterUpload?.let { replacement ->
+                replaceAfterUpload = null
+                add(this.remotePath, replacement)
+            }
         }
 
         override suspend fun createDirectory(path: String) = error("Not used")
-        override suspend fun rename(fromPath: String, toPath: String) = error("Not used")
-        override suspend fun delete(path: String, recursive: Boolean) = error("Not used")
+        override suspend fun rename(fromPath: String, toPath: String) {
+            val from = RemotePath.normalize(fromPath)
+            val to = RemotePath.normalize(toPath)
+            require(to !in files)
+            val content = requireNotNull(files.remove(from))
+            val modifiedAt = modified.remove(from)
+            files[to] = content
+            modified[to] = modifiedAt ?: clock
+        }
+
+        override suspend fun delete(path: String, recursive: Boolean) {
+            val normalized = RemotePath.normalize(path)
+            files.remove(normalized)
+            modified.remove(normalized)
+        }
         override suspend fun close() = Unit
     }
 }

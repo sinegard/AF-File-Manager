@@ -63,7 +63,8 @@ class TrashBrowserVisualTest {
             captureDialog(File(requireNotNull(application.getExternalFilesDir("validation")), "trash-folder-0.4.0.png"))
 
             compose.onNodeWithText("tik-pirmame-lygyje.txt").performClick()
-            compose.onNodeWithText("UTF-8 · up to 2 MB · editable working copy").assertIsDisplayed()
+            compose.onNodeWithTag("full-text-editor").assertIsDisplayed()
+            compose.onNodeWithText("UTF-8").assertIsDisplayed()
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithText("Vidinis katalogas").assertIsDisplayed()
 

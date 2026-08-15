@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.content.ContentResolver
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.affilemanager.app.AFFileManagerApplication
@@ -26,11 +27,18 @@ import com.affilemanager.app.data.WorkspaceTab
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.editing.EditConflict
+import com.affilemanager.app.editing.EditDestination
+import com.affilemanager.app.editing.EditDestinationRules
+import com.affilemanager.app.editing.EditExistingPolicy
 import com.affilemanager.app.editing.EditOrigin
+import com.affilemanager.app.editing.EditSaveAsConflict
+import com.affilemanager.app.editing.EditSaveAsResult
 import com.affilemanager.app.editing.EditSaveResult
 import com.affilemanager.app.editing.EditSession
 import com.affilemanager.app.editing.EditabilityRules
 import com.affilemanager.app.editing.FileRevision
+import com.affilemanager.app.editing.LineEnding
+import com.affilemanager.app.editing.TextEncoding
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.ContentFileEntry
 import com.affilemanager.app.model.ClipboardState
@@ -233,17 +241,23 @@ data class FileEditUiState(
     val session: EditSession? = null,
     val text: String? = null,
     val stagedText: String? = null,
+    val encoding: TextEncoding? = null,
+    val stagedEncoding: TextEncoding? = null,
+    val lineEnding: LineEnding? = null,
+    val stagedLineEnding: LineEnding? = null,
     val textChanged: Boolean = false,
     val preparing: Boolean = false,
     val saving: Boolean = false,
     val status: String? = null,
     val error: String? = null,
     val conflict: EditConflict? = null,
+    val saveAsConflict: EditSaveAsConflict? = null,
     val confirmDiscard: Boolean = false,
     val closeAfterSave: Boolean = false,
 ) {
-    val hasOriginChanges: Boolean get() = textChanged || session?.hasOriginChanges == true
-    val hasUnsavedChanges: Boolean get() = textChanged || session?.hasUnsavedChanges == true
+    val formatChanged: Boolean get() = encoding != stagedEncoding || lineEnding != stagedLineEnding
+    val hasOriginChanges: Boolean get() = textChanged || formatChanged || session?.hasOriginChanges == true
+    val hasUnsavedChanges: Boolean get() = textChanged || formatChanged || session?.hasUnsavedChanges == true
 }
 
 enum class TerminalLocation {
@@ -1145,8 +1159,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-                val text = if (internalTextEditor) withContext(Dispatchers.IO) {
-                    graph.editSessions.readText(requireNotNull(prepared))
+                val document = if (internalTextEditor) withContext(Dispatchers.IO) {
+                    graph.editSessions.readTextDocument(requireNotNull(prepared))
                 } else null
                 if (_preview.value !== target) {
                     withContext(Dispatchers.IO) { graph.editSessions.discard(prepared) }
@@ -1155,8 +1169,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _fileEditState.value = FileEditUiState(
                     sourceKey = source.key,
                     session = prepared,
-                    text = text,
-                    stagedText = text,
+                    text = document?.text,
+                    stagedText = document?.text,
+                    encoding = document?.encoding,
+                    stagedEncoding = document?.encoding,
+                    lineEnding = document?.lineEnding,
+                    stagedLineEnding = document?.lineEnding,
                     status = if (internalTextEditor) "Paruošta redaguoti" else "Redaguojama kopija paruošta",
                 )
             } catch (cancelled: CancellationException) {
@@ -1183,7 +1201,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 status = null,
                 error = null,
                 conflict = null,
+                saveAsConflict = null,
             )
+        }
+    }
+
+    fun updateEditEncoding(encoding: TextEncoding) {
+        _fileEditState.update { state ->
+            if (state.session?.usesInternalTextEditor != true || state.saving) state
+            else state.copy(encoding = encoding, status = null, error = null, conflict = null, saveAsConflict = null)
+        }
+    }
+
+    fun updateEditLineEnding(lineEnding: LineEnding) {
+        _fileEditState.update { state ->
+            if (state.session?.usesInternalTextEditor != true || state.saving) state
+            else state.copy(lineEnding = lineEnding, status = null, error = null, conflict = null, saveAsConflict = null)
         }
     }
 
@@ -1192,16 +1225,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.session == null || snapshot.saving || snapshot.preparing) return
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
-        _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null) }
+        _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null, saveAsConflict = null) }
         fileEditJob = viewModelScope.launch {
             try {
                 var session = requireNotNull(snapshot.session)
-                if (snapshot.textChanged) {
+                if (session.usesInternalTextEditor && (snapshot.textChanged || snapshot.formatChanged)) {
                     val text = requireNotNull(snapshot.text) { "Editor content is unavailable" }
-                    session = withContext(Dispatchers.IO) { graph.editSessions.stageText(session, text) }
+                    val encoding = requireNotNull(snapshot.encoding) { "Editor encoding is unavailable" }
+                    val lineEnding = requireNotNull(snapshot.lineEnding) { "Editor line ending is unavailable" }
+                    session = withContext(Dispatchers.IO) {
+                        graph.editSessions.stageText(session, text, encoding, lineEnding)
+                    }
                     _fileEditState.update { current ->
                         if (current.session?.id == session.id) {
-                            current.copy(session = session, stagedText = text, textChanged = false)
+                            current.copy(
+                                session = session,
+                                stagedText = text,
+                                stagedEncoding = encoding,
+                                stagedLineEnding = lineEnding,
+                                textChanged = false,
+                            )
                         } else current
                     }
                 } else {
@@ -1242,9 +1285,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     session = saved,
                                     saving = false,
                                     textChanged = false,
+                                    stagedEncoding = current.encoding,
+                                    stagedLineEnding = current.lineEnding,
                                     conflict = null,
+                                    saveAsConflict = null,
                                     closeAfterSave = false,
-                                    status = "Išsaugota pradinėje vietoje",
+                                    status = result.warning ?: "Išsaugota pradinėje vietoje",
                                     error = null,
                                 )
                             } else current
@@ -1280,19 +1326,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.session == null || snapshot.saving || snapshot.preparing) return
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
-        _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null) }
+        _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null, saveAsConflict = null) }
         fileEditJob = viewModelScope.launch {
             try {
                 var session = requireNotNull(snapshot.session)
-                if (snapshot.textChanged) {
+                if (session.usesInternalTextEditor && (snapshot.textChanged || snapshot.formatChanged)) {
                     val text = requireNotNull(snapshot.text) { "Editor content is unavailable" }
-                    session = withContext(Dispatchers.IO) { graph.editSessions.stageText(session, text) }
+                    val encoding = requireNotNull(snapshot.encoding) { "Editor encoding is unavailable" }
+                    val lineEnding = requireNotNull(snapshot.lineEnding) { "Editor line ending is unavailable" }
+                    session = withContext(Dispatchers.IO) {
+                        graph.editSessions.stageText(session, text, encoding, lineEnding)
+                    }
                 } else {
                     session = withContext(Dispatchers.IO) { graph.editSessions.refreshWorking(session) }
                 }
                 val verified = withContext(Dispatchers.IO) { writeContentDestination(session, destination) }
                 require(session.workingRevision.hasSameContent(verified)) { "Išsaugotos kopijos patikra nepavyko" }
-                val saved = withContext(Dispatchers.IO) { graph.editSessions.markSavedElsewhere(session) }
+                val saved = withContext(Dispatchers.IO) {
+                    graph.editSessions.rebaseOrigin(
+                        session = session,
+                        destination = EditDestination.Content(
+                            destination.toString(),
+                            contentDisplayName(destination) ?: session.displayName,
+                        ),
+                        savedRevision = verified,
+                    )
+                }
                 var shouldClose = false
                 _fileEditState.update { current ->
                     if (current.session?.id == session.id) {
@@ -1301,10 +1360,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             session = saved,
                             saving = false,
                             stagedText = current.text,
+                            stagedEncoding = current.encoding,
+                            stagedLineEnding = current.lineEnding,
                             textChanged = false,
                             conflict = null,
+                            saveAsConflict = null,
                             closeAfterSave = false,
-                            status = "Patikrinta kopija išsaugota pasirinktoje vietoje",
+                            status = "Išsaugota pasirinktoje vietoje; tai dabar aktyvus failas",
                             error = null,
                         )
                     } else current
@@ -1325,6 +1387,176 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveFileEditAsLocal(
+        directoryPath: String,
+        requestedName: String,
+        policy: EditExistingPolicy = EditExistingPolicy.ASK,
+    ) {
+        val destination = runCatching {
+            val name = EditDestinationRules.validateFileName(requestedName)
+            EditDestination.Local(File(File(directoryPath).canonicalFile, name).absolutePath)
+        }.getOrElse { error ->
+            _fileEditState.update { it.copy(error = error.message ?: "Netinkamas failo vardas") }
+            return
+        }
+        saveFileEditAsDestination(destination, policy)
+    }
+
+    fun saveFileEditAsRemote(
+        directoryPath: String,
+        requestedName: String,
+        policy: EditExistingPolicy = EditExistingPolicy.ASK,
+    ) {
+        val profile = _networkState.value.connectedProfile
+        if (profile == null || remoteClient == null) {
+            _fileEditState.update { it.copy(error = "Prieš išsaugodami serveryje prisijunkite prie serverio") }
+            return
+        }
+        val destination = runCatching {
+            val name = EditDestinationRules.validateFileName(requestedName)
+            EditDestination.Remote(
+                profileId = profile.id,
+                connectionName = profile.name,
+                path = RemotePath.join(directoryPath, name),
+            )
+        }.getOrElse { error ->
+            _fileEditState.update { it.copy(error = error.message ?: "Netinkamas failo vardas") }
+            return
+        }
+        saveFileEditAsDestination(destination, policy)
+    }
+
+    fun resolveFileEditSaveAsConflict(policy: EditExistingPolicy) {
+        require(policy != EditExistingPolicy.ASK) { "Choose replace or keep both" }
+        val destination = _fileEditState.value.saveAsConflict?.destination ?: return
+        _fileEditState.update { it.copy(saveAsConflict = null) }
+        saveFileEditAsDestination(destination, policy)
+    }
+
+    fun dismissFileEditSaveAsConflict() {
+        _fileEditState.update { it.copy(saveAsConflict = null) }
+    }
+
+    suspend fun listRemoteDirectoryForEdit(path: String): Result<List<RemoteEntry>> {
+        val client = remoteClient ?: return Result.failure(IllegalStateException("Server connection is not active"))
+        return runCatching { graph.remoteEdits.listDirectories(client, path) }
+    }
+
+    private fun saveFileEditAsDestination(destination: EditDestination, policy: EditExistingPolicy) {
+        val snapshot = _fileEditState.value
+        if (snapshot.session == null || snapshot.saving || snapshot.preparing) return
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        _fileEditState.update {
+            it.copy(saving = true, status = null, error = null, conflict = null, saveAsConflict = null)
+        }
+        fileEditJob = viewModelScope.launch {
+            try {
+                var session = requireNotNull(snapshot.session)
+                if (session.usesInternalTextEditor && (snapshot.textChanged || snapshot.formatChanged)) {
+                    val text = requireNotNull(snapshot.text) { "Editor content is unavailable" }
+                    val encoding = requireNotNull(snapshot.encoding) { "Editor encoding is unavailable" }
+                    val lineEnding = requireNotNull(snapshot.lineEnding) { "Editor line ending is unavailable" }
+                    session = withContext(Dispatchers.IO) {
+                        graph.editSessions.stageText(session, text, encoding, lineEnding)
+                    }
+                } else {
+                    session = withContext(Dispatchers.IO) { graph.editSessions.refreshWorking(session) }
+                }
+
+                val result = when (destination) {
+                    is EditDestination.Local -> withContext(Dispatchers.IO) {
+                        val target = File(destination.path)
+                        graph.editSessions.saveLocalAs(
+                            session = session,
+                            directoryPath = requireNotNull(target.parentFile).absolutePath,
+                            requestedName = target.name,
+                            policy = policy,
+                        )
+                    }
+                    is EditDestination.Remote -> {
+                        val profile = _networkState.value.connectedProfile
+                        val client = remoteClient
+                        require(profile?.id == destination.profileId && client != null) {
+                            "Vėl prisijunkite prie ${destination.connectionName}"
+                        }
+                        graph.remoteEdits.saveAs(
+                            session = session,
+                            client = client,
+                            profileId = destination.profileId,
+                            connectionName = destination.connectionName,
+                            directoryPath = RemotePath.normalize("${destination.path}/.."),
+                            requestedName = destination.displayName,
+                            policy = policy,
+                        )
+                    }
+                    is EditDestination.Content -> error("Content destinations use the Android document picker")
+                }
+
+                when (result) {
+                    is EditSaveAsResult.Conflict -> _fileEditState.update { current ->
+                        if (current.session?.id == session.id) {
+                            current.copy(
+                                session = session,
+                                saving = false,
+                                stagedText = current.text,
+                                stagedEncoding = current.encoding,
+                                stagedLineEnding = current.lineEnding,
+                                textChanged = false,
+                                saveAsConflict = result.details,
+                                closeAfterSave = false,
+                            )
+                        } else current
+                    }
+                    is EditSaveAsResult.Saved -> {
+                        val saved = withContext(Dispatchers.IO) {
+                            graph.editSessions.rebaseOrigin(session, result.destination, result.revision)
+                        }
+                        var shouldClose = false
+                        _fileEditState.update { current ->
+                            if (current.session?.id == session.id) {
+                                shouldClose = current.closeAfterSave
+                                current.copy(
+                                    session = saved,
+                                    saving = false,
+                                    stagedText = current.text,
+                                    stagedEncoding = current.encoding,
+                                    stagedLineEnding = current.lineEnding,
+                                    textChanged = false,
+                                    conflict = null,
+                                    saveAsConflict = null,
+                                    closeAfterSave = false,
+                                    status = result.warning ?: "Išsaugota kaip ${result.destination.label}; tai dabar aktyvus failas",
+                                    error = null,
+                                )
+                            } else current
+                        }
+                        when (result.destination) {
+                            is EditDestination.Local -> {
+                                refreshPanel(PanelId.LEFT)
+                                refreshPanel(PanelId.RIGHT)
+                            }
+                            is EditDestination.Remote -> refreshRemote()
+                            is EditDestination.Content -> Unit
+                        }
+                        if (shouldClose) {
+                            fileEditJob = null
+                            closePreviewImmediately()
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _fileEditState.update {
+                    it.copy(saving = false, closeAfterSave = false, error = error.message ?: "Failo išsaugoti nepavyko")
+                }
+            } finally {
+                if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
     fun refreshFileEditAfterExternalEditor() {
         val snapshot = _fileEditState.value
         val session = snapshot.session ?: return
@@ -1335,15 +1567,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fileEditJob = viewModelScope.launch {
             try {
                 val refreshed = withContext(Dispatchers.IO) { graph.editSessions.refreshWorking(session) }
-                val refreshedText = if (session.usesInternalTextEditor) withContext(Dispatchers.IO) {
-                    graph.editSessions.readText(refreshed)
-                } else snapshot.text
+                val refreshedDocument = if (session.usesInternalTextEditor) withContext(Dispatchers.IO) {
+                    graph.editSessions.readTextDocument(refreshed)
+                } else null
+                val refreshedText = refreshedDocument?.text ?: snapshot.text
                 _fileEditState.update { current ->
                     if (current.session?.id == session.id) {
                         current.copy(
                             session = refreshed,
                             text = refreshedText,
                             stagedText = refreshedText,
+                            encoding = refreshedDocument?.encoding ?: current.encoding,
+                            stagedEncoding = refreshedDocument?.encoding ?: current.stagedEncoding,
+                            lineEnding = refreshedDocument?.lineEnding ?: current.lineEnding,
+                            stagedLineEnding = refreshedDocument?.lineEnding ?: current.stagedLineEnding,
                             textChanged = false,
                             preparing = false,
                             status = if (refreshed.workingRevision.hasSameContent(session.workingRevision)) {
@@ -2893,6 +3130,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: FileNotFoundException) {
             null
         }
+    }
+
+    private fun contentDisplayName(uri: Uri): String? {
+        val resolver = getApplication<Application>().contentResolver
+        return runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
     private fun writeContentDestination(session: EditSession, destination: Uri): FileRevision {

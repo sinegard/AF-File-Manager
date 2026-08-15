@@ -44,6 +44,19 @@ class UiTranslatorTest {
         assertEquals("New connection", UiTranslator.translate("Nauja jungtis", AppLanguageManager.ENGLISH))
         assertEquals("Edit with another app", UiTranslator.translate("Redaguoti su kita programa", AppLanguageManager.ENGLISH))
         assertEquals("Save as", UiTranslator.translate("Išsaugoti kaip", AppLanguageManager.ENGLISH))
+        assertEquals("Find and replace", UiTranslator.translate("Rasti ir pakeisti", AppLanguageManager.ENGLISH))
+        assertEquals("Undo", UiTranslator.translate("Anuliuoti", AppLanguageManager.ENGLISH))
+        assertEquals("Text editor", UiTranslator.translate("Teksto redaktorius", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Replaced one match",
+            UiTranslator.translate("Pakeistas vienas atitikmuo", AppLanguageManager.ENGLISH),
+        )
+        assertEquals("Ln 12, Col 8", UiTranslator.translate("Eil. 12, stulp. 8", AppLanguageManager.ENGLISH))
+        assertEquals("Replaced: 4", UiTranslator.translate("Pakeista: 4", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "The destination file already exists",
+            UiTranslator.translate("Paskirties failas jau yra", AppLanguageManager.ENGLISH),
+        )
         assertEquals("Your edited copy", UiTranslator.translate("Jūsų redaguojama kopija", AppLanguageManager.ENGLISH))
         assertEquals("Add to clipboard", UiTranslator.translate("Įtraukti į iškarpinę", AppLanguageManager.ENGLISH))
         assertEquals(
