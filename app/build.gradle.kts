@@ -1,3 +1,5 @@
+import java.util.zip.ZipFile
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -8,22 +10,29 @@ val releaseStorePassword = providers.environmentVariable("AF_KEYSTORE_PASSWORD")
 val releaseKeyAlias = providers.environmentVariable("AF_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("AF_KEY_PASSWORD").orNull
 val hasReleaseSigning = listOf(releaseStorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
+val testOptimizedRelease = providers.gradleProperty("afTestOptimizedRelease").orNull.toBoolean()
 
 android {
     namespace = "com.affilemanager.app"
     compileSdk = 36
     ndkVersion = "27.3.13750724"
+    testBuildType = if (testOptimizedRelease) "release" else "debug"
 
     defaultConfig {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 25
-        versionName = "0.15.0"
+        versionCode = 26
+        versionName = "0.15.1"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = if (testOptimizedRelease) {
+            "com.affilemanager.app.network.OptimizedSftpInstrumentation"
+        } else {
+            "androidx.test.runner.AndroidJUnitRunner"
+        }
+        testProguardFiles("test-proguard-rules.pro")
         vectorDrawables.useSupportLibrary = true
 
         ndk {
@@ -136,4 +145,57 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit-ktx:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
+
+tasks.register("verifyReleaseDynamicRuntimeClasses") {
+    group = "verification"
+    description = "Checks runtime-resolved classes in the exact optimized release APK."
+    dependsOn("assembleRelease")
+
+    doLast {
+        val releaseApk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        check(releaseApk.isFile && releaseApk.length() > 0L) {
+            "Optimized release APK was not produced: ${releaseApk.absolutePath}"
+        }
+
+        val requiredDescriptors = listOf(
+            "Lcom/affilemanager/app/network/SftpRuntimeVerifier;",
+            "Lcom/jcraft/jsch/JSchException;",
+            "Lcom/jcraft/jsch/UserAuthPassword;",
+            "Lcom/jcraft/jsch/DH25519;",
+            "Lcom/jcraft/jsch/jce/AES256CTR;",
+            "Lcom/jcraft/jsch/jce/SignatureEd25519;",
+        )
+        val dexContents = ZipFile(releaseApk).use { archive ->
+            archive.entries().asSequence()
+                .filter { !it.isDirectory && it.name.matches(Regex("classes\\d*\\.dex")) }
+                .map { entry -> archive.getInputStream(entry).use { it.readBytes() } }
+                .toList()
+        }
+        check(dexContents.isNotEmpty()) { "Release APK contains no DEX files" }
+
+        fun ByteArray.containsBytes(needle: ByteArray): Boolean {
+            if (needle.isEmpty()) return true
+            if (needle.size > size) return false
+            for (offset in 0..size - needle.size) {
+                var matches = true
+                for (index in needle.indices) {
+                    if (this[offset + index] != needle[index]) {
+                        matches = false
+                        break
+                    }
+                }
+                if (matches) return true
+            }
+            return false
+        }
+
+        val missing = requiredDescriptors.filterNot { descriptor ->
+            val encoded = descriptor.toByteArray(Charsets.US_ASCII)
+            dexContents.any { it.containsBytes(encoded) }
+        }
+        check(missing.isEmpty()) {
+            "Optimized release APK is missing runtime-resolved classes: ${missing.joinToString()}"
+        }
+    }
 }
