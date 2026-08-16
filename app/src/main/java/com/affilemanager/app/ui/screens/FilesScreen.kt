@@ -118,6 +118,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -157,7 +158,9 @@ import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
 import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 import com.affilemanager.app.ui.preview.openWith
 import com.affilemanager.app.operations.TransferFailurePolicy
 import com.affilemanager.app.operations.TransferVerification
@@ -913,6 +916,7 @@ private fun homeShortcutIcon(shortcut: HomeShortcut): ImageVector = when (shortc
 
 @Composable
 private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
+    val context = LocalContext.current
     ElevatedCard(onClick = onOpen, modifier = Modifier.width(188.dp).height(172.dp)) {
         Column(
             modifier = Modifier.fillMaxSize().padding(12.dp),
@@ -929,7 +933,7 @@ private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(FileSystemRules.humanBytes(item.entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.weight(1f))
-                Text(recentTimeLabel(item.recentAtMillis), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Text(recentTimeLabel(context, item.recentAtMillis), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
         }
     }
@@ -937,6 +941,7 @@ private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
 
 @Composable
 private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
+    val context = LocalContext.current
     ElevatedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
@@ -953,7 +958,7 @@ private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(item.entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${FileSystemRules.humanBytes(item.entry.sizeBytes)} · ${recentTimeLabel(item.recentAtMillis)}",
+                    "${FileSystemRules.humanBytes(item.entry.sizeBytes)} · ${recentTimeLabel(context, item.recentAtMillis)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -962,12 +967,8 @@ private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
     }
 }
 
-private fun recentTimeLabel(timestampMillis: Long): String = DateUtils.getRelativeTimeSpanString(
-    timestampMillis,
-    System.currentTimeMillis(),
-    DateUtils.MINUTE_IN_MILLIS,
-    DateUtils.FORMAT_ABBREV_RELATIVE,
-).toString()
+private fun recentTimeLabel(context: android.content.Context, timestampMillis: Long): String =
+    DateUtils.getRelativeTimeSpanString(context, timestampMillis, false).toString()
 
 private data class QuickLocation(
     val title: String,
@@ -1442,7 +1443,9 @@ private fun FileList(
     onTrash: (FileEntry) -> Unit,
 ) {
     val context = LocalContext.current
-    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+    val interfaceLanguage = LocalConfiguration.current.locales[0].language
+    val chooserError = uiText("Programų pasirinkiklio atidaryti nepavyko")
+    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
     val initialPosition = remember(scrollKey) { viewModel.fileScrollPosition(scrollKey) }
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
@@ -1502,7 +1505,13 @@ private fun FileList(
                 onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
                 onOpenWith = {
                     runCatching { openWith(context, PreviewSource.Local(entry)) }
-                        .onFailure { Toast.makeText(context, it.message ?: "Programų pasirinkiklio atidaryti nepavyko", Toast.LENGTH_LONG).show() }
+                        .onFailure {
+                            Toast.makeText(
+                                context,
+                                it.message?.let { message -> UiTranslator.translate(message, interfaceLanguage) } ?: chooserError,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
                 },
                 onSelect = { viewModel.toggleSelection(panel, entry.absolutePath) },
                 onRename = { onRename(entry) },
@@ -1525,6 +1534,8 @@ private fun FileGrid(
     onTrash: (FileEntry) -> Unit,
 ) {
     val context = LocalContext.current
+    val interfaceLanguage = LocalConfiguration.current.locales[0].language
+    val chooserError = uiText("Programų pasirinkiklio atidaryti nepavyko")
     val initialPosition = remember(scrollKey) { viewModel.fileScrollPosition(scrollKey) }
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
@@ -1585,7 +1596,13 @@ private fun FileGrid(
                 onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
                 onOpenWith = {
                     runCatching { openWith(context, PreviewSource.Local(entry)) }
-                        .onFailure { Toast.makeText(context, it.message ?: "Programų pasirinkiklio atidaryti nepavyko", Toast.LENGTH_LONG).show() }
+                        .onFailure {
+                            Toast.makeText(
+                                context,
+                                it.message?.let { message -> UiTranslator.translate(message, interfaceLanguage) } ?: chooserError,
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
                 },
                 onSelect = { viewModel.toggleSelection(panel, entry.absolutePath) },
                 onRename = { onRename(entry) },
@@ -1875,7 +1892,7 @@ private fun EntryActionsButton(
 
 @Composable
 private fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
-    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
+    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Info, contentDescription = null) },

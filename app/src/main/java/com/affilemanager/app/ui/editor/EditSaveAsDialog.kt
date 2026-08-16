@@ -186,7 +186,7 @@ fun EditSaveAsDialog(
                         modifier = Modifier.fillMaxWidth().padding(20.dp),
                         horizontalArrangement = Arrangement.Center,
                     ) { CircularProgressIndicator() }
-                    error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    error != null -> LText(error.orEmpty(), color = MaterialTheme.colorScheme.error)
                     directories.isEmpty() -> LText("Šiame kataloge nėra poaplankių", style = MaterialTheme.typography.bodySmall)
                     else -> LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
                         items(directories, key = { it.second }) { (directoryName, directoryPath) ->

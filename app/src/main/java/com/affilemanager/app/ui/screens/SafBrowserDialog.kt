@@ -2,6 +2,7 @@ package com.affilemanager.app.ui.screens
 
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -268,7 +269,7 @@ private fun SafEntryRow(
 
 @Composable
 private fun SafInfoDialog(entry: SafEntry, onDismiss: () -> Unit) {
-    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
+    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Info, contentDescription = null) },

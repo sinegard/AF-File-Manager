@@ -55,6 +55,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         destinationDirectory: File,
         password: CharArray? = null,
         operation: OperationContext? = null,
+        fallbackExtractedName: String = "extracted",
     ) = withContext(Dispatchers.IO) {
         require(archiveFile.isFile) { "Archyvas nepasiekiamas" }
         require(destinationDirectory.isDirectory || destinationDirectory.mkdirs()) { "Paskirties aplankas nepasiekiamas" }
@@ -63,7 +64,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             ArchiveFormat.SEVEN_Z -> extractSevenZ(archiveFile, destinationDirectory, operation)
             ArchiveFormat.RAR -> extractRar(archiveFile, destinationDirectory, operation)
             ArchiveFormat.TAR, ArchiveFormat.TAR_GZ -> extractTar(archiveFile, destinationDirectory, operation)
-            ArchiveFormat.GZIP -> extractGzip(archiveFile, destinationDirectory, operation)
+            ArchiveFormat.GZIP -> extractGzip(archiveFile, destinationDirectory, operation, fallbackExtractedName)
         }
     }
 
@@ -269,8 +270,15 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         }
     }
 
-    private suspend fun extractGzip(file: File, destination: File, operation: OperationContext?) {
-        val name = file.name.removeSuffix(".${file.extension}").ifBlank { "išpakuota" }
+    private suspend fun extractGzip(
+        file: File,
+        destination: File,
+        operation: OperationContext?,
+        fallbackExtractedName: String,
+    ) {
+        val name = file.name.removeSuffix(".${file.extension}").ifBlank {
+            fallbackExtractedName.ifBlank { "extracted" }
+        }
         val target = SafeArchivePath.resolve(destination, name, limits.maxDepth)
         GzipCompressorInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
             writeExtractedTarget(target) { output ->

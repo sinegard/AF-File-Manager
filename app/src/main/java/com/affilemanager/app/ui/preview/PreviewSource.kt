@@ -118,6 +118,37 @@ internal sealed interface PreviewSource {
         override fun openInputStream(context: Context): InputStream = cachedFile.inputStream()
     }
 
+    data class Privileged(
+        val entry: FileEntry,
+        val cachedFile: File,
+    ) : PreviewSource {
+        override val key: String = "privileged|${entry.absolutePath}|${entry.modifiedAtMillis}|${entry.sizeBytes}"
+        override val name: String = entry.name
+        override val kind: EntryKind = entry.kind
+        override val extension: String = entry.extension
+        override val sizeBytes: Long = cachedFile.length().coerceAtLeast(0)
+        override val modifiedAtMillis: Long? = entry.modifiedAtMillis.takeIf { it > 0 }
+        override val isReadable: Boolean = cachedFile.isFile && cachedFile.canRead()
+        override val isWritable: Boolean = entry.isWritable
+        override val localFile: File = cachedFile
+        override val locationLabel: String = entry.absolutePath
+
+        override fun mimeType(context: Context): String = MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(extension.lowercase()) ?: "application/octet-stream"
+
+        override fun uri(context: Context): Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.files",
+            cachedFile,
+        )
+
+        override fun openFileDescriptor(context: Context): ParcelFileDescriptor = requireNotNull(
+            ParcelFileDescriptor.open(cachedFile, ParcelFileDescriptor.MODE_READ_ONLY),
+        ) { "Failo srautas nepasiekiamas" }
+
+        override fun openInputStream(context: Context): InputStream = cachedFile.inputStream()
+    }
+
     data class Working(
         val original: PreviewSource,
         val session: EditSession,
@@ -154,6 +185,7 @@ internal fun PreviewTarget.previewSource(): PreviewSource = when (this) {
     is PreviewTarget.TrashFile -> PreviewSource.Local(entry)
     is PreviewTarget.ContentFile -> PreviewSource.Content(entry)
     is PreviewTarget.RemoteFile -> PreviewSource.Remote(remote, cachedFile, profileId, connectionName)
+    is PreviewTarget.PrivilegedFile -> PreviewSource.Privileged(entry, cachedFile)
     is PreviewTarget.Archive -> PreviewSource.Local(file)
     is PreviewTarget.RemoteArchive -> PreviewSource.Remote(remote, file.file, profileId, connectionName)
     is PreviewTarget.Vault -> PreviewSource.Local(file)

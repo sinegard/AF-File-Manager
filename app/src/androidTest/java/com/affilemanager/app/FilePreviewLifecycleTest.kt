@@ -27,8 +27,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.exifinterface.media.ExifInterface
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.localization.AppLanguageManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -72,6 +74,52 @@ class FilePreviewLifecycleTest {
             }
         } finally {
             fixtureRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun exifDateAndMetadataFollowTheSelectedLanguageWithoutRawColonDate() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureBase = requireNotNull(application.getExternalFilesDir("preview-exif"))
+        val fixtureRoot = File(fixtureBase, "current")
+        fixtureRoot.deleteRecursively()
+        require(fixtureRoot.mkdirs())
+        val image = File(fixtureRoot, "camera-metadata.jpg")
+        try {
+            createExifImage(image)
+            compose.onNodeWithText("Files").fetchSemanticsNode()
+
+            val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+            val entry = LocalFileRepository(application).toEntry(image)
+            compose.runOnUiThread { viewModel.open(entry) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithText("Manufacturer").fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodesWithText("Taken").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("Manufacturer").assertIsDisplayed()
+            compose.onNodeWithText("Taken").assertIsDisplayed()
+            compose.onNodeWithText("2025", substring = true).assertIsDisplayed()
+            assertTrue(compose.onAllNodesWithText("2025:08:09", substring = true).fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithText("Gamintojas").fetchSemanticsNodes().isEmpty())
+
+            compose.runOnUiThread {
+                AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.LITHUANIAN)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithText("Gamintojas").fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodesWithText("Fotografuota").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("Gamintojas").assertIsDisplayed()
+            compose.onNodeWithText("Fotografuota").assertIsDisplayed()
+            compose.onNodeWithText("2025", substring = true).assertIsDisplayed()
+            assertTrue(compose.onAllNodesWithText("2025:08:09", substring = true).fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithText("Manufacturer").fetchSemanticsNodes().isEmpty())
+        } finally {
+            compose.runOnUiThread {
+                AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.ENGLISH)
+                ViewModelProvider(compose.activity)[MainViewModel::class.java].closePreview()
+            }
+            fixtureBase.deleteRecursively()
         }
     }
 
@@ -421,6 +469,24 @@ class FilePreviewLifecycleTest {
             file.outputStream().use { output -> assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) }
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    private fun createExifImage(file: File) {
+        val bitmap = createBitmap(960, 640, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = android.graphics.Canvas(bitmap)
+            canvas.drawColor(Color.rgb(37, 99, 235))
+            file.outputStream().use { output -> assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 92, output)) }
+        } finally {
+            bitmap.recycle()
+        }
+        ExifInterface(file).apply {
+            setAttribute(ExifInterface.TAG_MAKE, "AF Test Camera")
+            setAttribute(ExifInterface.TAG_MODEL, "Metadata Fixture")
+            setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, "2025:08:09 13:05:06")
+            setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, "+02:00")
+            saveAttributes()
         }
     }
 

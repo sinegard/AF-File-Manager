@@ -24,6 +24,8 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 - The local terminal is a bounded PTY session running `/system/bin/sh` under the app's normal Android UID and SELinux policy. It never grants root, Shizuku, or ADB privileges.
 - The server terminal is offered only for SFTP/SSH profiles. It creates a separate SSH shell with the saved encrypted credential and the same pinned host-key policy; credentials and terminal output are not written to app logs.
 - Closing a terminal tears down its PTY or SSH channel and process group. Terminal input queues, paste size, dimensions, and renderer scrollback are bounded.
+- Protected-folder access is off by default. Shizuku permission or root access is requested only after an explicit user action, and the returned service is accepted only when it runs as Android shell (UID 2000) or root (UID 0).
+- The privileged browser accepts only canonical paths under `Android/data` and `Android/obb`, with bounded depth, item count, preview size, and transfer size. It does not turn the local terminal into a privileged shell.
 
 ## File integrity
 
@@ -37,12 +39,12 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 - Local deletion goes to the app's recoverable trash by default.
 - Permanent local, Storage Access Framework, and remote deletion requires a separate confirmation.
 - Synchronization never performs a silent delete. Background conflicts stop execution and record their state.
-- Android confirms every APK installation. Root and Shizuku actions are not executed automatically.
+- Android confirms every APK installation. Root and Shizuku actions are not executed automatically, and changing the protected-folder access mode disconnects the previous privileged service.
 - The updater accepts only a stable release from this public repository. It verifies the HTTPS origin, APK name, size, GitHub SHA-256 digest, package ID, higher `versionCode`, and the installed app's signing certificate before opening Android's installer.
 
 ## Security boundaries
 
-- Android and device-vendor restrictions take precedence over the app, including restrictions around `Android/data` and `Android/obb`.
+- Android and device-vendor restrictions take precedence over the app. Ordinary access to `Android/data` and `Android/obb` remains restricted; the optional advanced mode works only when a separately installed and configured Shizuku or compatible root service actually grants access.
 - Release APKs are signed with a separate distribution key stored as GitHub Actions secrets. The private key and passwords are not present in this repository. Losing that key prevents compatible updates.
 - Every real server type should be validated against the owner's infrastructure and certificate or SSH-fingerprint policy before production use.
 - No software can guarantee that a remote server, network, removable drive, or third-party Android provider is trustworthy or available.

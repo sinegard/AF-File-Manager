@@ -18,4 +18,20 @@ ConnectBot Terminal embeds libvterm for terminal emulation.
 - Copyright Paul Evans and contributors
 - License: MIT
 
+## Shizuku API
+
+`dev.rikka.shizuku:api:13.1.5` and `dev.rikka.shizuku:provider:13.1.5` provide the optional local Shizuku permission and user-service connection.
+
+- Project: https://github.com/RikkaApps/Shizuku-API
+- Copyright RikkaApps contributors
+- License: MIT — https://github.com/RikkaApps/Shizuku-API/blob/master/LICENSE
+
+## libsu
+
+`com.github.topjohnwu.libsu:core:6.0.0`, `service:6.0.0`, and `nio:6.0.0` provide the optional root service and privileged file-system bridge.
+
+- Project: https://github.com/topjohnwu/libsu
+- Copyright John Wu and contributors
+- License: Apache License 2.0 — https://github.com/topjohnwu/libsu/blob/master/LICENSE
+
 The notices above do not change AF File Manager's [PolyForm Noncommercial License 1.0.0](LICENSE). Each third-party component remains governed by its own license.

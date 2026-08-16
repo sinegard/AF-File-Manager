@@ -27,6 +27,8 @@ class FileSearchEngine(
         const val MAX_SCANNED_ENTRIES = 200_000
         const val MAX_RESULTS = 5_000
         const val MAX_DUPLICATE_CANDIDATES = 20_000
+        const val MAX_CLEANUP_PACKAGES = 2_000
+        const val MAX_SIMILAR_IMAGE_CANDIDATES = 1_000
         private const val HASH_BUFFER = 256 * 1_024
     }
 
@@ -101,6 +103,8 @@ class FileSearchEngine(
         var bytes = 0L
         val largest = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
         val oldest = java.util.PriorityQueue<FileEntry>(compareByDescending { it.modifiedAtMillis })
+        val installerAndArchives = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
+        val similarImageCandidates = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
         val emptyDirectories = mutableListOf<String>()
         val directoryBytes = mutableMapOf<String, Long>()
         val directoryFiles = mutableMapOf<String, Int>()
@@ -137,6 +141,14 @@ class FileSearchEngine(
                 if (largest.size > 100) largest.remove()
                 oldest += entry
                 if (oldest.size > 100) oldest.remove()
+                if (entry.kind == EntryKind.APK || entry.kind == EntryKind.ARCHIVE) {
+                    installerAndArchives += entry
+                    if (installerAndArchives.size > MAX_CLEANUP_PACKAGES) installerAndArchives.remove()
+                }
+                if (entry.kind == EntryKind.IMAGE && fileBytes >= 32L * 1_024L) {
+                    similarImageCandidates += entry
+                    if (similarImageCandidates.size > MAX_SIMILAR_IMAGE_CANDIDATES) similarImageCandidates.remove()
+                }
             }
             WalkAction.DESCEND
         }
@@ -157,6 +169,8 @@ class FileSearchEngine(
             typeUsage = typeBytes.entries
                 .map { (kind, size) -> FileTypeUsage(kind, size, typeFiles[kind] ?: 0) }
                 .sortedByDescending(FileTypeUsage::sizeBytes),
+            installerAndArchiveFiles = installerAndArchives.toList().sortedByDescending(FileEntry::sizeBytes),
+            similarImageCandidates = similarImageCandidates.toList().sortedByDescending(FileEntry::sizeBytes),
         )
     }
 

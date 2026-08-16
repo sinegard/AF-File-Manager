@@ -1,5 +1,6 @@
 package com.affilemanager.app.transfer
 
+import com.affilemanager.app.ui.localization.AppLanguageManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,6 +24,8 @@ class LanHttpServerTest {
             val anonymous = request(session.port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assertTrue(anonymous.startsWith("HTTP/1.1 401"))
             assertFalse(anonymous.contains("visible.txt"))
+            assertTrue(anonymous.contains("Enter the 8-digit one-time code"))
+            assertFalse(anonymous.contains("Įveskite telefone"))
 
             val body = "code=12345678"
             val login = request(
@@ -37,6 +40,21 @@ class LanHttpServerTest {
             assertTrue(listing.startsWith("HTTP/1.1 200"))
             assertTrue(listing.contains("visible.txt"))
             assertFalse(listing.contains(root.canonicalPath))
+        }
+    }
+
+    @Test
+    fun webInterfaceUsesTheSelectedLithuanianLanguage() {
+        val root = temporary.newFolder("localized")
+        LanHttpServer(
+            root,
+            InetAddress.getLoopbackAddress(),
+            requestedCode = "12345678",
+            language = AppLanguageManager.LITHUANIAN,
+        ).use { server ->
+            val response = request(server.start().port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            assertTrue(response.contains("Įveskite telefone rodomą 8 skaitmenų vienkartinį kodą."))
+            assertTrue(response.contains("Prisijungti"))
         }
     }
 

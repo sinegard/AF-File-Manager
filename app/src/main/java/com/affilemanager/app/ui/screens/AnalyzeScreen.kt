@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.FolderOff
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
@@ -110,6 +111,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var showSave by remember { mutableStateOf(false) }
     var confirmTrash by remember { mutableStateOf(false) }
     var duplicateGroup by remember { mutableStateOf<DuplicateGroup?>(null) }
+    var showCleanupReview by remember { mutableStateOf(false) }
 
     LaunchedEffect(searchState.filters, searchState.roots) {
         query = searchState.filters.query
@@ -450,6 +452,15 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     }
                 }
             }
+            item {
+                OutlinedButton(
+                    onClick = { showCleanupReview = true },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("open_cleanup_review"),
+                ) {
+                    Icon(Icons.Rounded.DeleteSweep, contentDescription = null)
+                    LText("Atidaryti saugaus valymo peržiūrą", modifier = Modifier.padding(start = 7.dp))
+                }
+            }
             item { SectionTitle("Didžiausi failai", analysis.largestFiles.size.toString(), Modifier.padding(horizontal = 16.dp)) }
             items(analysis.largestFiles.take(30), key = { "large:${it.absolutePath}" }) { entry ->
                 ResultRow(
@@ -527,7 +538,10 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
 
     if (showSave) {
-        var name by remember(query) { mutableStateOf(query.take(40).ifBlank { "Mano paieška" }) }
+        val defaultSearchName = uiText("Mano paieška")
+        var name by remember(query, defaultSearchName) {
+            mutableStateOf(query.take(40).ifBlank { defaultSearchName })
+        }
         AlertDialog(
             onDismissRequest = { showSave = false },
             title = { LText("Išsaugoti paiešką") },
@@ -608,6 +622,22 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             },
             dismissButton = { TextButton(onClick = { duplicateGroup = null }) { LText("Atšaukti") } },
         )
+    }
+
+    if (showCleanupReview) {
+        analysisState.analysis?.let { analysis ->
+            CleanupReviewDialog(
+                analysis = analysis,
+                duplicates = analysisState.duplicates,
+                similarImages = analysisState.similarImages,
+                similarImagesRunning = analysisState.similarImagesRunning,
+                similarImagesAnalyzed = analysisState.similarImagesAnalyzed,
+                similarImagesError = analysisState.similarImagesError,
+                onAnalyzeSimilarImages = viewModel::analyzeSimilarImages,
+                onMoveToTrash = viewModel::trashAnalysisSelection,
+                onDismiss = { showCleanupReview = false },
+            )
+        }
     }
 }
 

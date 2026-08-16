@@ -101,7 +101,12 @@ class LanTransferService : Service() {
             val root = File(rootPath).canonicalFile
             require(root.isDirectory && root.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
             val address = privateLanAddress() ?: throw IllegalStateException("Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas")
-            LanHttpServer(root, address, durationMinutes = duration) { reason ->
+            LanHttpServer(
+                rootDirectory = root,
+                bindAddress = address,
+                durationMinutes = duration,
+                language = resources.configuration.locales[0].language,
+            ) { reason ->
                 LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
                 stopSelf()
             }.also { server = it }.start()
@@ -157,22 +162,22 @@ class LanTransferService : Service() {
     }
 
     private fun createChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, "Failų perdavimas vietiniame tinkle", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Rodoma tik tada, kai pats naudotojas paleidžia LAN failų perdavimą"
+        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.lan_transfer_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
+            description = getString(R.string.lan_transfer_channel_description)
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun startingNotification(): Notification = notificationBuilder()
-        .setContentTitle("AF File Manager LAN perdavimas")
-        .setContentText("Serveris paleidžiamas…")
+        .setContentTitle(getString(R.string.lan_transfer_starting_title))
+        .setContentText(getString(R.string.lan_transfer_starting_text))
         .build()
 
     private fun runningNotification(session: LanServerSession): Notification = notificationBuilder()
-        .setContentTitle("AF File Manager LAN perdavimas veikia")
+        .setContentTitle(getString(R.string.lan_transfer_running_title))
         .setContentText(session.url)
-        .addAction(0, "Sustabdyti", stopPendingIntent())
+        .addAction(0, getString(R.string.stop), stopPendingIntent())
         .build()
 
     private fun notificationBuilder(): NotificationCompat.Builder {

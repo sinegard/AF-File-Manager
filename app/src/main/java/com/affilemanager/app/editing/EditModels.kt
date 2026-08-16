@@ -51,6 +51,13 @@ sealed interface EditOrigin {
         override val label: String = "$connectionName · $path"
         override val canWrite: Boolean = true
     }
+
+    data class Privileged(
+        val path: String,
+        override val canWrite: Boolean,
+    ) : EditOrigin {
+        override val label: String = path
+    }
 }
 
 data class EditSession(

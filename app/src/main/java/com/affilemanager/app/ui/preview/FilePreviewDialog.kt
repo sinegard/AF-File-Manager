@@ -2,6 +2,7 @@ package com.affilemanager.app.ui.preview
 
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
 import android.content.ClipData
 import android.content.ComponentName
@@ -89,6 +90,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -136,6 +138,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 
 private val pdfRenderPermits = Semaphore(1)
 
@@ -171,6 +174,7 @@ fun FilePreviewDialog(
     onDecrypt: (FileEntry, CharArray) -> Unit,
 ) {
     val context = LocalContext.current
+    val summaryDateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
     val source = target.previewSource()
     var hash by remember(source.key) { mutableStateOf<String?>(null) }
     var hashRunning by remember { mutableStateOf(false) }
@@ -250,7 +254,7 @@ fun FilePreviewDialog(
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(editSession?.displayName ?: source.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(entrySummary(context, source), style = MaterialTheme.typography.bodySmall)
+                        Text(entrySummary(context, source, summaryDateFormat), style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 HorizontalDivider()
@@ -356,6 +360,7 @@ fun FilePreviewDialog(
                     is PreviewTarget.TrashFile,
                     is PreviewTarget.ContentFile,
                     is PreviewTarget.RemoteFile,
+                    is PreviewTarget.PrivilegedFile,
                     -> FileContentPreview(
                         source = source,
                         editState = activeEditState,
@@ -481,11 +486,12 @@ private fun FileContentPreview(
 @Composable
 private fun ImagePreview(source: PreviewSource) {
     val context = LocalContext.current
+    val locale = LocalConfiguration.current.locales[0]
     val result by produceState<Result<Bitmap>?>(initialValue = null, source.key) {
         value = withContext(Dispatchers.IO) { runCatching { decodeBoundedBitmap(context, source) } }
     }
-    val metadata by produceState(initialValue = emptyList<Pair<String, String>>(), source.key) {
-        value = withContext(Dispatchers.IO) { runCatching { imageMetadata(context, source) }.getOrDefault(emptyList()) }
+    val metadata by produceState(initialValue = emptyList<Pair<String, String>>(), source.key, locale) {
+        value = withContext(Dispatchers.IO) { runCatching { imageMetadata(context, source, locale) }.getOrDefault(emptyList()) }
     }
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     var offset by remember(source.key) { mutableStateOf(Offset.Zero) }
@@ -865,6 +871,7 @@ private fun EditConflictDialog(
     onSaveAs: () -> Unit,
     onKeepEditing: () -> Unit,
 ) {
+    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
     AlertDialog(
         onDismissRequest = onKeepEditing,
         title = { LText("Originalus failas pasikeitė") },
@@ -873,14 +880,14 @@ private fun EditConflictDialog(
                 LText("AF File Manager jo neperrašė. Palyginkite versijas ir pasirinkite veiksmą.")
                 Text(conflict.originLabel, style = MaterialTheme.typography.bodySmall)
                 LText("Originalas atidarymo metu", fontWeight = FontWeight.SemiBold)
-                Text(revisionSummary(conflict.expected), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                Text(revisionSummary(conflict.expected, dateFormat), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 LText("Jūsų redaguojama kopija", fontWeight = FontWeight.SemiBold)
-                Text(revisionSummary(workingRevision), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                Text(revisionSummary(workingRevision, dateFormat), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 LText("Dabartinis originalas", fontWeight = FontWeight.SemiBold)
                 if (conflict.current == null) {
                     LText("Originalaus failo nebėra")
                 } else {
-                    Text(revisionSummary(conflict.current), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    Text(revisionSummary(conflict.current, dateFormat), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 }
                 LText("Perrašymas pakeis dabartinį originalą. „Išsaugoti kaip“ paliks abi versijas.")
             }
@@ -910,6 +917,7 @@ private fun EditSaveAsConflictDialog(
     onChooseAnother: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val dateFormat = rememberLocalizedDateTimeFormat()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { LText("Paskirties failas jau yra") },
@@ -919,7 +927,7 @@ private fun EditSaveAsConflictDialog(
                 Text(conflict.destination.label, style = MaterialTheme.typography.bodySmall)
                 PropertyRow("Esamo failo dydis", FileSystemRules.humanBytes(conflict.existing.sizeBytes))
                 conflict.existing.modifiedAtMillis?.let { modified ->
-                    PropertyRow("Esamas failas pakeistas", DateFormat.getDateTimeInstance().format(Date(modified)))
+                    PropertyRow("Esamas failas pakeistas", dateFormat.format(Date(modified)))
                 }
                 conflict.existing.sha256?.let { sha ->
                     PropertyRow("Esamo failo SHA-256", sha.take(16) + "…")
@@ -1102,13 +1110,14 @@ private fun VaultPreview(target: PreviewTarget.Vault, onDecrypt: (FileEntry, Cha
 
 @Composable
 private fun PropertiesPreview(source: PreviewSource, note: String? = null) {
+    val dateFormat = rememberLocalizedDateTimeFormat()
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
         Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         note?.let { LText(it, modifier = Modifier.padding(vertical = 10.dp)) }
         PropertyRow("Pavadinimas", source.name)
         PropertyRow("Vieta", source.locationLabel)
         PropertyRow("Dydis", source.sizeBytes?.let(FileSystemRules::humanBytes) ?: uiText("Nežinomas"))
-        source.modifiedAtMillis?.let { PropertyRow("Pakeista", DateFormat.getDateTimeInstance().format(Date(it))) }
+        source.modifiedAtMillis?.let { PropertyRow("Pakeista", dateFormat.format(Date(it))) }
         PropertyRow("Skaitomas", uiText(if (source.isReadable) "Taip" else "Ne"))
         PropertyRow("Įrašomas", uiText(if (source.isWritable) "Taip" else "Ne"))
     }
@@ -1191,13 +1200,24 @@ private fun decodeBoundedBitmap(context: android.content.Context, source: Previe
     }
 }
 
-private fun imageMetadata(context: android.content.Context, source: PreviewSource): List<Pair<String, String>> {
-    fun attributes(exif: ExifInterface) = listOfNotNull(
-        exif.getAttribute(ExifInterface.TAG_MAKE)?.let { "Gamintojas" to it },
-        exif.getAttribute(ExifInterface.TAG_MODEL)?.let { "Modelis" to it },
-        exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)?.let { "Fotografuota" to it },
-        exif.getAttribute(ExifInterface.TAG_ORIENTATION)?.let { "Orientacija" to it },
-    )
+private fun imageMetadata(context: android.content.Context, source: PreviewSource, locale: Locale): List<Pair<String, String>> {
+    fun attributes(exif: ExifInterface): List<Pair<String, String>> {
+        val takenAt = listOf(
+            ExifInterface.TAG_DATETIME_ORIGINAL to ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
+            ExifInterface.TAG_DATETIME_DIGITIZED to ExifInterface.TAG_OFFSET_TIME_DIGITIZED,
+            ExifInterface.TAG_DATETIME to ExifInterface.TAG_OFFSET_TIME,
+        ).firstNotNullOfOrNull { (dateTag, offsetTag) ->
+            parseExifDateTimeMillis(exif.getAttribute(dateTag), exif.getAttribute(offsetTag))
+        }
+        return listOfNotNull(
+            exif.getAttribute(ExifInterface.TAG_MAKE)?.let { "Gamintojas" to it },
+            exif.getAttribute(ExifInterface.TAG_MODEL)?.let { "Modelis" to it },
+            takenAt?.let {
+                "Fotografuota" to com.affilemanager.app.ui.localization.localizedDateTime(it, locale)
+            },
+            exif.getAttribute(ExifInterface.TAG_ORIENTATION)?.let { "Orientacija" to it },
+        )
+    }
     return source.localFile?.let { attributes(ExifInterface(it)) }
         ?: source.openFileDescriptor(context).use { attributes(ExifInterface(it.fileDescriptor)) }
 }
@@ -1231,7 +1251,7 @@ private fun shareFile(context: android.content.Context, source: PreviewSource) {
                 clipData = ClipData.newRawUri(source.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             },
-            "Dalintis failu",
+            context.getString(R.string.share_file_chooser_title),
         ),
     )
 }
@@ -1284,11 +1304,11 @@ private fun createSaveAsIntent(session: EditSession): Intent = Intent(Intent.ACT
     putExtra(Intent.EXTRA_TITLE, session.displayName)
 }
 
-private fun revisionSummary(revision: FileRevision): String = buildString {
+private fun revisionSummary(revision: FileRevision, dateFormat: DateFormat): String = buildString {
     append(FileSystemRules.humanBytes(revision.sizeBytes))
     revision.modifiedAtMillis?.let {
         append(" · ")
-        append(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)))
+        append(dateFormat.format(Date(it)))
     }
     append(" · SHA-256 ")
     append(revision.sha256.take(12))
@@ -1307,8 +1327,8 @@ private fun installApk(context: android.content.Context, file: File) {
     )
 }
 
-private fun entrySummary(context: android.content.Context, source: PreviewSource): String = listOfNotNull(
+private fun entrySummary(context: android.content.Context, source: PreviewSource, dateFormat: DateFormat): String = listOfNotNull(
     source.sizeBytes?.let(FileSystemRules::humanBytes),
-    source.modifiedAtMillis?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it)) },
+    source.modifiedAtMillis?.let { dateFormat.format(Date(it)) },
     source.mimeType(context).takeIf { source.modifiedAtMillis == null },
 ).joinToString(" · ")

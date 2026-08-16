@@ -14,7 +14,7 @@ The app stores the following locally:
 - network-profile metadata;
 - passwords and optional private SSH keys encrypted through Android Keystore;
 - files placed in the app's recoverable trash and the metadata needed to restore them;
-- interface language and other user settings.
+- interface language, protected-folder access mode, and other user settings.
 
 Android backup and device-to-device transfer are disabled for app data so credentials and trash contents are not copied accidentally.
 
@@ -25,6 +25,8 @@ Data is sent to SMB, SFTP, WebDAV, FTP, or FTPS servers only when the user confi
 At app launch, no more than once every six hours, AF File Manager checks stable releases in the public `sinegard/AF-File-Manager` GitHub repository. GitHub receives a normal HTTPS request with the app version in the `User-Agent` header. The app never sends file names, file contents, storage listings, or network profiles to GitHub. A newer APK is downloaded automatically only on an unmetered network; on a metered network the app asks first.
 
 The temporary local-network transfer page shares only the folder selected by the user, requires a one-time code, and expires automatically. It does not create a public internet tunnel.
+
+Protected-folder access is local and optional. When the user enables it, selected paths and file operations are sent only to the local Shizuku or root service on that Android device. AF File Manager does not send those paths or file contents to its own server or any analytics service.
 
 ## Deleting local app data
 

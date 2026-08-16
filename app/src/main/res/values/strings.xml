@@ -7,4 +7,13 @@
     <string name="language_lithuanian">Lietuvių</string>
     <string name="open_with_chooser_title">Open “%1$s” with</string>
     <string name="edit_with_chooser_title">Edit “%1$s” with</string>
+    <string name="share_file_chooser_title">Share file</string>
+    <string name="open_with_chooser_short">Open with</string>
+    <string name="lan_transfer_channel_name">Local network file transfer</string>
+    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_text">Starting server…</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
+    <string name="generated_extracted_name">extracted</string>
+    <string name="stop">Stop</string>
 </resources>

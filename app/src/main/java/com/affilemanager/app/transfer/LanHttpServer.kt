@@ -1,6 +1,8 @@
 package com.affilemanager.app.transfer
 
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.localization.UiTranslator
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -40,6 +42,7 @@ class LanHttpServer(
     durationMinutes: Int = 15,
     private val requestedCode: String? = null,
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val language: String = AppLanguageManager.ENGLISH,
     private val onStopped: (String) -> Unit = {},
 ) : AutoCloseable {
     companion object {
@@ -112,7 +115,7 @@ class LanHttpServer(
         serverSocket = null
         executor.shutdownNow()
         session = null
-        onStopped(reason.take(200))
+        onStopped(t(reason).take(200))
     }
 
     private fun acceptLoop(activeSession: LanServerSession) {
@@ -152,7 +155,7 @@ class LanHttpServer(
                 writeText(
                     output,
                     if (clientError) 400 else 500,
-                    if (clientError) (error.message ?: "Užklausa atmesta").take(200) else "Serverio klaida",
+                    if (clientError) t(error.message ?: "Užklausa atmesta").take(200) else t("Serverio klaida"),
                     "text/plain; charset=utf-8",
                 )
             }
@@ -162,12 +165,12 @@ class LanHttpServer(
     private fun handleRequest(input: BufferedInputStream, output: BufferedOutputStream) {
         val request = readRequest(input)
         if (request == null) {
-            writeText(output, 400, "Bloga užklausa", "text/plain; charset=utf-8")
+            writeText(output, 400, t("Bloga užklausa"), "text/plain; charset=utf-8")
             return
         }
         val active = session
         if (!running.get() || active == null || nowMillis() >= active.expiresAtMillis) {
-            writeText(output, 410, "Sesija baigėsi", "text/plain; charset=utf-8")
+            writeText(output, 410, t("Sesija baigėsi"), "text/plain; charset=utf-8")
             return
         }
 
@@ -184,29 +187,29 @@ class LanHttpServer(
             request.method == "GET" && request.path == "/list" -> showDirectory(output, request.query["path"].orEmpty())
             request.method == "GET" && request.path == "/download" -> download(output, request.query["path"].orEmpty())
             request.method == "POST" && request.path == "/upload" -> upload(request, input, output)
-            else -> writeText(output, 404, "Nerasta", "text/plain; charset=utf-8")
+            else -> writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
         }
     }
 
     private fun handleLogin(request: Request, input: BufferedInputStream, output: BufferedOutputStream, active: LanServerSession) {
         if (codeConsumed.get() || authFailures.get() >= MAX_AUTH_FAILURES) {
-            writeText(output, 403, "Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją.", "text/plain; charset=utf-8")
+            writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
             return
         }
         val length = request.contentLength
         if (length !in 1..1_024) {
-            writeText(output, 400, "Netinkamas prisijungimo dydis", "text/plain; charset=utf-8")
+            writeText(output, 400, t("Netinkamas prisijungimo dydis"), "text/plain; charset=utf-8")
             return
         }
         val body = readExactly(input, length.toInt()).toString(StandardCharsets.UTF_8)
         val code = parseQuery(body)["code"]
         if (code != active.code) {
             authFailures.incrementAndGet()
-            writeText(output, 403, loginPage(active, "Neteisingas kodas"), "text/html; charset=utf-8")
+            writeText(output, 403, loginPage(active, t("Neteisingas kodas")), "text/html; charset=utf-8")
             return
         }
         codeConsumed.set(true)
-        val page = "<html><head><meta http-equiv='refresh' content='0;url=/'></head><body>Prisijungta.</body></html>"
+        val page = "<html lang='${html(language)}'><head><meta http-equiv='refresh' content='0;url=/'></head><body>${html(t("Prisijungta"))}.</body></html>"
         writeText(
             output,
             200,
@@ -225,7 +228,7 @@ class LanHttpServer(
         val rows = buildString {
             if (relative.isNotEmpty()) {
                 val parent = relative.substringBeforeLast('/', "")
-                append("<li><a href='/list?path=${url(parent)}'>⬆ Aukštyn</a></li>")
+                append("<li><a href='/list?path=${url(parent)}'>⬆ ${html(t("Aukštyn"))}</a></li>")
             }
             entries.forEach { entry ->
                 val childRelative = listOf(relative, entry.name).filter(String::isNotEmpty).joinToString("/")
@@ -237,10 +240,10 @@ class LanHttpServer(
             }
         }
         val page = """
-            <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+            <!doctype html><html lang="${html(language)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <title>AF File Manager</title><style>body{font-family:system-ui;max-width:900px;margin:auto;padding:20px;background:#111;color:#eee}a{color:#80cbc4}li{padding:8px}input,button{padding:10px;margin:4px}</style></head>
-            <body><h1>${html(session?.rootName.orEmpty())}</h1><p>Vieta: /${html(relative)}</p><ul>$rows</ul>
-            <hr><h2>Įkelti failą</h2><input id="file" type="file"><button onclick="upload()">Įkelti</button><pre id="status"></pre>
+            <body><h1>${html(session?.rootName.orEmpty())}</h1><p>${html(t("Vieta"))}: /${html(relative)}</p><ul>$rows</ul>
+            <hr><h2>${html(t("Įkelti failą"))}</h2><input id="file" type="file"><button onclick="upload()">${html(t("Įkelti"))}</button><pre id="status"></pre>
             <script>async function upload(){let f=document.getElementById('file').files[0];if(!f)return;let u='/upload?dir=${url(relative)}&name='+encodeURIComponent(f.name);let r=await fetch(u,{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});document.getElementById('status').textContent=await r.text();if(r.ok)location.reload();}</script>
             </body></html>
         """.trimIndent()
@@ -288,7 +291,7 @@ class LanHttpServer(
             }
             require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
             require(partial.renameTo(target)) { "Įkėlimo užbaigti nepavyko" }
-            writeText(output, 201, "Įkelta kaip ${target.name}", "text/plain; charset=utf-8")
+            writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
         } finally {
             if (partial.exists()) partial.delete()
         }
@@ -309,11 +312,11 @@ class LanHttpServer(
     }
 
     private fun loginPage(session: LanServerSession, error: String? = null): String = """
-        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AF File Manager</title></head>
+        <!doctype html><html lang="${html(language)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AF File Manager</title></head>
         <body style="font-family:system-ui;max-width:480px;margin:40px auto;padding:20px"><h1>AF File Manager</h1>
-        <p>Įveskite telefone rodomą 8 skaitmenų vienkartinį kodą.</p>${error?.let { "<p style='color:#b00020'>${html(it)}</p>" }.orEmpty()}
-        <form method="post" action="/login"><input name="code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required><button type="submit">Prisijungti</button></form>
-        <p>Sesija baigsis automatiškai. Katalogas: ${html(session.rootName)}</p></body></html>
+        <p>${html(t("Įveskite telefone rodomą 8 skaitmenų vienkartinį kodą."))}</p>${error?.let { "<p style='color:#b00020'>${html(it)}</p>" }.orEmpty()}
+        <form method="post" action="/login"><input name="code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required><button type="submit">${html(t("Prisijungti"))}</button></form>
+        <p>${html(t("Sesija baigsis automatiškai."))} ${html(t("Katalogas"))}: ${html(session.rootName)}</p></body></html>
     """.trimIndent()
 
     private data class Request(
@@ -424,6 +427,7 @@ class LanHttpServer(
     private fun decode(value: String): String = URLDecoder.decode(value, StandardCharsets.UTF_8.name())
     private fun url(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
     private fun html(value: String): String = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
+    private fun t(value: String): String = UiTranslator.translate(value, language)
 
     private fun randomCode(): String = SecureRandom().nextInt(100_000_000).toString().padStart(8, '0')
     private fun randomToken(bytes: Int): String = ByteArray(bytes).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }

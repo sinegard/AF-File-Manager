@@ -2,6 +2,7 @@ package com.affilemanager.app.ui.screens
 
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -185,6 +186,7 @@ private fun TrashBrowserRow(
     onDelete: () -> Unit,
 ) {
     val fileEntry = remember(entry) { entry.toFileEntry() }
+    val dateFormat = rememberLocalizedDateTimeFormat()
     Card(
         onClick = onOpen,
         modifier = Modifier.fillMaxWidth(),
@@ -209,7 +211,7 @@ private fun TrashBrowserRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                LText(trashEntryMeta(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LText(trashEntryMeta(entry, dateFormat), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 entry.originalPath?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -228,11 +230,11 @@ private fun trashLocationLabel(state: TrashBrowserUiState): String = buildString
     if (state.relativePath.isNotEmpty()) append(" / ").append(state.relativePath)
 }
 
-private fun trashEntryMeta(entry: TrashBrowserEntry): String = when {
+private fun trashEntryMeta(entry: TrashBrowserEntry, dateFormat: DateFormat): String = when {
     entry.deletedAtMillis != null -> buildString {
         append(if (entry.isDirectory) "Katalogas" else FileSystemRules.humanBytes(entry.sizeBytes))
         append(" · ")
-        append(DateFormat.getDateTimeInstance().format(Date(entry.deletedAtMillis)))
+        append(dateFormat.format(Date(entry.deletedAtMillis)))
     }
     entry.isDirectory -> "Katalogas"
     else -> FileSystemRules.humanBytes(entry.sizeBytes)

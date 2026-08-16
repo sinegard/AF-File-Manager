@@ -11,6 +11,10 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.affilemanager.app.AFFileManagerApplication
+import com.affilemanager.app.R
+import com.affilemanager.app.advanced.AdvancedAccessMode
+import com.affilemanager.app.advanced.AdvancedAccessState
+import com.affilemanager.app.advanced.PrivilegedPathRules
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveFormat
 import com.affilemanager.app.core.FileSystemRules
@@ -47,12 +51,14 @@ import com.affilemanager.app.editing.FileRevision
 import com.affilemanager.app.editing.LineEnding
 import com.affilemanager.app.editing.TextEncoding
 import com.affilemanager.app.model.ClipboardMode
+import com.affilemanager.app.model.ClipboardSource
 import com.affilemanager.app.model.ContentFileEntry
 import com.affilemanager.app.model.ClipboardState
 import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SearchFilters
+import com.affilemanager.app.model.SimilarImageGroup
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.model.StorageAnalysis
@@ -178,7 +184,26 @@ data class BatchRenameUiState(
 data class AnalysisUiState(
     val analysis: StorageAnalysis? = null,
     val duplicates: List<DuplicateGroup> = emptyList(),
+    val similarImages: List<SimilarImageGroup> = emptyList(),
+    val rootPath: String? = null,
     val running: Boolean = false,
+    val similarImagesRunning: Boolean = false,
+    val similarImagesAnalyzed: Boolean = false,
+    val similarImagesError: String? = null,
+    val error: String? = null,
+)
+
+data class AdvancedBrowserUiState(
+    val open: Boolean = false,
+    val path: String = "",
+    val entries: List<FileEntry> = emptyList(),
+    val selectedPaths: Set<String> = emptySet(),
+    val backHistory: List<String> = emptyList(),
+    val includeHidden: Boolean = false,
+    val grid: Boolean = false,
+    val sortMode: SortMode = SortMode.NAME,
+    val sortDirection: SortDirection = SortDirection.ASCENDING,
+    val loading: Boolean = false,
     val error: String? = null,
 )
 
@@ -319,6 +344,10 @@ sealed interface PreviewTarget {
         val profileId: String,
         val connectionName: String,
     ) : PreviewTarget
+    data class PrivilegedFile(
+        val entry: FileEntry,
+        val cachedFile: File,
+    ) : PreviewTarget
     data class Archive(val file: FileEntry, val entries: List<ArchiveEntryInfo>) : PreviewTarget
     data class RemoteArchive(
         val remote: RemoteEntry,
@@ -435,6 +464,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _analysisState = MutableStateFlow(AnalysisUiState())
     val analysisState: StateFlow<AnalysisUiState> = _analysisState.asStateFlow()
 
+    val advancedAccess: StateFlow<AdvancedAccessState> = graph.advancedAccess.state
+
+    private val _advancedBrowser = MutableStateFlow(AdvancedBrowserUiState())
+    val advancedBrowser: StateFlow<AdvancedBrowserUiState> = _advancedBrowser.asStateFlow()
+
     private val _panelComparison = MutableStateFlow(PanelComparisonUiState())
     val panelComparison: StateFlow<PanelComparisonUiState> = _panelComparison.asStateFlow()
 
@@ -496,6 +530,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var remoteClient: RemoteClient? = null
     private var searchJob: Job? = null
     private var analysisJob: Job? = null
+    private var similarImagesJob: Job? = null
+    private var advancedBrowserJob: Job? = null
+    private var advancedFileOpenJob: Job? = null
     private var recentFilesJob: Job? = null
     private var batchRenamePreviewJob: Job? = null
     private var remoteFileOpenJob: Job? = null
@@ -552,6 +589,244 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshTrash()
             refreshSafLocations()
             refreshSyncSchedules()
+        }
+    }
+
+    fun setAdvancedAccessMode(mode: AdvancedAccessMode) {
+        graph.advancedAccess.setMode(mode)
+        if (mode == AdvancedAccessMode.OFF) closeAdvancedBrowser()
+    }
+
+    fun requestShizukuAccess() = graph.advancedAccess.requestShizukuAccess()
+
+    fun requestRootAccess() = graph.advancedAccess.requestRootAccess()
+
+    fun refreshAdvancedAccess() = graph.advancedAccess.refreshCapabilities()
+
+    fun openAdvancedBrowser() {
+        advancedBrowserJob?.cancel()
+        _advancedBrowser.value = AdvancedBrowserUiState(open = true, loading = true)
+        advancedBrowserJob = viewModelScope.launch {
+            try {
+                val accessible = graph.privilegedFiles.probeAndroidData().getOrThrow()
+                require(accessible) { "Android/data šiuo privilegijuotu režimu nepasiekiamas" }
+                val firstRoot = graph.privilegedFiles.availableRoots().getOrThrow().firstOrNull()
+                    ?: throw IllegalStateException("Android/data ir Android/obb aplankai nepasiekiami")
+                loadAdvancedDirectory(firstRoot.path, pushHistory = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Privilegijuotos vietos atidaryti nepavyko") }
+            } finally {
+                advancedBrowserJob = null
+            }
+        }
+    }
+
+    fun closeAdvancedBrowser() {
+        advancedBrowserJob?.cancel()
+        advancedBrowserJob = null
+        _advancedBrowser.value = AdvancedBrowserUiState()
+    }
+
+    fun navigateAdvanced(path: String) {
+        advancedBrowserJob?.cancel()
+        advancedBrowserJob = viewModelScope.launch {
+            try {
+                loadAdvancedDirectory(path, pushHistory = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atidaryti nepavyko") }
+            } finally {
+                advancedBrowserJob = null
+            }
+        }
+    }
+
+    fun navigateAdvancedBack(): Boolean {
+        val state = _advancedBrowser.value
+        val previous = state.backHistory.lastOrNull()
+        if (previous == null) {
+            closeAdvancedBrowser()
+            return false
+        }
+        advancedBrowserJob?.cancel()
+        advancedBrowserJob = viewModelScope.launch {
+            _advancedBrowser.update { it.copy(backHistory = it.backHistory.dropLast(1), loading = true, selectedPaths = emptySet(), error = null) }
+            graph.privilegedFiles.list(previous, state.includeHidden, state.sortMode, state.sortDirection).fold(
+                onSuccess = { entries -> _advancedBrowser.update { it.copy(path = previous, entries = entries, loading = false, error = null) } },
+                onFailure = { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atidaryti nepavyko") } },
+            )
+            advancedBrowserJob = null
+        }
+        return true
+    }
+
+    fun refreshAdvancedBrowser() {
+        val state = _advancedBrowser.value
+        if (!state.open || state.path.isBlank()) return
+        advancedBrowserJob?.cancel()
+        advancedBrowserJob = viewModelScope.launch {
+            _advancedBrowser.update { it.copy(loading = true, error = null) }
+            graph.privilegedFiles.list(state.path, state.includeHidden, state.sortMode, state.sortDirection).fold(
+                onSuccess = { entries -> _advancedBrowser.update { it.copy(entries = entries, selectedPaths = it.selectedPaths.intersect(entries.map(FileEntry::absolutePath).toSet()), loading = false) } },
+                onFailure = { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atnaujinti nepavyko") } },
+            )
+            advancedBrowserJob = null
+        }
+    }
+
+    fun toggleAdvancedHidden() {
+        _advancedBrowser.update { it.copy(includeHidden = !it.includeHidden, selectedPaths = emptySet()) }
+        refreshAdvancedBrowser()
+    }
+
+    fun toggleAdvancedLayout() {
+        _advancedBrowser.update { it.copy(grid = !it.grid) }
+    }
+
+    fun setAdvancedSort(mode: SortMode, direction: SortDirection) {
+        _advancedBrowser.update { it.copy(sortMode = mode, sortDirection = direction, selectedPaths = emptySet()) }
+        refreshAdvancedBrowser()
+    }
+
+    fun toggleAdvancedSelection(path: String) {
+        _advancedBrowser.update { state ->
+            val selection = state.selectedPaths.toMutableSet()
+            if (!selection.add(path)) selection.remove(path)
+            state.copy(selectedPaths = selection)
+        }
+    }
+
+    fun clearAdvancedSelection() {
+        _advancedBrowser.update { it.copy(selectedPaths = emptySet()) }
+    }
+
+    fun toggleSelectAllAdvanced() {
+        _advancedBrowser.update { state ->
+            val all = state.entries.take(PrivilegedPathRules.MAX_SELECTED_ROOTS).map(FileEntry::absolutePath).toSet()
+            state.copy(selectedPaths = if (all.isNotEmpty() && state.selectedPaths.containsAll(all)) emptySet() else all)
+        }
+    }
+
+    fun copyAdvancedSelection(move: Boolean, append: Boolean = false) {
+        val selected = _advancedBrowser.value.entries.asSequence()
+            .map(FileEntry::absolutePath)
+            .filter { it in _advancedBrowser.value.selectedPaths }
+            .toList()
+        if (selected.isEmpty()) return
+        val existing = if (append) {
+            val current = _clipboard.value
+            if (current == null || current.source != ClipboardSource.PRIVILEGED || current.mode != ClipboardMode.COPY) {
+                message("Nėra privilegijuoto kopijavimo rinkinio, kurį būtų galima papildyti", true)
+                return
+            }
+            current.paths
+        } else emptyList()
+        val merged = ClipboardMergeRules.merge(
+            existing = existing,
+            additional = selected,
+            maximum = PrivilegedPathRules.MAX_SELECTED_ROOTS,
+            key = PrivilegedPathRules::normalizeAbsolute,
+        )
+        _clipboard.value = ClipboardState(
+            paths = merged.items,
+            mode = if (move) ClipboardMode.MOVE else ClipboardMode.COPY,
+            source = ClipboardSource.PRIVILEGED,
+        )
+        _remoteClipboard.value = null
+        clearAdvancedSelection()
+        message(
+            if (append) "Į privilegijuotą iškarpinę įtraukta: ${merged.addedCount} · iš viso: ${merged.items.size}"
+            else if (move) "Paruošta perkelti: ${merged.items.size}"
+            else "Nukopijuota į iškarpinę: ${merged.items.size}",
+        )
+    }
+
+    fun pasteIntoAdvanced(conflictPolicy: ConflictPolicy = ConflictPolicy.KEEP_BOTH) {
+        val clipboard = _clipboard.value ?: return
+        val destination = _advancedBrowser.value.path
+        if (destination.isBlank()) return
+        val moving = clipboard.mode == ClipboardMode.MOVE
+        graph.operationManager.submit("Kopijuojama į apsaugotą Android vietą") {
+            val result = when (clipboard.source) {
+                ClipboardSource.LOCAL -> graph.privilegedFiles.copyFromLocal(clipboard.paths, destination, moving, conflictPolicy, this)
+                ClipboardSource.PRIVILEGED -> graph.privilegedFiles.copyWithin(clipboard.paths, destination, moving, conflictPolicy, this)
+            }
+            note("Nukopijuota: ${result.copiedRoots} · praleista: ${result.skippedRoots}")
+            if (moving && result.skippedRoots == 0) _clipboard.value = null
+            refreshAdvancedBrowser()
+            if (clipboard.source == ClipboardSource.LOCAL && moving) {
+                refreshPanel(PanelId.LEFT)
+                refreshPanel(PanelId.RIGHT)
+            }
+        }.onFailure { message(it.message ?: "Įklijavimo pradėti nepavyko", true) }
+    }
+
+    fun createAdvancedDirectory(name: String) {
+        val path = _advancedBrowser.value.path
+        viewModelScope.launch {
+            graph.privilegedFiles.createDirectory(path, name).fold(
+                onSuccess = { refreshAdvancedBrowser() },
+                onFailure = { message(it.message ?: "Aplanko sukurti nepavyko", true) },
+            )
+        }
+    }
+
+    fun createAdvancedFile(name: String) {
+        val path = _advancedBrowser.value.path
+        viewModelScope.launch {
+            graph.privilegedFiles.createFile(path, name).fold(
+                onSuccess = { refreshAdvancedBrowser() },
+                onFailure = { message(it.message ?: "Failo sukurti nepavyko", true) },
+            )
+        }
+    }
+
+    fun renameAdvanced(path: String, name: String) {
+        viewModelScope.launch {
+            graph.privilegedFiles.rename(path, name).fold(
+                onSuccess = { clearAdvancedSelection(); refreshAdvancedBrowser() },
+                onFailure = { message(it.message ?: "Pervadinti nepavyko", true) },
+            )
+        }
+    }
+
+    fun deleteAdvancedSelectionPermanently() {
+        val selected = _advancedBrowser.value.selectedPaths.toList()
+        if (selected.isEmpty()) return
+        graph.operationManager.submit("Šalinami pasirinkti apsaugoti failai") {
+            graph.privilegedFiles.deletePermanently(selected, this)
+            clearAdvancedSelection()
+            refreshAdvancedBrowser()
+        }.onFailure { message(it.message ?: "Trynimo pradėti nepavyko", true) }
+    }
+
+    fun openAdvancedEntry(entry: FileEntry) {
+        if (entry.isDirectory) {
+            navigateAdvanced(entry.absolutePath)
+            return
+        }
+        advancedFileOpenJob?.cancel()
+        advancedFileOpenJob = viewModelScope.launch {
+            graph.privilegedFiles.stageForPreview(entry).fold(
+                onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached) },
+                onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
+            )
+            advancedFileOpenJob = null
+        }
+    }
+
+    private suspend fun loadAdvancedDirectory(path: String, pushHistory: Boolean) {
+        val before = _advancedBrowser.value
+        _advancedBrowser.update { it.copy(loading = true, error = null, selectedPaths = emptySet()) }
+        val entries = graph.privilegedFiles.list(path, before.includeHidden, before.sortMode, before.sortDirection).getOrThrow()
+        _advancedBrowser.update { state ->
+            val history = if (pushHistory && before.path.isNotBlank() && before.path != path) {
+                (before.backHistory + before.path).takeLast(128)
+            } else before.backHistory
+            state.copy(path = path, entries = entries, backHistory = history, loading = false, error = null)
         }
     }
 
@@ -1138,6 +1413,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 message("Nėra vietinio kopijavimo rinkinio, kurį būtų galima papildyti", true)
                 return false
             }
+            if (current.source != ClipboardSource.LOCAL) {
+                message("Vietinių failų negalima pridėti prie privilegijuoto kopijavimo rinkinio", true)
+                return false
+            }
             if (current.mode != ClipboardMode.COPY) {
                 message("Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują kopijavimo rinkinį.", true)
                 return false
@@ -1152,7 +1431,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             maximum = DurableTransferPlanner.MAX_SOURCE_PATHS,
             key = { path -> runCatching { File(path).canonicalPath }.getOrDefault(File(path).absolutePath) },
         )
-        _clipboard.value = ClipboardState(merged.items, mode)
+        _clipboard.value = ClipboardState(merged.items, mode, ClipboardSource.LOCAL)
         _remoteClipboard.value = null
         if (append) {
             message(
@@ -1180,6 +1459,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val clipboard = _clipboard.value ?: return
         val destination = panelFlow(panel).value.path
         val moving = clipboard.mode == ClipboardMode.MOVE
+        if (clipboard.source == ClipboardSource.PRIVILEGED) {
+            graph.operationManager.submit("Kopijuojama iš apsaugotos Android vietos") {
+                val result = graph.privilegedFiles.copyToLocal(
+                    sourcePaths = clipboard.paths,
+                    destinationDirectory = File(destination),
+                    move = moving,
+                    conflictPolicy = conflictPolicy,
+                    operation = this,
+                )
+                note("Nukopijuota: ${result.copiedRoots} · praleista: ${result.skippedRoots}")
+                if (moving && result.skippedRoots == 0) _clipboard.value = null
+                refreshPanel(panel)
+                refreshRecentFiles()
+                if (_advancedBrowser.value.open) refreshAdvancedBrowser()
+            }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
+            return
+        }
         viewModelScope.launch {
             graph.durableTransfers.createAndSubmit(
                 sourcePaths = clipboard.paths,
@@ -1324,7 +1620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
         val previousSession = existing.session
-        val temporaryDownload = source is PreviewSource.Remote
+        val temporaryDownload = source is PreviewSource.Remote || source is PreviewSource.Privileged
         _fileEditState.value = FileEditUiState(
             sourceKey = source.key,
             temporaryDownload = temporaryDownload,
@@ -1345,6 +1641,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         profileId = target.profileId,
                         connectionName = target.connectionName,
                         path = target.remote.path,
+                    )
+                    is PreviewTarget.PrivilegedFile -> EditOrigin.Privileged(
+                        path = target.entry.absolutePath,
+                        canWrite = target.entry.isWritable,
                     )
                 }
                 prepared = withContext(Dispatchers.IO) {
@@ -1391,6 +1691,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 if (source is PreviewSource.Remote) {
                     val removed = withContext(Dispatchers.IO) { remotePreviewCache.discard(source.cachedFile) }
+                    if (!removed) message("Laikinos pradinio failo kopijos pašalinti nepavyko", true)
+                }
+                if (source is PreviewSource.Privileged) {
+                    val removed = withContext(Dispatchers.IO) { graph.privilegedFiles.discardPreview(source.cachedFile) }
                     if (!removed) message("Laikinos pradinio failo kopijos pašalinti nepavyko", true)
                 }
             } catch (cancelled: CancellationException) {
@@ -1476,6 +1780,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         saveContentOrigin(session, forceOverwrite)
                     }
                     is EditOrigin.Remote -> saveRemoteOrigin(session, forceOverwrite)
+                    is EditOrigin.Privileged -> withContext(Dispatchers.IO) {
+                        graph.privilegedFiles.saveOrigin(session, forceOverwrite)
+                    }
                 }
                 when (result) {
                     is EditSaveResult.Conflict -> _fileEditState.update { current ->
@@ -1527,6 +1834,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 refreshPanel(PanelId.RIGHT)
                             }
                             is EditOrigin.Remote -> refreshRemote()
+                            is EditOrigin.Privileged -> refreshAdvancedBrowser()
                             is EditOrigin.Content -> Unit
                         }
                     }
@@ -1884,9 +2192,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun extractArchive(file: FileEntry, password: CharArray? = null) {
-        val destination = File(file.file.parentFile, file.name.substringBeforeLast('.').ifBlank { "išpakuota" })
+        val fallbackName = getApplication<Application>().getString(R.string.generated_extracted_name)
+        val destination = File(file.file.parentFile, file.name.substringBeforeLast('.').ifBlank { fallbackName })
         graph.operationManager.submit("Išpakuojamas ${file.name}") {
-            graph.archives.extract(file.file, destination, password, this)
+            graph.archives.extract(
+                archiveFile = file.file,
+                destinationDirectory = destination,
+                password = password,
+                operation = this,
+                fallbackExtractedName = fallbackName,
+            )
         }.onSuccess { closePreview() }
             .onFailure { message(it.message ?: "Išpakavimo pradėti nepavyko", true) }
     }
@@ -2021,18 +2336,106 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun analyze(path: String = activePanelState().path) {
         analysisJob?.cancel()
+        similarImagesJob?.cancel()
         analysisJob = viewModelScope.launch {
-            _analysisState.value = AnalysisUiState(running = true)
+            _analysisState.value = AnalysisUiState(rootPath = path, running = true)
             try {
                 val analysis = graph.search.analyze(listOf(path))
                 val duplicates = graph.search.duplicates(listOf(path))
-                _analysisState.value = AnalysisUiState(analysis, duplicates, running = false)
+                _analysisState.value = AnalysisUiState(
+                    analysis = analysis,
+                    duplicates = duplicates,
+                    rootPath = path,
+                    running = false,
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                _analysisState.value = AnalysisUiState(running = false, error = error.message)
+                _analysisState.value = AnalysisUiState(rootPath = path, running = false, error = error.message)
             }
         }
+    }
+
+    fun analyzeSimilarImages() {
+        val analysis = _analysisState.value.analysis ?: return
+        if (_analysisState.value.similarImagesRunning) return
+        similarImagesJob?.cancel()
+        similarImagesJob = viewModelScope.launch {
+            _analysisState.update {
+                it.copy(similarImagesRunning = true, similarImagesAnalyzed = false, similarImagesError = null)
+            }
+            try {
+                val groups = graph.similarImages.find(analysis.similarImageCandidates)
+                _analysisState.update {
+                    it.copy(
+                        similarImages = groups,
+                        similarImagesRunning = false,
+                        similarImagesAnalyzed = true,
+                        similarImagesError = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _analysisState.update {
+                    it.copy(
+                        similarImagesRunning = false,
+                        similarImagesAnalyzed = true,
+                        similarImagesError = error.message ?: "Panašių nuotraukų analizė nepavyko",
+                    )
+                }
+            }
+        }
+    }
+
+    fun trashAnalysisSelection(paths: Collection<String>) {
+        val state = _analysisState.value
+        val rootPath = state.rootPath ?: return
+        val root = runCatching { File(rootPath).canonicalFile }.getOrElse {
+            message("Analizės vieta nebepasiekiama", true)
+            return
+        }
+        val selected = runCatching {
+            val requested = paths.distinct()
+            require(requested.size <= 10_000) { "Vienu metu galima tvarkyti iki 10 000 elementų" }
+            requested.asSequence()
+                .map(::File)
+                .map { it.canonicalFile }
+                .filter(File::exists)
+                .onEach { candidate ->
+                    require(candidate != root && FileSystemRules.isContained(root, candidate)) {
+                        "Pasirinktas failas yra už analizuojamo aplanko ribų"
+                    }
+                }
+                .sortedBy { it.absolutePath.length }
+                .fold(mutableListOf<File>()) { accepted, candidate ->
+                    if (accepted.none { parent -> FileSystemRules.isContained(parent, candidate) }) accepted += candidate
+                    accepted
+                }
+                .toList()
+        }.getOrElse {
+            message(it.message ?: "Valymo pasirinkimas netinkamas", true)
+            return
+        }
+        if (selected.isEmpty()) return
+        fun scheduled(path: String): Boolean {
+            val candidate = File(path)
+            return selected.any { selectedRoot -> FileSystemRules.isContained(selectedRoot, candidate) }
+        }
+        val removedWholeDuplicateGroup = state.duplicates.any { group ->
+            group.paths.isNotEmpty() && group.paths.all(::scheduled)
+        }
+        val removedWholeSimilarGroup = state.similarImages.any { group ->
+            group.files.isNotEmpty() && group.files.all { scheduled(it.absolutePath) }
+        }
+        if (removedWholeDuplicateGroup || removedWholeSimilarGroup) {
+            message("Iš kiekvienos vienodų ar panašių failų grupės palikite bent vieną failą", true)
+            return
+        }
+        graph.operationManager.submit("Pasirinkti failai keliami į šiukšlinę") {
+            graph.trash.moveToTrash(selected.map(File::getAbsolutePath), this)
+            viewModelScope.launch { analyze(rootPath) }
+        }.onFailure { message(it.message ?: "Valymo pradėti nepavyko", true) }
     }
 
     fun refreshTrash() {
@@ -2284,7 +2687,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 setDataAndType(Uri.parse(entry.uri), entry.mimeType ?: "application/octet-stream")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            runCatching { application.startActivity(Intent.createChooser(intent, "Atidaryti su").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            runCatching {
+                application.startActivity(
+                    Intent.createChooser(intent, application.getString(R.string.open_with_chooser_short))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
                 .onFailure { message(it.message ?: "Failo atidaryti nepavyko", true) }
         }
     }
@@ -3058,6 +3466,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pasteLocalClipboardToRemote(): Boolean {
         val clipboard = _clipboard.value ?: return false
+        if (clipboard.source != ClipboardSource.LOCAL) {
+            message("Į serverį pirmiausia nukopijuokite failą iš apsaugotos vietos į telefoną", true)
+            return false
+        }
         if (clipboard.mode != ClipboardMode.COPY) {
             message("Į serverį galima įklijuoti tik nukopijuotus, ne iškirptus elementus", true)
             return false
@@ -3450,7 +3862,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         graph.applicationScope.launch {
             val editRemoved = graph.editSessions.discard(session)
             val previewRemoved = remotePreviewCache.discard(target.remoteCachedFile())
-            if (!editRemoved || !previewRemoved) {
+            val privilegedPreviewRemoved = graph.privilegedFiles.discardPreview(target.privilegedCachedFile())
+            if (!editRemoved || !previewRemoved || !privilegedPreviewRemoved) {
                 message("Laikinos redagavimo kopijos pašalinti nepavyko", true)
             }
         }
@@ -3459,6 +3872,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun PreviewTarget?.remoteCachedFile(): File? = when (this) {
         is PreviewTarget.RemoteFile -> cachedFile
         is PreviewTarget.RemoteArchive -> file.file
+        else -> null
+    }
+
+    private fun PreviewTarget?.privilegedCachedFile(): File? = when (this) {
+        is PreviewTarget.PrivilegedFile -> cachedFile
         else -> null
     }
 

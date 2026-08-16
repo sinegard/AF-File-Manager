@@ -12,6 +12,8 @@ This roadmap is designed for Android rather than copied blindly from desktop fil
 - Cross-location copy/paste between the active local folder and the current remote folder, plus a navigable multi-selection upload picker.
 - Unified local and remote browser controls, including navigation history, system Back, breadcrumbs, list/grid layouts, hidden-file filtering, folders-first sorting, and consistent item/selection menus.
 - SHA-256 duplicate analysis, large or old files, empty folders, folder-size analysis, tags, ratings, and saved searches.
+- Review-first cleanup for large files, installer/archive leftovers, exact duplicates, empty folders, and locally detected similar photos, with no automatic deletion.
+- Optional, disabled-by-default `Android/data` and `Android/obb` browsing through an explicitly granted Shizuku or compatible root service.
 - English as the default interface plus Lithuanian, with no translation of user data.
 - No advertising, mandatory account, analytics, or tracking SDK.
 
@@ -48,5 +50,5 @@ This roadmap is designed for Android rather than copied blindly from desktop fil
 
 - Local AI or semantic search only after durable operations, sessions, and transfer safety remain proven at larger scale.
 - Optional cloud-provider OAuth accounts require a separate threat model and credential lifecycle.
-- Root, Shizuku, and ADB are not part of the default product direction. Android restrictions around `Android/data` and `Android/obb` must be represented honestly.
+- ADB remains an external development tool rather than an in-app access mode. Android restrictions around `Android/data` and `Android/obb` must continue to be represented honestly when neither Shizuku nor compatible root access is active.
 - A portable Windows or Linux build would be a separate product and architecture, not a property of the Android APK.

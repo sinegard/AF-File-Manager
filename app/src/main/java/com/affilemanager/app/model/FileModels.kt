@@ -66,9 +66,15 @@ enum class ClipboardMode {
     MOVE,
 }
 
+enum class ClipboardSource {
+    LOCAL,
+    PRIVILEGED,
+}
+
 data class ClipboardState(
     val paths: List<String>,
     val mode: ClipboardMode,
+    val source: ClipboardSource = ClipboardSource.LOCAL,
 )
 
 data class StorageRoot(
@@ -104,6 +110,11 @@ data class DuplicateGroup(
     val paths: List<String>,
 )
 
+data class SimilarImageGroup(
+    val id: String,
+    val files: List<FileEntry>,
+)
+
 data class DirectoryUsage(
     val path: String,
     val sizeBytes: Long,
@@ -126,4 +137,6 @@ data class StorageAnalysis(
     val truncated: Boolean,
     val largestDirectories: List<DirectoryUsage> = emptyList(),
     val typeUsage: List<FileTypeUsage> = emptyList(),
+    val installerAndArchiveFiles: List<FileEntry> = emptyList(),
+    val similarImageCandidates: List<FileEntry> = emptyList(),
 )

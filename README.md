@@ -17,6 +17,8 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 - transparent local and remote editing through private working copies, explicit Save or Save As to the phone, Android document providers, or the active server, revision conflicts, SHA-256 verification, remote rollback protection, and automatic removal of temporary remote-edit downloads;
 - ZIP, 7z, RAR, TAR, TAR.GZ, and GZIP support with extraction safety limits;
 - scoped search, saved searches, tags, ratings, folder-size analysis, large files, empty folders, and duplicate detection;
+- a review-first cleanup workspace for large files, installer/archive leftovers, exact duplicates, empty folders, and locally detected similar photos; nothing is selected or deleted automatically;
+- optional protected-folder browsing for `Android/data` and `Android/obb` through Shizuku or a compatible root manager, disabled by default and limited to explicit file operations;
 - SMB 2/3, SFTP, HTTPS WebDAV, FTP, and FTPS connections with bidirectional recursive transfers;
 - one cross-location clipboard: copy locally and paste into the current server folder, or copy remotely and paste into the current local folder;
 - `Copy more` appends missed local, search-result, or same-server items to the current copy set without duplicates or replacing its earlier contents;
@@ -28,7 +30,7 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 - local Wi-Fi file transfer page with a one-time code and an automatic expiry;
 - self-update from signed [GitHub Releases](https://github.com/sinegard/AF-File-Manager/releases).
 
-The interface starts in English and can be switched to Lithuanian in **More → Language**. File names, folder names, paths, server names, and user-entered text are never translated.
+The interface starts in English and can be switched to Lithuanian in **More → Language**. Labels, metadata, dates, runtime messages, and the local transfer page follow that choice. File names, folder names, paths, server names, and user-entered text are never translated.
 
 ## Free for non-commercial use
 
@@ -59,9 +61,9 @@ Android always shows its own installation confirmation. A regular third-party ap
 
 Full local browsing on Android 11+ uses the special **All files access** permission. Android and device-vendor restrictions can still block `Android/data` and `Android/obb`. The app also supports user-selected Storage Access Framework locations without this broad permission.
 
-Root and Shizuku actions are not performed automatically.
+An optional advanced mode under **More → Tools and security → Protected Android folder access** can use an already running Shizuku service or a compatible root manager. It is off by default, asks before connecting, accepts only a privileged service running as Android shell or root, and exposes a bounded browser for `Android/data` and `Android/obb`. AF File Manager does not install, start, or configure Shizuku or root on its own.
 
-The phone terminal runs `/system/bin/sh` as AF File Manager's ordinary Android app user. It does not bypass Android permissions and it is not a root shell or a packaged Linux distribution. A remote shell is available only for SFTP/SSH profiles because FTP, FTPS, SMB, and WebDAV do not provide a shell protocol.
+The phone terminal still runs `/system/bin/sh` as AF File Manager's ordinary Android app user, even when protected-folder access is enabled. It is not a root shell or a packaged Linux distribution. A remote shell is available only for SFTP/SSH profiles because FTP, FTPS, SMB, and WebDAV do not provide a shell protocol.
 
 ## Build
 

@@ -22,8 +22,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.16.0"
+        versionCode = 28
+        versionName = "0.17.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -85,6 +85,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        aidl = true
     }
 
     packaging {
@@ -130,6 +131,12 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.connectbot:termlib:0.1.0")
 
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation("com.github.topjohnwu.libsu:core:6.0.0")
+    implementation("com.github.topjohnwu.libsu:service:6.0.0")
+    implementation("com.github.topjohnwu.libsu:nio:6.0.0")
+
     implementation("com.github.mwiede:jsch:2.28.6")
     implementation("com.hierynomus:smbj:0.14.0")
     implementation("commons-net:commons-net:3.12.0")
@@ -153,13 +160,22 @@ tasks.register("verifyReleaseDynamicRuntimeClasses") {
     dependsOn("assembleRelease")
 
     doLast {
-        val releaseApk = layout.buildDirectory.file("outputs/apk/release/app-release.apk").get().asFile
+        val releaseOutputDirectory = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+        val outputMetadata = releaseOutputDirectory.resolve("output-metadata.json")
+        val outputFileName = outputMetadata
+            .takeIf { it.isFile }
+            ?.readText()
+            ?.let { Regex("\\\"outputFile\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").find(it)?.groupValues?.get(1) }
+        val releaseApk = outputFileName?.let(releaseOutputDirectory::resolve)
+            ?: releaseOutputDirectory.resolve("app-release.apk")
         check(releaseApk.isFile && releaseApk.length() > 0L) {
             "Optimized release APK was not produced: ${releaseApk.absolutePath}"
         }
 
         val requiredDescriptors = listOf(
             "Lcom/affilemanager/app/network/SftpRuntimeVerifier;",
+            "Lcom/affilemanager/app/advanced/ShizukuFileService;",
+            "Lcom/affilemanager/app/advanced/RootFileService;",
             "Lcom/jcraft/jsch/JSchException;",
             "Lcom/jcraft/jsch/UserAuthPassword;",
             "Lcom/jcraft/jsch/DH25519;",

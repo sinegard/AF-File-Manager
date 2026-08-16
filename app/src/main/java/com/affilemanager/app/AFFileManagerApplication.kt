@@ -1,6 +1,8 @@
 package com.affilemanager.app
 
 import android.app.Application
+import com.affilemanager.app.advanced.AdvancedAccessManager
+import com.affilemanager.app.advanced.PrivilegedFileRepository
 import com.affilemanager.app.archive.ArchiveEngine
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.data.ContentFileRepository
@@ -21,6 +23,7 @@ import com.affilemanager.app.operations.BatchRenameEngine
 import com.affilemanager.app.operations.DurableTransferCoordinator
 import com.affilemanager.app.operations.DurableTransferRepository
 import com.affilemanager.app.search.FileSearchEngine
+import com.affilemanager.app.search.SimilarImageEngine
 import com.affilemanager.app.security.CredentialVault
 import com.affilemanager.app.security.AppLockRepository
 import com.affilemanager.app.security.FileVaultEngine
@@ -50,6 +53,8 @@ class AFFileManagerApplication : Application() {
 
 class AppGraph(application: Application) {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val advancedAccess = AdvancedAccessManager(application)
+    val privilegedFiles = PrivilegedFileRepository(application, advancedAccess)
     val localFiles = LocalFileRepository(application)
     val recentFiles = RecentFileRepository(application, localFiles)
     val contentFiles = ContentFileRepository(application)
@@ -66,6 +71,7 @@ class AppGraph(application: Application) {
     val durableTransfers = DurableTransferCoordinator(operationManager, durableTransferRepository)
     val trash = TrashRepository(application)
     val search = FileSearchEngine(localFiles)
+    val similarImages = SimilarImageEngine()
     val archives = ArchiveEngine()
     val credentialVault = CredentialVault()
     val appLock = AppLockRepository(application)

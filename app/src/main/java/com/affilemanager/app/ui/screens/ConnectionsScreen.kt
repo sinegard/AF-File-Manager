@@ -111,6 +111,7 @@ import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 import com.affilemanager.app.network.RemoteCopyEngine
 import com.affilemanager.app.sync.SyncActionType
 import com.affilemanager.app.sync.SyncConflictPolicy
@@ -761,7 +762,7 @@ private fun RemoteEntryList(
     onInfo: (RemoteEntry) -> Unit,
     onDelete: (RemoteEntry) -> Unit,
 ) {
-    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
         items(entries, key = RemoteEntry::path) { entry ->
             RemoteEntryRow(
@@ -1017,7 +1018,7 @@ private fun RemoteEmptyPanel(
 
 @Composable
 private fun RemoteInfoDialog(entry: RemoteEntry, onDismiss: () -> Unit) {
-    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
+    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.Info, contentDescription = null) },

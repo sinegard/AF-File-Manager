@@ -1,6 +1,5 @@
 package com.affilemanager.app.ui.screens
 
-import android.content.pm.PackageManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.os.Build
@@ -70,6 +69,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.BuildConfig
 import com.affilemanager.app.R
+import com.affilemanager.app.advanced.AdvancedAccessMode
+import com.affilemanager.app.advanced.CapabilityState
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationSnapshot
 import com.affilemanager.app.operations.OperationStatus
@@ -78,6 +79,7 @@ import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.localization.rememberLocalizedTimeFormat
 import com.affilemanager.app.ui.theme.AppColorPalette
 import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.ui.theme.AppearanceRules
@@ -97,6 +99,7 @@ fun ToolsScreen(
     onAddSafLocation: () -> Unit,
     onToggleAppLock: (Boolean) -> Unit,
 ) {
+    val timeFormat = rememberLocalizedTimeFormat(DateFormat.SHORT)
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val trash by viewModel.trashItems.collectAsStateWithLifecycle()
     val trashBrowser by viewModel.trashBrowser.collectAsStateWithLifecycle()
@@ -107,16 +110,13 @@ fun ToolsScreen(
     val lanTransfer by LanTransferController.state.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val appearanceSettings by viewModel.appearanceSettings.collectAsStateWithLifecycle()
+    val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
+    val advancedBrowser by viewModel.advancedBrowser.collectAsStateWithLifecycle()
+    val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val active = viewModel.activePanelState()
     val selectedEntry = active.entries.singleOrNull { it.absolutePath in active.selectedPaths }
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
-    val shizukuInstalled = remember {
-        @Suppress("DEPRECATION")
-        runCatching { context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0) }.isSuccess
-    }
-    val rootPresent = remember { listOf("/system/bin/su", "/system/xbin/su", "/sbin/su").any { File(it).exists() } }
-
     var encryptTarget by remember { mutableStateOf(selectedEntry) }
     var showEncrypt by remember { mutableStateOf(false) }
     var removeSaf by remember { mutableStateOf<com.affilemanager.app.data.SafLocation?>(null) }
@@ -205,7 +205,7 @@ fun ToolsScreen(
                             LText("Adresas: ${lanTransfer.url}", fontWeight = FontWeight.SemiBold)
                             LText("Vienkartinis kodas: ${lanTransfer.code}", style = MaterialTheme.typography.titleMedium)
                             lanTransfer.expiresAtMillis?.let { expires ->
-                                LText("Baigsis: ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(expires))}", style = MaterialTheme.typography.bodySmall)
+                                LText("Baigsis: ${timeFormat.format(Date(expires))}", style = MaterialTheme.typography.bodySmall)
                             }
                             LText("Katalogas: ${lanTransfer.rootName}", style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -358,11 +358,53 @@ fun ToolsScreen(
         item { SectionHeader("Pažengusio naudotojo režimas", "Neprivalomas") }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatusLine("Shizuku", if (shizukuInstalled) "Aptikta, leidimas dar nesuteiktas" else "Neįdiegta")
-                    StatusLine("Root", if (rootPresent) "Galimas su dvejetainiu su" else "Neaptiktas")
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LText("Apsaugotų Android aplankų prieiga", fontWeight = FontWeight.SemiBold)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        AdvancedAccessMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = advancedAccess.selectedMode == mode,
+                                onClick = { viewModel.setAdvancedAccessMode(mode) },
+                                label = { LText(advancedModeLabel(mode)) },
+                                modifier = Modifier.testTag("advanced_mode_${mode.name.lowercase()}"),
+                            )
+                        }
+                    }
+                    StatusLine(
+                        "Shizuku",
+                        shizukuStatus(
+                            installed = advancedAccess.shizukuInstalled,
+                            running = advancedAccess.shizukuRunning,
+                            permission = advancedAccess.shizukuPermission,
+                        ),
+                    )
+                    StatusLine("Root", capabilityLabel(advancedAccess.rootPermission))
+                    StatusLine("Aktyvi prieiga", if (advancedAccess.connected) "Prisijungta · UID ${advancedAccess.serviceUid}" else "Neprisijungta")
+                    advancedAccess.androidDataAccessible?.let { accessible ->
+                        StatusLine("Android/data", if (accessible) "Pasiekiamas" else "Nepasiekiamas šiuo režimu")
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = viewModel::requestShizukuAccess,
+                            enabled = advancedAccess.shizukuRunning && !advancedAccess.connecting,
+                        ) { LText(if (advancedAccess.shizukuPermission == CapabilityState.GRANTED) "Jungtis per Shizuku" else "Suteikti Shizuku leidimą") }
+                        OutlinedButton(
+                            onClick = viewModel::requestRootAccess,
+                            enabled = !advancedAccess.connecting,
+                        ) { LText("Jungtis per root") }
+                    }
+                    Button(
+                        onClick = viewModel::openAdvancedBrowser,
+                        enabled = advancedAccess.connected && !advancedAccess.connecting,
+                        modifier = Modifier.testTag("open_android_data"),
+                    ) {
+                        Icon(Icons.Rounded.FolderSpecial, contentDescription = null)
+                        LText("Atidaryti Android/data", modifier = Modifier.padding(start = 6.dp))
+                    }
+                    if (advancedAccess.connecting) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    advancedAccess.error?.let { LText(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     LText(
-                        "Šis režimas pagal nutylėjimą išjungtas. Jis negali pažadėti prieigos prie Android/data visuose įrenginiuose dėl SELinux ir gamintojo ribojimų.",
+                        "Pagal nutylėjimą ši prieiga išjungta. Įprastas režimas neapeina Android ribojimų. Shizuku ir root naudojami tik pasirinkus šį režimą ir suteikus leidimą.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -431,6 +473,33 @@ fun ToolsScreen(
             onDismiss = viewModel::closeTrashBrowser,
         )
     }
+
+    AdvancedStorageBrowserDialog(
+        state = advancedBrowser,
+        access = advancedAccess,
+        clipboard = clipboard,
+        viewModel = viewModel,
+    )
+}
+
+private fun advancedModeLabel(mode: AdvancedAccessMode): String = when (mode) {
+    AdvancedAccessMode.OFF -> "Išjungta"
+    AdvancedAccessMode.AUTO -> "Automatiškai"
+    AdvancedAccessMode.SHIZUKU -> "Shizuku"
+    AdvancedAccessMode.ROOT -> "Root"
+}
+
+private fun capabilityLabel(state: CapabilityState): String = when (state) {
+    CapabilityState.UNAVAILABLE -> "Neaptikta"
+    CapabilityState.AVAILABLE -> "Galima paprašyti leidimo"
+    CapabilityState.GRANTED -> "Leidimas suteiktas"
+    CapabilityState.DENIED -> "Leidimas atmestas"
+}
+
+private fun shizukuStatus(installed: Boolean, running: Boolean, permission: CapabilityState): String = when {
+    !installed -> "Neįdiegta"
+    !running -> "Įdiegta, bet nepaleista"
+    else -> capabilityLabel(permission)
 }
 
 @Composable

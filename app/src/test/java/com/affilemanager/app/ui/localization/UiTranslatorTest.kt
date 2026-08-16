@@ -1,6 +1,8 @@
 package com.affilemanager.app.ui.localization
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import java.io.File
 import org.junit.Test
 
 class UiTranslatorTest {
@@ -108,6 +110,11 @@ class UiTranslatorTest {
     fun lithuanianKeepsOriginalInterfaceCopy() {
         assertEquals("Failai", UiTranslator.translate("Failai", AppLanguageManager.LITHUANIAN))
         assertEquals("Pasirinkta: 12", UiTranslator.translate("Pasirinkta: 12", AppLanguageManager.LITHUANIAN))
+        assertEquals("Paprastas tekstas", UiTranslator.translate("Plain text", AppLanguageManager.LITHUANIAN))
+        assertEquals(
+            "Failas per didelis redaguoti",
+            UiTranslator.translate("File is too large to edit", AppLanguageManager.LITHUANIAN),
+        )
     }
 
     @Test
@@ -115,4 +122,64 @@ class UiTranslatorTest {
         val fileName = "Sąskaita 2026 – final.pdf"
         assertEquals(fileName, UiTranslator.translate(fileName, AppLanguageManager.ENGLISH))
     }
+
+    @Test
+    fun metadataAdvancedAccessAndCleanupCopyAreTranslated() {
+        assertEquals("Manufacturer", UiTranslator.translate("Gamintojas", AppLanguageManager.ENGLISH))
+        assertEquals("Model", UiTranslator.translate("Modelis", AppLanguageManager.ENGLISH))
+        assertEquals("Taken", UiTranslator.translate("Fotografuota", AppLanguageManager.ENGLISH))
+        assertEquals("Orientation", UiTranslator.translate("Orientacija", AppLanguageManager.ENGLISH))
+        assertEquals("Writable", UiTranslator.translate("Įrašomas", AppLanguageManager.ENGLISH))
+        assertEquals("Protected Android files", UiTranslator.translate("Apsaugoti Android failai", AppLanguageManager.ENGLISH))
+        assertEquals("Safe cleanup review", UiTranslator.translate("Saugaus valymo peržiūra", AppLanguageManager.ENGLISH))
+        assertEquals("Similar-photo group 4", UiTranslator.translate("Panašių nuotraukų grupė 4", AppLanguageManager.ENGLISH))
+        assertEquals("Connected · UID 2000", UiTranslator.translate("Prisijungta · UID 2000", AppLanguageManager.ENGLISH))
+    }
+
+    @Test
+    fun everyStaticMarkedUiLiteralHasAnEnglishEntry() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val literal = Regex("""(?:LText|uiText)\(\s*\"((?:\\.|[^\"\\])*)\"""")
+        val missing = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                literal.findAll(file.readText()).map { match -> file.name to decodeKotlinLiteral(match.groupValues[1]) }
+            }
+            .filter { (_, text) -> '$' !in text && !UiTranslator.hasEnglishEntry(text) }
+            .distinct()
+            .toList()
+        assertTrue("Missing English UI entries: $missing", missing.isEmpty())
+    }
+
+    @Test
+    fun staticLithuanianRuntimeMessagesHaveEnglishTranslations() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val literal = Regex("""\"((?:\\.|[^\"\\])*)\"""")
+        val untranslated = sourceRoot.walkTopDown()
+            .filter {
+                it.isFile && it.extension == "kt" &&
+                    it.name !in setOf("UiTranslator.kt", "RuntimeMessageTranslations.kt", "AppLanguageManager.kt")
+            }
+            .flatMap { file ->
+                literal.findAll(file.readText()).map { match -> file.name to decodeKotlinLiteral(match.groupValues[1]) }
+            }
+            .filter { (_, text) ->
+                '$' !in text && text != "Lietuvių" &&
+                    Regex("[ĄČĘĖĮŠŲŪŽąčęėįšųūž]").containsMatchIn(text) &&
+                    UiTranslator.translate(text, AppLanguageManager.ENGLISH) == text
+            }
+            .distinct()
+            .toList()
+        assertTrue("Untranslated Lithuanian runtime messages: $untranslated", untranslated.isEmpty())
+    }
+
+    private fun decodeKotlinLiteral(value: String): String = value
+        .replace("\\\"", "\"")
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\\", "\\")
 }

@@ -163,11 +163,11 @@ fun FullTextEditor(
                 Icon(Icons.Rounded.ZoomIn, contentDescription = uiText("Didinti tekstą"))
             }
             Box {
-                TextButton(onClick = { showLanguageMenu = true }) { Text(language.label) }
+                TextButton(onClick = { showLanguageMenu = true }) { LText(language.label) }
                 DropdownMenu(expanded = showLanguageMenu, onDismissRequest = { showLanguageMenu = false }) {
                     EditorLanguage.entries.forEach { option ->
                         DropdownMenuItem(
-                            text = { Text(option.label) },
+                            text = { LText(option.label) },
                             onClick = { language = option; showLanguageMenu = false },
                         )
                     }

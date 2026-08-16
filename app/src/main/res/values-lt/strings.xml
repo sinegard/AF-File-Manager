@@ -7,4 +7,13 @@
     <string name="language_lithuanian">Lietuvių</string>
     <string name="open_with_chooser_title">Atidaryti „%1$s“ su</string>
     <string name="edit_with_chooser_title">Redaguoti „%1$s“ su</string>
+    <string name="share_file_chooser_title">Dalintis failu</string>
+    <string name="open_with_chooser_short">Atidaryti su</string>
+    <string name="lan_transfer_channel_name">Failų perdavimas vietiniame tinkle</string>
+    <string name="lan_transfer_channel_description">Rodoma tik tada, kai paleistas LAN failų perdavimas</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN perdavimas</string>
+    <string name="lan_transfer_starting_text">Serveris paleidžiamas…</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN perdavimas veikia</string>
+    <string name="generated_extracted_name">išpakuota</string>
+    <string name="stop">Sustabdyti</string>
 </resources>

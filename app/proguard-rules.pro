@@ -23,6 +23,13 @@
 # stable cross-APK contract.
 -keep class com.affilemanager.app.network.SftpRuntimeVerifier { *; }
 
+# Shizuku and libsu start these application classes by their binary names in a
+# separate privileged process. Renaming or removing either class would make the
+# optimized APK report an available backend that can never connect.
+-keep class com.affilemanager.app.advanced.ShizukuFileService { *; }
+-keep class com.affilemanager.app.advanced.RootFileService { *; }
+-keep class com.affilemanager.app.advanced.IPrivilegedFileService$Stub { *; }
+
 # SMBJ optionally supports Kerberos/GSS and mbassador EL filters. AF File Manager
 # uses username/password NTLM and no expression-language filters, so those
 # desktop-only optional classes are intentionally absent on Android.
