@@ -102,6 +102,56 @@ class ConnectionsComponentsTest {
             assertEquals(1, openRequests.get())
             assertEquals(1, downloadRequests.get())
         }
+        compose.onNodeWithContentDescription("File actions: remote.txt").performClick()
+        compose.onNodeWithText("Rename").assertHasClickAction()
+        compose.onNodeWithText("Info").assertHasClickAction()
+        compose.onNodeWithText("Delete").assertHasClickAction()
+    }
+
+    @Test
+    fun remoteQuickSearchFiltersOnlyTheCurrentFolder() {
+        compose.setContent {
+            MaterialTheme {
+                RemoteBrowser(
+                    state = NetworkUiState(
+                        connectedProfile = profile(),
+                        path = "/remote",
+                        entries = listOf(
+                            RemoteEntry("alpha.txt", "/remote/alpha.txt", false, 12, null),
+                            RemoteEntry("beta.txt", "/remote/beta.txt", false, 12, null),
+                        ),
+                    ),
+                    localDirectory = "/local/target",
+                    onBack = {},
+                    onForward = {},
+                    onUp = {},
+                    onRefresh = {},
+                    onOpen = {},
+                    onDownload = {},
+                    onToggleSelection = {},
+                    onClearSelection = {},
+                    onSelectAll = {},
+                    onDownloadSelected = {},
+                    onCopySelected = {},
+                    localClipboardCount = 0,
+                    onPasteLocalClipboard = {},
+                    onChooseUpload = {},
+                    onCreateFolder = {},
+                    onRename = {},
+                    onDelete = {},
+                    onSync = {},
+                    onToggleHidden = {},
+                    onToggleGrid = {},
+                    onSort = {},
+                    onDisconnect = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag("directory_search_remote").performClick()
+        compose.onNodeWithTag("directory_search_field_remote").performTextInput("alpha")
+        compose.onNodeWithText("alpha.txt").assertIsDisplayed()
+        assertEquals(0, compose.onAllNodesWithText("beta.txt").fetchSemanticsNodes().size)
     }
 
     @Test

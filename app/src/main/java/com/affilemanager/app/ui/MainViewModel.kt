@@ -29,6 +29,10 @@ import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
+import com.affilemanager.app.data.HomeCustomization
+import com.affilemanager.app.data.HomeCustomizationRules
+import com.affilemanager.app.data.HomeSection
+import com.affilemanager.app.data.HomeShortcut
 import com.affilemanager.app.editing.EditConflict
 import com.affilemanager.app.editing.EditDestination
 import com.affilemanager.app.editing.EditDestinationRules
@@ -109,6 +113,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
+import java.util.UUID
 import org.connectbot.terminal.TerminalEmulator
 
 enum class AppSection {
@@ -341,6 +346,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val initialDownloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         .takeIf(File::isDirectory)?.absolutePath ?: initialPrimaryPath
     private val initialWorkspace = graph.workspaceSession.load(initialDownloadsPath, initialPrimaryPath)
+    private val homeBuiltInShortcuts = listOf(
+        HomeShortcut(
+            id = "builtin.downloads",
+            title = "Atsisiuntimai",
+            path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath,
+            builtIn = true,
+        ),
+        HomeShortcut(
+            id = "builtin.documents",
+            title = "Dokumentai",
+            path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).absolutePath,
+            builtIn = true,
+        ),
+        HomeShortcut(
+            id = "builtin.pictures",
+            title = "Nuotraukos",
+            path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).absolutePath,
+            builtIn = true,
+        ),
+        HomeShortcut(
+            id = "builtin.videos",
+            title = "Vaizdo įrašai",
+            path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).absolutePath,
+            builtIn = true,
+        ),
+        HomeShortcut(
+            id = "builtin.music",
+            title = "Muzika",
+            path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).absolutePath,
+            builtIn = true,
+        ),
+    )
 
     private val _section = MutableStateFlow(AppSection.FILES)
     val section: StateFlow<AppSection> = _section.asStateFlow()
@@ -356,6 +393,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: DirectoryDisplaySettings(gridColumns = 4),
     )
     val filesHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _filesHomeDisplaySettings.asStateFlow()
+
+    private val _homeCustomization = MutableStateFlow(
+        runCatching { graph.navigation.homeCustomization(homeBuiltInShortcuts) }
+            .getOrElse { HomeCustomizationRules.normalize(HomeCustomization(), homeBuiltInShortcuts) },
+    )
+    val homeCustomization: StateFlow<HomeCustomization> = _homeCustomization.asStateFlow()
 
     private val _activePanel = MutableStateFlow(PanelId.LEFT)
     val activePanel: StateFlow<PanelId> = _activePanel.asStateFlow()
@@ -565,6 +608,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { message(it.message ?: "Pradžios rodinio nustatymo išsaugoti nepavyko", true) }
     }
 
+    fun moveHomeSection(section: HomeSection, offset: Int) {
+        updateHomeCustomization { HomeCustomizationRules.moveSection(it, section, offset) }
+    }
+
+    fun moveHomeShortcut(id: String, offset: Int) {
+        updateHomeCustomization { HomeCustomizationRules.moveShortcut(it, id, offset) }
+    }
+
+    fun setHomeShortcutVisible(id: String, visible: Boolean) {
+        updateHomeCustomization { HomeCustomizationRules.setShortcutVisible(it, id, visible) }
+    }
+
+    fun removeHomeShortcut(id: String) {
+        updateHomeCustomization { HomeCustomizationRules.removeShortcut(it, id) }
+    }
+
+    fun addHomeShortcut(title: String, path: String): Boolean {
+        return runCatching {
+            val file = File(path.trim()).canonicalFile
+            require(file.exists()) { "Tokia failo ar aplanko vieta neegzistuoja" }
+            val shortcutTitle = title.trim().ifEmpty { file.name.ifEmpty { file.absolutePath } }
+            val shortcut = HomeShortcut(
+                id = "custom.${UUID.randomUUID()}",
+                title = shortcutTitle,
+                path = file.absolutePath,
+            )
+            val updated = HomeCustomizationRules.addShortcut(_homeCustomization.value, shortcut)
+            _homeCustomization.value = graph.navigation.setHomeCustomization(updated, homeBuiltInShortcuts)
+        }.fold(
+            onSuccess = { true },
+            onFailure = {
+                message(it.message ?: "Greitos vietos pridėti nepavyko", true)
+                false
+            },
+        )
+    }
+
+    private fun updateHomeCustomization(transform: (HomeCustomization) -> HomeCustomization) {
+        runCatching {
+            graph.navigation.setHomeCustomization(transform(_homeCustomization.value), homeBuiltInShortcuts)
+        }.onSuccess { _homeCustomization.value = it }
+            .onFailure { message(it.message ?: "Pradžios ekrano nustatymų išsaugoti nepavyko", true) }
+    }
+
     fun refreshPermissionDependentState() {
         viewModelScope.launch {
             _roots.value = graph.localFiles.roots()
@@ -769,6 +856,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshPanel(panel)
     }
 
+    fun setSort(panel: PanelId, mode: SortMode, direction: SortDirection) {
+        panelFlow(panel).update { it.copy(sortMode = mode, sortDirection = direction) }
+        syncActiveTab(panel)
+        refreshPanel(panel)
+    }
+
     fun newTab(panel: PanelId) {
         syncActiveTab(panel, persist = false)
         val tabsFlow = tabsFlow(panel)
@@ -953,6 +1046,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectAll(panel: PanelId) {
         panelFlow(panel).update { it.copy(selectedPaths = it.entries.map(FileEntry::absolutePath).toSet()) }
+    }
+
+    fun selectPaths(panel: PanelId, paths: Collection<String>) {
+        activatePanel(panel)
+        panelFlow(panel).update { state ->
+            val available = state.entries.mapTo(hashSetOf(), FileEntry::absolutePath)
+            state.copy(selectedPaths = paths.filterTo(linkedSetOf(), available::contains))
+        }
+    }
+
+    fun selectOnly(panel: PanelId, path: String) {
+        selectPaths(panel, listOf(path))
     }
 
     fun clearSelection(panel: PanelId) {
@@ -2070,6 +2175,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _favorites.value = graph.navigation.favorites()
             _recents.value = graph.navigation.recents()
             _savedSearches.value = graph.navigation.savedSearches()
+            _homeCustomization.value = graph.navigation.homeCustomization(homeBuiltInShortcuts)
         }.onFailure { message(it.message ?: "Naršymo nustatymų perskaityti nepavyko", true) }
     }
 
@@ -2736,6 +2842,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setRemoteSort(mode: SortMode, direction: SortDirection) {
+        _networkState.update { it.copy(sortMode = mode, sortDirection = direction) }
+    }
+
     fun refreshRemote(path: String = _networkState.value.path) {
         val client = remoteClient ?: return
         val protocol = _networkState.value.connectedProfile?.protocol ?: return
@@ -2797,6 +2907,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 availablePaths = visibleRemoteEntries(state).map(RemoteEntry::path),
                 maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
             )
+            limitReached = result.limitReached
+            state.copy(selectedPaths = result.selectedPaths)
+        }
+        if (limitReached) message("Pasirinkti pirmi ${RemoteCopyEngine.MAX_SELECTED_ROOTS} elementų", true)
+    }
+
+    fun selectRemotePaths(paths: List<String>) {
+        var limitReached = false
+        _networkState.update { state ->
+            val available = visibleRemoteEntries(state).map(RemoteEntry::path).toHashSet()
+            val requested = paths.filter(available::contains).distinct()
+            val result = RemoteSelectionRules.selectAll(requested, RemoteCopyEngine.MAX_SELECTED_ROOTS)
             limitReached = result.limitReached
             state.copy(selectedPaths = result.selectedPaths)
         }

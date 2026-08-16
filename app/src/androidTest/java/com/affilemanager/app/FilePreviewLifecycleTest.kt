@@ -139,6 +139,9 @@ class FilePreviewLifecycleTest {
             val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
 
             compose.runOnUiThread { viewModel.open(repository.toEntry(archive)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithText("Archive root").fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithText("Archive root").assertIsDisplayed()
             compose.onNodeWithText("Aplankas").assertIsDisplayed()
             compose.onNodeWithText("šaknis.txt").assertIsDisplayed()
@@ -148,6 +151,9 @@ class FilePreviewLifecycleTest {
             captureRoot(File(validationRoot, "preview-archive-root.png"))
 
             compose.onNodeWithText("Aplankas").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithText("viduje.txt").fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithText("viduje.txt").assertIsDisplayed()
             compose.onNodeWithText("Giliau").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("gilus.txt").fetchSemanticsNodes().isEmpty())
@@ -155,6 +161,9 @@ class FilePreviewLifecycleTest {
             captureRoot(File(validationRoot, "preview-archive-folder.png"))
 
             compose.onNodeWithText("Giliau").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithText("gilus.txt").fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithText("gilus.txt").assertIsDisplayed()
             compose.onNodeWithContentDescription("Return to the previous archive folder").performClick()
             compose.onNodeWithText("viduje.txt").assertIsDisplayed()

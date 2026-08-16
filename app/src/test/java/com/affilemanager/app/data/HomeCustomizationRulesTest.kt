@@ -1,0 +1,55 @@
+package com.affilemanager.app.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class HomeCustomizationRulesTest {
+    private val defaults = listOf(
+        HomeShortcut("downloads", "Downloads", "/storage/Downloads", builtIn = true),
+        HomeShortcut("documents", "Documents", "/storage/Documents", builtIn = true),
+    )
+
+    @Test
+    fun normalizationPreservesUserOrderAndAddsNewBuiltIns() {
+        val saved = HomeCustomization(
+            sectionOrder = listOf(HomeSection.QUICK_LOCATIONS),
+            shortcuts = listOf(
+                defaults[1].copy(visible = false),
+                HomeShortcut("custom.one", "Project", "/storage/Project"),
+            ),
+        )
+
+        val normalized = HomeCustomizationRules.normalize(saved, defaults)
+
+        assertEquals(HomeSection.entries.toSet(), normalized.sectionOrder.toSet())
+        assertEquals(listOf("documents", "custom.one", "downloads"), normalized.shortcuts.map(HomeShortcut::id))
+        assertFalse(normalized.shortcuts.first().visible)
+        assertTrue(normalized.shortcuts.last().builtIn)
+    }
+
+    @Test
+    fun sectionsAndShortcutsCanBeReorderedWithoutLosingData() {
+        val start = HomeCustomizationRules.normalize(HomeCustomization(), defaults)
+        val sectionsMoved = HomeCustomizationRules.moveSection(start, HomeSection.QUICK_LOCATIONS, -2)
+        val shortcutsMoved = HomeCustomizationRules.moveShortcut(sectionsMoved, "documents", -1)
+
+        assertEquals(HomeSection.QUICK_LOCATIONS, shortcutsMoved.sectionOrder.first())
+        assertEquals("documents", shortcutsMoved.shortcuts.first().id)
+        assertEquals(defaults.map(HomeShortcut::id).toSet(), shortcutsMoved.shortcuts.map(HomeShortcut::id).toSet())
+    }
+
+    @Test
+    fun builtInsCannotBeRemovedButCustomShortcutsCan() {
+        val withCustom = HomeCustomizationRules.addShortcut(
+            HomeCustomizationRules.normalize(HomeCustomization(), defaults),
+            HomeShortcut("custom.one", "Project", "/storage/Project"),
+        )
+        val builtInRemoval = HomeCustomizationRules.removeShortcut(withCustom, "downloads")
+        val customRemoval = HomeCustomizationRules.removeShortcut(builtInRemoval, "custom.one")
+
+        assertTrue(customRemoval.shortcuts.any { it.id == "downloads" })
+        assertFalse(customRemoval.shortcuts.any { it.id == "custom.one" })
+    }
+}

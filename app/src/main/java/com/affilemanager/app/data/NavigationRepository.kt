@@ -52,6 +52,7 @@ class NavigationRepository(context: Context) {
         private const val KEY_THUMBNAIL_DIRECTORIES = "thumbnail_directories"
         private const val KEY_DIRECTORY_DISPLAY_INDEX = "directory_display_index"
         private const val KEY_DIRECTORY_DISPLAY_PREFIX = "directory_display_"
+        private const val KEY_HOME_CUSTOMIZATION = "home_customization"
         private const val MAX_FAVORITES = 100
         private const val MAX_RECENTS = 100
         private const val MAX_SEARCHES = 50
@@ -60,9 +61,66 @@ class NavigationRepository(context: Context) {
         private const val MAX_DIRECTORY_DISPLAY_SETTINGS = 2_000
         private const val MAX_DIRECTORY_IDENTITY_LENGTH = 4_096
         private const val MAX_DIRECTORY_DISPLAY_BYTES = 32_768
+        private const val MAX_HOME_CUSTOMIZATION_BYTES = 64_000
     }
 
     private val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun homeCustomization(builtInShortcuts: List<HomeShortcut>): HomeCustomization {
+        val raw = preferences.getString(KEY_HOME_CUSTOMIZATION, null)
+            ?: return HomeCustomizationRules.normalize(HomeCustomization(), builtInShortcuts)
+        require(raw.length <= MAX_HOME_CUSTOMIZATION_BYTES) { "Home customization is too large" }
+        val item = JSONObject(raw)
+        val sections = item.optJSONArray("sections")?.let { array ->
+            (0 until array.length()).mapNotNull { index ->
+                runCatching { HomeSection.valueOf(array.getString(index)) }.getOrNull()
+            }
+        }.orEmpty()
+        val shortcuts = item.optJSONArray("shortcuts")?.let { array ->
+            (0 until array.length()).map { index ->
+                val shortcut = array.getJSONObject(index)
+                HomeShortcut(
+                    id = shortcut.getString("id"),
+                    title = shortcut.getString("title"),
+                    path = shortcut.getString("path"),
+                    visible = shortcut.optBoolean("visible", true),
+                    builtIn = shortcut.optBoolean("builtIn", false),
+                )
+            }
+        }.orEmpty()
+        return HomeCustomizationRules.normalize(
+            HomeCustomization(sectionOrder = sections, shortcuts = shortcuts),
+            builtInShortcuts,
+        )
+    }
+
+    @Synchronized
+    fun setHomeCustomization(value: HomeCustomization, builtInShortcuts: List<HomeShortcut>): HomeCustomization {
+        val normalized = HomeCustomizationRules.normalize(value, builtInShortcuts)
+        val encoded = JSONObject()
+            .put("sections", JSONArray().apply { normalized.sectionOrder.forEach { put(it.name) } })
+            .put(
+                "shortcuts",
+                JSONArray().apply {
+                    normalized.shortcuts.forEach { shortcut ->
+                        put(
+                            JSONObject()
+                                .put("id", shortcut.id)
+                                .put("title", shortcut.title)
+                                .put("path", shortcut.path)
+                                .put("visible", shortcut.visible)
+                                .put("builtIn", shortcut.builtIn),
+                        )
+                    }
+                },
+            )
+            .toString()
+        require(encoded.length <= MAX_HOME_CUSTOMIZATION_BYTES) { "Home customization is too large" }
+        check(preferences.edit().putString(KEY_HOME_CUSTOMIZATION, encoded).commit()) {
+            "Home customization could not be saved"
+        }
+        return normalized
+    }
 
     fun favorites(): List<String> = readStringArray(KEY_FAVORITES, MAX_FAVORITES)
 

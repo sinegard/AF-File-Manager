@@ -33,9 +33,12 @@ import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.PictureAsPdf
+import androidx.compose.material.icons.rounded.Slideshow
 import androidx.compose.material.icons.rounded.VideoFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -102,6 +105,24 @@ internal object FileVisualRules {
 
     fun extensionBadge(extension: String): String = extension.trim().trimStart('.').uppercase().take(4)
 
+    fun iconFamily(kind: EntryKind, extension: String): FileIconFamily {
+        val ext = extension.trim().trimStart('.').lowercase()
+        return when {
+            kind == EntryKind.DIRECTORY -> FileIconFamily.FOLDER
+            kind == EntryKind.IMAGE && ext == "svg" -> FileIconFamily.VECTOR_IMAGE
+            kind == EntryKind.IMAGE -> FileIconFamily.IMAGE
+            kind == EntryKind.VIDEO -> FileIconFamily.VIDEO
+            kind == EntryKind.AUDIO -> FileIconFamily.AUDIO
+            kind == EntryKind.DOCUMENT && ext == "pdf" -> FileIconFamily.PDF
+            ext in setOf("xml", "json", "yaml", "yml", "html", "htm", "lua", "kt", "kts", "java", "c", "h", "cpp", "hpp", "cs", "js", "ts", "py", "sh", "sql") -> FileIconFamily.CODE
+            ext in setOf("smil", "smi") -> FileIconFamily.PRESENTATION
+            kind == EntryKind.DOCUMENT -> FileIconFamily.DOCUMENT
+            kind == EntryKind.ARCHIVE -> FileIconFamily.ARCHIVE
+            kind == EntryKind.APK -> FileIconFamily.APK
+            else -> FileIconFamily.OTHER
+        }
+    }
+
     fun hasContentThumbnail(kind: EntryKind, extension: String): Boolean = when (kind) {
         EntryKind.IMAGE, EntryKind.VIDEO, EntryKind.AUDIO, EntryKind.APK -> true
         EntryKind.DOCUMENT -> extension.equals("pdf", ignoreCase = true)
@@ -127,6 +148,21 @@ internal object FileVisualRules {
             "local-type|$kind|$normalizedExtension|$dimensions"
         }
     }
+}
+
+internal enum class FileIconFamily {
+    FOLDER,
+    IMAGE,
+    VECTOR_IMAGE,
+    VIDEO,
+    AUDIO,
+    PDF,
+    CODE,
+    PRESENTATION,
+    DOCUMENT,
+    ARCHIVE,
+    APK,
+    OTHER,
 }
 
 internal data class LoadedFileVisual(
@@ -289,16 +325,19 @@ private fun fallbackColor(kind: EntryKind) = when (kind) {
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
-private fun fallbackIcon(kind: EntryKind, extension: String): ImageVector = when {
-    kind == EntryKind.DIRECTORY -> Icons.Rounded.Folder
-    kind == EntryKind.IMAGE -> Icons.Rounded.Image
-    kind == EntryKind.VIDEO -> Icons.Rounded.VideoFile
-    kind == EntryKind.AUDIO -> Icons.Rounded.AudioFile
-    kind == EntryKind.DOCUMENT && extension.equals("pdf", ignoreCase = true) -> Icons.Rounded.PictureAsPdf
-    kind == EntryKind.DOCUMENT -> Icons.Rounded.Description
-    kind == EntryKind.ARCHIVE -> Icons.Rounded.Archive
-    kind == EntryKind.APK -> Icons.Rounded.Android
-    else -> Icons.AutoMirrored.Rounded.InsertDriveFile
+private fun fallbackIcon(kind: EntryKind, extension: String): ImageVector = when (FileVisualRules.iconFamily(kind, extension)) {
+    FileIconFamily.FOLDER -> Icons.Rounded.Folder
+    FileIconFamily.IMAGE -> Icons.Rounded.Image
+    FileIconFamily.VECTOR_IMAGE -> Icons.Rounded.Draw
+    FileIconFamily.VIDEO -> Icons.Rounded.VideoFile
+    FileIconFamily.AUDIO -> Icons.Rounded.AudioFile
+    FileIconFamily.PDF -> Icons.Rounded.PictureAsPdf
+    FileIconFamily.CODE -> Icons.Rounded.Code
+    FileIconFamily.PRESENTATION -> Icons.Rounded.Slideshow
+    FileIconFamily.DOCUMENT -> Icons.Rounded.Description
+    FileIconFamily.ARCHIVE -> Icons.Rounded.Archive
+    FileIconFamily.APK -> Icons.Rounded.Android
+    FileIconFamily.OTHER -> Icons.AutoMirrored.Rounded.InsertDriveFile
 }
 
 private fun localVisualKey(entry: FileEntry, widthPx: Int, heightPx: Int, showThumbnails: Boolean): String =
