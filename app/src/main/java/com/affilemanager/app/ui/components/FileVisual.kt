@@ -3,7 +3,6 @@ package com.affilemanager.app.ui.components
 import com.affilemanager.app.ui.localization.uiText
 
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -20,7 +19,6 @@ import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.LruCache
 import android.util.Size
-import android.webkit.MimeTypeMap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -445,8 +443,7 @@ internal object FileVisualLoader {
                 ?.let { LoadedFileVisual(it, crop = false, contentThumbnail = true) }
             else -> null
         }
-        return bitmap ?: systemMimeIcon(context, mimeType(entry.extension, entry.kind), widthPx, heightPx)
-            ?.let { LoadedFileVisual(it, crop = false, contentThumbnail = false) }
+        return bitmap
     }
 
     private fun createSafVisual(context: Context, entry: SafEntry, widthPx: Int, heightPx: Int): LoadedFileVisual? {
@@ -473,8 +470,7 @@ internal object FileVisualLoader {
             } else null
             else -> null
         }
-        return rich ?: systemMimeIcon(context, entry.mimeType ?: mimeType(extension, entry.kind), widthPx, heightPx)
-            ?.let { LoadedFileVisual(it, crop = false, contentThumbnail = false) }
+        return rich
     }
 
     private fun decodeLocalImage(file: File, widthPx: Int, heightPx: Int): Bitmap? {
@@ -593,20 +589,6 @@ internal object FileVisualLoader {
         return drawableBitmap(applicationInfo.loadIcon(manager), widthPx, heightPx)
     }
 
-    @Suppress("DEPRECATION")
-    private fun systemMimeIcon(context: Context, mimeType: String?, widthPx: Int, heightPx: Int): Bitmap? {
-        if (mimeType.isNullOrBlank()) return null
-        val manager = context.packageManager
-        val intent = Intent(Intent.ACTION_VIEW).setType(mimeType).addCategory(Intent.CATEGORY_DEFAULT)
-        val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            manager.resolveActivity(intent, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
-        } else {
-            manager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
-        } ?: return null
-        if (resolved.activityInfo?.packageName == "android" && resolved.activityInfo?.name?.contains("ResolverActivity") == true) return null
-        return drawableBitmap(resolved.loadIcon(manager), widthPx, heightPx)
-    }
-
     private fun drawableBitmap(drawable: android.graphics.drawable.Drawable, widthPx: Int, heightPx: Int): Bitmap {
         val intrinsicWidth = drawable.intrinsicWidth.takeIf { it > 0 } ?: widthPx
         val intrinsicHeight = drawable.intrinsicHeight.takeIf { it > 0 } ?: heightPx
@@ -625,14 +607,4 @@ internal object FileVisualLoader {
         else bitmap.scale(width, height, true)
     }
 
-    private fun mimeType(extension: String, kind: EntryKind): String? =
-        MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()) ?: when (kind) {
-            EntryKind.IMAGE -> "image/*"
-            EntryKind.VIDEO -> "video/*"
-            EntryKind.AUDIO -> "audio/*"
-            EntryKind.DOCUMENT -> "application/*"
-            EntryKind.ARCHIVE -> "application/zip"
-            EntryKind.APK -> "application/vnd.android.package-archive"
-            else -> null
-        }
 }

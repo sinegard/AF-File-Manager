@@ -10,6 +10,7 @@ import com.affilemanager.app.model.FileEntry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -78,6 +79,36 @@ class FileVisualLoaderTest {
         assertFalse(visual.contentThumbnail)
         assertTrue(visual.bitmap.width <= 96)
         assertTrue(visual.bitmap.height <= 96)
+    }
+
+    @Test
+    fun xmlAndZipUseBuiltInTypeIconsInsteadOfAnAssociatedApplicationIcon() = runBlocking {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val xml = File(application.cacheDir, "type-${System.nanoTime()}.xml").apply { writeText("<root />") }
+        val zip = File(application.cacheDir, "type-${System.nanoTime()}.zip").apply { writeBytes(byteArrayOf()) }
+        try {
+            assertNull(
+                FileVisualLoader.loadLocal(
+                    application,
+                    fileEntry(xml, EntryKind.DOCUMENT),
+                    96,
+                    96,
+                    showThumbnails = false,
+                ),
+            )
+            assertNull(
+                FileVisualLoader.loadLocal(
+                    application,
+                    fileEntry(zip, EntryKind.ARCHIVE),
+                    96,
+                    96,
+                    showThumbnails = false,
+                ),
+            )
+        } finally {
+            xml.delete()
+            zip.delete()
+        }
     }
 
     private fun fileEntry(file: File, kind: EntryKind) = FileEntry(

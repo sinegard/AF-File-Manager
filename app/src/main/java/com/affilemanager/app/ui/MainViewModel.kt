@@ -586,6 +586,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshRecentFiles()
         }
         if (section == AppSection.TOOLS) {
+            graph.advancedAccess.refreshCapabilities()
             refreshTrash()
             refreshSafLocations()
             refreshSyncSchedules()
@@ -2592,6 +2593,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (file.isDirectory) navigate(panel, path)
         else if (file.isFile) open(graph.localFiles.toEntry(file))
         else message("Vieta nebeegzistuoja", true)
+    }
+
+    fun openStorageRoot(root: StorageRoot, panel: PanelId = _activePanel.value) {
+        val target = runCatching { File(root.path).canonicalPath }.getOrElse {
+            message(it.message ?: "Saugykla nepasiekiama", true)
+            return
+        }
+        val knownRoot = _roots.value.firstOrNull { candidate ->
+            runCatching { File(candidate.path).canonicalPath == target }.getOrDefault(false)
+        }
+        if (knownRoot == null || !File(target).isDirectory) {
+            message("Saugykla nebeprijungta", true)
+            return
+        }
+
+        _filesHomeVisible.value = false
+        val displaySettings = savedDirectoryDisplaySettings(target)
+        fileScrollPositions.reset(tabsFlow(panel).value.activeTabId, target)
+        panelFlow(panel).update { state ->
+            state.copy(
+                path = target,
+                entries = emptyList(),
+                selectedPaths = emptySet(),
+                loading = true,
+                listingScannedEntries = 0,
+                listingMetadataEntries = 0,
+                listingTruncated = false,
+                error = null,
+                backHistory = emptyList(),
+                forwardHistory = emptyList(),
+            ).withDirectoryDisplaySettings(displaySettings)
+        }
+        syncActiveTab(panel)
+        refreshPanel(panel)
     }
 
     fun clearRecents() {

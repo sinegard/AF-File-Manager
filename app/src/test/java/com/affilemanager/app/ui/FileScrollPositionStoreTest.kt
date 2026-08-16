@@ -5,6 +5,34 @@ import org.junit.Test
 
 class FileScrollPositionStoreTest {
     @Test
+    fun progressiveUpdatesPersistTheTopUntilTheInitialListingFinishes() {
+        val initial = FileScrollPosition()
+
+        assertEquals(true, ProgressiveScrollRules.startsPinnedToTop(initial))
+        assertEquals(
+            FileScrollPosition(),
+            ProgressiveScrollRules.positionToPersist(
+                pinnedToTop = true,
+                firstVisibleItemIndex = 9,
+                firstVisibleItemScrollOffset = 12,
+            ),
+        )
+    }
+
+    @Test
+    fun restoredAndUserMovedPositionsAreNotForcedToTheTop() {
+        assertEquals(false, ProgressiveScrollRules.startsPinnedToTop(FileScrollPosition(7, 3)))
+        assertEquals(
+            FileScrollPosition(9, 12),
+            ProgressiveScrollRules.positionToPersist(
+                pinnedToTop = false,
+                firstVisibleItemIndex = 9,
+                firstVisibleItemScrollOffset = 12,
+            ),
+        )
+    }
+
+    @Test
     fun unseenLocationStartsAtTheTop() {
         val store = FileScrollPositionStore()
 

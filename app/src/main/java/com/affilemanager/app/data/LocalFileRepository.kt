@@ -1,6 +1,8 @@
 package com.affilemanager.app.data
 
 import android.content.Context
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbManager
 import android.os.Environment
 import android.os.storage.StorageManager
 import com.affilemanager.app.core.FileSystemRules
@@ -8,6 +10,7 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.model.StorageRoot
+import com.affilemanager.app.model.StorageRootKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -15,6 +18,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 data class DirectoryListingUpdate(
@@ -36,21 +40,56 @@ internal object ProgressiveListingPolicy {
         count % LATER_BATCH == 0
 }
 
+internal object StorageRootClassifier {
+    private val usbToken = Regex("(^|[^a-z0-9])(usb|otg)([^a-z0-9]|$)")
+    private val sdToken = Regex("(^|[^a-z0-9])(sd|memory[ _-]?card)([^a-z0-9]|$)")
+
+    fun classify(
+        primary: Boolean,
+        removable: Boolean,
+        description: String,
+        path: String,
+        usbMassStorageConnected: Boolean,
+        removableVolumeCount: Int,
+    ): StorageRootKind {
+        if (primary || !removable) return StorageRootKind.INTERNAL
+        val identity = "$description $path".lowercase(Locale.ROOT)
+        return when {
+            usbToken.containsMatchIn(identity) -> StorageRootKind.USB_STORAGE
+            sdToken.containsMatchIn(identity) -> StorageRootKind.SD_CARD
+            usbMassStorageConnected && removableVolumeCount == 1 -> StorageRootKind.USB_STORAGE
+            else -> StorageRootKind.REMOVABLE
+        }
+    }
+}
+
 class LocalFileRepository(private val context: Context) {
     suspend fun roots(): List<StorageRoot> = withContext(Dispatchers.IO) {
         val storageManager = context.getSystemService(StorageManager::class.java)
-        val roots = storageManager.storageVolumes.mapNotNull { volume ->
+        val mountedVolumes = storageManager.storageVolumes.mapNotNull { volume ->
             val directory = if (android.os.Build.VERSION.SDK_INT >= 30) volume.directory else null
-            directory?.takeIf(File::exists)?.let { root ->
-                StorageRoot(
-                    id = volume.uuid ?: "primary",
-                    title = if (volume.isPrimary) "Vidinė atmintis" else volume.getDescription(context),
-                    path = root.absolutePath,
-                    totalBytes = root.totalSpace.coerceAtLeast(0),
-                    freeBytes = root.usableSpace.coerceAtLeast(0),
+            directory?.takeIf(File::exists)?.let { root -> volume to root }
+        }
+        val removableVolumeCount = mountedVolumes.count { (volume, _) -> volume.isRemovable && !volume.isPrimary }
+        val usbMassStorageConnected = runCatching { hasUsbMassStorageDevice() }.getOrDefault(false)
+        val roots = mountedVolumes.map { (volume, root) ->
+            val description = volume.getDescription(context)
+            StorageRoot(
+                id = volume.uuid ?: "primary",
+                title = if (volume.isPrimary) "Vidinė atmintis" else description,
+                path = root.absolutePath,
+                totalBytes = root.totalSpace.coerceAtLeast(0),
+                freeBytes = root.usableSpace.coerceAtLeast(0),
+                removable = volume.isRemovable,
+                kind = StorageRootClassifier.classify(
+                    primary = volume.isPrimary,
                     removable = volume.isRemovable,
-                )
-            }
+                    description = description,
+                    path = root.absolutePath,
+                    usbMassStorageConnected = usbMassStorageConnected,
+                    removableVolumeCount = removableVolumeCount,
+                ),
+            )
         }.toMutableList()
 
         if (roots.none { it.path == Environment.getExternalStorageDirectory().absolutePath }) {
@@ -64,10 +103,21 @@ class LocalFileRepository(private val context: Context) {
                     totalBytes = root.totalSpace.coerceAtLeast(0),
                     freeBytes = root.usableSpace.coerceAtLeast(0),
                     removable = false,
+                    kind = StorageRootKind.INTERNAL,
                 ),
             )
         }
         roots.distinctBy(StorageRoot::path)
+    }
+
+    private fun hasUsbMassStorageDevice(): Boolean {
+        val usbManager = context.getSystemService(UsbManager::class.java) ?: return false
+        return usbManager.deviceList.values.any { device ->
+            device.deviceClass == UsbConstants.USB_CLASS_MASS_STORAGE ||
+                (0 until device.interfaceCount).any { index ->
+                    device.getInterface(index).interfaceClass == UsbConstants.USB_CLASS_MASS_STORAGE
+                }
+        }
     }
 
     suspend fun list(

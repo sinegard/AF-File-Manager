@@ -373,7 +373,7 @@ fun ToolsScreen(
                     StatusLine(
                         "Shizuku",
                         shizukuStatus(
-                            installed = advancedAccess.shizukuInstalled,
+                            managerDetected = advancedAccess.shizukuManagerDetected,
                             running = advancedAccess.shizukuRunning,
                             permission = advancedAccess.shizukuPermission,
                         ),
@@ -386,11 +386,19 @@ fun ToolsScreen(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = viewModel::requestShizukuAccess,
-                            enabled = advancedAccess.shizukuRunning && !advancedAccess.connecting,
-                        ) { LText(if (advancedAccess.shizukuPermission == CapabilityState.GRANTED) "Jungtis per Shizuku" else "Suteikti Shizuku leidimą") }
+                            enabled = !advancedAccess.connecting,
+                        ) {
+                            LText(
+                                when {
+                                    !advancedAccess.shizukuRunning -> "Patikrinti Shizuku"
+                                    advancedAccess.shizukuPermission == CapabilityState.GRANTED -> "Jungtis per Shizuku"
+                                    else -> "Suteikti Shizuku leidimą"
+                                },
+                            )
+                        }
                         OutlinedButton(
                             onClick = viewModel::requestRootAccess,
-                            enabled = !advancedAccess.connecting,
+                            enabled = advancedAccess.rootPermission != CapabilityState.UNAVAILABLE && !advancedAccess.connecting,
                         ) { LText("Jungtis per root") }
                     }
                     Button(
@@ -496,10 +504,10 @@ private fun capabilityLabel(state: CapabilityState): String = when (state) {
     CapabilityState.DENIED -> "Leidimas atmestas"
 }
 
-private fun shizukuStatus(installed: Boolean, running: Boolean, permission: CapabilityState): String = when {
-    !installed -> "Neįdiegta"
-    !running -> "Įdiegta, bet nepaleista"
-    else -> capabilityLabel(permission)
+private fun shizukuStatus(managerDetected: Boolean, running: Boolean, permission: CapabilityState): String = when {
+    running -> capabilityLabel(permission)
+    managerDetected -> "Programa aptikta, tarnyba nepaleista"
+    else -> "Tarnyba nepaleista"
 }
 
 @Composable

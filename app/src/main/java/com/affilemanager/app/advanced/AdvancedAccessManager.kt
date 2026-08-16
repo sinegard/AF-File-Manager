@@ -43,9 +43,24 @@ enum class CapabilityState {
     DENIED,
 }
 
+internal object AdvancedAccessCapabilityRules {
+    fun shizukuPermission(
+        binderRunning: Boolean,
+        permissionGranted: Boolean,
+        permissionDenied: Boolean,
+    ): CapabilityState = when {
+        !binderRunning -> CapabilityState.UNAVAILABLE
+        permissionGranted -> CapabilityState.GRANTED
+        permissionDenied -> CapabilityState.DENIED
+        else -> CapabilityState.AVAILABLE
+    }
+
+    fun canRequestRoot(permission: CapabilityState): Boolean = permission != CapabilityState.UNAVAILABLE
+}
+
 data class AdvancedAccessState(
     val selectedMode: AdvancedAccessMode = AdvancedAccessMode.OFF,
-    val shizukuInstalled: Boolean = false,
+    val shizukuManagerDetected: Boolean = false,
     val shizukuRunning: Boolean = false,
     val shizukuPermission: CapabilityState = CapabilityState.UNAVAILABLE,
     val rootPermission: CapabilityState = CapabilityState.UNAVAILABLE,
@@ -238,7 +253,12 @@ class AdvancedAccessManager(context: Context) {
         if (_state.value.selectedMode == AdvancedAccessMode.OFF) setMode(AdvancedAccessMode.SHIZUKU)
         refreshCapabilities()
         if (!_state.value.shizukuRunning) {
-            _state.update { it.copy(error = "Pirmiausia paleiskite Shizuku") }
+            val message = if (_state.value.shizukuManagerDetected) {
+                "Atidarykite Shizuku ir paleiskite tarnybą"
+            } else {
+                "Shizuku tarnyba nepaleista. Įdiekite arba paleiskite Shizuku"
+            }
+            _state.update { it.copy(connecting = false, error = message) }
             return
         }
         if (_state.value.shizukuPermission == CapabilityState.GRANTED) {
@@ -253,6 +273,11 @@ class AdvancedAccessManager(context: Context) {
 
     fun requestRootAccess() {
         if (_state.value.selectedMode == AdvancedAccessMode.OFF) setMode(AdvancedAccessMode.ROOT)
+        else refreshCapabilities()
+        if (!AdvancedAccessCapabilityRules.canRequestRoot(_state.value.rootPermission)) {
+            _state.update { it.copy(connecting = false, error = "Root prieiga šiame įrenginyje nepasiekiama") }
+            return
+        }
         bindRoot(requestPermission = true)
     }
 
@@ -261,12 +286,15 @@ class AdvancedAccessManager(context: Context) {
             appContext.packageManager.getApplicationInfo(SHIZUKU_PACKAGE, 0)
         }.isSuccess
         val running = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
-        val shizukuPermission = when {
-            !installed || !running -> CapabilityState.UNAVAILABLE
-            runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false) -> CapabilityState.GRANTED
-            runCatching { Shizuku.shouldShowRequestPermissionRationale() }.getOrDefault(false) -> CapabilityState.DENIED
-            else -> CapabilityState.AVAILABLE
-        }
+        val shizukuPermission = AdvancedAccessCapabilityRules.shizukuPermission(
+            binderRunning = running,
+            permissionGranted = running && runCatching {
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false),
+            permissionDenied = running && runCatching {
+                Shizuku.shouldShowRequestPermissionRationale()
+            }.getOrDefault(false),
+        )
         val probeRoot = _state.value.selectedMode in setOf(AdvancedAccessMode.AUTO, AdvancedAccessMode.ROOT) ||
             _state.value.activeBackend == AdvancedAccessBackend.ROOT
         val rootPermission = if (!probeRoot) {
@@ -280,7 +308,7 @@ class AdvancedAccessManager(context: Context) {
         }
         _state.update {
             it.copy(
-                shizukuInstalled = installed,
+                shizukuManagerDetected = installed,
                 shizukuRunning = running,
                 shizukuPermission = shizukuPermission,
                 rootPermission = rootPermission,
@@ -352,6 +380,10 @@ class AdvancedAccessManager(context: Context) {
     private fun bindRoot(requestPermission: Boolean) {
         if (rootBound || rootBinding || _state.value.connecting) return
         if (!requestPermission && _state.value.rootPermission != CapabilityState.GRANTED) return
+        if (requestPermission && !AdvancedAccessCapabilityRules.canRequestRoot(_state.value.rootPermission)) {
+            _state.update { it.copy(connecting = false, error = "Root prieiga šiame įrenginyje nepasiekiama") }
+            return
+        }
         disconnectShizuku()
         rootBinding = true
         _state.update { it.copy(connecting = true, error = null) }

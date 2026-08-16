@@ -8,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +70,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.SwapHoriz
@@ -109,6 +111,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -133,6 +136,7 @@ import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.model.StorageRoot
+import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.data.PanelWorkspace
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
@@ -148,6 +152,7 @@ import com.affilemanager.app.ui.FileScrollKey
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.PanelUiState
 import com.affilemanager.app.ui.PanelComparisonStatus
+import com.affilemanager.app.ui.ProgressiveScrollRules
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
@@ -275,6 +280,7 @@ fun FilesScreen(
                     displaySettings = filesHomeDisplaySettings,
                     customization = homeCustomization,
                     onOpen = { path -> viewModel.openQuickPath(path, activePanel) },
+                    onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
                     onRefreshRecent = viewModel::refreshRecentFiles,
                     onToggleLayout = viewModel::toggleFilesHomeLayout,
@@ -566,6 +572,7 @@ private fun FilesHome(
     displaySettings: DirectoryDisplaySettings,
     customization: HomeCustomization,
     onOpen: (String) -> Unit,
+    onOpenStorage: (StorageRoot) -> Unit,
     onOpenRecent: (FileEntry) -> Unit,
     onRefreshRecent: () -> Unit,
     onToggleLayout: () -> Unit,
@@ -614,7 +621,7 @@ private fun FilesHome(
                         onRefresh = onRefreshRecent,
                         onOpen = onOpenRecent,
                     )
-                    HomeSection.STORAGE -> StorageHomeSection(roots = roots, onOpen = onOpen)
+                    HomeSection.STORAGE -> StorageHomeSection(roots = roots, onOpen = onOpenStorage)
                     HomeSection.QUICK_LOCATIONS -> QuickLocationsHomeSection(
                         locations = quickLocations,
                         displaySettings = displaySettings,
@@ -693,18 +700,27 @@ private fun RecentFilesHomeSection(
 }
 
 @Composable
-private fun StorageHomeSection(roots: List<StorageRoot>, onOpen: (String) -> Unit) {
+private fun StorageHomeSection(roots: List<StorageRoot>, onOpen: (StorageRoot) -> Unit) {
     LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
     roots.forEach { root ->
         val usageFraction = root.totalBytes.takeIf { it > 0L }?.let { total ->
             (total - root.freeBytes).coerceIn(0L, total).toFloat() / total.toFloat()
         }
         StorageLocationCard(
-            title = if (root.removable) root.title.ifBlank { "Išimama saugykla" } else "Vidinė atmintis",
+            title = when (root.kind) {
+                StorageRootKind.INTERNAL -> "Vidinė atmintis"
+                StorageRootKind.SD_CARD -> root.title.ifBlank { "SD kortelė" }
+                StorageRootKind.USB_STORAGE -> root.title.ifBlank { "USB saugykla" }
+                StorageRootKind.REMOVABLE -> root.title.ifBlank { "Išimama saugykla" }
+            },
             description = "${FileSystemRules.humanBytes(root.freeBytes)} laisva iš ${FileSystemRules.humanBytes(root.totalBytes)}",
-            icon = if (root.removable) Icons.Rounded.SdStorage else Icons.Rounded.Storage,
+            icon = when (root.kind) {
+                StorageRootKind.INTERNAL -> Icons.Rounded.Storage
+                StorageRootKind.USB_STORAGE -> Icons.Rounded.Usb
+                StorageRootKind.SD_CARD, StorageRootKind.REMOVABLE -> Icons.Rounded.SdStorage
+            },
             usageFraction = usageFraction,
-            onClick = { onOpen(root.path) },
+            onClick = { onOpen(root) },
         )
     }
 }
@@ -1450,11 +1466,21 @@ private fun FileList(
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
     }
+    var pinInitialTop by remember(scrollKey) {
+        mutableStateOf(ProgressiveScrollRules.startsPinnedToTop(initialPosition))
+    }
     val listState = key(scrollKey) {
         rememberLazyListState()
     }
-    LaunchedEffect(scrollKey, state.entries.size, state.loading) {
-        if (restoringPosition && state.entries.isNotEmpty() &&
+    val userDragging by listState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(scrollKey, userDragging) {
+        if (userDragging) pinInitialTop = false
+    }
+    LaunchedEffect(scrollKey, state.entries.size, state.loading, pinInitialTop) {
+        if (pinInitialTop && state.entries.isNotEmpty()) {
+            listState.scrollToItem(0)
+            if (!state.loading) pinInitialTop = false
+        } else if (restoringPosition && state.entries.isNotEmpty() &&
             (state.entries.size > initialPosition.firstVisibleItemIndex || !state.loading)
         ) {
             val index = initialPosition.firstVisibleItemIndex.coerceAtMost(state.entries.lastIndex)
@@ -1467,18 +1493,28 @@ private fun FileList(
     }
     LaunchedEffect(scrollKey, listState) {
         snapshotFlow {
-            Triple(restoringPosition, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+            val position = ProgressiveScrollRules.positionToPersist(
+                pinnedToTop = pinInitialTop,
+                firstVisibleItemIndex = listState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset,
+            )
+            Triple(restoringPosition, position.firstVisibleItemIndex, position.firstVisibleItemScrollOffset)
         }.collect { (restoring, index, offset) ->
             if (!restoring) viewModel.saveFileScrollPosition(scrollKey, index, offset)
         }
     }
-    DisposableEffect(scrollKey, listState) {
+    DisposableEffect(scrollKey, listState, pinInitialTop) {
         onDispose {
             if (!restoringPosition) {
+                val position = ProgressiveScrollRules.positionToPersist(
+                    pinnedToTop = pinInitialTop,
+                    firstVisibleItemIndex = listState.firstVisibleItemIndex,
+                    firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset,
+                )
                 viewModel.saveFileScrollPosition(
                     scrollKey,
-                    listState.firstVisibleItemIndex,
-                    listState.firstVisibleItemScrollOffset,
+                    position.firstVisibleItemIndex,
+                    position.firstVisibleItemScrollOffset,
                 )
             }
         }
@@ -1540,11 +1576,21 @@ private fun FileGrid(
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
     }
+    var pinInitialTop by remember(scrollKey) {
+        mutableStateOf(ProgressiveScrollRules.startsPinnedToTop(initialPosition))
+    }
     val gridState = key(scrollKey) {
         rememberLazyGridState()
     }
-    LaunchedEffect(scrollKey, state.entries.size, state.loading) {
-        if (restoringPosition && state.entries.isNotEmpty() &&
+    val userDragging by gridState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(scrollKey, userDragging) {
+        if (userDragging) pinInitialTop = false
+    }
+    LaunchedEffect(scrollKey, state.entries.size, state.loading, pinInitialTop) {
+        if (pinInitialTop && state.entries.isNotEmpty()) {
+            gridState.scrollToItem(0)
+            if (!state.loading) pinInitialTop = false
+        } else if (restoringPosition && state.entries.isNotEmpty() &&
             (state.entries.size > initialPosition.firstVisibleItemIndex || !state.loading)
         ) {
             val index = initialPosition.firstVisibleItemIndex.coerceAtMost(state.entries.lastIndex)
@@ -1557,18 +1603,28 @@ private fun FileGrid(
     }
     LaunchedEffect(scrollKey, gridState) {
         snapshotFlow {
-            Triple(restoringPosition, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+            val position = ProgressiveScrollRules.positionToPersist(
+                pinnedToTop = pinInitialTop,
+                firstVisibleItemIndex = gridState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset,
+            )
+            Triple(restoringPosition, position.firstVisibleItemIndex, position.firstVisibleItemScrollOffset)
         }.collect { (restoring, index, offset) ->
             if (!restoring) viewModel.saveFileScrollPosition(scrollKey, index, offset)
         }
     }
-    DisposableEffect(scrollKey, gridState) {
+    DisposableEffect(scrollKey, gridState, pinInitialTop) {
         onDispose {
             if (!restoringPosition) {
+                val position = ProgressiveScrollRules.positionToPersist(
+                    pinnedToTop = pinInitialTop,
+                    firstVisibleItemIndex = gridState.firstVisibleItemIndex,
+                    firstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset,
+                )
                 viewModel.saveFileScrollPosition(
                     scrollKey,
-                    gridState.firstVisibleItemIndex,
-                    gridState.firstVisibleItemScrollOffset,
+                    position.firstVisibleItemIndex,
+                    position.firstVisibleItemScrollOffset,
                 )
             }
         }
@@ -1641,6 +1697,7 @@ private fun FileRow(
     val iconSize = (42f * iconScalePercent / 100f).dp
     val verticalPadding = (9f * spacingScalePercent / 100f).dp
     val itemSpacing = (12f * spacingScalePercent / 100f).dp
+    val itemAlpha = if (entry.isHidden && !selected) 0.64f else 1f
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1653,6 +1710,7 @@ private fun FileRow(
                     Modifier.background(MaterialTheme.colorScheme.surface)
                 },
             )
+            .alpha(itemAlpha)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -1703,9 +1761,11 @@ private fun FileTile(
     val visualHeight = (76f * iconScalePercent / 100f).dp
     val cardHeight = 158.dp + (visualHeight - 76.dp)
     val innerPadding = (9f * spacingScalePercent / 100f).dp
+    val itemAlpha = if (entry.isHidden && !selected) 0.64f else 1f
     Card(
         modifier = Modifier
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
+            .alpha(itemAlpha)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = selectionShape,
         colors = CardDefaults.cardColors(

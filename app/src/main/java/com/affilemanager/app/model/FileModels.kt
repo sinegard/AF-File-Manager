@@ -84,7 +84,15 @@ data class StorageRoot(
     val totalBytes: Long,
     val freeBytes: Long,
     val removable: Boolean,
+    val kind: StorageRootKind,
 )
+
+enum class StorageRootKind {
+    INTERNAL,
+    SD_CARD,
+    USB_STORAGE,
+    REMOVABLE,
+}
 
 data class SearchFilters(
     val query: String = "",

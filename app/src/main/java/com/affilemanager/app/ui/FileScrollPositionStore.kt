@@ -11,6 +11,24 @@ data class FileScrollPosition(
     val firstVisibleItemScrollOffset: Int = 0,
 )
 
+internal object ProgressiveScrollRules {
+    fun startsPinnedToTop(initialPosition: FileScrollPosition): Boolean =
+        initialPosition.firstVisibleItemIndex == 0 && initialPosition.firstVisibleItemScrollOffset == 0
+
+    fun positionToPersist(
+        pinnedToTop: Boolean,
+        firstVisibleItemIndex: Int,
+        firstVisibleItemScrollOffset: Int,
+    ): FileScrollPosition = if (pinnedToTop) {
+        FileScrollPosition()
+    } else {
+        FileScrollPosition(
+            firstVisibleItemIndex = firstVisibleItemIndex.coerceAtLeast(0),
+            firstVisibleItemScrollOffset = firstVisibleItemScrollOffset.coerceAtLeast(0),
+        )
+    }
+}
+
 class FileScrollPositionStore(
     private val maxEntries: Int = 256,
 ) {

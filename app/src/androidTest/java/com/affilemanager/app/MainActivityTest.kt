@@ -94,6 +94,29 @@ class MainActivityTest {
     }
 
     @Test
+    fun storageCardOpensAHistoryBoundarySoSystemBackReturnsToFileLocations() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        compose.runOnUiThread {
+            viewModel.activatePanel(PanelId.LEFT)
+            viewModel.setSection(AppSection.FILES)
+        }
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("Internal storage").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        compose.onNodeWithText("Internal storage").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            !viewModel.filesHomeVisible.value && viewModel.leftPanel.value.backHistory.isEmpty()
+        }
+        compose.waitForIdle()
+
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.filesHomeVisible.value }
+        compose.onNodeWithText("File locations").fetchSemanticsNode()
+    }
+
+    @Test
     fun systemBackMovesTheActivePanelUpBeforeExiting() {
         val directory = File(compose.activity.getExternalFilesDir(null), "back-${System.nanoTime()}").apply { mkdirs() }
         try {
