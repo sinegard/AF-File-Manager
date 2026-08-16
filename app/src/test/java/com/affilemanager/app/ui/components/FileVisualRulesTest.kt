@@ -9,6 +9,15 @@ import org.junit.Test
 
 class FileVisualRulesTest {
     @Test
+    fun codeVectorAndSmilFilesUseDistinctIconFamilies() {
+        assertEquals(FileIconFamily.CODE, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "xml"))
+        assertEquals(FileIconFamily.CODE, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "lua"))
+        assertEquals(FileIconFamily.VECTOR_IMAGE, FileVisualRules.iconFamily(EntryKind.IMAGE, "svg"))
+        assertEquals(FileIconFamily.PRESENTATION, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "smil"))
+        assertEquals(FileIconFamily.ARCHIVE, FileVisualRules.iconFamily(EntryKind.ARCHIVE, "zip"))
+    }
+
+    @Test
     fun fitWithinPreservesAspectRatioAndDoesNotUpscale() {
         assertEquals(128 to 96, FileVisualRules.fitWithin(4_000, 3_000, 128, 128))
         assertEquals(40 to 20, FileVisualRules.fitWithin(40, 20, 128, 128))

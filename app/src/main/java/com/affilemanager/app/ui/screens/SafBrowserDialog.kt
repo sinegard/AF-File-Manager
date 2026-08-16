@@ -23,6 +23,9 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.FileDownload
@@ -45,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,6 +64,10 @@ import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.SafBrowserUiState
 import com.affilemanager.app.ui.components.SafFileVisual
+import com.affilemanager.app.ui.components.DirectoryQuickSearchField
+import com.affilemanager.app.ui.components.DirectorySearchButton
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun SafBrowserDialog(
@@ -71,6 +79,17 @@ fun SafBrowserDialog(
     var create by remember { mutableStateOf(false) }
     var rename by remember { mutableStateOf<SafEntry?>(null) }
     var delete by remember { mutableStateOf<SafEntry?>(null) }
+    var info by remember { mutableStateOf<SafEntry?>(null) }
+    var searchVisible by remember(state.location?.uri) { mutableStateOf(false) }
+    var searchQuery by remember(state.location?.uri) { mutableStateOf("") }
+    LaunchedEffect(state.currentUri) {
+        searchVisible = false
+        searchQuery = ""
+    }
+    val displayedEntries = remember(state.entries, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) state.entries else state.entries.filter { it.name.contains(query, ignoreCase = true) }
+    }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -92,7 +111,22 @@ fun SafBrowserDialog(
                             Icon(Icons.Rounded.FileUpload, contentDescription = uiText("Kopijuoti pasirinktą vietinį elementą čia"))
                         }
                     }
+                    DirectorySearchButton(
+                        active = searchVisible,
+                        testTag = "directory_search_saf",
+                        onClick = {
+                            searchVisible = !searchVisible
+                            if (!searchVisible) searchQuery = ""
+                        },
+                    )
                     IconButton(onClick = viewModel::refreshSafBrowser) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti")) }
+                }
+                if (searchVisible) {
+                    DirectoryQuickSearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        onClose = { searchVisible = false; searchQuery = "" },
+                    )
                 }
                 HorizontalDivider()
                 state.error?.let { error ->
@@ -108,13 +142,20 @@ fun SafBrowserDialog(
                             Icon(Icons.Rounded.Folder, contentDescription = null, modifier = Modifier.size(56.dp))
                             LText("Aplankas tuščias", style = MaterialTheme.typography.titleMedium)
                         }
+                    } else if (displayedEntries.isEmpty()) {
+                        Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.Folder, contentDescription = null, modifier = Modifier.size(56.dp))
+                            LText("Atitikmenų nerasta", style = MaterialTheme.typography.titleMedium)
+                            LText("Pabandykite kitą pavadinimą", style = MaterialTheme.typography.bodySmall)
+                        }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
-                            items(state.entries, key = SafEntry::uri) { entry ->
+                            items(displayedEntries, key = SafEntry::uri) { entry ->
                                 SafEntryRow(
                                     entry = entry,
                                     onOpen = { viewModel.openSafEntry(entry) },
                                     onRename = { rename = entry },
+                                    onInfo = { info = entry },
                                     onDelete = { delete = entry },
                                     onDownload = { viewModel.copySafToLocal(entry) },
                                 )
@@ -145,6 +186,9 @@ fun SafBrowserDialog(
             onConfirm = { name -> viewModel.renameSafEntry(entry, name); rename = null },
         )
     }
+    info?.let { entry ->
+        SafInfoDialog(entry = entry, onDismiss = { info = null })
+    }
     delete?.let { entry ->
         AlertDialog(
             onDismissRequest = { delete = null },
@@ -163,6 +207,7 @@ private fun SafEntryRow(
     entry: SafEntry,
     onOpen: () -> Unit,
     onRename: () -> Unit,
+    onInfo: () -> Unit,
     onDelete: () -> Unit,
     onDownload: () -> Unit,
 ) {
@@ -189,11 +234,27 @@ private fun SafEntryRow(
             IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai")) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
+                    text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
+                    leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
+                    onClick = { menu = false; onOpen() },
+                )
+                DropdownMenuItem(
                     text = { LText("Kopijuoti į aktyvų langą") },
                     leadingIcon = { Icon(Icons.Rounded.FileDownload, contentDescription = null) },
                     onClick = { menu = false; onDownload() },
                 )
-                DropdownMenuItem(text = { LText("Pervadinti") }, enabled = entry.canWrite, onClick = { menu = false; onRename() })
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { LText("Pervadinti") },
+                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+                    enabled = entry.canWrite,
+                    onClick = { menu = false; onRename() },
+                )
+                DropdownMenuItem(
+                    text = { LText("Informacija") },
+                    leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                    onClick = { menu = false; onInfo() },
+                )
                 DropdownMenuItem(
                     text = { LText("Ištrinti") },
                     leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
@@ -202,6 +263,33 @@ private fun SafEntryRow(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SafInfoDialog(entry: SafEntry, onDismiss: () -> Unit) {
+    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+        title = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LText(if (entry.directory) "Aplankas" else entry.mimeType ?: "Failas")
+                if (!entry.directory) SafInfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
+                entry.modifiedAtMillis.takeIf { it > 0L }?.let { SafInfoLine("Pakeista", dateFormat.format(Date(it))) }
+                Text(entry.uri, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
+    )
+}
+
+@Composable
+private fun SafInfoLine(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        LText(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
     }
 }
 

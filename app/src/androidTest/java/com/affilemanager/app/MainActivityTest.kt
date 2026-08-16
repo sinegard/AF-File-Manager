@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import android.os.Build
@@ -65,6 +66,15 @@ class MainActivityTest {
         compose.onNodeWithText("File locations").fetchSemanticsNode()
         assertTrue(compose.onAllNodesWithText("% used", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(compose.onAllNodesWithText("Kairysis:").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun homeCustomizationExposesSectionAndQuickLocationControls() {
+        compose.onNodeWithTag("home_customize").performClick()
+        compose.onNodeWithText("Customize home").fetchSemanticsNode()
+        compose.onNodeWithText("Section order").fetchSemanticsNode()
+        compose.onNodeWithText("Add a file or folder shortcut").performScrollTo()
+        compose.onNodeWithText("Done").performClick()
     }
 
     @Test
@@ -264,7 +274,34 @@ class MainActivityTest {
 
             compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
             compose.onNodeWithTag("display_settings_dialog").fetchSemanticsNode()
+            compose.onNodeWithTag("display_sort_name").fetchSemanticsNode()
+            compose.onNodeWithTag("display_sort_ascending").fetchSemanticsNode()
             compose.onNodeWithText("Cancel").performClick()
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun localQuickSearchFiltersOnlyTheCurrentFolder() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "search-${System.nanoTime()}").apply { mkdirs() }
+        File(directory, "alpha.txt").writeText("alpha")
+        File(directory, "beta.txt").writeText("beta")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                !viewModel.filesHomeVisible.value && viewModel.leftPanel.value.entries.size == 2
+            }
+
+            compose.onNodeWithTag("directory_search_local_LEFT").performClick()
+            compose.onNodeWithTag("directory_search_field_local_LEFT").performTextInput("alpha")
+            compose.onNodeWithText("alpha.txt").fetchSemanticsNode()
+            assertTrue(compose.onAllNodesWithText("beta.txt").fetchSemanticsNodes().isEmpty())
         } finally {
             directory.deleteRecursively()
         }

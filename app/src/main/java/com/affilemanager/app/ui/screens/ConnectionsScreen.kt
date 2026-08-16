@@ -39,6 +39,8 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Edit
@@ -102,7 +104,11 @@ import com.affilemanager.app.ui.components.RemoteFileVisual
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
+import com.affilemanager.app.ui.components.DirectoryQuickSearchField
+import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.SelectionActionBar
+import com.affilemanager.app.ui.components.SelectionActionDock
+import com.affilemanager.app.ui.components.SelectionHeader
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.network.RemoteCopyEngine
@@ -134,6 +140,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var showSync by remember { mutableStateOf(false) }
     var showUploadPicker by remember { mutableStateOf(false) }
     var showDisplaySettings by remember { mutableStateOf(false) }
+    var remoteInfo by remember { mutableStateOf<RemoteEntry?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         if (state.connectedProfile == null) {
@@ -204,6 +211,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onChooseUpload = { showUploadPicker = true },
                     onCreateFolder = { createRemoteFolder = true },
                     onRename = { renameRemote = it },
+                    onInfo = { remoteInfo = it },
                     onDelete = { deleteRemote = it },
                     onSync = { showSync = true },
                     onToggleHidden = viewModel::toggleRemoteHidden,
@@ -212,6 +220,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onSort = viewModel::setRemoteSort,
                     onDisconnect = viewModel::disconnectNetwork,
                     onOpenTerminal = viewModel::openRemoteTerminal,
+                    onSelectPaths = viewModel::selectRemotePaths,
                 )
             }
         }
@@ -253,6 +262,9 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             viewModel.remoteRename(entry, it)
             renameRemote = null
         }
+    }
+    remoteInfo?.let { entry ->
+        RemoteInfoDialog(entry = entry, onDismiss = { remoteInfo = null })
     }
     deleteRemote?.let { entries ->
         val single = entries.singleOrNull()
@@ -308,11 +320,14 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         DirectoryDisplaySettingsDialog(
             initialSettings = state.toDirectoryDisplaySettings(),
             thumbnailsAvailable = false,
+            initialSortMode = state.sortMode,
+            initialSortDirection = state.sortDirection,
             onDismiss = { showDisplaySettings = false },
             onApply = { settings ->
                 viewModel.setRemoteDirectoryDisplaySettings(settings)
                 showDisplaySettings = false
             },
+            onApplySort = viewModel::setRemoteSort,
         )
     }
 }
@@ -392,8 +407,16 @@ internal fun RemoteBrowser(
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit = {},
+    onInfo: (RemoteEntry) -> Unit = {},
+    onSelectPaths: (List<String>) -> Unit = { onSelectAll() },
 ) {
-    val displayedEntries = remember(state.entries, state.includeHidden, state.sortMode, state.sortDirection) {
+    var searchVisible by remember(state.connectedProfile?.id) { mutableStateOf(false) }
+    var searchQuery by remember(state.connectedProfile?.id) { mutableStateOf("") }
+    LaunchedEffect(state.path) {
+        searchVisible = false
+        searchQuery = ""
+    }
+    val orderedEntries = remember(state.entries, state.includeHidden, state.sortMode, state.sortDirection) {
         RemoteBrowserRules.displayEntries(
             entries = state.entries,
             includeHidden = state.includeHidden,
@@ -401,46 +424,23 @@ internal fun RemoteBrowser(
             sortDirection = state.sortDirection,
         )
     }
+    val displayedEntries = remember(orderedEntries, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) orderedEntries else orderedEntries.filter { it.name.contains(query, ignoreCase = true) }
+    }
     val selectableEntries = displayedEntries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
     val allSelected = selectableEntries.isNotEmpty() && selectableEntries.all { it.path in state.selectedPaths }
     val selectedEntries = displayedEntries.filter { it.path in state.selectedPaths }
     Column(modifier = Modifier.fillMaxSize()) {
         if (state.selectedPaths.isNotEmpty()) {
-            SelectionActionBar(
+            SelectionHeader(
                 count = state.selectedPaths.size,
                 allSelected = allSelected,
                 onClose = onClearSelection,
-                onToggleSelectAll = { if (allSelected) onClearSelection() else onSelectAll() },
-            ) {
-                IconButton(onClick = onCopySelected, enabled = !state.loading) {
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
-                }
-                if (canAddToRemoteClipboard) {
-                    TextButton(
-                        onClick = onAddToRemoteClipboard,
-                        enabled = !state.loading,
-                        modifier = Modifier.testTag("copy-more-remote"),
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Įtraukti į iškarpinę"))
-                        LText("Kopijuoti daugiau", modifier = Modifier.padding(start = 5.dp))
-                    }
-                }
-                IconButton(onClick = onDownloadSelected, enabled = !state.loading) {
-                    Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))
-                }
-                IconButton(
-                    onClick = { selectedEntries.singleOrNull()?.let(onRename) },
-                    enabled = !state.loading && selectedEntries.size == 1,
-                ) {
-                    Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = uiText("Pervadinti"))
-                }
-                IconButton(
-                    onClick = { onDelete(selectedEntries) },
-                    enabled = !state.loading && selectedEntries.isNotEmpty(),
-                ) {
-                    Icon(Icons.Rounded.Delete, contentDescription = uiText("Ištrinti"), tint = MaterialTheme.colorScheme.error)
-                }
-            }
+                onToggleSelectAll = {
+                    if (allSelected) onClearSelection() else onSelectPaths(selectableEntries.map(RemoteEntry::path))
+                },
+            )
         } else {
             RemoteFolderToolbar(
                 state = state,
@@ -459,6 +459,19 @@ internal fun RemoteBrowser(
                 onSort = onSort,
                 onDisconnect = onDisconnect,
                 onOpenTerminal = onOpenTerminal,
+                searchActive = searchVisible,
+                onToggleSearch = {
+                    searchVisible = !searchVisible
+                    if (!searchVisible) searchQuery = ""
+                },
+            )
+        }
+        if (searchVisible) {
+            DirectoryQuickSearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onClose = { searchVisible = false; searchQuery = "" },
+                modifier = Modifier.testTag("directory_search_field_remote"),
             )
         }
         RemoteBreadcrumbs(state.path) { onPath ->
@@ -474,8 +487,9 @@ internal fun RemoteBrowser(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when {
                 state.error != null && displayedEntries.isEmpty() -> Unit
-                state.loading && displayedEntries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                displayedEntries.isEmpty() -> RemoteEmptyPanel()
+                state.loading && orderedEntries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                orderedEntries.isEmpty() -> RemoteEmptyPanel()
+                displayedEntries.isEmpty() -> RemoteEmptyPanel("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
                 state.grid -> RemoteEntryGrid(
                     entries = displayedEntries,
                     selectedPaths = state.selectedPaths,
@@ -487,6 +501,9 @@ internal fun RemoteBrowser(
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
+                    onRename = onRename,
+                    onInfo = onInfo,
+                    onDelete = { onDelete(listOf(it)) },
                 )
                 else -> RemoteEntryList(
                     entries = displayedEntries,
@@ -498,13 +515,48 @@ internal fun RemoteBrowser(
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
+                    onRename = onRename,
+                    onInfo = onInfo,
+                    onDelete = { onDelete(listOf(it)) },
                 )
             }
-            FloatingActionButton(
-                onClick = onCreateFolder,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti aplanką"))
+            if (state.selectedPaths.isNotEmpty()) {
+                SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
+                    IconButton(onClick = onCopySelected, enabled = !state.loading) {
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+                    }
+                    if (canAddToRemoteClipboard) {
+                        IconButton(
+                            onClick = onAddToRemoteClipboard,
+                            enabled = !state.loading,
+                            modifier = Modifier.testTag("copy-more-remote"),
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
+                        }
+                    }
+                    IconButton(onClick = onDownloadSelected, enabled = !state.loading) {
+                        Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))
+                    }
+                    IconButton(
+                        onClick = { selectedEntries.singleOrNull()?.let(onRename) },
+                        enabled = !state.loading && selectedEntries.size == 1,
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = uiText("Pervadinti"))
+                    }
+                    IconButton(
+                        onClick = { onDelete(selectedEntries) },
+                        enabled = !state.loading && selectedEntries.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Rounded.Delete, contentDescription = uiText("Ištrinti"), tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+            } else {
+                FloatingActionButton(
+                    onClick = onCreateFolder,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti aplanką"))
+                }
             }
         }
     }
@@ -528,6 +580,8 @@ private fun RemoteFolderToolbar(
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit,
+    searchActive: Boolean,
+    onToggleSearch: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
@@ -551,6 +605,11 @@ private fun RemoteFolderToolbar(
             )
             Text(state.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        DirectorySearchButton(
+            active = searchActive,
+            testTag = "directory_search_remote",
+            onClick = onToggleSearch,
+        )
         DirectoryLayoutButton(
             grid = state.grid,
             testTag = "directory_layout_remote",
@@ -698,6 +757,9 @@ private fun RemoteEntryList(
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onRename: (RemoteEntry) -> Unit,
+    onInfo: (RemoteEntry) -> Unit,
+    onDelete: (RemoteEntry) -> Unit,
 ) {
     val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
@@ -713,6 +775,9 @@ private fun RemoteEntryList(
                 onOpen = { onOpen(entry) },
                 onDownload = { onDownload(entry) },
                 onToggleSelection = { onToggleSelection(entry.path) },
+                onRename = { onRename(entry) },
+                onInfo = { onInfo(entry) },
+                onDelete = { onDelete(entry) },
             )
         }
     }
@@ -730,6 +795,9 @@ private fun RemoteEntryGrid(
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onRename: (RemoteEntry) -> Unit,
+    onInfo: (RemoteEntry) -> Unit,
+    onDelete: (RemoteEntry) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(gridColumns.coerceIn(1, 6)),
@@ -749,6 +817,9 @@ private fun RemoteEntryGrid(
                 onOpen = { onOpen(entry) },
                 onDownload = { onDownload(entry) },
                 onToggleSelection = { onToggleSelection(entry.path) },
+                onRename = { onRename(entry) },
+                onInfo = { onInfo(entry) },
+                onDelete = { onDelete(entry) },
             )
         }
     }
@@ -766,6 +837,9 @@ private fun RemoteEntryRow(
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
+    onRename: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(8.dp)
     val iconSize = (42f * iconScalePercent / 100f).dp
@@ -805,7 +879,7 @@ private fun RemoteEntryRow(
             Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (entry.directory) FontWeight.SemiBold else FontWeight.Normal)
             LText(metadata, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection)
+        RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
     }
     HorizontalDivider(
         modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
@@ -824,6 +898,9 @@ private fun RemoteEntryTile(
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
+    onRename: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
@@ -862,7 +939,7 @@ private fun RemoteEntryTile(
                 if (!entry.directory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
             }
             Box(modifier = Modifier.align(Alignment.TopEnd)) {
-                RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection)
+                RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
             }
         }
     }
@@ -874,6 +951,9 @@ private fun RemoteEntryActionsButton(
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
+    onRename: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var expanded by remember(entry.path) { mutableStateOf(false) }
     Box {
@@ -895,14 +975,34 @@ private fun RemoteEntryActionsButton(
             }
             DropdownMenuItem(
                 text = { LText("Pasirinkti") },
+                leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) },
                 onClick = { expanded = false; onToggleSelection() },
+            )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { LText("Pervadinti") },
+                leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+                onClick = { expanded = false; onRename() },
+            )
+            DropdownMenuItem(
+                text = { LText("Informacija") },
+                leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                onClick = { expanded = false; onInfo() },
+            )
+            DropdownMenuItem(
+                text = { LText("Ištrinti") },
+                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                onClick = { expanded = false; onDelete() },
             )
         }
     }
 }
 
 @Composable
-private fun RemoteEmptyPanel() {
+private fun RemoteEmptyPanel(
+    title: String = "Aplankas tuščias",
+    description: String = "Čia dar nėra failų",
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -910,8 +1010,36 @@ private fun RemoteEmptyPanel() {
     ) {
         Icon(Icons.Rounded.Folder, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.outline)
         Spacer(Modifier.height(10.dp))
-        LText("Aplankas tuščias", style = MaterialTheme.typography.titleMedium)
-        LText("Čia dar nėra failų", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LText(title, style = MaterialTheme.typography.titleMedium)
+        LText(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun RemoteInfoDialog(entry: RemoteEntry, onDismiss: () -> Unit) {
+    val dateFormat = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+        title = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RemoteInfoLine("Tipas", if (entry.directory) uiText("Aplankas") else entry.name.substringAfterLast('.', "").uppercase().ifBlank { uiText("Failas") })
+                if (!entry.directory) RemoteInfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
+                entry.modifiedAtMillis?.takeIf { it > 0L }?.let { RemoteInfoLine("Pakeista", dateFormat.format(Date(it))) }
+                LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Text(entry.path, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
+    )
+}
+
+@Composable
+private fun RemoteInfoLine(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        LText(label, modifier = Modifier.size(width = 88.dp, height = 24.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
