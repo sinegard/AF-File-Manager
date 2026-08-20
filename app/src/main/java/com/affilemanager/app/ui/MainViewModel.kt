@@ -1,8 +1,6 @@
 package com.affilemanager.app.ui
 
 import android.app.Application
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
@@ -39,6 +37,7 @@ import com.affilemanager.app.data.HomeCustomization
 import com.affilemanager.app.data.HomeCustomizationRules
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
+import com.affilemanager.app.data.HomeShortcutNavigationRules
 import com.affilemanager.app.editing.EditConflict
 import com.affilemanager.app.editing.EditDestination
 import com.affilemanager.app.editing.EditDestinationRules
@@ -92,10 +91,7 @@ import com.affilemanager.app.sync.SyncPreview
 import com.affilemanager.app.sync.SyncSchedule
 import com.affilemanager.app.terminal.LocalPtyBackend
 import com.affilemanager.app.terminal.SshTerminalBackend
-import com.affilemanager.app.terminal.TerminalBackend
 import com.affilemanager.app.terminal.TerminalLimits
-import com.affilemanager.app.terminal.TerminalModifierState
-import com.affilemanager.app.terminal.TerminalSessionController
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
 import com.affilemanager.app.workflow.AfAutomationRule
@@ -137,7 +133,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.UUID
-import org.connectbot.terminal.TerminalEmulator
 
 enum class AppSection {
     FILES,
@@ -216,6 +211,13 @@ data class FileCategoryUiState(
     val category: FileCategory? = null,
     val entries: List<FileEntry> = emptyList(),
     val selectedPaths: Set<String> = emptySet(),
+    val grid: Boolean = false,
+    val iconScalePercent: Int = 100,
+    val spacingScalePercent: Int = 100,
+    val gridColumns: Int = 3,
+    val showThumbnails: Boolean = false,
+    val sortMode: SortMode = SortMode.NAME,
+    val sortDirection: SortDirection = SortDirection.ASCENDING,
     val scannedRows: Int = 0,
     val truncated: Boolean = false,
     val loading: Boolean = false,
@@ -317,6 +319,13 @@ data class SafBrowserUiState(
     val title: String = "",
     val entries: List<SafEntry> = emptyList(),
     val backStack: List<Pair<String, String>> = emptyList(),
+    val grid: Boolean = false,
+    val iconScalePercent: Int = 100,
+    val spacingScalePercent: Int = 100,
+    val gridColumns: Int = 3,
+    val showThumbnails: Boolean = false,
+    val sortMode: SortMode = SortMode.NAME,
+    val sortDirection: SortDirection = SortDirection.ASCENDING,
     val loading: Boolean = false,
     val error: String? = null,
 )
@@ -327,7 +336,13 @@ data class TrashBrowserUiState(
     val relativePath: String = "",
     val rootName: String? = null,
     val entries: List<TrashBrowserEntry> = emptyList(),
+    val grid: Boolean = false,
+    val iconScalePercent: Int = 100,
+    val spacingScalePercent: Int = 100,
+    val gridColumns: Int = 3,
     val showThumbnails: Boolean = false,
+    val sortMode: SortMode = SortMode.NAME,
+    val sortDirection: SortDirection = SortDirection.ASCENDING,
     val loading: Boolean = false,
     val emptying: Boolean = false,
     val error: String? = null,
@@ -367,32 +382,6 @@ data class FileEditUiState(
     val hasOriginChanges: Boolean get() = textChanged || formatChanged || session?.hasOriginChanges == true
     val hasUnsavedChanges: Boolean get() = textChanged || formatChanged || session?.hasUnsavedChanges == true
 }
-
-enum class TerminalLocation {
-    PHONE,
-    SERVER,
-}
-
-data class TerminalFailureUi(
-    val title: String,
-    val detail: String,
-    val suggestion: String,
-    val diagnosticCode: String,
-)
-
-data class TerminalUiState(
-    val visible: Boolean = false,
-    val starting: Boolean = false,
-    val running: Boolean = false,
-    val location: TerminalLocation = TerminalLocation.PHONE,
-    val title: String = "",
-    val path: String = "",
-    val emulator: TerminalEmulator? = null,
-    val modifiers: TerminalModifierState? = null,
-    val failure: TerminalFailureUi? = null,
-    val endedMessage: String? = null,
-    val confirmClose: Boolean = false,
-)
 
 sealed interface PreviewTarget {
     data class LocalFile(val entry: FileEntry) : PreviewTarget
@@ -604,8 +593,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _fileEditState = MutableStateFlow(FileEditUiState())
     val fileEditState: StateFlow<FileEditUiState> = _fileEditState.asStateFlow()
 
-    private val _terminalState = MutableStateFlow(TerminalUiState())
-    val terminalState: StateFlow<TerminalUiState> = _terminalState.asStateFlow()
+    val terminalState: StateFlow<TerminalUiState> = graph.terminalSessions.state
 
     val operations = graph.operationManager.operations
 
@@ -625,15 +613,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var remoteFileOpenRequestId = 0L
     private var fileEditJob: Job? = null
     private var fileEditRequestId = 0L
-    private var terminalSession: TerminalSessionController? = null
-    private var terminalOpenJob: Job? = null
-    private var terminalRequestId = 0L
     private var leftPanelRefreshJob: Job? = null
     private var rightPanelRefreshJob: Job? = null
     private val handledOperations = ArrayDeque<String>()
     private val workspaceSaveRequests = Channel<WorkspaceSession>(Channel.CONFLATED)
 
     init {
+        viewModelScope.launch {
+            graph.terminalSessions.notices.collectLatest { message(it, true) }
+        }
         graph.applicationScope.launch {
             for (session in workspaceSaveRequests) {
                 runCatching { graph.workspaceSession.save(session) }
@@ -666,6 +654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSection(section: AppSection) {
+        if (_fileCategory.value.open) closeFileCategory()
         _section.value = section
         if (section == AppSection.FILES) {
             _filesHomeVisible.value = true
@@ -1593,7 +1582,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openFileCategory(category: FileCategory) {
         fileCategoryJob?.cancel()
-        _fileCategory.value = FileCategoryUiState(open = true, category = category, loading = true)
+        val display = savedDirectoryDisplaySettings(fileCategoryIdentity(category))
+        _fileCategory.value = FileCategoryUiState(
+            open = true,
+            category = category,
+            loading = true,
+            grid = display.layoutMode == DirectoryLayoutMode.GRID,
+            iconScalePercent = display.iconScalePercent,
+            spacingScalePercent = display.spacingScalePercent,
+            gridColumns = display.gridColumns,
+            showThumbnails = display.showThumbnails,
+        )
         fileCategoryJob = viewModelScope.launch {
             try {
                 val result = graph.fileCategories.load(category)
@@ -1620,6 +1619,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFileCategory() {
         _fileCategory.value.category?.let(::openFileCategory)
+    }
+
+    fun toggleFileCategoryLayout() {
+        val state = _fileCategory.value
+        setFileCategoryDisplaySettings(
+            state.fileCategoryDisplaySettings().copy(
+                layoutMode = if (state.grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+            ),
+        )
+    }
+
+    fun toggleFileCategoryThumbnails() {
+        val state = _fileCategory.value
+        setFileCategoryDisplaySettings(state.fileCategoryDisplaySettings().copy(showThumbnails = !state.showThumbnails))
+    }
+
+    fun setFileCategoryDisplaySettings(settings: DirectoryDisplaySettings) {
+        val category = _fileCategory.value.category ?: return
+        runCatching { graph.navigation.setDirectoryDisplaySettings(fileCategoryIdentity(category), settings) }
+            .onSuccess {
+                _fileCategory.update { current ->
+                    if (current.category == category) current.withFileCategoryDisplaySettings(settings) else current
+                }
+            }
+            .onFailure { message(it.message ?: "Kategorijos rodinio nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setFileCategorySort(mode: SortMode, direction: SortDirection) {
+        _fileCategory.update { it.copy(sortMode = mode, sortDirection = direction, selectedPaths = emptySet()) }
     }
 
     fun closeFileCategory() {
@@ -3116,10 +3144,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openTrashBrowser() {
-        _trashBrowser.value = TrashBrowserUiState(
-            open = true,
-            showThumbnails = savedThumbnailMode(trashDirectoryIdentity(null, "")),
-        )
+        val display = savedDirectoryDisplaySettings(trashDirectoryIdentity(null, ""))
+        _trashBrowser.value = TrashBrowserUiState(open = true).withTrashDisplaySettings(display)
         refreshTrashBrowser()
     }
 
@@ -3164,15 +3190,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val nextItemId = current.itemId ?: entry.itemId
         val nextRelativePath = if (current.itemId == null) "" else entry.relativePath
         val nextRootName = current.rootName ?: entry.name
+        val display = savedDirectoryDisplaySettings(trashDirectoryIdentity(nextItemId, nextRelativePath))
         _trashBrowser.update {
             it.copy(
                 itemId = nextItemId,
                 relativePath = nextRelativePath,
                 rootName = nextRootName,
                 entries = emptyList(),
-                showThumbnails = savedThumbnailMode(trashDirectoryIdentity(nextItemId, nextRelativePath)),
                 error = null,
-            )
+            ).withTrashDisplaySettings(display)
         }
         refreshTrashBrowser()
     }
@@ -3186,15 +3212,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val nextItemId = if (current.relativePath.isEmpty()) null else current.itemId
         val nextRelativePath = if (current.relativePath.isEmpty()) "" else TrashPathRules.parent(current.relativePath)
+        val display = savedDirectoryDisplaySettings(trashDirectoryIdentity(nextItemId, nextRelativePath))
         _trashBrowser.update {
             it.copy(
                 itemId = nextItemId,
                 relativePath = nextRelativePath,
                 rootName = if (nextItemId == null) null else it.rootName,
                 entries = emptyList(),
-                showThumbnails = savedThumbnailMode(trashDirectoryIdentity(nextItemId, nextRelativePath)),
                 error = null,
-            )
+            ).withTrashDisplaySettings(display)
         }
         refreshTrashBrowser()
         return true
@@ -3203,17 +3229,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleTrashThumbnails() {
         val snapshot = _trashBrowser.value
         if (!snapshot.open) return
+        setTrashDisplaySettings(snapshot.trashDisplaySettings().copy(showThumbnails = !snapshot.showThumbnails))
+    }
+
+    fun toggleTrashLayout() {
+        val snapshot = _trashBrowser.value
+        if (!snapshot.open) return
+        setTrashDisplaySettings(
+            snapshot.trashDisplaySettings().copy(
+                layoutMode = if (snapshot.grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+            ),
+        )
+    }
+
+    fun setTrashDisplaySettings(settings: DirectoryDisplaySettings) {
+        val snapshot = _trashBrowser.value
+        if (!snapshot.open) return
         val identity = trashDirectoryIdentity(snapshot.itemId, snapshot.relativePath)
-        val enabled = !snapshot.showThumbnails
-        runCatching { graph.navigation.setThumbnailsEnabled(identity, enabled) }
+        runCatching { graph.navigation.setDirectoryDisplaySettings(identity, settings) }
             .onSuccess {
                 _trashBrowser.update { current ->
                     if (current.itemId == snapshot.itemId && current.relativePath == snapshot.relativePath) {
-                        current.copy(showThumbnails = enabled)
+                        current.withTrashDisplaySettings(settings)
                     } else current
                 }
             }
             .onFailure { message(it.message ?: "Šiukšliadėžės vaizdo nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setTrashSort(mode: SortMode, direction: SortDirection) {
+        _trashBrowser.update { it.copy(sortMode = mode, sortDirection = direction) }
     }
 
     fun emptyTrash() {
@@ -3227,9 +3272,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     relativePath = "",
                     rootName = null,
                     entries = emptyList(),
-                    showThumbnails = savedThumbnailMode(trashDirectoryIdentity(null, "")),
                     emptying = false,
-                )
+                ).withTrashDisplaySettings(savedDirectoryDisplaySettings(trashDirectoryIdentity(null, "")))
             }
             refreshTrash()
             when {
@@ -3262,6 +3306,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (file.isDirectory) navigate(panel, path)
         else if (file.isFile) open(graph.localFiles.toEntry(file))
         else message("Vieta nebeegzistuoja", true)
+    }
+
+    fun openHomeShortcut(shortcutId: String, path: String, panel: PanelId = _activePanel.value) {
+        val category = HomeShortcutNavigationRules.categoryFor(shortcutId)
+        if (category != null) openFileCategory(category) else openQuickPath(path, panel)
     }
 
     fun openStorageRoot(root: StorageRoot, panel: PanelId = _activePanel.value) {
@@ -3368,7 +3417,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSafLocation(location: SafLocation) {
-        _safBrowser.value = SafBrowserUiState(location = location, currentUri = location.uri, title = location.title)
+        val display = savedDirectoryDisplaySettings(safDirectoryIdentity(location.uri))
+        _safBrowser.value = SafBrowserUiState(
+            location = location,
+            currentUri = location.uri,
+            title = location.title,
+        ).withSafDisplaySettings(display)
         refreshSafBrowser()
     }
 
@@ -3376,13 +3430,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (entry.directory) {
             val state = _safBrowser.value
             val current = state.currentUri ?: return
+            val display = savedDirectoryDisplaySettings(safDirectoryIdentity(entry.uri))
             _safBrowser.update {
                 it.copy(
                     currentUri = entry.uri,
                     title = entry.name,
                     backStack = (it.backStack + (current to it.title)).takeLast(64),
                     entries = emptyList(),
-                )
+                ).withSafDisplaySettings(display)
             }
             refreshSafBrowser()
         } else {
@@ -3404,8 +3459,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateSafBack(): Boolean {
         val state = _safBrowser.value
         val previous = state.backStack.lastOrNull() ?: return false
+        val display = savedDirectoryDisplaySettings(safDirectoryIdentity(previous.first))
         _safBrowser.update {
-            it.copy(currentUri = previous.first, title = previous.second, backStack = it.backStack.dropLast(1), entries = emptyList())
+            it.copy(
+                currentUri = previous.first,
+                title = previous.second,
+                backStack = it.backStack.dropLast(1),
+                entries = emptyList(),
+            ).withSafDisplaySettings(display)
         }
         refreshSafBrowser()
         return true
@@ -3420,6 +3481,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onFailure = { error -> _safBrowser.update { it.copy(entries = emptyList(), loading = false, error = error.message) } },
             )
         }
+    }
+
+    fun toggleSafLayout() {
+        val state = _safBrowser.value
+        setSafDisplaySettings(
+            state.safDisplaySettings().copy(
+                layoutMode = if (state.grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+            ),
+        )
+    }
+
+    fun toggleSafThumbnails() {
+        val state = _safBrowser.value
+        setSafDisplaySettings(state.safDisplaySettings().copy(showThumbnails = !state.showThumbnails))
+    }
+
+    fun setSafDisplaySettings(settings: DirectoryDisplaySettings) {
+        val uri = _safBrowser.value.currentUri ?: return
+        runCatching { graph.navigation.setDirectoryDisplaySettings(safDirectoryIdentity(uri), settings) }
+            .onSuccess {
+                _safBrowser.update { current ->
+                    if (current.currentUri == uri) current.withSafDisplaySettings(settings) else current
+                }
+            }
+            .onFailure { message(it.message ?: "Dokumentų vietos rodinio nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setSafSort(mode: SortMode, direction: SortDirection) {
+        _safBrowser.update { it.copy(sortMode = mode, sortDirection = direction) }
     }
 
     fun createSafDirectory(name: String) = mutateSaf { uri -> graph.safFiles.createDirectory(uri, name).map { Unit } }
@@ -3465,7 +3555,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openLocalTerminal(panel: PanelId = _activePanel.value) {
         val directory = File(panelFlow(panel).value.path)
-        beginTerminal(
+        graph.terminalSessions.begin(
             location = TerminalLocation.PHONE,
             title = "Telefono terminalas",
             path = directory.absolutePath,
@@ -3503,7 +3593,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profileId = connected.id
         val remotePath = snapshot.path
-        beginTerminal(
+        graph.terminalSessions.begin(
             location = TerminalLocation.SERVER,
             title = connected.name,
             path = remotePath,
@@ -3537,21 +3627,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun requestTerminalClose() {
-        val state = _terminalState.value
-        if (!state.visible) return
-        if (state.running || state.starting) {
-            _terminalState.update { it.copy(confirmClose = true) }
-        } else {
-            closeTerminalNow()
-        }
+        graph.terminalSessions.requestClose()
     }
 
     fun dismissTerminalCloseConfirmation() {
-        _terminalState.update { it.copy(confirmClose = false) }
+        graph.terminalSessions.dismissCloseConfirmation()
     }
 
     fun confirmTerminalClose() {
-        closeTerminalNow()
+        graph.terminalSessions.confirmClose()
     }
 
     fun pasteIntoTerminal(text: String) {
@@ -3561,114 +3645,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             message("Iškarpinės turinys viršija 64 KiB terminalo įklijavimo ribą", true)
             return
         }
-        if (terminalSession?.paste(text) != true) {
+        if (!graph.terminalSessions.paste(text)) {
             message("Terminalo įvestis užimta; bandykite įklijuoti dar kartą", true)
         }
     }
 
     fun dispatchTerminalKey(key: Int) {
-        terminalSession?.dispatchKey(key)
+        graph.terminalSessions.dispatchKey(key)
     }
 
     fun toggleTerminalCtrl() {
-        terminalSession?.modifiers?.toggleCtrl()
+        graph.terminalSessions.toggleCtrl()
     }
 
     fun toggleTerminalAlt() {
-        terminalSession?.modifiers?.toggleAlt()
-    }
-
-    private fun beginTerminal(
-        location: TerminalLocation,
-        title: String,
-        path: String,
-        openBackend: suspend () -> TerminalBackend,
-        errorInfo: (Throwable) -> TerminalFailureUi,
-    ) {
-        if (_terminalState.value.visible) return
-        val requestId = ++terminalRequestId
-        _terminalState.value = TerminalUiState(
-            visible = true,
-            starting = true,
-            location = location,
-            title = title,
-            path = path,
-        )
-        terminalOpenJob = viewModelScope.launch {
-            var backend: TerminalBackend? = null
-            var controller: TerminalSessionController? = null
-            try {
-                backend = openBackend()
-                if (requestId != terminalRequestId) return@launch
-                controller = TerminalSessionController.create(
-                    backend = requireNotNull(backend),
-                    parentScope = viewModelScope,
-                    onClipboardCopy = ::copyTerminalText,
-                    onTransportEnded = { transportError ->
-                        if (requestId == terminalRequestId) {
-                            _terminalState.update { state ->
-                                state.copy(
-                                    starting = false,
-                                    running = false,
-                                    endedMessage = transportError,
-                                )
-                            }
-                        }
-                    },
-                )
-                backend = null
-                if (requestId != terminalRequestId) {
-                    controller.close()
-                    return@launch
-                }
-                terminalSession = controller
-                _terminalState.update {
-                    it.copy(
-                        starting = false,
-                        running = true,
-                        emulator = controller.emulator,
-                        modifiers = controller.modifiers,
-                        failure = null,
-                        endedMessage = null,
-                    )
-                }
-            } catch (cancelled: CancellationException) {
-                controller?.close()
-                withContext(NonCancellable + Dispatchers.IO) { backend?.close() }
-                throw cancelled
-            } catch (error: Throwable) {
-                controller?.close()
-                withContext(Dispatchers.IO) { backend?.close() }
-                if (requestId == terminalRequestId) {
-                    _terminalState.update {
-                        it.copy(starting = false, running = false, failure = errorInfo(error))
-                    }
-                }
-            } finally {
-                withContext(NonCancellable + Dispatchers.IO) { backend?.close() }
-                if (requestId == terminalRequestId) terminalOpenJob = null
-            }
-        }
-    }
-
-    private fun copyTerminalText(text: String) {
-        if (text.isEmpty()) return
-        if (text.toByteArray(Charsets.UTF_8).size > TerminalLimits.MAX_CLIPBOARD_COPY_BYTES) {
-            message("Pažymėtas terminalo tekstas viršija 64 KiB kopijavimo ribą", true)
-            return
-        }
-        val clipboard = getApplication<Application>().getSystemService(ClipboardManager::class.java)
-        clipboard?.setPrimaryClip(ClipData.newPlainText("AF File Manager terminal", text))
-    }
-
-    private fun closeTerminalNow() {
-        terminalRequestId += 1
-        val session = terminalSession
-        terminalSession = null
-        terminalOpenJob?.cancel()
-        terminalOpenJob = null
-        _terminalState.value = TerminalUiState()
-        if (session != null) viewModelScope.launch { session.close() }
+        graph.terminalSessions.toggleAlt()
     }
 
     fun refreshProfiles() {
@@ -4404,12 +4395,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         workspaceSaveRequests.close()
         recentFilesJob?.cancel()
         recentFilesJob = null
-        terminalRequestId += 1
-        terminalOpenJob?.cancel()
-        terminalOpenJob = null
-        terminalSession?.let { session -> graph.applicationScope.launch { session.close() } }
-        terminalSession = null
-        _terminalState.value = TerminalUiState()
         cancelRemoteFileOpen()
         fileEditRequestId += 1
         fileEditJob?.cancel()
@@ -4448,6 +4433,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun remoteDirectoryIdentity(profileId: String, path: String): String =
         "remote:$profileId:${RemotePath.normalize(path)}"
 
+    private fun fileCategoryIdentity(category: FileCategory): String =
+        "virtual:category/${category.name.lowercase()}"
+
+    private fun safDirectoryIdentity(uri: String): String = "saf:$uri"
+
     private fun trashDirectoryIdentity(itemId: String?, relativePath: String): String = if (itemId == null) {
         "virtual:trash/root"
     } else {
@@ -4476,6 +4466,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
         showThumbnails = showThumbnails,
+    )
+
+    private fun FileCategoryUiState.fileCategoryDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
+        layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+        iconScalePercent = iconScalePercent,
+        spacingScalePercent = spacingScalePercent,
+        gridColumns = gridColumns,
+        showThumbnails = showThumbnails,
+    )
+
+    private fun FileCategoryUiState.withFileCategoryDisplaySettings(
+        settings: DirectoryDisplaySettings,
+    ): FileCategoryUiState = copy(
+        grid = settings.layoutMode == DirectoryLayoutMode.GRID,
+        iconScalePercent = settings.iconScalePercent,
+        spacingScalePercent = settings.spacingScalePercent,
+        gridColumns = settings.gridColumns,
+        showThumbnails = settings.showThumbnails,
+    )
+
+    private fun TrashBrowserUiState.trashDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
+        layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+        iconScalePercent = iconScalePercent,
+        spacingScalePercent = spacingScalePercent,
+        gridColumns = gridColumns,
+        showThumbnails = showThumbnails,
+    )
+
+    private fun TrashBrowserUiState.withTrashDisplaySettings(settings: DirectoryDisplaySettings): TrashBrowserUiState = copy(
+        grid = settings.layoutMode == DirectoryLayoutMode.GRID,
+        iconScalePercent = settings.iconScalePercent,
+        spacingScalePercent = settings.spacingScalePercent,
+        gridColumns = settings.gridColumns,
+        showThumbnails = settings.showThumbnails,
+    )
+
+    private fun SafBrowserUiState.safDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
+        layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+        iconScalePercent = iconScalePercent,
+        spacingScalePercent = spacingScalePercent,
+        gridColumns = gridColumns,
+        showThumbnails = showThumbnails,
+    )
+
+    private fun SafBrowserUiState.withSafDisplaySettings(settings: DirectoryDisplaySettings): SafBrowserUiState = copy(
+        grid = settings.layoutMode == DirectoryLayoutMode.GRID,
+        iconScalePercent = settings.iconScalePercent,
+        spacingScalePercent = settings.spacingScalePercent,
+        gridColumns = settings.gridColumns,
+        showThumbnails = settings.showThumbnails,
     )
 
     private fun PanelUiState.withDirectoryDisplaySettings(settings: DirectoryDisplaySettings): PanelUiState = copy(

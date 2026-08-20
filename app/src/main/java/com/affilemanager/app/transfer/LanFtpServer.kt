@@ -4,6 +4,7 @@ import com.affilemanager.app.core.FileSystemRules
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
+import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.Inet4Address
@@ -15,6 +16,7 @@ import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -40,6 +42,7 @@ class LanFtpServer(
         const val MAX_COMMAND_BYTES = 8 * 1_024
         const val MAX_COMMANDS_PER_SESSION = 10_000
         const val MAX_AUTH_FAILURES = 20
+        const val AUTH_LOCK_MILLIS = 30_000L
         const val MAX_UPLOAD_BYTES = LanHttpServer.MAX_UPLOAD_BYTES
         private const val SOCKET_TIMEOUT_MILLIS = 30_000
         private const val DATA_TIMEOUT_MILLIS = 15_000
@@ -53,7 +56,9 @@ class LanFtpServer(
     private val durationMillis = durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES) * 60_000L
     private val running = AtomicBoolean(false)
     private val commandCount = AtomicInteger(0)
-    private val authFailures = AtomicInteger(0)
+    private val authGuard = Any()
+    private var authFailures = 0
+    private var authLockedUntilMillis = 0L
     private val executor = ThreadPoolExecutor(
         MAX_CLIENTS,
         MAX_CLIENTS,
@@ -129,6 +134,7 @@ class LanFtpServer(
         var acceptedUser = false
         var cwd = root
         var passive: ServerSocket? = null
+        var activeTarget: InetSocketAddress? = null
         var renameFrom: File? = null
 
         fun reply(code: Int, text: String) {
@@ -144,6 +150,7 @@ class LanFtpServer(
 
         fun openPassive(): ServerSocket {
             passive?.close()
+            activeTarget = null
             return ServerSocket().apply {
                 reuseAddress = false
                 soTimeout = DATA_TIMEOUT_MILLIS
@@ -154,18 +161,36 @@ class LanFtpServer(
 
         fun withData(block: (Socket) -> Unit) {
             val server = passive
-            if (server == null) {
-                reply(425, "Use PASV or EPSV first")
+            val target = activeTarget
+            if (server == null && target == null) {
+                reply(425, "Use PASV, EPSV, PORT or EPRT first")
                 return
             }
             passive = null
+            activeTarget = null
             reply(150, "Opening data connection")
             try {
-                server.use { listener -> listener.accept().use(block) }
+                val data = if (server != null) {
+                    server.use { listener -> listener.accept() }
+                } else {
+                    Socket().apply {
+                        soTimeout = DATA_TIMEOUT_MILLIS
+                        connect(requireNotNull(target), DATA_TIMEOUT_MILLIS)
+                    }
+                }
+                data.use(block)
                 reply(226, "Transfer complete")
             } catch (_: SocketTimeoutException) {
                 reply(425, "Data connection timed out")
+            } catch (_: IOException) {
+                reply(425, "Data connection failed")
             }
+        }
+
+        fun setActiveTarget(target: InetSocketAddress) {
+            runCatching { passive?.close() }
+            passive = null
+            activeTarget = target
         }
 
         reply(220, "AF File Manager temporary FTP server")
@@ -183,13 +208,24 @@ class LanFtpServer(
                         reply(if (acceptedUser) 331 else 530, if (acceptedUser) "Password required" else "Unknown user")
                     }
                     "PASS" -> {
-                        authenticated = acceptedUser && argument == active.code && authFailures.get() < MAX_AUTH_FAILURES
-                        if (!authenticated) authFailures.incrementAndGet()
-                        reply(if (authenticated) 230 else 530, if (authenticated) "Logged in" else "Login incorrect")
+                        when (verifyCredentials(acceptedUser, argument, active.code)) {
+                            AuthResult.ACCEPTED -> {
+                                authenticated = true
+                                reply(230, "Logged in")
+                            }
+                            AuthResult.REJECTED -> {
+                                authenticated = false
+                                reply(530, "Login incorrect")
+                            }
+                            AuthResult.LOCKED -> {
+                                authenticated = false
+                                reply(530, "Too many login failures; retry later")
+                            }
+                        }
                     }
                     "SYST" -> reply(215, "UNIX Type: L8")
                     "FEAT" -> {
-                        writer.write("211-Features\r\n UTF8\r\n EPSV\r\n SIZE\r\n MDTM\r\n MLSD\r\n211 End\r\n")
+                        writer.write("211-Features\r\n UTF8\r\n EPSV\r\n EPRT\r\n SIZE\r\n MDTM\r\n MLSD\r\n211 End\r\n")
                         writer.flush()
                     }
                     "OPTS" -> reply(200, "UTF8 enabled")
@@ -213,6 +249,14 @@ class LanFtpServer(
                     "EPSV" -> if (requireAuth()) {
                         val data = openPassive()
                         reply(229, "Entering Extended Passive Mode (|||${data.localPort}|)")
+                    }
+                    "PORT" -> if (requireAuth()) {
+                        setActiveTarget(parsePortTarget(argument, socket.inetAddress))
+                        reply(200, "Active data connection configured")
+                    }
+                    "EPRT" -> if (requireAuth()) {
+                        setActiveTarget(parseEprtTarget(argument, socket.inetAddress))
+                        reply(200, "Extended active data connection configured")
                     }
                     "LIST", "NLST", "MLSD" -> if (requireAuth()) {
                         val target = resolvePath(cwd, argument.ifBlank { "." })
@@ -294,12 +338,63 @@ class LanFtpServer(
                 } catch (error: Throwable) {
                     runCatching { passive?.close() }
                     passive = null
+                    activeTarget = null
                     reply(550, (error.message ?: "Request rejected").take(300))
                 }
             }
         } finally {
             runCatching { passive?.close() }
+            activeTarget = null
         }
+    }
+
+    private fun verifyCredentials(acceptedUser: Boolean, password: String, expectedCode: String): AuthResult = synchronized(authGuard) {
+        val now = nowMillis()
+        if (now < authLockedUntilMillis) return@synchronized AuthResult.LOCKED
+        val matches = acceptedUser && MessageDigest.isEqual(
+            password.toByteArray(StandardCharsets.UTF_8),
+            expectedCode.toByteArray(StandardCharsets.UTF_8),
+        )
+        if (matches) {
+            authFailures = 0
+            authLockedUntilMillis = 0L
+            AuthResult.ACCEPTED
+        } else {
+            authFailures += 1
+            if (authFailures >= MAX_AUTH_FAILURES) {
+                authFailures = 0
+                authLockedUntilMillis = Math.addExact(now, AUTH_LOCK_MILLIS)
+                AuthResult.LOCKED
+            } else {
+                AuthResult.REJECTED
+            }
+        }
+    }
+
+    private fun parsePortTarget(argument: String, peerAddress: InetAddress): InetSocketAddress {
+        val values = argument.split(',').map { part -> part.toIntOrNull() ?: throw IllegalArgumentException("Invalid PORT") }
+        require(values.size == 6 && values.all { it in 0..255 }) { "Invalid PORT" }
+        val address = InetAddress.getByAddress(values.take(4).map(Int::toByte).toByteArray())
+        val port = values[4] * 256 + values[5]
+        return validatedActiveTarget(address, port, peerAddress)
+    }
+
+    private fun parseEprtTarget(argument: String, peerAddress: InetAddress): InetSocketAddress {
+        require(argument.length in 7..80) { "Invalid EPRT" }
+        val delimiter = argument.first()
+        val parts = argument.split(delimiter)
+        require(parts.size == 5 && parts.first().isEmpty() && parts.last().isEmpty() && parts[1] == "1") { "Invalid EPRT" }
+        val octets = parts[2].split('.').map { part -> part.toIntOrNull() ?: throw IllegalArgumentException("Invalid EPRT") }
+        require(octets.size == 4 && octets.all { it in 0..255 }) { "Invalid EPRT" }
+        val address = InetAddress.getByAddress(octets.map(Int::toByte).toByteArray())
+        val port = parts[3].toIntOrNull() ?: throw IllegalArgumentException("Invalid EPRT")
+        return validatedActiveTarget(address, port, peerAddress)
+    }
+
+    private fun validatedActiveTarget(address: InetAddress, port: Int, peerAddress: InetAddress): InetSocketAddress {
+        require(address.address.contentEquals(peerAddress.address)) { "Active FTP address must match the control client" }
+        require(port in 1_024..65_535) { "Active FTP port is outside the allowed range" }
+        return InetSocketAddress(address, port)
     }
 
     private fun resolvePath(cwd: File, raw: String): File {
@@ -325,4 +420,6 @@ class LanFtpServer(
 
     private fun ftpDate(millis: Long): String = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date(millis.coerceAtLeast(0)))
     private fun randomCode(): String = SecureRandom().nextInt(100_000_000).toString().padStart(8, '0')
+
+    private enum class AuthResult { ACCEPTED, REJECTED, LOCKED }
 }

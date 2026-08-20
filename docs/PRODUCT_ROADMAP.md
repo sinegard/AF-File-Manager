@@ -10,7 +10,8 @@ This roadmap is designed for Android rather than copied blindly from desktop fil
 - SMB, SFTP, HTTPS WebDAV, FTP, and FTPS with bidirectional recursive transfers and synchronization-plan previews.
 - Unified long-press selection for local and remote lists, a select-all/deselect-all toggle, and grouped transfers in both directions.
 - Cross-location copy/paste between the active local folder and the current remote folder, plus a navigable multi-selection upload picker.
-- Unified local and remote browser controls, including navigation history, system Back, breadcrumbs, list/grid layouts, hidden-file filtering, folders-first sorting, and consistent item/selection menus.
+- Unified browser controls across local storage, remote servers, Archives, Apps, Android document providers, protected Root/Shizuku locations, archive contents, and the trash, including navigation history, system Back, scoped search, list/grid layouts, folders-first sorting, and consistent display controls.
+- Application-owned terminal sessions that remain attached while the UI is recreated or the app is temporarily in the background.
 - SHA-256 duplicate analysis, large or old files, empty folders, folder-size analysis, tags, ratings, and saved searches.
 - Review-first cleanup for large files, installer/archive leftovers, exact duplicates, empty folders, and locally detected similar photos, with no automatic deletion.
 - Optional, disabled-by-default `Android/data` and `Android/obb` browsing through an explicitly granted Shizuku or compatible root service.

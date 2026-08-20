@@ -191,6 +191,9 @@ class FilePreviewLifecycleTest {
                 compose.onAllNodesWithText("Archive root").fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithText("Archive root").assertIsDisplayed()
+            compose.onNodeWithTag("directory_toolbar_archive").assertIsDisplayed()
+            compose.onNodeWithTag("directory_search_archive").assertIsDisplayed()
+            compose.onNodeWithTag("directory_layout_archive").assertIsDisplayed()
             compose.onNodeWithText("Aplankas").assertIsDisplayed()
             compose.onNodeWithText("šaknis.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("viduje.txt").fetchSemanticsNodes().isEmpty())

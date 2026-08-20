@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -62,13 +65,23 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafEntry
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.SafBrowserUiState
+import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
+import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.SafFileVisual
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.DirectorySearchButton
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SafBrowserDialog(
@@ -81,46 +94,88 @@ fun SafBrowserDialog(
     var rename by remember { mutableStateOf<SafEntry?>(null) }
     var delete by remember { mutableStateOf<SafEntry?>(null) }
     var info by remember { mutableStateOf<SafEntry?>(null) }
+    var menu by remember(state.currentUri) { mutableStateOf(false) }
+    var showDisplaySettings by remember(state.currentUri) { mutableStateOf(false) }
     var searchVisible by remember(state.location?.uri) { mutableStateOf(false) }
     var searchQuery by remember(state.location?.uri) { mutableStateOf("") }
     LaunchedEffect(state.currentUri) {
         searchVisible = false
         searchQuery = ""
     }
-    val displayedEntries = remember(state.entries, searchQuery) {
+    var displayedEntries by remember(state.currentUri) { mutableStateOf<List<SafEntry>>(emptyList()) }
+    var transforming by remember(state.currentUri) { mutableStateOf(false) }
+    LaunchedEffect(state.entries, searchQuery, state.sortMode, state.sortDirection) {
+        val entries = state.entries
         val query = searchQuery.trim()
-        if (query.isEmpty()) state.entries else state.entries.filter { it.name.contains(query, ignoreCase = true) }
+        transforming = true
+        displayedEntries = emptyList()
+        displayedEntries = withContext(Dispatchers.Default) {
+            val ordered = orderSafEntries(entries, state.sortMode, state.sortDirection)
+            if (query.isEmpty()) ordered else ordered.filter { it.name.contains(query, ignoreCase = true) }
+        }
+        transforming = false
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize().padding(WindowInsets.safeDrawing.asPaddingValues())) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                DirectoryBrowserToolbar(
+                    title = state.title,
+                    path = safLocationLabel(state),
+                    backEnabled = true,
+                    forwardEnabled = false,
+                    upEnabled = state.backStack.isNotEmpty(),
+                    searchActive = searchVisible,
+                    grid = state.grid,
+                    testTagPrefix = "saf",
+                    onBack = { if (!viewModel.navigateSafBack()) onDismiss() },
+                    onForward = {},
+                    onUp = { viewModel.navigateSafBack() },
+                    onToggleSearch = {
+                        searchVisible = !searchVisible
+                        if (!searchVisible) searchQuery = ""
+                    },
+                    onToggleLayout = viewModel::toggleSafLayout,
+                    onOpenSettings = { showDisplaySettings = true },
                 ) {
-                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti")) }
-                    IconButton(onClick = viewModel::navigateSafBack, enabled = state.backStack.isNotEmpty()) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Atgal"))
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(state.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        LText("Android dokumentų sistema", style = MaterialTheme.typography.labelSmall)
-                    }
-                    if (selectedLocalPath != null) {
-                        IconButton(onClick = { viewModel.copyLocalToSaf(selectedLocalPath) }) {
-                            Icon(Icons.Rounded.FileUpload, contentDescription = uiText("Kopijuoti pasirinktą vietinį elementą čia"))
+                    Box {
+                        IconButton(onClick = { menu = true }) {
+                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            if (selectedLocalPath != null) {
+                                DropdownMenuItem(
+                                    text = { LText("Kopijuoti pasirinktą vietinį elementą čia") },
+                                    leadingIcon = { Icon(Icons.Rounded.FileUpload, contentDescription = null) },
+                                    onClick = { menu = false; viewModel.copyLocalToSaf(selectedLocalPath) },
+                                )
+                                HorizontalDivider()
+                            }
+                            DirectoryDisplayMenuItems(
+                                grid = state.grid,
+                                includeHidden = false,
+                                hiddenFilesAvailable = false,
+                                showThumbnails = state.showThumbnails,
+                                thumbnailsAvailable = true,
+                                sortMode = state.sortMode,
+                                sortDirection = state.sortDirection,
+                                displaySettingsTestTag = "saf_display_settings",
+                                onToggleHidden = {},
+                                onToggleLayout = viewModel::toggleSafLayout,
+                                onToggleThumbnails = viewModel::toggleSafThumbnails,
+                                onOpenSettings = { showDisplaySettings = true },
+                                onSort = { mode -> viewModel.setSafSort(mode, state.sortDirection) },
+                                onDismissMenu = { menu = false },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { LText("Atnaujinti") },
+                                leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                                enabled = !state.loading,
+                                onClick = { menu = false; viewModel.refreshSafBrowser() },
+                            )
                         }
                     }
-                    DirectorySearchButton(
-                        active = searchVisible,
-                        testTag = "directory_search_saf",
-                        onClick = {
-                            searchVisible = !searchVisible
-                            if (!searchVisible) searchQuery = ""
-                        },
-                    )
-                    IconButton(onClick = viewModel::refreshSafBrowser) { Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti")) }
                 }
                 if (searchVisible) {
                     DirectoryQuickSearchField(
@@ -138,6 +193,8 @@ fun SafBrowserDialog(
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (state.loading && state.entries.isEmpty()) {
                         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    } else if (transforming && displayedEntries.isEmpty()) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                     } else if (state.entries.isEmpty() && state.error == null) {
                         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Rounded.Folder, contentDescription = null, modifier = Modifier.size(56.dp))
@@ -149,11 +206,35 @@ fun SafBrowserDialog(
                             LText("Atitikmenų nerasta", style = MaterialTheme.typography.titleMedium)
                             LText("Pabandykite kitą pavadinimą", style = MaterialTheme.typography.bodySmall)
                         }
+                    } else if (state.grid) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp, 8.dp, 10.dp, 92.dp),
+                            horizontalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
+                            verticalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
+                        ) {
+                            gridItems(displayedEntries, key = SafEntry::uri) { entry ->
+                                SafEntryGridItem(
+                                    entry = entry,
+                                    showThumbnails = state.showThumbnails,
+                                    iconScalePercent = state.iconScalePercent,
+                                    onOpen = { viewModel.openSafEntry(entry) },
+                                    onRename = { rename = entry },
+                                    onInfo = { info = entry },
+                                    onDelete = { delete = entry },
+                                    onDownload = { viewModel.copySafToLocal(entry) },
+                                )
+                            }
+                        }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
                             items(displayedEntries, key = SafEntry::uri) { entry ->
                                 SafEntryRow(
                                     entry = entry,
+                                    showThumbnails = state.showThumbnails,
+                                    iconScalePercent = state.iconScalePercent,
+                                    spacingScalePercent = state.spacingScalePercent,
                                     onOpen = { viewModel.openSafEntry(entry) },
                                     onRename = { rename = entry },
                                     onInfo = { info = entry },
@@ -201,11 +282,34 @@ fun SafBrowserDialog(
             dismissButton = { TextButton(onClick = { delete = null }) { LText("Atšaukti") } },
         )
     }
+    if (showDisplaySettings) {
+        DirectoryDisplaySettingsDialog(
+            initialSettings = DirectoryDisplaySettings(
+                layoutMode = if (state.grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
+                gridColumns = state.gridColumns,
+                showThumbnails = state.showThumbnails,
+            ),
+            thumbnailsAvailable = true,
+            initialSortMode = state.sortMode,
+            initialSortDirection = state.sortDirection,
+            onDismiss = { showDisplaySettings = false },
+            onApply = {
+                viewModel.setSafDisplaySettings(it)
+                showDisplaySettings = false
+            },
+            onApplySort = viewModel::setSafSort,
+        )
+    }
 }
 
 @Composable
 private fun SafEntryRow(
     entry: SafEntry,
+    showThumbnails: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onInfo: () -> Unit,
@@ -213,17 +317,20 @@ private fun SafEntryRow(
     onDownload: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
+    val iconSize = (42f * iconScalePercent / 100f).dp
+    val verticalPadding = (4f * spacingScalePercent / 100f).dp
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Card(onClick = onOpen, modifier = Modifier.weight(1f)) {
             Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 SafFileVisual(
                     entry = entry,
-                    targetWidth = 42.dp,
-                    targetHeight = 42.dp,
-                    modifier = Modifier.size(42.dp),
+                    targetWidth = iconSize,
+                    targetHeight = iconSize,
+                    showThumbnails = showThumbnails,
+                    modifier = Modifier.size(iconSize),
                 )
                 Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(entry.name, fontWeight = if (entry.directory) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -234,37 +341,128 @@ private fun SafEntryRow(
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai")) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
-                    leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
-                    onClick = { menu = false; onOpen() },
-                )
-                DropdownMenuItem(
-                    text = { LText("Kopijuoti į aktyvų langą") },
-                    leadingIcon = { Icon(Icons.Rounded.FileDownload, contentDescription = null) },
-                    onClick = { menu = false; onDownload() },
-                )
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = { LText("Pervadinti") },
-                    leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
-                    enabled = entry.canWrite,
-                    onClick = { menu = false; onRename() },
-                )
-                DropdownMenuItem(
-                    text = { LText("Informacija") },
-                    leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-                    onClick = { menu = false; onInfo() },
-                )
-                DropdownMenuItem(
-                    text = { LText("Ištrinti") },
-                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
-                    enabled = entry.canWrite,
-                    onClick = { menu = false; onDelete() },
+                SafEntryMenuItems(
+                    entry = entry,
+                    dismiss = { menu = false },
+                    onOpen = onOpen,
+                    onRename = onRename,
+                    onInfo = onInfo,
+                    onDelete = onDelete,
+                    onDownload = onDownload,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun SafEntryGridItem(
+    entry: SafEntry,
+    showThumbnails: Boolean,
+    iconScalePercent: Int,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val iconSize = (72f * iconScalePercent / 100f).dp
+    Card(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                SafFileVisual(
+                    entry = entry,
+                    targetWidth = iconSize,
+                    targetHeight = iconSize,
+                    showThumbnails = showThumbnails,
+                    modifier = Modifier.size(iconSize).align(Alignment.Center),
+                )
+                IconButton(onClick = { menu = true }, modifier = Modifier.align(Alignment.TopEnd)) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai"))
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    SafEntryMenuItems(
+                        entry = entry,
+                        dismiss = { menu = false },
+                        onOpen = onOpen,
+                        onRename = onRename,
+                        onInfo = onInfo,
+                        onDelete = onDelete,
+                        onDownload = onDownload,
+                    )
+                }
+            }
+            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (!entry.directory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun SafEntryMenuItems(
+    entry: SafEntry,
+    dismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
+        leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
+        onClick = { dismiss(); onOpen() },
+    )
+    DropdownMenuItem(
+        text = { LText("Kopijuoti į aktyvų langą") },
+        leadingIcon = { Icon(Icons.Rounded.FileDownload, contentDescription = null) },
+        onClick = { dismiss(); onDownload() },
+    )
+    HorizontalDivider()
+    DropdownMenuItem(
+        text = { LText("Pervadinti") },
+        leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+        enabled = entry.canWrite,
+        onClick = { dismiss(); onRename() },
+    )
+    DropdownMenuItem(
+        text = { LText("Informacija") },
+        leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+        onClick = { dismiss(); onInfo() },
+    )
+    DropdownMenuItem(
+        text = { LText("Ištrinti") },
+        leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+        enabled = entry.canWrite,
+        onClick = { dismiss(); onDelete() },
+    )
+}
+
+private fun safLocationLabel(state: SafBrowserUiState): String = buildString {
+    append(state.location?.title ?: state.title)
+    state.backStack.drop(1).forEach { (_, title) -> append(" / ").append(title) }
+    if (state.backStack.isNotEmpty()) append(" / ").append(state.title)
+}
+
+private fun orderSafEntries(
+    entries: List<SafEntry>,
+    mode: SortMode,
+    direction: SortDirection,
+): List<SafEntry> {
+    val ascending = when (mode) {
+        SortMode.NAME -> compareBy<SafEntry> { it.name.lowercase(Locale.ROOT) }
+        SortMode.SIZE -> compareBy<SafEntry> { it.sizeBytes }.thenBy { it.name.lowercase(Locale.ROOT) }
+        SortMode.MODIFIED -> compareBy<SafEntry> { it.modifiedAtMillis }.thenBy { it.name.lowercase(Locale.ROOT) }
+        SortMode.TYPE -> compareBy<SafEntry> { it.kind }.thenBy { it.name.lowercase(Locale.ROOT) }
+    }
+    val comparator = if (direction == SortDirection.ASCENDING) ascending else ascending.reversed()
+    val (directories, files) = entries.partition(SafEntry::directory)
+    return directories.sortedWith(comparator) + files.sortedWith(comparator)
 }
 
 @Composable

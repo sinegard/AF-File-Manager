@@ -3,8 +3,10 @@ package com.affilemanager.app.transfer
 import com.affilemanager.app.core.FileSystemRules
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -18,6 +20,7 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Base64
@@ -31,7 +34,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Temporary Basic-auth WebDAV endpoint for local-network file transfer. */
+/** Temporary, bounded WebDAV endpoint for local-network file transfer. */
 class LanWebDavServer(
     rootDirectory: File,
     private val bindAddress: InetAddress,
@@ -45,11 +48,17 @@ class LanWebDavServer(
         const val MAX_HEADER_BYTES = 16 * 1_024
         const val MAX_REQUESTS = 10_000
         const val MAX_AUTH_FAILURES = 20
+        const val AUTH_LOCK_MILLIS = 30_000L
         const val MAX_TREE_ENTRIES = 100_000
+        const val MAX_LOCKS = 256
+        const val MAX_LOCK_BODY_BYTES = 64 * 1_024
+        const val MAX_LOCK_SECONDS = 3_600L
         const val MAX_UPLOAD_BYTES = LanHttpServer.MAX_UPLOAD_BYTES
         private const val SOCKET_TIMEOUT_MILLIS = 30_000
         private const val MAX_CLIENTS = 4
         private const val MAX_QUEUE = 16
+        private const val ALLOW = "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK"
+        private val LOCK_TOKEN_PATTERN = Regex("<(opaquelocktoken:[^>]+)>", RegexOption.IGNORE_CASE)
     }
 
     private val root = rootDirectory.canonicalFile.also {
@@ -58,7 +67,11 @@ class LanWebDavServer(
     private val durationMillis = durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES) * 60_000L
     private val running = AtomicBoolean(false)
     private val requestCount = AtomicInteger(0)
-    private val authFailures = AtomicInteger(0)
+    private val authGuard = Any()
+    private var authFailures = 0
+    private var authLockedUntilMillis = 0L
+    private val lockGuard = Any()
+    private val locks = linkedMapOf<String, LockRecord>()
     private val executor = ThreadPoolExecutor(
         MAX_CLIENTS,
         MAX_CLIENTS,
@@ -105,6 +118,7 @@ class LanWebDavServer(
         runCatching { serverSocket?.close() }
         serverSocket = null
         executor.shutdownNow()
+        synchronized(lockGuard) { locks.clear() }
         session = null
         onStopped(reason.take(200))
     }
@@ -131,44 +145,74 @@ class LanWebDavServer(
     private fun handle(socket: Socket) {
         val input = BufferedInputStream(socket.getInputStream(), 64 * 1_024)
         val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1_024)
-        val request = try { readRequest(input) } catch (_: Throwable) { null }
-        if (request == null) return write(output, 400, "text/plain; charset=utf-8", "Bad request".toByteArray())
+        val request = try {
+            readRequest(input)
+        } catch (error: Throwable) {
+            return writeError(output, 400, error.message ?: "Bad request")
+        } ?: return writeError(output, 400, "Bad request")
         val active = session
         if (!running.get() || active == null || nowMillis() >= active.expiresAtMillis) {
-            return write(output, 410, "text/plain; charset=utf-8", "Session expired".toByteArray())
+            return writeError(output, 410, "Session expired")
         }
-        if (!authenticated(request, active)) {
-            authFailures.incrementAndGet()
-            return write(output, 401, "text/plain; charset=utf-8", "Authentication required".toByteArray(), listOf("WWW-Authenticate: Basic realm=\"AF File Manager\""))
+        when (authenticate(request, active)) {
+            AuthResult.REJECTED -> return write(
+                output,
+                401,
+                "text/plain; charset=utf-8",
+                "Authentication required".toByteArray(),
+                listOf("WWW-Authenticate: Basic realm=\"AF File Manager\""),
+            )
+            AuthResult.LOCKED -> {
+                val retrySeconds = synchronized(authGuard) {
+                    ((authLockedUntilMillis - nowMillis()).coerceAtLeast(1L) + 999L) / 1_000L
+                }
+                return write(output, 429, "text/plain; charset=utf-8", "Authentication temporarily locked".toByteArray(), listOf("Retry-After: $retrySeconds"))
+            }
+            AuthResult.ACCEPTED -> Unit
         }
-        if (authFailures.get() >= MAX_AUTH_FAILURES) {
-            return write(output, 403, "text/plain; charset=utf-8", "Authentication locked".toByteArray())
+        val expectation = request.headers["expect"]
+        if (expectation != null) {
+            if (!expectation.equals("100-continue", ignoreCase = true)) return writeError(output, 417, "Expectation not supported")
+            if (request.hasBody) writeContinue(output)
         }
         runCatching { dispatch(request, input, output) }.onFailure { error ->
-            runCatching { write(output, if (error is SecurityException || error is IllegalArgumentException) 400 else 500, "text/plain; charset=utf-8", (error.message ?: "Server error").take(300).toByteArray()) }
+            val status = when (error) {
+                is WebDavStatusException -> error.status
+                is SecurityException, is IllegalArgumentException -> 400
+                else -> 500
+            }
+            runCatching { writeError(output, status, error.message ?: "Server error") }
         }
     }
 
     private fun dispatch(request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
         val target = resolve(request.path)
         when (request.method) {
-            "OPTIONS" -> write(output, 200, "text/plain", ByteArray(0), listOf("DAV: 1, 2", "Allow: OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY"))
+            "OPTIONS" -> write(output, 200, "text/plain", ByteArray(0), listOf("DAV: 1, 2", "Allow: $ALLOW"))
             "PROPFIND" -> propfind(target, request.headers["depth"].orEmpty(), output)
             "GET", "HEAD" -> get(target, output, headOnly = request.method == "HEAD")
-            "PUT" -> put(target, request.contentLength, input, output)
+            "PUT" -> {
+                requireWriteAllowed(target, request)
+                put(target, request, input, output)
+            }
             "MKCOL" -> {
+                requireWriteAllowed(target, request)
                 require(target != root && !target.exists() && target.parentFile?.isDirectory == true) { "Katalogo sukurti negalima" }
                 require(target.mkdir()) { "Katalogo sukurti nepavyko" }
                 write(output, 201, "text/plain", ByteArray(0))
             }
             "DELETE" -> {
+                requireWriteAllowed(target, request)
                 require(target != root && target.exists()) { "Bendrinimo šaknies pašalinti negalima" }
                 deleteBounded(target, Counter())
+                removeLocksUnder(target)
                 write(output, 204, "text/plain", ByteArray(0))
             }
             "MOVE" -> move(target, request, output)
             "COPY" -> copy(target, request, output)
-            else -> write(output, 405, "text/plain", ByteArray(0), listOf("Allow: OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY"))
+            "LOCK" -> lock(target, request, input, output)
+            "UNLOCK" -> unlock(target, request, output)
+            else -> write(output, 405, "text/plain", ByteArray(0), listOf("Allow: $ALLOW"))
         }
     }
 
@@ -184,6 +228,8 @@ class LanWebDavServer(
                 if (file.isDirectory) append("<D:resourcetype><D:collection/></D:resourcetype>")
                 else append("<D:resourcetype/><D:getcontentlength>").append(file.length()).append("</D:getcontentlength>")
                 append("<D:getlastmodified>").append(httpDate(file.lastModified())).append("</D:getlastmodified>")
+                append("<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>")
+                exactLock(file)?.let { record -> append(lockDiscoveryXml(record, includePropertyWrapper = true)) }
                 append("</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>")
             }
             append("</D:multistatus>")
@@ -199,23 +245,16 @@ class LanWebDavServer(
         output.flush()
     }
 
-    private fun put(target: File, length: Long, input: BufferedInputStream, output: BufferedOutputStream) {
-        require(length in 0..MAX_UPLOAD_BYTES) { "Reikalingas ne didesnis kaip 1 GB Content-Length" }
+    private fun put(target: File, request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
+        if (request.bodyKind == BodyKind.FIXED) require(request.contentLength in 0..MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą" }
         require(target != root && target.parentFile?.isDirectory == true && target.parentFile?.canWrite() == true) { "Paskirties katalogas neleidžia rašyti" }
         FileSystemRules.validateFileName(target.name).getOrThrow()
         val existed = target.exists()
         require(!target.isDirectory) { "Failo vietoje yra katalogas" }
         val partial = File(target.parentFile, ".af-webdav-${UUID.randomUUID()}.partial")
-        var remaining = length
         try {
             FileOutputStream(partial).use { fileOutput ->
-                val buffer = ByteArray(256 * 1_024)
-                while (remaining > 0) {
-                    val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                    if (read < 0) error("Įkėlimas nutrūko")
-                    fileOutput.write(buffer, 0, read)
-                    remaining -= read
-                }
+                copyRequestBody(request, input, fileOutput, MAX_UPLOAD_BYTES)
                 fileOutput.fd.sync()
             }
             Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
@@ -226,18 +265,22 @@ class LanWebDavServer(
     private fun move(source: File, request: Request, output: BufferedOutputStream) {
         require(source != root && source.exists()) { "Šaltinis nepasiekiamas" }
         val target = destination(request)
+        requireWriteAllowed(source, request)
+        requireWriteAllowed(target, request)
         require(target != root && target.parentFile?.isDirectory == true) { "Paskirtis nepasiekiama" }
         if (target.exists()) {
             require(!request.headers["overwrite"].equals("F", true)) { "Paskirtis jau egzistuoja" }
             deleteBounded(target, Counter())
         }
         require(source.renameTo(target)) { "Perkelti nepavyko" }
+        removeLocksUnder(source)
         write(output, 201, "text/plain", ByteArray(0))
     }
 
     private fun copy(source: File, request: Request, output: BufferedOutputStream) {
         require(source.exists()) { "Šaltinis nepasiekiamas" }
         val target = destination(request)
+        requireWriteAllowed(target, request)
         require(target != root && !FileSystemRules.isContained(source, target)) { "Negalima kopijuoti į šaltinio vidų" }
         if (target.exists()) {
             require(!request.headers["overwrite"].equals("F", true)) { "Paskirtis jau egzistuoja" }
@@ -255,7 +298,9 @@ class LanWebDavServer(
 
     private fun resolve(rawPath: String): File {
         require(rawPath.length <= 4_096 && '\u0000' !in rawPath && '\\' !in rawPath) { "Netinkamas WebDAV kelias" }
-        val decoded = URLDecoder.decode(rawPath.substringBefore('?'), StandardCharsets.UTF_8.name()).trimStart('/')
+        // URLDecoder follows HTML-form rules and would otherwise turn a literal '+' in a path into a space.
+        val encodedPath = rawPath.substringBefore('?').replace("+", "%2B")
+        val decoded = URLDecoder.decode(encodedPath, StandardCharsets.UTF_8.name()).trimStart('/')
         val candidate = File(root, decoded).canonicalFile
         require(FileSystemRules.isContained(root, candidate)) { "Kelias išeina už pasirinkto katalogo" }
         return candidate
@@ -277,15 +322,63 @@ class LanWebDavServer(
         require(file.delete()) { "Pašalinti nepavyko" }
     }
 
-    private fun authenticated(request: Request, active: LanServerSession): Boolean {
-        if (authFailures.get() >= MAX_AUTH_FAILURES) return false
-        val value = request.headers["authorization"] ?: return false
-        if (!value.startsWith("Basic ", true)) return false
-        val decoded = runCatching { String(Base64.getDecoder().decode(value.substringAfter(' ').trim()), StandardCharsets.UTF_8) }.getOrNull() ?: return false
-        return decoded == "$USERNAME:${active.code}"
+    private fun authenticate(request: Request, active: LanServerSession): AuthResult = synchronized(authGuard) {
+        val now = nowMillis()
+        if (now < authLockedUntilMillis) return@synchronized AuthResult.LOCKED
+        if (authLockedUntilMillis != 0L) {
+            authLockedUntilMillis = 0L
+            authFailures = 0
+        }
+        val value = request.headers["authorization"]
+        val supplied = if (value?.startsWith("Basic ", true) == true) {
+            runCatching { Base64.getDecoder().decode(value.substringAfter(' ').trim()) }.getOrNull()
+        } else {
+            null
+        }
+        val expected = "$USERNAME:${active.code}".toByteArray(StandardCharsets.UTF_8)
+        val matches = supplied != null && MessageDigest.isEqual(supplied, expected)
+        if (matches) {
+            authFailures = 0
+            AuthResult.ACCEPTED
+        } else {
+            authFailures += 1
+            if (authFailures >= MAX_AUTH_FAILURES) {
+                authFailures = 0
+                authLockedUntilMillis = Math.addExact(now, AUTH_LOCK_MILLIS)
+                AuthResult.LOCKED
+            } else {
+                AuthResult.REJECTED
+            }
+        }
     }
 
-    private data class Request(val method: String, val path: String, val headers: Map<String, String>, val contentLength: Long)
+    private data class Request(
+        val method: String,
+        val path: String,
+        val headers: Map<String, String>,
+        val bodyKind: BodyKind,
+        val contentLength: Long,
+    ) {
+        val hasBody: Boolean get() = bodyKind == BodyKind.CHUNKED || contentLength > 0
+
+        fun conditionTokens(): Set<String> = sequenceOf(headers["if"], headers["lock-token"])
+            .filterNotNull()
+            .flatMap { value -> LOCK_TOKEN_PATTERN.findAll(value).map { match -> match.groupValues[1] } }
+            .toSet()
+    }
+
+    private enum class BodyKind { NONE, FIXED, CHUNKED }
+
+    private enum class AuthResult { ACCEPTED, REJECTED, LOCKED }
+
+    private data class LockRecord(
+        val path: String,
+        val token: String,
+        val depthInfinity: Boolean,
+        val expiresAtMillis: Long,
+    )
+
+    private class WebDavStatusException(val status: Int, message: String) : IllegalArgumentException(message)
 
     private fun readRequest(input: BufferedInputStream): Request? {
         var consumed = 0
@@ -302,19 +395,230 @@ class LanWebDavServer(
         val first = line()?.split(' ') ?: return null
         if (first.size != 3 || first[2] !in setOf("HTTP/1.0", "HTTP/1.1")) return null
         val method = first[0].uppercase(Locale.ROOT)
-        val allowed = setOf("OPTIONS", "PROPFIND", "GET", "HEAD", "PUT", "DELETE", "MKCOL", "MOVE", "COPY")
-        if (method !in allowed || !first[1].startsWith('/')) return null
+        if (!method.matches(Regex("[A-Z]{1,16}")) || !first[1].startsWith('/')) return null
         val headers = linkedMapOf<String, String>()
         while (true) {
             val header = line() ?: return null
             if (header.isEmpty()) break
             val separator = header.indexOf(':')
             if (separator <= 0) return null
-            headers[header.substring(0, separator).trim().lowercase(Locale.ROOT)] = header.substring(separator + 1).trim().take(8_192)
+            val value = header.substring(separator + 1).trim()
+            require(value.length <= 8_192) { "Header value is too large" }
+            headers[header.substring(0, separator).trim().lowercase(Locale.ROOT)] = value
         }
-        val length = headers["content-length"]?.toLongOrNull() ?: 0L
-        require(length >= 0) { "Netinkamas turinio dydis" }
-        return Request(method, first[1], headers, length)
+        val contentLengthHeader = headers["content-length"]
+        val transferEncoding = headers["transfer-encoding"]
+        require(contentLengthHeader == null || transferEncoding == null) { "Content-Length and Transfer-Encoding cannot be used together" }
+        val bodyKind: BodyKind
+        val length: Long
+        when {
+            transferEncoding != null -> {
+                require(transferEncoding.equals("chunked", ignoreCase = true)) { "Unsupported Transfer-Encoding" }
+                bodyKind = BodyKind.CHUNKED
+                length = 0L
+            }
+            contentLengthHeader != null -> {
+                length = contentLengthHeader.toLongOrNull() ?: throw IllegalArgumentException("Netinkamas turinio dydis")
+                require(length >= 0) { "Netinkamas turinio dydis" }
+                bodyKind = BodyKind.FIXED
+            }
+            else -> {
+                bodyKind = BodyKind.NONE
+                length = 0L
+            }
+        }
+        return Request(method, first[1], headers, bodyKind, length)
+    }
+
+    private fun copyRequestBody(
+        request: Request,
+        input: BufferedInputStream,
+        output: OutputStream,
+        maximumBytes: Long,
+    ): Long = when (request.bodyKind) {
+        BodyKind.NONE -> 0L
+        BodyKind.FIXED -> {
+            require(request.contentLength <= maximumBytes) { "Request body exceeds the allowed limit" }
+            copyFixed(input, output, request.contentLength)
+        }
+        BodyKind.CHUNKED -> copyChunked(input, output, maximumBytes)
+    }
+
+    private fun copyFixed(input: BufferedInputStream, output: OutputStream, length: Long): Long {
+        var remaining = length
+        val buffer = ByteArray(256 * 1_024)
+        while (remaining > 0) {
+            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+            if (read < 0) throw WebDavStatusException(400, "Request body ended unexpectedly")
+            output.write(buffer, 0, read)
+            remaining -= read
+        }
+        return length
+    }
+
+    private fun copyChunked(input: BufferedInputStream, output: OutputStream, maximumBytes: Long): Long {
+        var total = 0L
+        while (true) {
+            val sizeText = readCrlfLine(input, 8_192).substringBefore(';').trim()
+            require(sizeText.matches(Regex("[0-9A-Fa-f]{1,16}"))) { "Invalid chunk size" }
+            val size = sizeText.toLongOrNull(16) ?: throw IllegalArgumentException("Invalid chunk size")
+            if (size == 0L) {
+                var trailerBytes = 0
+                while (true) {
+                    val trailer = readCrlfLine(input, 8_192)
+                    trailerBytes = Math.addExact(trailerBytes, trailer.length + 2)
+                    require(trailerBytes <= MAX_HEADER_BYTES) { "Chunk trailers are too large" }
+                    if (trailer.isEmpty()) break
+                    require(':' in trailer) { "Invalid chunk trailer" }
+                }
+                return total
+            }
+            total = Math.addExact(total, size)
+            require(total <= maximumBytes) { "Request body exceeds the allowed limit" }
+            copyFixed(input, output, size)
+            require(input.read() == '\r'.code && input.read() == '\n'.code) { "Invalid chunk ending" }
+        }
+    }
+
+    private fun readCrlfLine(input: BufferedInputStream, maximumBytes: Int): String {
+        val result = StringBuilder()
+        while (true) {
+            val byte = input.read()
+            if (byte < 0) throw WebDavStatusException(400, "Request body ended unexpectedly")
+            if (byte == '\n'.code) {
+                require(result.isNotEmpty() && result.last() == '\r') { "CRLF line ending required" }
+                result.setLength(result.length - 1)
+                return result.toString()
+            }
+            require(result.length < maximumBytes) { "Request line is too long" }
+            result.append(byte.toChar())
+        }
+    }
+
+    private fun lock(target: File, request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
+        val bodyOutput = ByteArrayOutputStream()
+        copyRequestBody(request, input, bodyOutput, MAX_LOCK_BODY_BYTES.toLong())
+        val body = bodyOutput.toString(StandardCharsets.UTF_8.name())
+        val suppliedTokens = request.conditionTokens()
+        val now = nowMillis()
+        val requestedSeconds = lockTimeoutSeconds(request.headers["timeout"])
+        val sessionExpiry = session?.expiresAtMillis ?: Math.addExact(now, requestedSeconds * 1_000L)
+        val expiresAt = minOf(Math.addExact(now, requestedSeconds * 1_000L), sessionExpiry)
+        val targetPath = target.canonicalPath
+        val record = synchronized(lockGuard) {
+            cleanupExpiredLocks(now)
+            val existing = locks[targetPath]
+            if (body.isBlank()) {
+                if (existing == null || existing.token !in suppliedTokens) {
+                    throw WebDavStatusException(412, "Lock token does not match")
+                }
+                existing.copy(expiresAtMillis = expiresAt).also { locks[targetPath] = it }
+            } else {
+                val normalizedBody = body.lowercase(Locale.ROOT)
+                require("lockscope" in normalizedBody && "exclusive" in normalizedBody && "write" in normalizedBody) {
+                    "Only exclusive write locks are supported"
+                }
+                val depthInfinity = target.isDirectory && !request.headers["depth"].equals("0", ignoreCase = true)
+                val conflict = locks.values.firstOrNull { other -> locksConflict(other, targetPath, depthInfinity) }
+                if (conflict != null) throw WebDavStatusException(423, "Resource is locked")
+                if (locks.size >= MAX_LOCKS) throw WebDavStatusException(507, "Lock limit reached")
+                LockRecord(
+                    path = targetPath,
+                    token = "opaquelocktoken:${UUID.randomUUID()}",
+                    depthInfinity = depthInfinity,
+                    expiresAtMillis = expiresAt,
+                ).also { locks[targetPath] = it }
+            }
+        }
+        val response = lockDiscoveryXml(record, includePropertyWrapper = false).toByteArray(StandardCharsets.UTF_8)
+        write(
+            output,
+            if (target.exists()) 200 else 201,
+            "application/xml; charset=utf-8",
+            response,
+            listOf("Lock-Token: <${record.token}>", "Timeout: Second-${remainingLockSeconds(record)}"),
+        )
+    }
+
+    private fun unlock(target: File, request: Request, output: BufferedOutputStream) {
+        val token = request.conditionTokens().singleOrNull() ?: throw WebDavStatusException(400, "Invalid Lock-Token header")
+        val removed = synchronized(lockGuard) {
+            cleanupExpiredLocks(nowMillis())
+            val current = locks[target.canonicalPath]
+            if (current?.token == token) locks.remove(target.canonicalPath) != null else false
+        }
+        if (!removed) throw WebDavStatusException(409, "Lock token does not match")
+        write(output, 204, "text/plain", ByteArray(0))
+    }
+
+    private fun requireWriteAllowed(target: File, request: Request) {
+        val supplied = request.conditionTokens()
+        val blocking = synchronized(lockGuard) {
+            cleanupExpiredLocks(nowMillis())
+            locks.values.filter { record -> lockAffects(record, target.canonicalPath) }
+        }
+        if (blocking.any { it.token !in supplied }) throw WebDavStatusException(423, "Resource is locked")
+    }
+
+    private fun exactLock(target: File): LockRecord? = synchronized(lockGuard) {
+        cleanupExpiredLocks(nowMillis())
+        locks[target.canonicalPath]
+    }
+
+    private fun removeLocksUnder(target: File) = synchronized(lockGuard) {
+        val path = target.canonicalPath
+        locks.entries.removeAll { (_, record) -> record.path == path || record.path.startsWith(path + File.separator) }
+    }
+
+    private fun cleanupExpiredLocks(now: Long) {
+        locks.entries.removeAll { (_, record) -> record.expiresAtMillis <= now }
+    }
+
+    private fun locksConflict(existing: LockRecord, targetPath: String, targetDepthInfinity: Boolean): Boolean =
+        lockAffects(existing, targetPath) || (targetDepthInfinity && existing.path.startsWith(targetPath + File.separator))
+
+    private fun lockAffects(record: LockRecord, targetPath: String): Boolean =
+        record.path == targetPath || (record.depthInfinity && targetPath.startsWith(record.path + File.separator))
+
+    private fun lockTimeoutSeconds(raw: String?): Long {
+        if (raw.isNullOrBlank()) return minOf(600L, MAX_LOCK_SECONDS)
+        raw.split(',').forEach { candidate ->
+            val value = candidate.trim()
+            if (value.equals("Infinite", ignoreCase = true)) return MAX_LOCK_SECONDS
+            if (value.startsWith("Second-", ignoreCase = true)) {
+                val seconds = value.substringAfter('-').toLongOrNull()
+                if (seconds != null && seconds > 0) return seconds.coerceAtMost(MAX_LOCK_SECONDS)
+            }
+        }
+        throw WebDavStatusException(400, "Invalid Timeout header")
+    }
+
+    private fun lockDiscoveryXml(record: LockRecord, includePropertyWrapper: Boolean): String {
+        val active = buildString {
+            append("<D:activelock><D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope>")
+            append("<D:depth>").append(if (record.depthInfinity) "Infinity" else "0").append("</D:depth>")
+            append("<D:owner><D:href>AF File Manager</D:href></D:owner>")
+            append("<D:timeout>Second-").append(remainingLockSeconds(record)).append("</D:timeout>")
+            append("<D:locktoken><D:href>").append(xml(record.token)).append("</D:href></D:locktoken>")
+            append("<D:lockroot><D:href>").append(xml(davHref(File(record.path)))).append("</D:href></D:lockroot></D:activelock>")
+        }
+        return if (includePropertyWrapper) {
+            "<D:lockdiscovery>$active</D:lockdiscovery>"
+        } else {
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:prop xmlns:D=\"DAV:\"><D:lockdiscovery>$active</D:lockdiscovery></D:prop>"
+        }
+    }
+
+    private fun remainingLockSeconds(record: LockRecord): Long =
+        ((record.expiresAtMillis - nowMillis()).coerceAtLeast(1L) + 999L) / 1_000L
+
+    private fun writeContinue(output: BufferedOutputStream) {
+        output.write("HTTP/1.1 100 Continue\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))
+        output.flush()
+    }
+
+    private fun writeError(output: BufferedOutputStream, status: Int, message: String) {
+        write(output, status, "text/plain; charset=utf-8", message.take(300).toByteArray(StandardCharsets.UTF_8))
     }
 
     private fun write(output: BufferedOutputStream, status: Int, type: String, body: ByteArray, extra: List<String> = emptyList()) {
@@ -324,7 +628,24 @@ class LanWebDavServer(
     }
 
     private fun writeHeaders(output: BufferedOutputStream, status: Int, type: String, length: Long, extra: List<String>) {
-        val reason = mapOf(200 to "OK", 201 to "Created", 204 to "No Content", 207 to "Multi-Status", 400 to "Bad Request", 401 to "Unauthorized", 403 to "Forbidden", 405 to "Method Not Allowed", 410 to "Gone")[status] ?: "Error"
+        val reason = mapOf(
+            200 to "OK",
+            201 to "Created",
+            204 to "No Content",
+            207 to "Multi-Status",
+            400 to "Bad Request",
+            401 to "Unauthorized",
+            403 to "Forbidden",
+            405 to "Method Not Allowed",
+            409 to "Conflict",
+            410 to "Gone",
+            412 to "Precondition Failed",
+            417 to "Expectation Failed",
+            423 to "Locked",
+            429 to "Too Many Requests",
+            500 to "Internal Server Error",
+            507 to "Insufficient Storage",
+        )[status] ?: "Error"
         val header = buildString {
             append("HTTP/1.1 $status $reason\r\nContent-Type: $type\r\nContent-Length: $length\r\nCache-Control: no-store\r\n")
             extra.forEach { append(it).append("\r\n") }

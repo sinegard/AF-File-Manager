@@ -28,10 +28,10 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 - scheduled rules are disabled until their exact SHA-256 preview is shown and approved; changed files, oversized work, metered-network rules, and charging constraints stop execution safely;
 - a browsable local upload picker with folder navigation, persistent multi-folder selection, and system-back history;
 - the same long-press selection, clear/select-all toggle, strong highlight, and grouped copy flow for local and remote files;
-- one consistent local and remote browser layout with back/forward/up history, breadcrumbs, list/grid views, hidden-file controls, folders-first sorting, file-type icons, and matching action menus;
+- one consistent browser layout across local storage, remote servers, Archives, Apps, Android document providers, protected Root/Shizuku locations, archive contents, and the trash, with back/forward/up navigation, scoped search, list/grid views, folders-first sorting, file-type icons, and matching display controls;
 - editable network profiles, Android Keystore-protected secrets, SFTP host-key pinning, and safe reconnect after transient transport failures;
 - three-way remote text merging compares the downloaded original, the user's edit, and the current server version; overlapping changes remain visibly marked for a human decision;
-- a full-screen, touch-friendly terminal in the current folder: a real local Android PTY on the phone, or an SSH shell that reuses the active SFTP profile and opens at the current server path;
+- a full-screen, touch-friendly terminal in the current folder: a real local Android PTY on the phone, or an SSH shell that reuses the active SFTP profile and opens at the current server path; an active session stays open when the app is minimized;
 - local Wi-Fi file transfer page with a one-time code and an automatic expiry;
 - self-update from signed [GitHub Releases](https://github.com/sinegard/AF-File-Manager/releases).
 

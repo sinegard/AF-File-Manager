@@ -42,6 +42,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -56,12 +59,16 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAs
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -109,6 +116,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveBrowserIndex
+import com.affilemanager.app.archive.ArchiveBrowserItem
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
 import com.affilemanager.app.core.FileSystemRules
@@ -123,11 +131,19 @@ import com.affilemanager.app.editing.LineEnding
 import com.affilemanager.app.editing.TextEncoding
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.ui.PreviewTarget
 import com.affilemanager.app.ui.FileEditUiState
 import com.affilemanager.app.ui.editor.EditSaveAsDialog
 import com.affilemanager.app.ui.editor.FullTextEditor
+import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
+import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
+import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1018,78 +1034,163 @@ private fun ArchivePreview(
     onExtract: ((FileEntry, CharArray?) -> Unit)?,
 ) {
     var askPassword by remember { mutableStateOf(false) }
+    var searchVisible by remember(file.absolutePath) { mutableStateOf(false) }
+    var searchQuery by remember(file.absolutePath) { mutableStateOf("") }
+    var menu by remember(file.absolutePath) { mutableStateOf(false) }
+    var showDisplaySettings by remember(file.absolutePath) { mutableStateOf(false) }
+    var displaySettings by remember(file.absolutePath) { mutableStateOf(DirectoryDisplaySettings()) }
+    var sortMode by remember(file.absolutePath) { mutableStateOf(SortMode.NAME) }
+    var sortDirection by remember(file.absolutePath) { mutableStateOf(SortDirection.ASCENDING) }
+    LaunchedEffect(currentPath) {
+        searchVisible = false
+        searchQuery = ""
+    }
     val browser = remember(entries) { ArchiveBrowserIndex.from(entries) }
-    val visibleEntries = remember(browser, currentPath) { browser.children(currentPath) }
+    val children = remember(browser, currentPath) { browser.children(currentPath) }
+    var visibleEntries by remember(file.absolutePath, currentPath) { mutableStateOf<List<ArchiveBrowserItem>>(emptyList()) }
+    var transforming by remember(file.absolutePath, currentPath) { mutableStateOf(false) }
+    LaunchedEffect(children, searchQuery, sortMode, sortDirection) {
+        val requestedChildren = children
+        val query = searchQuery.trim()
+        transforming = true
+        visibleEntries = emptyList()
+        visibleEntries = withContext(Dispatchers.Default) {
+            val ordered = orderArchiveEntries(requestedChildren, sortMode, sortDirection)
+            if (query.isEmpty()) ordered else ordered.filter { it.name.contains(query, ignoreCase = true) }
+        }
+        transforming = false
+    }
+    val grid = displaySettings.layoutMode == DirectoryLayoutMode.GRID
+    val goUp = { if (currentPath.isNotEmpty()) onPathChanged(ArchiveBrowserIndex.parentOf(currentPath)) }
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(34.dp))
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                if (currentPath.isEmpty()) {
-                    LText("Archyvo pradžia", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                } else {
-                    Text(
-                        ArchiveBrowserIndex.folderName(currentPath),
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+        DirectoryBrowserToolbar(
+            title = if (currentPath.isEmpty()) uiText("Archyvo pradžia") else ArchiveBrowserIndex.folderName(currentPath),
+            path = if (currentPath.isEmpty()) file.name else "${file.name} / $currentPath",
+            backEnabled = currentPath.isNotEmpty(),
+            forwardEnabled = false,
+            upEnabled = currentPath.isNotEmpty(),
+            searchActive = searchVisible,
+            grid = grid,
+            testTagPrefix = "archive",
+            onBack = goUp,
+            onForward = {},
+            onUp = goUp,
+            onToggleSearch = {
+                searchVisible = !searchVisible
+                if (!searchVisible) searchQuery = ""
+            },
+            onToggleLayout = {
+                displaySettings = displaySettings.copy(
+                    layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+                )
+            },
+            onOpenSettings = { showDisplaySettings = true },
+        ) {
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
                 }
-                LText("${visibleEntries.size} elementų", style = MaterialTheme.typography.bodySmall)
-            }
-            if (onExtract != null) {
-                FilledTonalButton(onClick = { askPassword = true }) { LText("Išpakuoti") }
-            }
-            if (onCopyEntry != null && currentPath.isNotEmpty()) {
-                IconButton(onClick = { onCopyEntry(currentPath) }) {
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti archyvo aplanką"))
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    if (onExtract != null) {
+                        DropdownMenuItem(
+                            text = { LText("Išpakuoti") },
+                            leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
+                            onClick = { menu = false; askPassword = true },
+                        )
+                    }
+                    if (onCopyEntry != null && currentPath.isNotEmpty()) {
+                        DropdownMenuItem(
+                            text = { LText("Kopijuoti archyvo aplanką") },
+                            leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                            onClick = { menu = false; onCopyEntry(currentPath) },
+                        )
+                    }
+                    if (onExtract != null || (onCopyEntry != null && currentPath.isNotEmpty())) HorizontalDivider()
+                    DirectoryDisplayMenuItems(
+                        grid = grid,
+                        includeHidden = false,
+                        hiddenFilesAvailable = false,
+                        showThumbnails = false,
+                        thumbnailsAvailable = false,
+                        sortMode = sortMode,
+                        sortDirection = sortDirection,
+                        displaySettingsTestTag = "archive_display_settings",
+                        onToggleHidden = {},
+                        onToggleLayout = {
+                            displaySettings = displaySettings.copy(
+                                layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+                            )
+                        },
+                        onToggleThumbnails = {},
+                        onOpenSettings = { showDisplaySettings = true },
+                        onSort = { sortMode = it },
+                        onDismissMenu = { menu = false },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { LText("Atnaujinti") },
+                        leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                        enabled = false,
+                        onClick = {},
+                    )
                 }
             }
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            if (currentPath.isNotEmpty()) {
-                item(key = "archive-up") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onPathChanged(ArchiveBrowserIndex.parentOf(currentPath)) }
-                            .padding(horizontal = 14.dp, vertical = 12.dp)
-                            .testTag("archive-up"),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = null)
-                        LText("Aukštyn", modifier = Modifier.padding(start = 12.dp), fontWeight = FontWeight.Medium)
-                    }
+        if (searchVisible) {
+            DirectoryQuickSearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onClose = { searchVisible = false; searchQuery = "" },
+                modifier = Modifier.testTag("directory_search_field_archive"),
+            )
+        }
+        when {
+            transforming && visibleEntries.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            visibleEntries.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                LText(if (children.isEmpty()) "Aplankas tuščias" else "Atitikmenų nerasta")
+            }
+            grid -> LazyVerticalGrid(
+                columns = GridCells.Fixed(displaySettings.gridColumns.coerceIn(1, 6)),
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
+                verticalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
+            ) {
+                gridItems(visibleEntries, key = { it.path }) { entry ->
+                    ArchiveGridItem(entry, displaySettings.iconScalePercent, onPathChanged, onCopyEntry)
+                }
+            }
+            else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(visibleEntries, key = { it.path }) { entry ->
+                    ArchiveListItem(
+                        entry,
+                        displaySettings.iconScalePercent,
+                        displaySettings.spacingScalePercent,
+                        onPathChanged,
+                        onCopyEntry,
+                    )
                     HorizontalDivider()
                 }
             }
-            items(visibleEntries, key = { it.path }) { entry ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = entry.directory) {
-                            if (entry.directory) onPathChanged(entry.path)
-                        }
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                        .testTag("archive-entry-${entry.path}"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Description,
-                        contentDescription = null,
-                        tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(entry.name, modifier = Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!entry.directory && entry.sizeBytes >= 0) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-                    onCopyEntry?.let { copy ->
-                        IconButton(onClick = { copy(entry.path) }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Pridėti archyvo įrašą į kopijavimo rinkinį"))
-                        }
-                    }
-                    if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
-                }
-                HorizontalDivider()
-            }
         }
+    }
+    if (showDisplaySettings) {
+        DirectoryDisplaySettingsDialog(
+            initialSettings = displaySettings,
+            thumbnailsAvailable = false,
+            initialSortMode = sortMode,
+            initialSortDirection = sortDirection,
+            onDismiss = { showDisplaySettings = false },
+            onApply = {
+                displaySettings = it.copy(showThumbnails = false)
+                showDisplaySettings = false
+            },
+            onApplySort = { mode, direction ->
+                sortMode = mode
+                sortDirection = direction
+            },
+        )
     }
     if (askPassword && onExtract != null) {
         var password by remember { mutableStateOf("") }
@@ -1110,6 +1211,101 @@ private fun ArchivePreview(
             dismissButton = { TextButton(onClick = { askPassword = false }) { LText("Atšaukti") } },
         )
     }
+}
+
+@Composable
+private fun ArchiveListItem(
+    entry: ArchiveBrowserItem,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
+    onPathChanged: (String) -> Unit,
+    onCopyEntry: ((String) -> Unit)?,
+) {
+    val iconSize = (32f * iconScalePercent / 100f).dp
+    val verticalPadding = (10f * spacingScalePercent / 100f).dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = entry.directory) { if (entry.directory) onPathChanged(entry.path) }
+            .padding(horizontal = 14.dp, vertical = verticalPadding)
+            .testTag("archive-entry-${entry.path}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Description,
+            contentDescription = null,
+            tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(iconSize),
+        )
+        Text(entry.name, modifier = Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!entry.directory && entry.sizeBytes >= 0) {
+            Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+        }
+        onCopyEntry?.let { copy ->
+            IconButton(onClick = { copy(entry.path) }) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Pridėti archyvo įrašą į kopijavimo rinkinį"))
+            }
+        }
+        if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
+    }
+}
+
+@Composable
+private fun ArchiveGridItem(
+    entry: ArchiveBrowserItem,
+    iconScalePercent: Int,
+    onPathChanged: (String) -> Unit,
+    onCopyEntry: ((String) -> Unit)?,
+) {
+    val iconSize = (64f * iconScalePercent / 100f).dp
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = entry.directory) { if (entry.directory) onPathChanged(entry.path) }
+            .testTag("archive-entry-${entry.path}"),
+        tonalElevation = 2.dp,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Description,
+                contentDescription = null,
+                tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(iconSize),
+            )
+            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (!entry.directory && entry.sizeBytes >= 0) {
+                Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+            }
+            onCopyEntry?.let { copy ->
+                IconButton(onClick = { copy(entry.path) }) {
+                    Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Pridėti archyvo įrašą į kopijavimo rinkinį"))
+                }
+            }
+        }
+    }
+}
+
+private fun orderArchiveEntries(
+    entries: List<ArchiveBrowserItem>,
+    mode: SortMode,
+    direction: SortDirection,
+): List<ArchiveBrowserItem> {
+    val ascending = when (mode) {
+        SortMode.NAME -> compareBy<ArchiveBrowserItem> { it.name.lowercase(Locale.ROOT) }
+        SortMode.SIZE -> compareBy<ArchiveBrowserItem> { it.sizeBytes }.thenBy { it.name.lowercase(Locale.ROOT) }
+        SortMode.MODIFIED -> compareBy<ArchiveBrowserItem> { it.modifiedAtMillis ?: Long.MAX_VALUE }
+            .thenBy { it.name.lowercase(Locale.ROOT) }
+        SortMode.TYPE -> compareBy<ArchiveBrowserItem> { it.name.substringAfterLast('.', "").lowercase(Locale.ROOT) }
+            .thenBy { it.name.lowercase(Locale.ROOT) }
+    }
+    val comparator = if (direction == SortDirection.ASCENDING) ascending else ascending.reversed()
+    val (directories, files) = entries.partition(ArchiveBrowserItem::directory)
+    return directories.sortedWith(comparator) + files.sortedWith(comparator)
 }
 
 @Composable

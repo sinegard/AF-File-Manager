@@ -14,6 +14,12 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN perdavimas</string>
     <string name="lan_transfer_starting_text">Serveris paleidžiamas…</string>
     <string name="lan_transfer_running_title">AF File Manager LAN perdavimas veikia</string>
+    <string name="terminal_channel_name">Aktyvus terminalas</string>
+    <string name="terminal_channel_description">Išlaiko atidarytą telefono arba serverio terminalą programai veikiant fone</string>
+    <string name="terminal_notification_title">AF File Manager terminalas</string>
+    <string name="terminal_phone_active">Telefono terminalas aktyvus</string>
+    <string name="terminal_server_active">Serverio terminalas aktyvus</string>
     <string name="generated_extracted_name">išpakuota</string>
+    <string name="close">Uždaryti</string>
     <string name="stop">Sustabdyti</string>
 </resources>

@@ -39,6 +39,7 @@ import com.affilemanager.app.workflow.AfPlanRepository
 import com.affilemanager.app.workflow.AfStorageSessionFactory
 import com.affilemanager.app.workflow.AfTimelineRepository
 import com.affilemanager.app.workflow.AfWorkflowCoordinator
+import com.affilemanager.app.ui.TerminalSessionStore
 import com.affilemanager.app.ui.theme.AppearanceRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +64,7 @@ class AFFileManagerApplication : Application() {
 
 class AppGraph(application: Application) {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val terminalSessions = TerminalSessionStore(application, applicationScope)
     val advancedAccess = AdvancedAccessManager(application)
     val privilegedFiles = PrivilegedFileRepository(application, advancedAccess)
     val localFiles = LocalFileRepository(application)

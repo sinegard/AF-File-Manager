@@ -55,7 +55,11 @@ class TrashBrowserVisualTest {
 
             compose.onNodeWithText("Open trash").performClick()
             compose.onNodeWithText("AFTrashVisual").assertIsDisplayed()
-            compose.onNodeWithContentDescription("Show thumbnails").assertIsDisplayed()
+            compose.onNodeWithTag("directory_toolbar_trash").assertIsDisplayed()
+            compose.onNodeWithTag("directory_search_trash").assertIsDisplayed()
+            compose.onNodeWithTag("directory_layout_trash").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Folder actions").performClick()
+            compose.onNodeWithText("Show thumbnails").assertIsDisplayed().performClick()
             compose.onNodeWithText("AFTrashVisual").performClick()
             compose.onNodeWithText("Vidinis katalogas").assertIsDisplayed()
             compose.onNodeWithText("tik-pirmame-lygyje.txt").assertIsDisplayed()
@@ -78,7 +82,8 @@ class TrashBrowserVisualTest {
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithContentDescription("Restore AFTrashVisual").assertIsDisplayed()
 
-            compose.onNodeWithContentDescription("Empty trash").performClick()
+            compose.onNodeWithContentDescription("Folder actions").performClick()
+            compose.onNodeWithText("Empty trash").performClick()
             compose.onNodeWithText("Empty all trash?").assertIsDisplayed()
             compose.onNodeWithText("Delete all").performClick()
             compose.waitUntil(timeoutMillis = 10_000) {

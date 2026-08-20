@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -23,7 +26,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Warning
@@ -32,6 +35,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -56,11 +62,22 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.TrashBrowserEntry
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.TrashBrowserUiState
+import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
+import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
+import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.LocalFileVisual
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TrashBrowserDialog(
@@ -72,6 +89,27 @@ fun TrashBrowserDialog(
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     var confirmEmpty by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<TrashBrowserEntry?>(null) }
+    var searchVisible by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
+    var searchQuery by remember(state.itemId, state.relativePath) { mutableStateOf("") }
+    var menu by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
+    var showDisplaySettings by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
+    LaunchedEffect(state.itemId, state.relativePath) {
+        searchVisible = false
+        searchQuery = ""
+    }
+    var displayedEntries by remember(state.itemId, state.relativePath) { mutableStateOf<List<TrashBrowserEntry>>(emptyList()) }
+    var transforming by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
+    LaunchedEffect(state.entries, searchQuery, state.sortMode, state.sortDirection) {
+        val entries = state.entries
+        val query = searchQuery.trim()
+        transforming = true
+        displayedEntries = emptyList()
+        displayedEntries = withContext(Dispatchers.Default) {
+            val ordered = orderTrashEntries(entries, state.sortMode, state.sortDirection)
+            if (query.isEmpty()) ordered else ordered.filter { it.name.contains(query, ignoreCase = true) }
+        }
+        transforming = false
+    }
 
     BackHandler(enabled = preview == null) { viewModel.navigateTrashBack() }
     Dialog(
@@ -83,39 +121,69 @@ fun TrashBrowserDialog(
             color = MaterialTheme.colorScheme.surface,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                DirectoryBrowserToolbar(
+                    title = state.rootName ?: uiText("Šiukšliadėžė"),
+                    path = trashLocationLabel(state),
+                    backEnabled = true,
+                    forwardEnabled = false,
+                    upEnabled = state.itemId != null,
+                    searchActive = searchVisible,
+                    grid = state.grid,
+                    testTagPrefix = "trash",
+                    onBack = { viewModel.navigateTrashBack() },
+                    onForward = {},
+                    onUp = { viewModel.navigateTrashBack() },
+                    onToggleSearch = {
+                        searchVisible = !searchVisible
+                        if (!searchVisible) searchQuery = ""
+                    },
+                    onToggleLayout = viewModel::toggleTrashLayout,
+                    onOpenSettings = { showDisplaySettings = true },
                 ) {
-                    IconButton(onClick = { viewModel.navigateTrashBack() }) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = uiText(if (state.itemId == null) "Uždaryti šiukšliadėžę" else "Aukštyn"),
-                        )
+                    Box {
+                        IconButton(onClick = { menu = true }) {
+                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DirectoryDisplayMenuItems(
+                                grid = state.grid,
+                                includeHidden = false,
+                                hiddenFilesAvailable = false,
+                                showThumbnails = state.showThumbnails,
+                                thumbnailsAvailable = true,
+                                sortMode = state.sortMode,
+                                sortDirection = state.sortDirection,
+                                displaySettingsTestTag = "trash_display_settings",
+                                onToggleHidden = {},
+                                onToggleLayout = viewModel::toggleTrashLayout,
+                                onToggleThumbnails = viewModel::toggleTrashThumbnails,
+                                onOpenSettings = { showDisplaySettings = true },
+                                onSort = { mode -> viewModel.setTrashSort(mode, state.sortDirection) },
+                                onDismissMenu = { menu = false },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { LText("Atnaujinti") },
+                                leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                                enabled = !state.loading && !state.emptying,
+                                onClick = { menu = false; viewModel.refreshTrashBrowser() },
+                            )
+                            DropdownMenuItem(
+                                text = { LText("Išvalyti visą šiukšliadėžę") },
+                                leadingIcon = { Icon(Icons.Rounded.DeleteForever, contentDescription = null) },
+                                enabled = itemCount > 0 && !state.emptying,
+                                onClick = { menu = false; confirmEmpty = true },
+                            )
+                        }
                     }
-                    Column(modifier = Modifier.weight(1f)) {
-                        state.rootName?.let { rootName ->
-                            Text(rootName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        } ?: LText("Šiukšliadėžė", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        LText(
-                            text = trashLocationLabel(state),
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    IconButton(onClick = viewModel::toggleTrashThumbnails) {
-                        Icon(
-                            if (state.showThumbnails) Icons.AutoMirrored.Rounded.InsertDriveFile else Icons.Rounded.PhotoLibrary,
-                            contentDescription = uiText(if (state.showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras"),
-                        )
-                    }
-                    IconButton(onClick = viewModel::refreshTrashBrowser, enabled = !state.loading && !state.emptying) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti šiukšliadėžę"))
-                    }
-                    IconButton(onClick = { confirmEmpty = true }, enabled = itemCount > 0 && !state.emptying) {
-                        Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Išvalyti visą šiukšliadėžę"))
-                    }
+                }
+                if (searchVisible) {
+                    DirectoryQuickSearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        onClose = { searchVisible = false; searchQuery = "" },
+                        modifier = Modifier.testTag("directory_search_field_trash"),
+                    )
                 }
                 HorizontalDivider()
                 if (state.loading || state.emptying) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -124,18 +192,39 @@ fun TrashBrowserDialog(
                     when {
                         state.error != null -> TrashEmptyState("Katalogo atidaryti nepavyko", state.error)
                         state.loading && state.entries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                        transforming && displayedEntries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                         state.entries.isEmpty() -> TrashEmptyState(
                             if (state.itemId == null) "Šiukšliadėžė tuščia" else "Katalogas tuščias",
                             if (state.itemId == null) "Ištrinti elementai bus rodomi čia." else "Šiame kataloge nėra failų.",
                         )
+                        displayedEntries.isEmpty() -> TrashEmptyState("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
+                        state.grid -> LazyVerticalGrid(
+                            columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
+                            verticalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
+                        ) {
+                            gridItems(displayedEntries, key = { "${it.itemId}|${it.relativePath}|${it.storedPath}" }) { entry ->
+                                TrashBrowserGridItem(
+                                    entry = entry,
+                                    showThumbnails = state.showThumbnails,
+                                    iconScalePercent = state.iconScalePercent,
+                                    onOpen = { viewModel.openTrashEntry(entry) },
+                                    onRestore = { viewModel.restoreTrash(entry.itemId) },
+                                    onDelete = { deleteTarget = entry },
+                                )
+                            }
+                        }
                         else -> LazyColumn(
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(7.dp),
                         ) {
-                            items(state.entries, key = { "${it.itemId}|${it.relativePath}|${it.storedPath}" }) { entry ->
+                            items(displayedEntries, key = { "${it.itemId}|${it.relativePath}|${it.storedPath}" }) { entry ->
                                 TrashBrowserRow(
                                     entry = entry,
                                     showThumbnails = state.showThumbnails,
+                                    iconScalePercent = state.iconScalePercent,
+                                    spacingScalePercent = state.spacingScalePercent,
                                     onOpen = { viewModel.openTrashEntry(entry) },
                                     onRestore = { viewModel.restoreTrash(entry.itemId) },
                                     onDelete = { deleteTarget = entry },
@@ -175,34 +264,59 @@ fun TrashBrowserDialog(
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { LText("Atšaukti") } },
         )
     }
+
+    if (showDisplaySettings) {
+        DirectoryDisplaySettingsDialog(
+            initialSettings = DirectoryDisplaySettings(
+                layoutMode = if (state.grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
+                gridColumns = state.gridColumns,
+                showThumbnails = state.showThumbnails,
+            ),
+            thumbnailsAvailable = true,
+            initialSortMode = state.sortMode,
+            initialSortDirection = state.sortDirection,
+            onDismiss = { showDisplaySettings = false },
+            onApply = {
+                viewModel.setTrashDisplaySettings(it)
+                showDisplaySettings = false
+            },
+            onApplySort = viewModel::setTrashSort,
+        )
+    }
 }
 
 @Composable
 private fun TrashBrowserRow(
     entry: TrashBrowserEntry,
     showThumbnails: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
     onOpen: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val fileEntry = remember(entry) { entry.toFileEntry() }
     val dateFormat = rememberLocalizedDateTimeFormat()
+    val iconSize = (52f * iconScalePercent / 100f).dp
+    val verticalPadding = (10f * spacingScalePercent / 100f).dp
     Card(
         onClick = onOpen,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = verticalPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             LocalFileVisual(
                 entry = fileEntry,
-                targetWidth = 52.dp,
-                targetHeight = 52.dp,
+                targetWidth = iconSize,
+                targetHeight = iconSize,
                 showThumbnails = showThumbnails,
-                modifier = Modifier.size(52.dp),
+                modifier = Modifier.size(iconSize),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -224,8 +338,67 @@ private fun TrashBrowserRow(
     }
 }
 
+@Composable
+private fun TrashBrowserGridItem(
+    entry: TrashBrowserEntry,
+    showThumbnails: Boolean,
+    iconScalePercent: Int,
+    onOpen: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val fileEntry = remember(entry) { entry.toFileEntry() }
+    val iconSize = (72f * iconScalePercent / 100f).dp
+    Card(
+        onClick = onOpen,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            LocalFileVisual(
+                entry = fileEntry,
+                targetWidth = iconSize,
+                targetHeight = iconSize,
+                showThumbnails = showThumbnails,
+                modifier = Modifier.size(iconSize),
+            )
+            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (entry.topLevel) {
+                Row {
+                    IconButton(onClick = onRestore) {
+                        Icon(Icons.Rounded.Restore, contentDescription = uiText("Atkurti ${entry.name}"))
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti ${entry.name} visam laikui"))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun orderTrashEntries(
+    entries: List<TrashBrowserEntry>,
+    mode: SortMode,
+    direction: SortDirection,
+): List<TrashBrowserEntry> {
+    val ascending = when (mode) {
+        SortMode.NAME -> compareBy<TrashBrowserEntry> { it.name.lowercase(Locale.ROOT) }
+        SortMode.SIZE -> compareBy<TrashBrowserEntry> { it.sizeBytes }.thenBy { it.name.lowercase(Locale.ROOT) }
+        SortMode.MODIFIED -> compareBy<TrashBrowserEntry> { it.modifiedAtMillis }.thenBy { it.name.lowercase(Locale.ROOT) }
+        SortMode.TYPE -> compareBy<TrashBrowserEntry> { it.kind }.thenBy { it.name.lowercase(Locale.ROOT) }
+    }
+    val comparator = if (direction == SortDirection.ASCENDING) ascending else ascending.reversed()
+    val (directories, files) = entries.partition(TrashBrowserEntry::isDirectory)
+    return directories.sortedWith(comparator) + files.sortedWith(comparator)
+}
+
+@Composable
 private fun trashLocationLabel(state: TrashBrowserUiState): String = buildString {
-    append("Šiukšliadėžė")
+    append(uiText("Šiukšliadėžė"))
     state.rootName?.let { append(" / ").append(it) }
     if (state.relativePath.isNotEmpty()) append(" / ").append(state.relativePath)
 }

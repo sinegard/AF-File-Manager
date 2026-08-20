@@ -1,9 +1,11 @@
 package com.affilemanager.app
 
+import android.content.Intent
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.ui.MainViewModel
@@ -56,6 +58,46 @@ class TerminalFlowTest {
             assertFalse(viewModel.terminalState.value.running)
         } finally {
             compose.runOnUiThread { viewModel.confirmTerminalClose() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun terminalSurvivesBackgroundingAndViewModelDisposal() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val application = compose.activity.application as AFFileManagerApplication
+        val directory = File(compose.activity.getExternalFilesDir(null), "terminal-background-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            compose.runOnUiThread {
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.openLocalTerminal(PanelId.LEFT)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { application.graph.terminalSessions.state.value.running }
+            compose.onNodeWithTag("terminal-screen").fetchSemanticsNode()
+
+            compose.runOnUiThread {
+                compose.activity.moveTaskToBack(true)
+                compose.activity.viewModelStore.clear()
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                val state = application.graph.terminalSessions.state.value
+                state.visible && state.running && state.path.endsWith(directory.name)
+            }
+
+            compose.runOnUiThread {
+                compose.activity.startActivity(
+                    Intent(compose.activity, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                )
+            }
+
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            }
+            compose.onNodeWithTag("terminal-screen").fetchSemanticsNode()
+            assertTrue(application.graph.terminalSessions.state.value.running)
+        } finally {
+            application.graph.terminalSessions.closeNow()
             directory.deleteRecursively()
         }
     }

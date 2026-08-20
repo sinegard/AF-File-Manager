@@ -52,4 +52,28 @@ class HomeCustomizationRulesTest {
         assertTrue(customRemoval.shortcuts.any { it.id == "downloads" })
         assertFalse(customRemoval.shortcuts.any { it.id == "custom.one" })
     }
+
+    @Test
+    fun realQuickLocationFoldersUseStandardDirectoryNavigation() {
+        val folderIds = listOf(
+            "builtin.downloads",
+            "builtin.documents",
+            "builtin.pictures",
+            "builtin.videos",
+            "builtin.music",
+        )
+
+        folderIds.forEach { id ->
+            assertEquals(null, HomeShortcutNavigationRules.categoryFor(id))
+            assertFalse(HomeShortcutNavigationRules.isVirtualCategory(id))
+        }
+    }
+
+    @Test
+    fun onlyNonFolderShortcutsRemainVirtualCategories() {
+        assertEquals(FileCategory.ARCHIVES, HomeShortcutNavigationRules.categoryFor("builtin.archives"))
+        assertEquals(FileCategory.APPS, HomeShortcutNavigationRules.categoryFor("builtin.apps"))
+        assertTrue(HomeShortcutNavigationRules.isVirtualCategory("builtin.archives"))
+        assertTrue(HomeShortcutNavigationRules.isVirtualCategory("builtin.apps"))
+    }
 }

@@ -219,13 +219,24 @@ fun SafFileVisual(
     entry: SafEntry,
     targetWidth: Dp,
     targetHeight: Dp,
+    showThumbnails: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val extension = entry.name.substringAfterLast('.', "").lowercase()
+    if (entry.directory || !showThumbnails) {
+        FileVisualFrame(
+            name = entry.name,
+            kind = entry.kind,
+            extension = extension,
+            visual = null,
+            modifier = modifier,
+        )
+        return
+    }
     val context = LocalContext.current.applicationContext
     val density = LocalDensity.current
     val widthPx = FileVisualRules.boundedDimension(with(density) { targetWidth.roundToPx() })
     val heightPx = FileVisualRules.boundedDimension(with(density) { targetHeight.roundToPx() })
-    val extension = entry.name.substringAfterLast('.', "").lowercase()
     val key = "saf|${entry.uri}|${entry.modifiedAtMillis}|${entry.sizeBytes}|$widthPx|$heightPx"
     val cached = FileVisualLoader.peek(key)
     val visual = if (cached != null) {

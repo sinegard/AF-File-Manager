@@ -22,6 +22,21 @@ data class HomeCustomization(
     val shortcuts: List<HomeShortcut> = emptyList(),
 )
 
+/**
+ * Quick locations that point at real directories must use the normal local
+ * browser. Only shortcuts without a concrete directory are virtual categories.
+ */
+object HomeShortcutNavigationRules {
+    private val virtualCategories = mapOf(
+        "builtin.archives" to FileCategory.ARCHIVES,
+        "builtin.apps" to FileCategory.APPS,
+    )
+
+    fun categoryFor(shortcutId: String): FileCategory? = virtualCategories[shortcutId]
+
+    fun isVirtualCategory(shortcutId: String): Boolean = shortcutId in virtualCategories
+}
+
 object HomeCustomizationRules {
     const val MAX_SHORTCUTS = 32
     const val MAX_TITLE_LENGTH = 80
