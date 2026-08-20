@@ -102,6 +102,7 @@ import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.RemoteBrowserRules
 import com.affilemanager.app.ui.components.RemoteFileVisual
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
@@ -602,43 +603,22 @@ private fun RemoteFolderToolbar(
     searchActive: Boolean,
     onToggleSearch: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 3.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(22.dp))
-            .padding(horizontal = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    DirectoryBrowserToolbar(
+        title = state.path.substringAfterLast('/').ifBlank { state.connectedProfile?.name.orEmpty() },
+        path = state.path,
+        backEnabled = state.backHistory.isNotEmpty(),
+        forwardEnabled = state.forwardHistory.isNotEmpty(),
+        upEnabled = state.path != "/",
+        searchActive = searchActive,
+        grid = state.grid,
+        testTagPrefix = "remote",
+        onBack = onBack,
+        onForward = onForward,
+        onUp = onUp,
+        onToggleSearch = onToggleSearch,
+        onToggleLayout = onToggleGrid,
+        onOpenSettings = onDisplaySettings,
     ) {
-        IconButton(onClick = onBack, enabled = state.backHistory.isNotEmpty()) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Atgal"))
-        }
-        IconButton(onClick = onForward, enabled = state.forwardHistory.isNotEmpty()) {
-            Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Pirmyn"))
-        }
-        IconButton(onClick = onUp, enabled = state.path != "/") {
-            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                state.path.substringAfterLast('/').ifBlank { state.connectedProfile?.name.orEmpty() },
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(state.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        DirectorySearchButton(
-            active = searchActive,
-            testTag = "directory_search_remote",
-            onClick = onToggleSearch,
-        )
-        DirectoryLayoutButton(
-            grid = state.grid,
-            testTag = "directory_layout_remote",
-            onToggleLayout = onToggleGrid,
-            onOpenSettings = onDisplaySettings,
-        )
         RemoteFolderActionsMenu(
             state = state,
             localDirectory = localDirectory,

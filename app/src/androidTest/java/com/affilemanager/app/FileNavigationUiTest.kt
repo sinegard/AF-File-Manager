@@ -6,9 +6,12 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.FileScrollKey
 import com.affilemanager.app.ui.PanelId
@@ -139,6 +142,60 @@ class FileNavigationUiTest {
             }
             compose.waitForIdle()
             directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun quickLocationFolderUsesTheStandardLocalBrowserAndControls() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "quick-location-${System.nanoTime()}").apply { mkdirs() }
+        File(directory, "visible.txt").writeText("visible")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val previousPath = viewModel.leftPanel.value.path
+
+        try {
+            compose.runOnUiThread {
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.openHomeShortcut("builtin.documents", directory.absolutePath, PanelId.LEFT)
+            }
+            waitForPathAndListing(viewModel, directory)
+
+            assertTrue(!viewModel.fileCategory.value.open)
+            compose.onNodeWithTag("directory_search_local_LEFT").assertIsDisplayed()
+            compose.onNodeWithTag("directory_layout_local_LEFT").assertIsDisplayed()
+            compose.onNodeWithText("visible.txt").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, previousPath) }
+            compose.waitForIdle()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archivesAndAppsUseTheSharedBrowserChrome() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+
+        listOf(
+            "builtin.archives" to FileCategory.ARCHIVES,
+            "builtin.apps" to FileCategory.APPS,
+        ).forEach { (shortcutId, expectedCategory) ->
+            compose.runOnUiThread { viewModel.setSection(AppSection.FILES) }
+            compose.onNodeWithTag("quick_location_$shortcutId").performScrollTo().performClick()
+            compose.waitForIdle()
+            assertEquals(
+                "Quick location $shortcutId opened the wrong browser state: ${viewModel.fileCategory.value}",
+                expectedCategory,
+                viewModel.fileCategory.value.category,
+            )
+            assertTrue(viewModel.fileCategory.value.open)
+
+            compose.onNodeWithTag("panel_tabs_${viewModel.activePanel.value}").assertIsDisplayed()
+            compose.onNodeWithTag("directory_toolbar_category").assertIsDisplayed()
+            compose.onNodeWithTag("directory_search_category").assertIsDisplayed()
+            compose.onNodeWithTag("directory_layout_category").assertIsDisplayed()
+            compose.onNodeWithText("Files").assertIsDisplayed()
+
+            compose.onNodeWithText("Files").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) { !viewModel.fileCategory.value.open }
         }
     }
 

@@ -152,7 +152,7 @@ import com.affilemanager.app.data.TaggedFileRecord
 import com.affilemanager.app.data.HomeCustomization
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
-import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.data.HomeShortcutNavigationRules
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.FileScrollKey
@@ -162,6 +162,7 @@ import com.affilemanager.app.ui.PanelComparisonStatus
 import com.affilemanager.app.ui.ProgressiveScrollRules
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
@@ -231,6 +232,29 @@ fun FilesScreen(
             .padding(contentPadding)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (fileCategory.open) {
+                    return@onPreviewKeyEvent when {
+                        event.key == Key.Escape -> {
+                            viewModel.closeFileCategory(); true
+                        }
+                        event.key == Key.F5 -> {
+                            viewModel.refreshFileCategory(); true
+                        }
+                        event.isCtrlPressed && event.isShiftPressed && event.key == Key.C -> {
+                            viewModel.copyFileCategorySelection(move = false, append = true); true
+                        }
+                        event.isCtrlPressed && event.key == Key.C -> {
+                            viewModel.copyFileCategorySelection(move = false); true
+                        }
+                        event.isCtrlPressed && event.key == Key.X -> {
+                            viewModel.copyFileCategorySelection(move = true); true
+                        }
+                        event.isCtrlPressed && event.key == Key.A -> {
+                            viewModel.toggleAllFileCategoryEntries(fileCategory.entries.mapTo(linkedSetOf(), FileEntry::absolutePath)); true
+                        }
+                        else -> false
+                    }
+                }
                 val state = if (activePanel == PanelId.LEFT) left else right
                 when {
                     event.isCtrlPressed && event.isShiftPressed && event.key == Key.T -> {
@@ -283,7 +307,19 @@ fun FilesScreen(
             if (!hasAllFilesAccess) {
                 PermissionBanner(onRequestAllFilesAccess)
             }
-            if (filesHomeVisible) {
+            if (fileCategory.open) {
+                PanelTabsBar(
+                    panel = activePanel,
+                    workspace = if (activePanel == PanelId.LEFT) leftTabs else rightTabs,
+                    viewModel = viewModel,
+                    onBeforeTabAction = viewModel::closeFileCategory,
+                )
+                FileCategoryBrowser(
+                    state = fileCategory,
+                    viewModel = viewModel,
+                    modifier = Modifier.weight(1f),
+                )
+            } else if (filesHomeVisible) {
                 FilesHome(
                     roots = roots,
                     recentFiles = recentFiles.items,
@@ -298,17 +334,7 @@ fun FilesScreen(
                         AdvancedAccessBackend.ROOT,
                         AdvancedAccessBackend.SHIZUKU_ROOT,
                     ),
-                    onOpen = { location ->
-                        when (location.id) {
-                            "builtin.documents" -> viewModel.openFileCategory(FileCategory.DOCUMENTS)
-                            "builtin.pictures" -> viewModel.openFileCategory(FileCategory.IMAGES)
-                            "builtin.videos" -> viewModel.openFileCategory(FileCategory.VIDEOS)
-                            "builtin.music" -> viewModel.openFileCategory(FileCategory.AUDIO)
-                            "builtin.archives" -> viewModel.openFileCategory(FileCategory.ARCHIVES)
-                            "builtin.apps" -> viewModel.openFileCategory(FileCategory.APPS)
-                            else -> viewModel.openQuickPath(location.path, activePanel)
-                        }
-                    },
+                    onOpen = { location -> viewModel.openHomeShortcut(location.id, location.path, activePanel) },
                     onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
                     onOpenRoot = { viewModel.openAdvancedBrowser("/") },
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
@@ -584,7 +610,6 @@ fun FilesScreen(
             confirmButton = { TextButton(onClick = viewModel::closePanelComparison) { LText("Uždaryti") } },
         )
     }
-    FileCategoryBrowserDialog(fileCategory, viewModel)
 }
 
 @Composable
@@ -642,7 +667,7 @@ private fun FilesHome(
             title = shortcut.title,
             path = shortcut.path,
             icon = homeShortcutIcon(shortcut),
-            virtual = shortcut.id in VIRTUAL_CATEGORY_IDS,
+            virtual = HomeShortcutNavigationRules.isVirtualCategory(shortcut.id),
         )
     }
     var showAllRecent by remember { mutableStateOf(false) }
@@ -863,7 +888,7 @@ private fun QuickLocationsHomeSection(
                     QuickLocationTile(
                         location = location,
                         iconScalePercent = displaySettings.iconScalePercent,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).testTag("quick_location_${location.id}"),
                         onClick = { onOpen(location) },
                     )
                 }
@@ -876,6 +901,7 @@ private fun QuickLocationsHomeSection(
                 title = location.title,
                 description = if (location.virtual) "Visa saugykla" else location.path,
                 icon = location.icon,
+                modifier = Modifier.testTag("quick_location_${location.id}"),
                 onClick = { onOpen(location) },
             )
         }
@@ -1144,15 +1170,6 @@ private data class QuickLocation(
     val virtual: Boolean = false,
 )
 
-private val VIRTUAL_CATEGORY_IDS = setOf(
-    "builtin.documents",
-    "builtin.pictures",
-    "builtin.videos",
-    "builtin.music",
-    "builtin.archives",
-    "builtin.apps",
-)
-
 @Composable
 private fun QuickLocationTile(
     location: QuickLocation,
@@ -1185,6 +1202,7 @@ private fun StorageLocationCard(
     description: String,
     icon: ImageVector,
     usageFraction: Float? = null,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val animatedUsage by animateFloatAsState(
@@ -1192,7 +1210,7 @@ private fun StorageLocationCard(
         animationSpec = spring(),
         label = "storage usage",
     )
-    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+    ElevatedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1298,46 +1316,25 @@ private fun FilePanel(
                 },
             )
         } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(22.dp))
-                    .padding(horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            DirectoryBrowserToolbar(
+                title = File(state.path).name.ifBlank { state.path },
+                path = state.path,
+                backEnabled = state.backHistory.isNotEmpty(),
+                forwardEnabled = state.forwardHistory.isNotEmpty(),
+                upEnabled = File(state.path).parentFile != null,
+                searchActive = searchVisible,
+                grid = state.grid,
+                testTagPrefix = "local_$panelId",
+                onBack = { viewModel.navigateBack(panelId) },
+                onForward = { viewModel.navigateForward(panelId) },
+                onUp = { viewModel.navigateUp(panelId) },
+                onToggleSearch = {
+                    searchVisible = !searchVisible
+                    if (!searchVisible) searchQuery = ""
+                },
+                onToggleLayout = { viewModel.toggleGrid(panelId) },
+                onOpenSettings = onDisplaySettings,
             ) {
-                IconButton(onClick = { viewModel.navigateBack(panelId) }, enabled = state.backHistory.isNotEmpty()) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Atgal"))
-                }
-                IconButton(onClick = { viewModel.navigateForward(panelId) }, enabled = state.forwardHistory.isNotEmpty()) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Pirmyn"))
-                }
-                IconButton(onClick = { viewModel.navigateUp(panelId) }) {
-                    Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        File(state.path).name.ifBlank { state.path },
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(state.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                DirectorySearchButton(
-                    active = searchVisible,
-                    testTag = "directory_search_local_$panelId",
-                    onClick = {
-                        searchVisible = !searchVisible
-                        if (!searchVisible) searchQuery = ""
-                    },
-                )
-                DirectoryLayoutButton(
-                    grid = state.grid,
-                    testTag = "directory_layout_local_$panelId",
-                    onToggleLayout = { viewModel.toggleGrid(panelId) },
-                    onOpenSettings = onDisplaySettings,
-                )
                 CompactPanelActions(
                     expanded = compactMenu,
                     onExpandedChange = { compactMenu = it },
@@ -1588,11 +1585,17 @@ private fun ViewingHistoryDialog(
 }
 
 @Composable
-private fun PanelTabsBar(panel: PanelId, workspace: PanelWorkspace, viewModel: MainViewModel) {
+private fun PanelTabsBar(
+    panel: PanelId,
+    workspace: PanelWorkspace,
+    viewModel: MainViewModel,
+    onBeforeTabAction: () -> Unit = {},
+) {
     var menu by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("panel_tabs_$panel")
             .padding(horizontal = 6.dp, vertical = 3.dp)
             .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(22.dp))
             .horizontalScroll(rememberScrollState())
@@ -1603,14 +1606,14 @@ private fun PanelTabsBar(panel: PanelId, workspace: PanelWorkspace, viewModel: M
         workspace.tabs.forEach { tab ->
             FilterChip(
                 selected = tab.id == workspace.activeTabId,
-                onClick = { viewModel.activateTab(panel, tab.id) },
+                onClick = { onBeforeTabAction(); viewModel.activateTab(panel, tab.id) },
                 label = { Text(File(tab.path).name.ifBlank { tab.path }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = if (tab.locked) {
                     { Icon(Icons.Rounded.Lock, contentDescription = uiText("Užrakinta"), modifier = Modifier.size(16.dp)) }
                 } else null,
             )
         }
-        IconButton(onClick = { viewModel.newTab(panel) }) {
+        IconButton(onClick = { onBeforeTabAction(); viewModel.newTab(panel) }) {
             Icon(Icons.Rounded.Add, contentDescription = uiText("Nauja kortelė"))
         }
         Box {
@@ -1618,35 +1621,35 @@ private fun PanelTabsBar(panel: PanelId, workspace: PanelWorkspace, viewModel: M
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
                     text = { LText("Dubliuoti kortelę") },
-                    onClick = { viewModel.duplicateTab(panel); menu = false },
+                    onClick = { onBeforeTabAction(); viewModel.duplicateTab(panel); menu = false },
                 )
                 DropdownMenuItem(
                     text = { LText(if (workspace.activeTab.locked) "Atrakinti kortelę" else "Užrakinti kortelę") },
                     leadingIcon = {
                         Icon(if (workspace.activeTab.locked) Icons.Rounded.LockOpen else Icons.Rounded.Lock, contentDescription = null)
                     },
-                    onClick = { viewModel.toggleTabLock(panel); menu = false },
+                    onClick = { onBeforeTabAction(); viewModel.toggleTabLock(panel); menu = false },
                 )
                 DropdownMenuItem(
                     text = { LText("Uždaryti kortelę") },
                     enabled = workspace.tabs.size > 1 && !workspace.activeTab.locked,
-                    onClick = { viewModel.closeActiveTab(panel); menu = false },
+                    onClick = { onBeforeTabAction(); viewModel.closeActiveTab(panel); menu = false },
                 )
                 DropdownMenuItem(
                     text = { LText("Atkurti uždarytą kortelę") },
                     enabled = workspace.closedTabs.isNotEmpty(),
-                    onClick = { viewModel.restoreClosedTab(panel); menu = false },
+                    onClick = { onBeforeTabAction(); viewModel.restoreClosedTab(panel); menu = false },
                 )
                 HorizontalDivider()
                 DropdownMenuItem(
                     text = { LText("Sukeisti skydelius") },
                     leadingIcon = { Icon(Icons.Rounded.SwapHoriz, contentDescription = null) },
-                    onClick = { viewModel.swapPanels(); menu = false },
+                    onClick = { onBeforeTabAction(); viewModel.swapPanels(); menu = false },
                 )
                 DropdownMenuItem(
                     text = { LText("Palyginti skydelių aplankus") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.CompareArrows, contentDescription = null) },
-                    onClick = { viewModel.comparePanels(); menu = false },
+                    onClick = { onBeforeTabAction(); viewModel.comparePanels(); menu = false },
                 )
             }
         }

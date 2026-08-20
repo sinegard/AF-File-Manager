@@ -85,6 +85,9 @@ class ConnectionsComponentsTest {
             }
         }
 
+        compose.onNodeWithTag("directory_toolbar_remote").assertIsDisplayed()
+        compose.onNodeWithTag("directory_search_remote").assertIsDisplayed()
+        compose.onNodeWithTag("directory_layout_remote").assertIsDisplayed()
         compose.onNodeWithContentDescription("Folder actions").performClick()
         compose.onNodeWithTag("remote_upload_choose").assertIsEnabled().assertHasClickAction()
         compose.onNodeWithTag("remote_paste_local").assertIsEnabled().assertHasClickAction()
@@ -348,7 +351,8 @@ class ConnectionsComponentsTest {
         compose.onNodeWithTag("directory_layout_remote").performTouchInput { longClick() }
         clickFolderMenuItem("Show hidden files")
         compose.onNodeWithContentDescription("Folder actions").performClick()
-        compose.onAllNodesWithText("Show grid").assertCountEquals(0)
+        compose.onNodeWithText("Show grid").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("Folder actions").performClick()
         compose.onAllNodesWithText("By size").assertCountEquals(0)
         compose.onNodeWithText("Display settings").performScrollTo().assertIsDisplayed().performClick()
         clickFolderMenuItem("Refresh")
@@ -359,7 +363,7 @@ class ConnectionsComponentsTest {
             assertEquals(1, forward.get())
             assertEquals(1, up.get())
             assertEquals(1, hidden.get())
-            assertEquals(1, grid.get())
+            assertEquals(2, grid.get())
             assertEquals(2, displaySettings.get())
             assertEquals(0, sort.get())
             assertEquals(1, refresh.get())

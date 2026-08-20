@@ -44,6 +44,19 @@ class ArchiveBrowserTest {
     }
 
     @Test
+    fun preservesFileAndExplicitDirectoryModificationTimesForSorting() {
+        val index = ArchiveBrowserIndex.from(
+            listOf(
+                entry("Aplankas/failas.txt", size = 8, modifiedAtMillis = 200),
+                entry("Aplankas/", directory = true, modifiedAtMillis = 100),
+            ),
+        )
+
+        assertEquals(100L, index.children("").single().modifiedAtMillis)
+        assertEquals(200L, index.children("Aplankas").single().modifiedAtMillis)
+    }
+
+    @Test
     fun parentMovesExactlyOneArchiveLevel() {
         assertEquals("", ArchiveBrowserIndex.parentOf("A"))
         assertEquals("A", ArchiveBrowserIndex.parentOf("A/B"))
@@ -60,9 +73,15 @@ class ArchiveBrowserTest {
         assertTrue(warning.name.contains("1 archyvo įrašų nerodoma"))
     }
 
-    private fun entry(name: String, directory: Boolean = false, size: Long = -1) = ArchiveEntryInfo(
+    private fun entry(
+        name: String,
+        directory: Boolean = false,
+        size: Long = -1,
+        modifiedAtMillis: Long? = null,
+    ) = ArchiveEntryInfo(
         name = name,
         directory = directory,
         sizeBytes = size,
+        modifiedAtMillis = modifiedAtMillis,
     )
 }

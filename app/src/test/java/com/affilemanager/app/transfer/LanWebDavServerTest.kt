@@ -49,6 +49,165 @@ class LanWebDavServerTest {
         }
         assertEquals(10_000, LanWebDavServer.MAX_REQUESTS)
         assertEquals(100_000, LanWebDavServer.MAX_TREE_ENTRIES)
+        assertEquals(30_000L, LanWebDavServer.AUTH_LOCK_MILLIS)
+        assertEquals(256, LanWebDavServer.MAX_LOCKS)
+        assertEquals(64 * 1_024, LanWebDavServer.MAX_LOCK_BODY_BYTES)
+        assertEquals(3_600L, LanWebDavServer.MAX_LOCK_SECONDS)
+    }
+
+    @Test
+    fun chunkedPutStoresTheCompleteBody() {
+        val root = temporary.newFolder("dav-chunked")
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val response = request(
+                server.start().port,
+                authenticated(
+                    "PUT /chunked.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "Transfer-Encoding: chunked\r\n",
+                ) + "5;source=test\r\nhello\r\n7\r\n WebDAV\r\n0\r\nX-Test: done\r\n\r\n",
+            )
+
+            assertTrue(response.startsWith("HTTP/1.1 201"))
+            assertEquals("hello WebDAV", root.resolve("chunked.txt").readText())
+        }
+    }
+
+    @Test
+    fun literalPlusInAPathIsNotDecodedAsSpace() {
+        val root = temporary.newFolder("dav-plus-path")
+        val body = "plus"
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val response = request(
+                server.start().port,
+                authenticated("PUT /a+b.txt HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\n") + body,
+            )
+
+            assertTrue(response.startsWith("HTTP/1.1 201"))
+            assertEquals(body, root.resolve("a+b.txt").readText())
+            assertFalse(root.resolve("a b.txt").exists())
+        }
+    }
+
+    @Test
+    fun expectContinueIsAcknowledgedBeforeTheFinalPutResponse() {
+        val root = temporary.newFolder("dav-continue")
+        val body = "continue without delay"
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val response = request(
+                server.start().port,
+                authenticated(
+                    "PUT /continue.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "Content-Length: ${body.toByteArray().size}\r\n",
+                ) + body,
+            )
+
+            assertTrue(response.startsWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201"))
+            assertEquals(body, root.resolve("continue.txt").readText())
+        }
+    }
+
+    @Test
+    fun optionsLocksAndUnlocksFollowTheAdvertisedDavContract() {
+        val root = temporary.newFolder("dav-locks")
+        val lockBody = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <D:lockinfo xmlns:D="DAV:">
+              <D:lockscope><D:exclusive/></D:lockscope>
+              <D:locktype><D:write/></D:locktype>
+              <D:owner><D:href>test</D:href></D:owner>
+            </D:lockinfo>
+        """.trimIndent()
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val port = server.start().port
+            val options = request(port, authenticated("OPTIONS / HTTP/1.1\r\nHost: localhost\r\n"))
+            assertTrue(options.contains("DAV: 1, 2"))
+            assertTrue(options.contains("LOCK"))
+            assertTrue(options.contains("UNLOCK"))
+
+            val lockResponse = request(
+                port,
+                authenticated(
+                    "LOCK /locked.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "Depth: 0\r\n" +
+                        "Timeout: Second-120\r\n" +
+                        "Content-Length: ${lockBody.toByteArray().size}\r\n",
+                ) + lockBody,
+            )
+            assertTrue(lockResponse.startsWith("HTTP/1.1 201"))
+            val token = Regex("Lock-Token: <([^>]+)>", RegexOption.IGNORE_CASE)
+                .find(lockResponse)?.groupValues?.get(1)
+            assertTrue(!token.isNullOrBlank())
+
+            val content = "locked content"
+            val blockedPut = request(
+                port,
+                authenticated(
+                    "PUT /locked.txt HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${content.toByteArray().size}\r\n",
+                ) + content,
+            )
+            assertTrue(blockedPut.startsWith("HTTP/1.1 423"))
+            assertFalse(root.resolve("locked.txt").exists())
+
+            val acceptedPut = request(
+                port,
+                authenticated(
+                    "PUT /locked.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "If: (<$token>)\r\n" +
+                        "Content-Length: ${content.toByteArray().size}\r\n",
+                ) + content,
+            )
+            assertTrue(acceptedPut.startsWith("HTTP/1.1 201"))
+            assertEquals(content, root.resolve("locked.txt").readText())
+
+            val refresh = request(
+                port,
+                authenticated(
+                    "LOCK /locked.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "If: (<$token>)\r\n" +
+                        "Timeout: Second-180\r\n" +
+                        "Content-Length: 0\r\n",
+                ),
+            )
+            assertTrue(refresh.startsWith("HTTP/1.1 200"))
+
+            val unlock = request(
+                port,
+                authenticated(
+                    "UNLOCK /locked.txt HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "Lock-Token: <$token>\r\n",
+                ),
+            )
+            assertTrue(unlock.startsWith("HTTP/1.1 204"))
+        }
+    }
+
+    @Test
+    fun authenticationLockExpiresAndValidCredentialsRecover() {
+        val root = temporary.newFolder("dav-auth-lock")
+        var now = 100_000L
+        LanWebDavServer(
+            root,
+            InetAddress.getLoopbackAddress(),
+            requestedCode = "12345678",
+            nowMillis = { now },
+        ).use { server ->
+            val port = server.start().port
+            repeat(LanWebDavServer.MAX_AUTH_FAILURES - 1) {
+                assertTrue(request(port, "OPTIONS / HTTP/1.1\r\nHost: localhost\r\n\r\n").startsWith("HTTP/1.1 401"))
+            }
+            assertTrue(request(port, "OPTIONS / HTTP/1.1\r\nHost: localhost\r\n\r\n").startsWith("HTTP/1.1 429"))
+            assertTrue(request(port, authenticated("OPTIONS / HTTP/1.1\r\nHost: localhost\r\n")).startsWith("HTTP/1.1 429"))
+
+            now += LanWebDavServer.AUTH_LOCK_MILLIS + 1
+            assertTrue(request(port, authenticated("OPTIONS / HTTP/1.1\r\nHost: localhost\r\n")).startsWith("HTTP/1.1 200"))
+        }
     }
 
     private fun authenticated(firstLines: String): String {

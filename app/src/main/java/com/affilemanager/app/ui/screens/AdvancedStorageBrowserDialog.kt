@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,8 +71,9 @@ import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.AdvancedBrowserUiState
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
-import com.affilemanager.app.ui.components.DirectoryLayoutButton
+import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
+import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.ui.components.LocalFileVisual
@@ -93,7 +95,17 @@ fun AdvancedStorageBrowserDialog(
     var renameTarget by remember { mutableStateOf<FileEntry?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     var showDisplaySettings by remember { mutableStateOf(false) }
-    val allSelected = state.entries.isNotEmpty() && state.entries.all { it.absolutePath in state.selectedPaths }
+    var searchVisible by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    LaunchedEffect(state.path) {
+        searchVisible = false
+        searchQuery = ""
+    }
+    val displayedEntries = remember(state.entries, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) state.entries else state.entries.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    val allSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.absolutePath in state.selectedPaths }
 
     BackHandler { viewModel.navigateAdvancedBack() }
     Dialog(
@@ -102,36 +114,28 @@ fun AdvancedStorageBrowserDialog(
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                DirectoryBrowserToolbar(
+                    title = uiText(state.title),
+                    path = state.path.ifBlank { uiText("Jungiama") },
+                    backEnabled = true,
+                    forwardEnabled = false,
+                    upEnabled = state.path.isNotBlank() && state.path != "/",
+                    searchActive = searchVisible,
+                    grid = state.grid,
+                    testTagPrefix = "advanced",
+                    onBack = { viewModel.navigateAdvancedBack() },
+                    onForward = {},
+                    onUp = { java.io.File(state.path).parentFile?.absolutePath?.let(viewModel::navigateAdvanced) },
+                    onToggleSearch = {
+                        searchVisible = !searchVisible
+                        if (!searchVisible) searchQuery = ""
+                    },
+                    onToggleLayout = viewModel::toggleAdvancedLayout,
+                    onOpenSettings = { showDisplaySettings = true },
                 ) {
-                    IconButton(onClick = { viewModel.navigateAdvancedBack() }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Grįžti"))
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        LText(state.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = state.path.ifBlank { uiText("Jungiama") },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        LText(advancedBackendLabel(access.activeBackend), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    }
-                    DirectoryLayoutButton(
-                        grid = state.grid,
-                        testTag = "advanced_layout_toggle",
-                        onToggleLayout = viewModel::toggleAdvancedLayout,
-                        onOpenSettings = { menu = true },
-                    )
-                    IconButton(onClick = viewModel::refreshAdvancedBrowser, enabled = !state.loading) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti"))
-                    }
                     Box {
                         IconButton(onClick = { menu = true }) {
-                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau"))
+                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
@@ -171,8 +175,30 @@ fun AdvancedStorageBrowserDialog(
                                 },
                                 onDismissMenu = { menu = false },
                             )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { LText("Atnaujinti") },
+                                leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                                enabled = !state.loading,
+                                onClick = { menu = false; viewModel.refreshAdvancedBrowser() },
+                            )
                         }
                     }
+                }
+                LText(
+                    advancedBackendLabel(access.activeBackend),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+
+                if (searchVisible) {
+                    DirectoryQuickSearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        onClose = { searchVisible = false; searchQuery = "" },
+                        modifier = Modifier.testTag("directory_search_field_advanced"),
+                    )
                 }
 
                 if (state.selectedPaths.isNotEmpty()) {
@@ -180,7 +206,12 @@ fun AdvancedStorageBrowserDialog(
                         count = state.selectedPaths.size,
                         allSelected = allSelected,
                         onClose = viewModel::clearAdvancedSelection,
-                        onToggleSelectAll = viewModel::toggleSelectAllAdvanced,
+                        onToggleSelectAll = {
+                            if (allSelected) viewModel.clearAdvancedSelection()
+                            else displayedEntries.forEach { entry ->
+                                if (entry.absolutePath !in state.selectedPaths) viewModel.toggleAdvancedSelection(entry.absolutePath)
+                            }
+                        },
                         modifier = Modifier.testTag("advanced_selection_bar"),
                     ) {
                         IconButton(onClick = { viewModel.copyAdvancedSelection(move = false) }) {
@@ -219,6 +250,9 @@ fun AdvancedStorageBrowserDialog(
                     state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         LText("Aplankas tuščias")
                     }
+                    displayedEntries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        LText("Atitikmenų nerasta")
+                    }
                     state.grid -> LazyVerticalGrid(
                         columns = GridCells.Fixed(state.gridColumns.coerceIn(2, 8)),
                         modifier = Modifier.fillMaxSize().testTag("advanced_grid"),
@@ -226,16 +260,30 @@ fun AdvancedStorageBrowserDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(state.entries, key = FileEntry::absolutePath) { entry ->
-                            AdvancedGridEntry(entry, entry.absolutePath in state.selectedPaths, state.selectedPaths.isNotEmpty(), viewModel)
+                        items(displayedEntries, key = FileEntry::absolutePath) { entry ->
+                            AdvancedGridEntry(
+                                entry,
+                                entry.absolutePath in state.selectedPaths,
+                                state.selectedPaths.isNotEmpty(),
+                                state.iconScalePercent,
+                                state.spacingScalePercent,
+                                viewModel,
+                            )
                         }
                     }
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize().testTag("advanced_list"),
                         contentPadding = PaddingValues(bottom = 24.dp),
                     ) {
-                        items(state.entries, key = FileEntry::absolutePath) { entry ->
-                            AdvancedListEntry(entry, entry.absolutePath in state.selectedPaths, state.selectedPaths.isNotEmpty(), viewModel)
+                        items(displayedEntries, key = FileEntry::absolutePath) { entry ->
+                            AdvancedListEntry(
+                                entry,
+                                entry.absolutePath in state.selectedPaths,
+                                state.selectedPaths.isNotEmpty(),
+                                state.iconScalePercent,
+                                state.spacingScalePercent,
+                                viewModel,
+                            )
                             HorizontalDivider()
                         }
                     }
@@ -299,16 +347,25 @@ fun AdvancedStorageBrowserDialog(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AdvancedListEntry(entry: FileEntry, selected: Boolean, selectionActive: Boolean, viewModel: MainViewModel) {
+private fun AdvancedListEntry(
+    entry: FileEntry,
+    selected: Boolean,
+    selectionActive: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
+    viewModel: MainViewModel,
+) {
+    val iconSize = (48f * iconScalePercent / 100f).dp
+    val verticalPadding = (7f * spacingScalePercent / 100f).dp
     Row(
         modifier = Modifier.fillMaxWidth().combinedClickable(
             onClick = { if (selectionActive) viewModel.toggleAdvancedSelection(entry.absolutePath) else viewModel.openAdvancedEntry(entry) },
             onLongClick = { viewModel.toggleAdvancedSelection(entry.absolutePath) },
-        ).padding(horizontal = 10.dp, vertical = 7.dp),
+        ).padding(horizontal = 10.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(checked = selected, onCheckedChange = { viewModel.toggleAdvancedSelection(entry.absolutePath) })
-        LocalFileVisual(entry, 48.dp, 48.dp, showThumbnails = false, modifier = Modifier.size(48.dp))
+        LocalFileVisual(entry, iconSize, iconSize, showThumbnails = false, modifier = Modifier.size(iconSize))
         Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
             Text(entry.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             LText(entryMeta(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -318,7 +375,16 @@ private fun AdvancedListEntry(entry: FileEntry, selected: Boolean, selectionActi
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AdvancedGridEntry(entry: FileEntry, selected: Boolean, selectionActive: Boolean, viewModel: MainViewModel) {
+private fun AdvancedGridEntry(
+    entry: FileEntry,
+    selected: Boolean,
+    selectionActive: Boolean,
+    iconScalePercent: Int,
+    spacingScalePercent: Int,
+    viewModel: MainViewModel,
+) {
+    val iconSize = (72f * iconScalePercent / 100f).dp
+    val padding = (8f * spacingScalePercent / 100f).dp
     Card(
         modifier = Modifier.fillMaxWidth().combinedClickable(
             onClick = { if (selectionActive) viewModel.toggleAdvancedSelection(entry.absolutePath) else viewModel.openAdvancedEntry(entry) },
@@ -326,12 +392,12 @@ private fun AdvancedGridEntry(entry: FileEntry, selected: Boolean, selectionActi
         ),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(padding),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Checkbox(checked = selected, onCheckedChange = { viewModel.toggleAdvancedSelection(entry.absolutePath) }, modifier = Modifier.align(Alignment.End))
-            LocalFileVisual(entry, 72.dp, 72.dp, showThumbnails = false, modifier = Modifier.size(72.dp))
+            LocalFileVisual(entry, iconSize, iconSize, showThumbnails = false, modifier = Modifier.size(iconSize))
             Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
             LText(entryMeta(entry), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

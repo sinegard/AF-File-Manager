@@ -5,6 +5,7 @@ internal data class ArchiveBrowserItem(
     val path: String,
     val directory: Boolean,
     val sizeBytes: Long,
+    val modifiedAtMillis: Long?,
 )
 
 /**
@@ -56,6 +57,7 @@ internal class ArchiveBrowserIndex private constructor(
                         path = path,
                         directory = isDirectory,
                         sizeBytes = if (isDirectory) -1 else entry.sizeBytes,
+                        modifiedAtMillis = entry.modifiedAtMillis.takeIf { isLastSegment },
                     )
                 }
                 val newNodes = candidates.count { it.path !in itemsByPath }
@@ -68,7 +70,11 @@ internal class ArchiveBrowserIndex private constructor(
                     val existing = itemsByPath[candidate.path]
                     itemsByPath[candidate.path] = when {
                         existing == null -> candidate
-                        existing.directory || candidate.directory -> existing.copy(directory = true, sizeBytes = -1)
+                        existing.directory || candidate.directory -> existing.copy(
+                            directory = true,
+                            sizeBytes = -1,
+                            modifiedAtMillis = existing.modifiedAtMillis ?: candidate.modifiedAtMillis,
+                        )
                         else -> existing
                     }
                 }
@@ -80,6 +86,7 @@ internal class ArchiveBrowserIndex private constructor(
                     path = "\u0000omitted-archive-paths",
                     directory = false,
                     sizeBytes = -1,
+                    modifiedAtMillis = null,
                 )
             }
 

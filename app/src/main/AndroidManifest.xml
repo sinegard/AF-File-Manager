@@ -103,6 +103,12 @@
             android:stopWithTask="false" />
 
         <service
+            android:name=".terminal.TerminalKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+
+        <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"
             android:exported="false">
