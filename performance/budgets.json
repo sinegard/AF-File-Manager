@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "minimumIterations": 7,
+  "benchmarks": {
+    "coldStartAndFirstPaint": {
+      "timeToInitialDisplayMs": {
+        "medianMax": 22000,
+        "p95Max": 24000
+      },
+      "timeToFullDisplayMs": {
+        "medianMax": 25000,
+        "p95Max": 28000
+      },
+      "memoryHeapSizeMaxKb": {
+        "maximumMax": 22000
+      },
+      "memoryRssAnonMaxKb": {
+        "maximumMax": 110000
+      }
+    },
+    "largeDirectoryFirstContent": {
+      "timeToInitialDisplayMs": {
+        "medianMax": 23000,
+        "p95Max": 26000
+      },
+      "timeToFullDisplayMs": {
+        "medianMax": 28000,
+        "p95Max": 31000
+      },
+      "memoryHeapSizeMaxKb": {
+        "maximumMax": 48000
+      },
+      "memoryRssAnonMaxKb": {
+        "maximumMax": 155000
+      }
+    },
+    "largeDirectoryScroll": {
+      "frameDurationCpuMs": {
+        "p95Max": 850
+      },
+      "frameOverrunMs": {
+        "p95Max": 1250
+      },
+      "memoryHeapSizeMaxKb": {
+        "maximumMax": 31000
+      },
+      "memoryRssAnonMaxKb": {
+        "maximumMax": 190000
+      }
+    },
+    "thumbnailScroll": {
+      "frameDurationCpuMs": {
+        "p95Max": 700
+      },
+      "frameOverrunMs": {
+        "p95Max": 1000
+      },
+      "memoryHeapSizeMaxKb": {
+        "maximumMax": 29000
+      },
+      "memoryRssAnonMaxKb": {
+        "maximumMax": 180000
+      }
+    },
+    "remoteListAndScroll": {
+      "timeToInitialDisplayMs": {
+        "medianMax": 23000,
+        "p95Max": 26000
+      },
+      "timeToFullDisplayMs": {
+        "medianMax": 27000,
+        "p95Max": 30000
+      },
+      "frameDurationCpuMs": {
+        "p95Max": 1200
+      },
+      "frameOverrunMs": {
+        "p95Max": 2200
+      },
+      "memoryHeapSizeMaxKb": {
+        "maximumMax": 60000
+      },
+      "memoryRssAnonMaxKb": {
+        "maximumMax": 200000
+      }
+    }
+  }
+}

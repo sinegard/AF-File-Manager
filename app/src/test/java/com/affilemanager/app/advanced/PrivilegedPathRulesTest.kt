@@ -40,4 +40,19 @@ class PrivilegedPathRulesTest {
         assertNull(PrivilegedPathRules.parent(roots.first(), roots))
         assertEquals(roots.first(), PrivilegedPathRules.parent("${roots.first()}/app", roots))
     }
+
+    @Test
+    fun filesystemRootAllowsDescendantsButCannotBeMutated() {
+        val rootAccess = listOf("/")
+
+        assertEquals(
+            "/storage/emulated/0",
+            PrivilegedPathRules.requireWithinAllowed("/storage/emulated/0", rootAccess),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            PrivilegedPathRules.requireWithinAllowed("/", rootAccess, allowRoot = false)
+        }
+        assertEquals("/storage", PrivilegedPathRules.parent("/storage/emulated", rootAccess))
+        assertNull(PrivilegedPathRules.parent("/", rootAccess))
+    }
 }

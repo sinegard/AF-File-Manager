@@ -132,30 +132,6 @@ fun DirectoryDisplayMenuItems(
         },
     )
     DropdownMenuItem(
-        text = { LText(if (grid) "Rodyti sąrašą" else "Rodyti tinklelį") },
-        leadingIcon = {
-            Icon(if (grid) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView, contentDescription = null)
-        },
-        onClick = {
-            onDismissMenu()
-            onToggleLayout()
-        },
-    )
-    DropdownMenuItem(
-        text = { LText(if (showThumbnails) "Rodyti piktogramas" else "Rodyti miniatiūras") },
-        leadingIcon = {
-            Icon(
-                if (showThumbnails) Icons.AutoMirrored.Rounded.InsertDriveFile else Icons.Rounded.PhotoLibrary,
-                contentDescription = null,
-            )
-        },
-        enabled = thumbnailsAvailable,
-        onClick = {
-            onDismissMenu()
-            onToggleThumbnails()
-        },
-    )
-    DropdownMenuItem(
         text = { LText("Rodinio nustatymai") },
         leadingIcon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
         modifier = Modifier.testTag(displaySettingsTestTag),
@@ -164,26 +140,4 @@ fun DirectoryDisplayMenuItems(
             onOpenSettings()
         },
     )
-    SortMode.entries.forEach { mode ->
-        val currentSuffix = if (sortMode == mode) {
-            if (sortDirection == SortDirection.ASCENDING) " ↑" else " ↓"
-        } else {
-            ""
-        }
-        DropdownMenuItem(
-            text = { LText("${sortLabel(mode)}$currentSuffix") },
-            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = null) },
-            onClick = {
-                onDismissMenu()
-                onSort(mode)
-            },
-        )
-    }
-}
-
-private fun sortLabel(mode: SortMode): String = when (mode) {
-    SortMode.NAME -> "Pagal pavadinimą"
-    SortMode.MODIFIED -> "Pagal datą"
-    SortMode.SIZE -> "Pagal dydį"
-    SortMode.TYPE -> "Pagal tipą"
 }

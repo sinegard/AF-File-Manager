@@ -68,6 +68,92 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         }
     }
 
+    /** Extracts one explicitly selected regular entry into an app-controlled file. */
+    suspend fun extractEntry(
+        archiveFile: File,
+        entryPath: String,
+        destinationFile: File,
+        operation: OperationContext? = null,
+    ) = withContext(Dispatchers.IO) {
+        require(archiveFile.isFile) { "Archive is unavailable" }
+        val requested = normalizedEntryPath(entryPath)
+        require(destinationFile.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
+            "Entry destination is unavailable"
+        }
+        when (detectFormat(archiveFile)) {
+            ArchiveFormat.ZIP -> {
+                val zip = ZipFile(archiveFile)
+                val header = zip.fileHeaders.takeChecked().firstOrNull {
+                    normalizedEntryPath(it.fileName) == requested
+                } ?: throw IllegalArgumentException("Archive entry was not found")
+                require(!header.isDirectory) { "A folder cannot be materialized as a file" }
+                require(header.uncompressedSize in 0..limits.maxSingleEntryBytes) { "Archive entry is too large" }
+                zip.getInputStream(header).use { input ->
+                    writeExtractedTarget(destinationFile) { output ->
+                        copyBounded(input, output, header.uncompressedSize, 0, operation, requested)
+                    }
+                }
+            }
+            ArchiveFormat.SEVEN_Z -> {
+                var found = false
+                SevenZFile(archiveFile).use { archive ->
+                    while (true) {
+                        val entry = archive.nextEntry ?: break
+                        if (normalizedEntryPath(entry.name) != requested) continue
+                        require(!entry.isDirectory) { "A folder cannot be materialized as a file" }
+                        require(entry.size in 0..limits.maxSingleEntryBytes) { "Archive entry is too large" }
+                        writeExtractedTarget(destinationFile) { output ->
+                            copySevenZBounded(archive, output, entry.size, 0, operation, requested)
+                        }
+                        found = true
+                        break
+                    }
+                }
+                require(found) { "Archive entry was not found" }
+            }
+            ArchiveFormat.RAR -> {
+                Archive(archiveFile).use { archive ->
+                    val header = archive.fileHeaders.takeChecked().firstOrNull {
+                        normalizedEntryPath(it.fileName) == requested
+                    } ?: throw IllegalArgumentException("Archive entry was not found")
+                    require(!header.isDirectory) { "A folder cannot be materialized as a file" }
+                    require(header.fullUnpackSize in 0..limits.maxSingleEntryBytes) { "Archive entry is too large" }
+                    writeExtractedTarget(destinationFile) { output ->
+                        val bounded = BoundedOutputStream(output, limits.maxSingleEntryBytes) { written ->
+                            operation?.progress(byteDelta = written, currentName = requested)
+                        }
+                        archive.extractFile(header, bounded)
+                        bounded.flush()
+                    }
+                }
+            }
+            ArchiveFormat.TAR, ArchiveFormat.TAR_GZ -> {
+                var found = false
+                openTarInput(archiveFile).use { input ->
+                    while (true) {
+                        val entry = input.nextEntry ?: break
+                        if (normalizedEntryPath(entry.name) != requested) continue
+                        require(!entry.isDirectory && !entry.isSymbolicLink && !entry.isLink) {
+                            "Only regular archive files can be materialized"
+                        }
+                        copyIntoExtractedTarget(input, destinationFile, entry.size, operation, requested)
+                        found = true
+                        break
+                    }
+                }
+                require(found) { "Archive entry was not found" }
+            }
+            ArchiveFormat.GZIP -> {
+                val name = archiveFile.name.removeSuffix(".${archiveFile.extension}")
+                require(requested == normalizedEntryPath(name)) { "Archive entry was not found" }
+                GzipCompressorInputStream(BufferedInputStream(FileInputStream(archiveFile))).use { input ->
+                    copyIntoExtractedTarget(input, destinationFile, -1, operation, requested)
+                }
+            }
+        }
+        require(destinationFile.isFile) { "Archive entry was not extracted" }
+    }
+
     suspend fun create(
         format: ArchiveFormat,
         outputFile: File,
@@ -384,6 +470,28 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             base
         }
         return TarArchiveInputStream(input)
+    }
+
+    private suspend fun copyIntoExtractedTarget(
+        input: InputStream,
+        destination: File,
+        declaredSize: Long,
+        operation: OperationContext?,
+        name: String,
+    ) {
+        writeExtractedTarget(destination) { output ->
+            copyBounded(input, output, declaredSize, 0, operation, name)
+        }
+    }
+
+    private fun normalizedEntryPath(raw: String): String {
+        val normalized = raw.replace('\\', '/').trimStart('/').trimEnd('/')
+        require(normalized.isNotBlank() && '\u0000' !in normalized) { "Invalid archive entry path" }
+        val pieces = normalized.split('/')
+        require(pieces.size <= limits.maxDepth && pieces.none { it.isBlank() || it == "." || it == ".." }) {
+            "Unsafe archive entry path"
+        }
+        return pieces.joinToString("/")
     }
 
     private suspend fun copyBounded(

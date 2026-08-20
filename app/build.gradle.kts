@@ -22,8 +22,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 29
-        versionName = "0.18.0"
+        versionCode = 30
+        versionName = "0.19.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -66,6 +66,23 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+        }
+        create("profile") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            // Human-readable Baseline Profile rules must retain the app's real
+            // class and method names. Performance measurements still use the
+            // separately minified benchmark variant above.
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -102,6 +119,12 @@ android {
             it.useJUnit()
         }
     }
+
+    sourceSets.getByName("profile").apply {
+        java.directories.add("src/benchmark/java")
+        kotlin.directories.add("src/benchmark/java")
+        manifest.srcFile("src/benchmark/AndroidManifest.xml")
+    }
 }
 
 dependencies {
@@ -128,6 +151,7 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.connectbot:termlib:0.1.0")
 
@@ -147,6 +171,7 @@ dependencies {
     implementation("com.github.junrar:junrar:7.6.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260719")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     androidTestImplementation("androidx.test:core-ktx:1.7.0")
     androidTestImplementation("androidx.test.ext:junit-ktx:1.3.0")

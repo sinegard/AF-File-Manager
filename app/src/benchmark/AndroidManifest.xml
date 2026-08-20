@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission
+        android:name="com.affilemanager.app.permission.BENCHMARK_SETUP"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.affilemanager.app.permission.BENCHMARK_SETUP" />
+
+    <application>
+        <activity
+            android:name=".benchmark.BenchmarkSetupActivity"
+            android:exported="true"
+            android:permission="com.affilemanager.app.permission.BENCHMARK_SETUP" />
+    </application>
+</manifest>

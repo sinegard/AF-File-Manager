@@ -94,6 +94,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val renameUndo by viewModel.renameUndo.collectAsStateWithLifecycle()
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
+    val cleanupRequested by viewModel.cleanupRequested.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) leftPanel.path else rightPanel.path
 
     var query by remember { mutableStateOf(searchState.filters.query) }
@@ -112,6 +113,13 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var confirmTrash by remember { mutableStateOf(false) }
     var duplicateGroup by remember { mutableStateOf<DuplicateGroup?>(null) }
     var showCleanupReview by remember { mutableStateOf(false) }
+
+    LaunchedEffect(cleanupRequested) {
+        if (cleanupRequested) {
+            showCleanupReview = true
+            viewModel.consumeCleanupRequest()
+        }
+    }
 
     LaunchedEffect(searchState.filters, searchState.roots) {
         query = searchState.filters.query

@@ -10,3 +10,5 @@ docs/CHANGE_CONTRACT.md
 *.jks
 *.keystore
 *.log
+__pycache__/
+*.pyc

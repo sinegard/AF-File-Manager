@@ -29,9 +29,9 @@ object PrivilegedPathRules {
     fun requireWithinAllowed(path: String, allowedRoots: List<String>, allowRoot: Boolean = true): String {
         val normalized = normalizeAbsolute(path)
         val root = allowedRoots.map(::normalizeAbsolute).firstOrNull { candidate ->
-            normalized == candidate || normalized.startsWith("$candidate/")
-        } ?: throw SecurityException("Kelias nepatenka į leistiną Android programų duomenų sritį")
-        if (!allowRoot) require(normalized != root) { "Pačios apsaugotos srities keisti negalima" }
+            candidate == "/" || normalized == candidate || normalized.startsWith("$candidate/")
+        } ?: throw SecurityException("Kelias nepatenka į leistiną privilegijuotą sritį")
+        if (!allowRoot) require(normalized != root) { "Pačios privilegijuotos srities keisti negalima" }
         return normalized
     }
 

@@ -168,8 +168,10 @@ fun FilePreviewDialog(
     loadRemoteSaveDirectory: suspend (String) -> Result<List<RemoteEntry>>,
     onExternalEditorReturned: () -> Unit,
     onDismissEditConflict: () -> Unit,
+    onMergeEditConflict: () -> Unit,
     onKeepEditing: () -> Unit,
     onDiscardEditAndClose: () -> Unit,
+    onCopyArchiveEntry: (String) -> Unit,
     onExtract: (FileEntry, CharArray?) -> Unit,
     onDecrypt: (FileEntry, CharArray) -> Unit,
 ) {
@@ -346,6 +348,7 @@ fun FilePreviewDialog(
                         entries = target.entries,
                         currentPath = archivePath,
                         onPathChanged = { archivePath = it },
+                        onCopyEntry = onCopyArchiveEntry,
                         onExtract = onExtract,
                     )
                     is PreviewTarget.RemoteArchive -> ArchivePreview(
@@ -353,6 +356,7 @@ fun FilePreviewDialog(
                         entries = target.entries,
                         currentPath = archivePath,
                         onPathChanged = { archivePath = it },
+                        onCopyEntry = null,
                         onExtract = null,
                     )
                     is PreviewTarget.Vault -> VaultPreview(target, onDecrypt)
@@ -381,6 +385,8 @@ fun FilePreviewDialog(
             conflict = conflict,
             workingRevision = editSession?.workingRevision ?: conflict.expected,
             saving = activeEditState.saving,
+            canMerge = target is PreviewTarget.RemoteFile && editSession?.usesInternalTextEditor == true && conflict.current != null,
+            onMerge = onMergeEditConflict,
             onOverwrite = { onSaveEdit(true) },
             onSaveAs = launchSaveAs,
             onKeepEditing = onDismissEditConflict,
@@ -867,6 +873,8 @@ private fun EditConflictDialog(
     conflict: EditConflict,
     workingRevision: FileRevision,
     saving: Boolean,
+    canMerge: Boolean,
+    onMerge: () -> Unit,
     onOverwrite: () -> Unit,
     onSaveAs: () -> Unit,
     onKeepEditing: () -> Unit,
@@ -889,20 +897,35 @@ private fun EditConflictDialog(
                 } else {
                     Text(revisionSummary(conflict.current, dateFormat), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 }
-                LText("Perrašymas pakeis dabartinį originalą. „Išsaugoti kaip“ paliks abi versijas.")
+                LText(
+                    if (canMerge) {
+                        "„Sujungti“ palygins originalą, jūsų pakeitimus ir dabartinę serverio versiją. Neaiškios vietos bus aiškiai pažymėtos redaktoriuje."
+                    } else {
+                        "Perrašymas pakeis dabartinį originalą. „Išsaugoti kaip“ paliks abi versijas."
+                    },
+                )
             }
         },
         confirmButton = {
             Button(
-                onClick = onOverwrite,
+                onClick = if (canMerge) onMerge else onOverwrite,
                 enabled = !saving,
-                modifier = Modifier.testTag("overwrite-edit-conflict"),
-            ) { LText("Perrašyti originalą") }
+                modifier = Modifier.testTag(if (canMerge) "merge-edit-conflict" else "overwrite-edit-conflict"),
+            ) { LText(if (canMerge) "Sujungti pakeitimus" else "Perrašyti originalą") }
         },
         dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onSaveAs, enabled = !saving) { LText("Išsaugoti kaip") }
-                TextButton(onClick = onKeepEditing, enabled = !saving) { LText("Tęsti redagavimą") }
+            Column(horizontalAlignment = Alignment.End) {
+                if (canMerge) {
+                    TextButton(
+                        onClick = onOverwrite,
+                        enabled = !saving,
+                        modifier = Modifier.testTag("overwrite-edit-conflict"),
+                    ) { LText("Perrašyti originalą") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onSaveAs, enabled = !saving) { LText("Išsaugoti kaip") }
+                    TextButton(onClick = onKeepEditing, enabled = !saving) { LText("Tęsti redagavimą") }
+                }
             }
         },
     )
@@ -991,6 +1014,7 @@ private fun ArchivePreview(
     entries: List<ArchiveEntryInfo>,
     currentPath: String,
     onPathChanged: (String) -> Unit,
+    onCopyEntry: ((String) -> Unit)?,
     onExtract: ((FileEntry, CharArray?) -> Unit)?,
 ) {
     var askPassword by remember { mutableStateOf(false) }
@@ -1014,6 +1038,11 @@ private fun ArchivePreview(
             }
             if (onExtract != null) {
                 FilledTonalButton(onClick = { askPassword = true }) { LText("Išpakuoti") }
+            }
+            if (onCopyEntry != null && currentPath.isNotEmpty()) {
+                IconButton(onClick = { onCopyEntry(currentPath) }) {
+                    Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti archyvo aplanką"))
+                }
             }
         }
         LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -1051,6 +1080,11 @@ private fun ArchivePreview(
                     )
                     Text(entry.name, modifier = Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (!entry.directory && entry.sizeBytes >= 0) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                    onCopyEntry?.let { copy ->
+                        IconButton(onClick = { copy(entry.path) }) {
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Pridėti archyvo įrašą į kopijavimo rinkinį"))
+                        }
+                    }
                     if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
                 }
                 HorizontalDivider()

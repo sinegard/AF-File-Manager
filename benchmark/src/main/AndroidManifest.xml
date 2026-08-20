@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="com.affilemanager.app.permission.BENCHMARK_SETUP" />
+
+    <queries>
+        <package android:name="com.affilemanager.app" />
+    </queries>
+</manifest>

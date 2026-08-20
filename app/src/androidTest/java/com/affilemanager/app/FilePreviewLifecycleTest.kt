@@ -332,7 +332,12 @@ class FilePreviewLifecycleTest {
             }
             replaceEditorText("first saved version")
             compose.runOnUiThread { viewModel.saveFileEditAsLocal(destinationDirectory.absolutePath, destination.name) }
-            compose.waitUntil(timeoutMillis = 10_000) { destination.isFile && destination.readText() == "first saved version" }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                destination.isFile && destination.readText() == "first saved version" &&
+                    !viewModel.fileEditState.value.saving &&
+                    (viewModel.fileEditState.value.session?.origin as? com.affilemanager.app.editing.EditOrigin.Local)?.path ==
+                    destination.absolutePath
+            }
             compose.runOnIdle {
                 assertEquals("original", source.readText())
                 assertEquals(destination.absolutePath, (viewModel.fileEditState.value.session?.origin as? com.affilemanager.app.editing.EditOrigin.Local)?.path)

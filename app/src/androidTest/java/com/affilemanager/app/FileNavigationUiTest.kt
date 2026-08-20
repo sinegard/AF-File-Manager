@@ -39,7 +39,7 @@ class FileNavigationUiTest {
 
         try {
             navigateAndWait(viewModel, firstDirectory)
-            compose.onNodeWithTag("file-list-LEFT").performScrollToIndex(35)
+            compose.onNodeWithTag("file_list_LEFT").performScrollToIndex(35)
             compose.onNodeWithText("a-035.txt").assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.fileScrollPosition(firstScrollKey).firstVisibleItemIndex > 0
@@ -47,7 +47,7 @@ class FileNavigationUiTest {
 
             navigateAndWait(viewModel, secondDirectory)
             compose.onNodeWithText("b-000.txt").assertIsDisplayed()
-            compose.onNodeWithTag("file-list-LEFT").performScrollToIndex(28)
+            compose.onNodeWithTag("file_list_LEFT").performScrollToIndex(28)
             compose.onNodeWithText("b-028.txt").assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.fileScrollPosition(secondScrollKey).firstVisibleItemIndex > 0
@@ -154,7 +154,7 @@ class FileNavigationUiTest {
 
         try {
             navigateAndWait(viewModel, directory)
-            compose.onNodeWithTag("file-list-LEFT").performScrollToIndex(32)
+            compose.onNodeWithTag("file_list_LEFT").performScrollToIndex(32)
             compose.onNodeWithText("tab-032.txt").assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.fileScrollPosition(originalScrollKey).firstVisibleItemIndex > 0

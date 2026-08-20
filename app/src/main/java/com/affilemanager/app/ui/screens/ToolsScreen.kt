@@ -1,9 +1,6 @@
 package com.affilemanager.app.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.os.Build
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesomeMotion
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
@@ -34,7 +32,6 @@ import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
-import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -77,20 +74,14 @@ import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.localization.LText
-import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.localization.uiText
-import com.affilemanager.app.ui.localization.rememberLocalizedTimeFormat
 import com.affilemanager.app.ui.theme.AppColorPalette
 import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.ui.theme.AppearanceRules
 import com.affilemanager.app.ui.theme.AppearanceSettings
 import com.affilemanager.app.ui.theme.palettePreviewColors
-import com.affilemanager.app.transfer.LanTransferController
-import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
-import java.text.DateFormat
-import java.util.Date
 
 @Composable
 fun ToolsScreen(
@@ -99,7 +90,6 @@ fun ToolsScreen(
     onAddSafLocation: () -> Unit,
     onToggleAppLock: (Boolean) -> Unit,
 ) {
-    val timeFormat = rememberLocalizedTimeFormat(DateFormat.SHORT)
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val trash by viewModel.trashItems.collectAsStateWithLifecycle()
     val trashBrowser by viewModel.trashBrowser.collectAsStateWithLifecycle()
@@ -107,12 +97,12 @@ fun ToolsScreen(
     val safBrowser by viewModel.safBrowser.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val syncSchedules by viewModel.syncSchedules.collectAsStateWithLifecycle()
-    val lanTransfer by LanTransferController.state.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val appearanceSettings by viewModel.appearanceSettings.collectAsStateWithLifecycle()
     val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
     val advancedBrowser by viewModel.advancedBrowser.collectAsStateWithLifecycle()
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
+    val afClipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
     val active = viewModel.activePanelState()
     val selectedEntry = active.entries.singleOrNull { it.absolutePath in active.selectedPaths }
     val context = LocalContext.current
@@ -120,7 +110,6 @@ fun ToolsScreen(
     var encryptTarget by remember { mutableStateOf(selectedEntry) }
     var showEncrypt by remember { mutableStateOf(false) }
     var removeSaf by remember { mutableStateOf<com.affilemanager.app.data.SafLocation?>(null) }
-    var lanDuration by remember { mutableStateOf(15) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(contentPadding).testTag("tools_list"),
@@ -168,6 +157,34 @@ fun ToolsScreen(
             )
         }
 
+        item {
+            Card(
+                onClick = { viewModel.openAfWorkflowCenter() },
+                modifier = Modifier.fillMaxWidth().testTag("open_af_plans"),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.AutoAwesomeMotion,
+                        contentDescription = null,
+                        modifier = Modifier.size(38.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        LText("AF planai ir operacijų istorija", fontWeight = FontWeight.Bold)
+                        LText(
+                            "Kopijuokite į kelias vietas, pirmiausia patikrinkite konfliktus, eksportuokite kvitą ir saugiai atšaukite.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        afClipboard?.let { LText("Kopijavimo rinkinyje: ${it.sources.size}", style = MaterialTheme.typography.labelSmall) }
+                    }
+                }
+            }
+        }
+
         item { SectionHeader("Operacijų centras", operations.size.toString()) }
         if (operations.isEmpty()) {
             item { InfoCard("Nėra operacijų", "Kopijavimas, archyvavimas ir tinklo perdavimai bus rodomi čia.", Icons.Rounded.CheckCircle) }
@@ -183,66 +200,6 @@ fun ToolsScreen(
             }
             item {
                 TextButton(onClick = viewModel::dismissFinishedOperations) { LText("Paslėpti užbaigtas") }
-            }
-        }
-
-        item { SectionHeader("Perdavimas kompiuteriui", if (lanTransfer.status == LanTransferStatus.RUNNING) "Veikia" else "Išjungta") }
-        item {
-            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Wifi, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
-                        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                            LText("Trumpalaikis LAN tinklalapis", fontWeight = FontWeight.SemiBold)
-                            LText(
-                                "Tik vienas pasirinktas katalogas · prisijungimas vienkartiniu kodu · jokio viešo tunelio",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                    when (lanTransfer.status) {
-                        LanTransferStatus.RUNNING -> {
-                            LText("Adresas: ${lanTransfer.url}", fontWeight = FontWeight.SemiBold)
-                            LText("Vienkartinis kodas: ${lanTransfer.code}", style = MaterialTheme.typography.titleMedium)
-                            lanTransfer.expiresAtMillis?.let { expires ->
-                                LText("Baigsis: ${timeFormat.format(Date(expires))}", style = MaterialTheme.typography.bodySmall)
-                            }
-                            LText("Katalogas: ${lanTransfer.rootName}", style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = {
-                                    val clipboard = context.getSystemService(ClipboardManager::class.java)
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("AF File Manager LAN", lanTransfer.url.orEmpty()))
-                                    Toast.makeText(
-                                        context,
-                                        UiTranslator.translate("Adresas nukopijuotas", interfaceLanguage),
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }) { LText("Kopijuoti adresą") }
-                                OutlinedButton(onClick = { LanTransferController.stop(context) }) { LText("Sustabdyti") }
-                            }
-                        }
-                        LanTransferStatus.STARTING -> {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            LText(lanTransfer.message ?: "Paleidžiama…", style = MaterialTheme.typography.bodySmall)
-                        }
-                        LanTransferStatus.STOPPED, LanTransferStatus.ERROR -> {
-                            LText("Bus bendrinamas aktyvus katalogas: ${File(active.path).name.ifBlank { active.path }}", style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf(15, 30, 60).forEach { minutes ->
-                                    FilterChip(
-                                        selected = lanDuration == minutes,
-                                        onClick = { lanDuration = minutes },
-                                        label = { LText("$minutes min.") },
-                                    )
-                                }
-                            }
-                            lanTransfer.message?.let { message ->
-                                LText(message, style = MaterialTheme.typography.bodySmall, color = if (lanTransfer.status == LanTransferStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Button(onClick = { LanTransferController.start(context, active.path, lanDuration) }) { LText("Paleisti") }
-                        }
-                    }
-                }
             }
         }
 

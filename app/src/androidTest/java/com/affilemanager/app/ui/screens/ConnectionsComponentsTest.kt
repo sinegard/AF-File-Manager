@@ -347,8 +347,10 @@ class ConnectionsComponentsTest {
         compose.onNodeWithTag("directory_layout_remote").performClick()
         compose.onNodeWithTag("directory_layout_remote").performTouchInput { longClick() }
         clickFolderMenuItem("Show hidden files")
-        clickFolderMenuItem("Show grid")
-        clickFolderMenuItem("By size")
+        compose.onNodeWithContentDescription("Folder actions").performClick()
+        compose.onAllNodesWithText("Show grid").assertCountEquals(0)
+        compose.onAllNodesWithText("By size").assertCountEquals(0)
+        compose.onNodeWithText("Display settings").performScrollTo().assertIsDisplayed().performClick()
         clickFolderMenuItem("Refresh")
         clickFolderMenuItem("Disconnect")
 
@@ -357,9 +359,9 @@ class ConnectionsComponentsTest {
             assertEquals(1, forward.get())
             assertEquals(1, up.get())
             assertEquals(1, hidden.get())
-            assertEquals(2, grid.get())
-            assertEquals(1, displaySettings.get())
-            assertEquals(1, sort.get())
+            assertEquals(1, grid.get())
+            assertEquals(2, displaySettings.get())
+            assertEquals(0, sort.get())
             assertEquals(1, refresh.get())
             assertEquals(1, disconnect.get())
         }

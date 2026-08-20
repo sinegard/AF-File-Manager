@@ -5,8 +5,60 @@ object UiTranslator {
     private val english = mapOf(
         "Failai" to "Files",
         "Analizė" to "Analyze",
-        "Ryšiai" to "Connections",
+        "Ryšiai" to "Network",
+        "Bendrinti" to "Share",
         "Daugiau" to "More",
+        "Bendrinti su kompiuteriu" to "Share with a computer",
+        "Laikinai atverkite pasirinktą aplanką tame pačiame privačiame Wi-Fi arba Ethernet tinkle." to "Temporarily share the selected folder on the same private Wi-Fi or Ethernet network.",
+        "Bendrinamas aplankas" to "Shared folder",
+        "Naudoti aktyvų aplanką" to "Use active folder",
+        "Laikina ir aiškiai valdoma sesija" to "Temporary, explicitly controlled session",
+        "Prisijungimui naudojamas vienkartinis 8 skaitmenų kodas. Sesija automatiškai baigsis." to "Sign in with a one-time 8-digit code. The session will end automatically.",
+        "FTP srautas nėra šifruojamas. Naudokite tik patikimame privačiame tinkle; prisijungimas ribojamas laikinu vardu ir kodu." to "FTP traffic is not encrypted. Use it only on a trusted private network; access is limited by a temporary username and code.",
+        "Ši laikina WebDAV sesija naudoja HTTP Basic prisijungimą be TLS. Naudokite tik patikimame privačiame tinkle." to "This temporary WebDAV session uses HTTP Basic authentication without TLS. Use it only on a trusted private network.",
+        "Paleisti bendrinimą" to "Start sharing",
+        "Bendrinimas veikia" to "Sharing is active",
+        "Kopijuoti duomenis" to "Copy details",
+        "Prisijungimo duomenys nukopijuoti" to "Connection details copied",
+        "Kodas" to "Code",
+        "Ieškoti šioje kategorijoje" to "Search this category",
+        "Visi aplankai" to "All folders",
+        "Atitinkančių failų nėra" to "No matching files",
+        "Garso įrašai" to "Audio",
+        "Pasirinkite saugyklą, kategoriją arba dažną vietą." to "Choose storage, a category, or a frequent location.",
+        "Šiukšlinė" to "Trash",
+        "Peržiūrėti valytinus failus" to "Review files to clean",
+        "Mėgstami" to "Favorites",
+        "Mėgstamų vietų dar nėra" to "No favorite locations yet",
+        "Žymos" to "Tags",
+        "Žymų dar nėra" to "No tags yet",
+        "Peržiūrų istorija" to "Viewing history",
+        "Peržiūrėtų failų istorija tuščia" to "Viewing history is empty",
+        "Išvalyti istoriją" to "Clear history",
+        "Kelias nepatenka į leistiną privilegijuotą sritį" to "The path is outside the allowed privileged area",
+        "Pačios privilegijuotos srities keisti negalima" to "The privileged root itself cannot be changed",
+        "FTP sesijos laikas baigėsi" to "The FTP session expired",
+        "FTP sesijos komandų riba pasiekta" to "The FTP session command limit was reached",
+        "FTP serverio ryšys nutrūko" to "The FTP server connection failed",
+        "Šakninio bendrinimo katalogo keisti negalima" to "The shared root folder cannot be changed",
+        "Paskirties aplankas neleidžia rašyti" to "The destination folder is not writable",
+        "WebDAV sesijos laikas baigėsi" to "The WebDAV session expired",
+        "WebDAV sesijos užklausų riba pasiekta" to "The WebDAV session request limit was reached",
+        "WebDAV serverio ryšys nutrūko" to "The WebDAV server connection failed",
+        "Bendrinimo šaknies pašalinti negalima" to "The shared root cannot be deleted",
+        "Paskirties katalogas neleidžia rašyti" to "The destination folder is not writable",
+        "Šaltinis nepasiekiamas" to "The source is unavailable",
+        "Negalima kopijuoti į šaltinio vidų" to "A source cannot be copied into itself",
+        "Trūksta Destination antraštės" to "The Destination header is missing",
+        "Simbolinės nuorodos nešalinamos" to "Symbolic links are not deleted",
+        "Pašalinti nepavyko" to "Could not delete",
+        "Rodinio nustatymo išsaugoti nepavyko" to "Could not save display settings",
+        "Failų kategorijos atidaryti nepavyko" to "Could not open the file category",
+        "Vaizdai" to "Images",
+        "Programos" to "Apps",
+        "Visa saugykla" to "All storage",
+        "Sistemos failai · privilegijuota prieiga" to "System files · privileged access",
+        "1 elementas" to "1 item",
         "Uždaryti" to "Close",
         "Atšaukti" to "Cancel",
         "Išsaugoti" to "Save",
@@ -886,12 +938,144 @@ object UiTranslator {
         "Pradžios rodinio nustatymo išsaugoti nepavyko" to "Could not save home display settings",
         "Katalogo vaizdo nustatymo išsaugoti nepavyko" to "Could not save folder display settings",
         "Katalogo vaizdo nustatymo perskaityti nepavyko" to "Could not read folder display settings",
+        "Kopijuoti archyvo aplanką" to "Copy archive folder",
+        "Pridėti archyvo įrašą į kopijavimo rinkinį" to "Add archive entry to the copy set",
+        "AF planai" to "AF Plans",
+        "Planai" to "Plans",
+        "Istorija" to "Timeline",
+        "Automatika" to "Automation",
+        "Pirmiausia peržiūra, tada saugus vykdymas" to "Preview first, then run safely",
+        "Naujas planas" to "New plan",
+        "Naujas AF planas" to "New AF Plan",
+        "Redaguojamas AF planas" to "Edit AF Plan",
+        "Išsaugoti planai" to "Saved plans",
+        "Planų dar nėra" to "No plans yet",
+        "Nukopijuokite failus, pridėkite vieną ar kelias paskirtis ir pirmiausia peržiūrėkite rezultatą." to "Copy files, add one or more destinations, and preview the result first.",
+        " · šalinti tik patvirtinus visas kopijas" to " · remove only after all copies are verified",
+        "Automatizuoti" to "Automate",
+        "Pašalinti planą" to "Remove plan",
+        "Plano pavadinimas" to "Plan name",
+        "Pašalinti šaltinį" to "Remove source",
+        "Pašalinti paskirtį" to "Remove destination",
+        "Pridėti aktyvų telefono aplanką" to "Add the active phone folder",
+        "Pridėti atvertą serverio aplanką" to "Add the open server folder",
+        "Privaloma paskirtis" to "Required destination",
+        "Neprivaloma paskirtis" to "Optional destination",
+        "Pakeisti su atsargine kopija" to "Replace with recovery backup",
+        "Sujungti aplankus" to "Merge folders",
+        "Klausti" to "Ask",
+        "Patikra" to "Verification",
+        "Praleisti klaidą ir tęsti" to "Skip an error and continue",
+        "Šaltinius šalinti tik patvirtinus visas privalomas kopijas" to "Remove sources only after every required copy is verified",
+        "Jei nors viena privaloma paskirtis nepavyks, šaltiniai liks nepakeisti." to "If any required destination fails, the sources remain unchanged.",
+        "Planas paruoštas" to "Plan is ready",
+        "Planą reikia pataisyti" to "Plan needs attention",
+        "Vykdyti patvirtintą planą" to "Run the approved plan",
+        "Kur dingo mano failas?" to "Where did my file go?",
+        "Ieškoma tik AF File Manager atliktų operacijų istorijoje." to "Searches only operations performed by AF File Manager.",
+        "Istorija tuščia" to "Timeline is empty",
+        "Čia bus saugomi AF planų, automatizavimo ir saugaus atšaukimo kvitai." to "Receipts for AF Plans, automation, and safe undo will appear here.",
+        "Uždaryti kvitą" to "Close receipt",
+        "Eksportuoti JSON" to "Export JSON",
+        "Eksportuoti tekstą" to "Export text",
+        "Peržiūrėti saugų atšaukimą" to "Preview safe undo",
+        "Atšaukimą vykdyti saugu" to "Undo is safe to run",
+        "Atšaukimas sustabdytas" to "Undo was stopped",
+        "Atšaukti operaciją" to "Undo operation",
+        "Saugi automatika" to "Safe automation",
+        "Taisyklė vykdoma tik tada, kai naujas planas tiksliai sutampa su paskutine jūsų patvirtinta peržiūra. Pasikeitus failams reikės naujo patvirtinimo." to "A rule runs only when a fresh plan exactly matches your last approved preview. Changed files require new approval.",
+        "Taisyklių dar nėra" to "No rules yet",
+        "Atverkite išsaugotą planą ir pasirinkite „Automatizuoti“." to "Open a saved plan and choose Automate.",
+        "Pašalinti automatiką" to "Remove automation",
+        "Automatizuoti AF planą" to "Automate AF Plan",
+        "Taisyklės pavadinimas" to "Rule name",
+        "Tik nematuojamas tinklas" to "Unmetered network only",
+        "Tik įkraunant" to "Only while charging",
+        "Dabartinė peržiūra bus patvirtinta kartu su taisykle. Jei šaltiniai ar paskirtys pasikeis, automatinis vykdymas sustos." to "The current preview is approved with the rule. If sources or destinations change, automatic execution stops.",
+        "Pirmiausia peržiūrėkite konkretų darbą. Jei šaltiniai ar paskirtys vėliau pasikeis, automatinis vykdymas sustos." to "Review the exact work first. If sources or destinations change later, automatic execution stops.",
+        "Automatikos planas paruoštas" to "Automation plan is ready",
+        "Automatikos planas sustabdytas" to "Automation plan was stopped",
+        "Peržiūrėti automatikos planą" to "Review automation plan",
+        "Patvirtinti ir įjungti" to "Approve and enable",
+        "Bus kopijuojama" to "Will be copied",
+        "Jau vienoda ir patvirtinta" to "Already identical and verified",
+        "Tikriausiai jau vienoda" to "Probably already identical",
+        "Bus paliktos abi versijos" to "Both versions will be kept",
+        "Bus praleista" to "Will be skipped",
+        "Bus pakeista su atsargine kopija" to "Will be replaced with a recovery backup",
+        "Veiksmas užblokuotas" to "Action is blocked",
+        "Tik rankiniu būdu" to "Manual only",
+        "Kas 6 val." to "Every 6 hours",
+        "Kasdien" to "Daily",
+        "Saugu" to "Safe",
+        "Nepavyko" to "Failed",
+        "Failas pasikeitė" to "File changed",
+        "Failo nebėra" to "File is missing",
+        "Negalima atšaukti" to "Cannot undo",
+        "Mišrus kopijavimo rinkinys" to "Mixed copy set",
+        "Rinkinyje yra šaltinių iš kelių vietų. Atverkite „Įklijuoti į kelias vietas“, kad prieš vykdymą matytumėte visą planą." to "The set contains sources from several locations. Open Paste to many to review the complete plan before running it.",
+        "Atverti planą" to "Open plan",
+        "Įklijuoti į kelias vietas" to "Paste to many",
+        "AF planai ir operacijų istorija" to "AF Plans and operation timeline",
+        "Kopijuokite į kelias vietas, pirmiausia patikrinkite konfliktus, eksportuokite kvitą ir saugiai atšaukite." to "Copy to several destinations, review conflicts first, export a receipt, and undo safely.",
+        "„Sujungti“ palygins originalą, jūsų pakeitimus ir dabartinę serverio versiją. Neaiškios vietos bus aiškiai pažymėtos redaktoriuje." to "Merge compares the original, your changes, and the current server version. Ambiguous sections are clearly marked in the editor.",
+        "Planas neberastas" to "Plan is missing",
+        "Peržiūrėta" to "Previewed",
+        "Eilėje" to "Queued",
+        "Vykdoma" to "Running",
+        "Pristabdyta" to "Paused",
+        "Baigta" to "Completed",
+        "Baigta su klaidomis" to "Completed with errors",
+        "Atšaukta" to "Cancelled",
+        "Nutrūko" to "Interrupted",
+        "Nukopijuota" to "Copied",
+        "Patvirtinta kaip vienoda" to "Verified identical",
+        "Praleista" to "Skipped",
+        "Pašalintas šaltinis" to "Source removed",
+        "Atkurta" to "Restored",
+        "Nėra kopijavimo rinkinio, kurį būtų galima papildyti" to "There is no copy set to extend",
+        "Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują rinkinį." to "Cut items cannot be mixed with Copy more. Start a new copy set.",
+        "Trijų versijų sujungimas dabar galimas nuotoliniams teksto failams" to "Three-way merge is currently available for remote text files",
+        "Pakeitimai sujungti. Peržiūrėkite ir išsaugokite rezultatą." to "Changes merged. Review and save the result.",
+        "Trijų versijų sujungimas nepavyko" to "Three-way merge failed",
+        "Pirmiausia nukopijuokite failus, tada atverkite „Įklijuoti į kelias vietas“" to "Copy files first, then open Paste to many",
+        "Prieš pridėdami dabartinį serverio aplanką prisijunkite prie serverio" to "Connect to a server before adding its current folder",
+        "AF planas neužbaigtas" to "AF Plan is incomplete",
+        "AF plano peržiūra nepavyko" to "AF Plan preview failed",
+        "AF planas išsaugotas" to "AF Plan saved",
+        "AF plano išsaugoti nepavyko" to "Could not save the AF Plan",
+        "Prieš vykdydami peržiūrėkite AF planą" to "Preview the AF Plan before running it",
+        "Po peržiūros failai pasikeitė; peržiūrėkite atnaujintą planą" to "Files changed after preview; review the refreshed plan",
+        "AF planas įtrauktas į operacijų eilę" to "AF Plan added to the operation queue",
+        "AF plano pašalinti nepavyko" to "Could not remove the AF Plan",
+        "Atšaukimo peržiūra nepavyko" to "Undo preview failed",
+        "Saugus atšaukimas įtrauktas į operacijų eilę" to "Safe undo added to the operation queue",
+        "Atšaukimo paleisti nepavyko" to "Could not start undo",
+        "Pasirinkite automatinį tvarkaraštį" to "Choose an automatic schedule",
+        "Pirmiausia peržiūrėkite automatikos planą" to "Review the automation plan first",
+        "AF plano peržiūroje yra kliūčių" to "AF Plan preview contains blockers",
+        "Automatikos plano peržiūra nepavyko" to "Automation plan preview failed",
+        "Automatika išsaugota su dabartine peržiūra" to "Automation saved with the current preview",
+        "Automatikos išsaugoti nepavyko" to "Could not save automation",
+        "Automatikos atnaujinti nepavyko" to "Could not update automation",
+        "Automatikos pašalinti nepavyko" to "Could not remove automation",
+        "Į AF planą galima pridėti tik vietinio archyvo įrašą" to "Only a local archive entry can be added to an AF Plan",
+        "Archyvo įrašo pridėti nepavyko" to "Could not add the archive entry",
+        "Archyvo įrašų negalima pridėti prie iškirpimo rinkinio" to "Archive entries cannot be added to a cut set",
+        "Archyvo įrašas pridėtas prie kopijavimo rinkinio" to "Archive entry added to the copy set",
+        "Archyvo įrašas jau yra kopijavimo rinkinyje" to "Archive entry is already in the copy set",
+        "Ši paskirtis jau yra AF plane" to "This destination is already in the AF Plan",
+        "Pasiekta AF plano paskirčių riba" to "AF Plan destination limit reached",
     )
 
     fun translate(text: String, language: String): String {
         if (text.isBlank()) return text
         if (language == AppLanguageManager.LITHUANIAN) {
-            return RuntimeMessageTranslations.lithuanian[text] ?: text
+            RuntimeMessageTranslations.lithuanian[text]?.let { return it }
+            lithuanianPatterns.firstNotNullOfOrNull { (pattern, transform) ->
+                pattern.matchEntire(text)?.let(transform)
+            }?.let { return it }
+            return text
         }
         english[text]?.let { return it }
         RuntimeMessageTranslations.english[text]?.let { return it }
@@ -901,6 +1085,51 @@ object UiTranslator {
         }
 
         val patterns = listOf(
+            Regex("^Naujas iš kopijavimo rinkinio \\((\\d+)\\)$") to { match: MatchResult ->
+                "New from copy set (${match.groupValues[1]})"
+            },
+            Regex("^Šaltiniai: (\\d+) · Paskirtys: (\\d+)$") to { match: MatchResult ->
+                "Sources: ${match.groupValues[1]} · Destinations: ${match.groupValues[2]}"
+            },
+            Regex("^(.+) · (.+) · šalinti tik patvirtinus visas kopijas$") to { match: MatchResult ->
+                "${translate(match.groupValues[1], language)} · ${translate(match.groupValues[2], language)} · remove only after all copies are verified"
+            },
+            Regex("^Šaltiniai \\((\\d+)\\)$") to { match: MatchResult -> "Sources (${match.groupValues[1]})" },
+            Regex("^Paskirtys \\((\\d+)\\)$") to { match: MatchResult -> "Destinations (${match.groupValues[1]})" },
+            Regex("^Dar (\\d+) šaltinių$") to { match: MatchResult -> "${match.groupValues[1]} more sources" },
+            Regex("^Elementai: (\\d+) · Kopijos: (\\d+) · Konfliktai: (\\d+)$") to { match: MatchResult ->
+                "Items: ${match.groupValues[1]} · Copies: ${match.groupValues[2]} · Conflicts: ${match.groupValues[3]}"
+            },
+            Regex("^Numatoma įrašyti: (.+)$") to { match: MatchResult ->
+                "Estimated write: ${match.groupValues[1]}"
+            },
+            Regex("^Dar (\\d+) paskirčių veiksmų$") to { match: MatchResult ->
+                "${match.groupValues[1]} more destination actions"
+            },
+            Regex("^Failai pasikeitė po peržiūros; peržiūrėkite automatikos planą iš naujo$") to { _: MatchResult ->
+                "Files changed after review; review the automation plan again"
+            },
+            Regex("^Šaltinių dydis: (.+) · Numatoma įrašyti: (.+)$") to { match: MatchResult ->
+                "Source size: ${match.groupValues[1]} · Estimated write: ${match.groupValues[2]}"
+            },
+            Regex("^Jau vienodi: (\\d+)$") to { match: MatchResult -> "Already identical: ${match.groupValues[1]}" },
+            Regex("^Bus praleista: (\\d+)$") to { match: MatchResult -> "Will be skipped: ${match.groupValues[1]}" },
+            Regex("^Įspėjimas: (.+)$") to { match: MatchResult -> "Warning: ${translate(match.groupValues[1], language)}" },
+            Regex("^Įrašai: (\\d+) · Klaidos: (\\d+)$") to { match: MatchResult ->
+                "Entries: ${match.groupValues[1]} · Errors: ${match.groupValues[2]}"
+            },
+            Regex("^Būsena: (.+) · Patikra: (.+)$") to { match: MatchResult ->
+                "Status: ${translate(match.groupValues[1], language)} · Verification: ${translate(match.groupValues[2], language)}"
+            },
+            Regex("^Šaltiniai pašalinti: (Taip|Ne)$") to { match: MatchResult ->
+                "Sources removed: ${translate(match.groupValues[1], language)}"
+            },
+            Regex("^Dar (\\d+) įrašų rasite eksportuotame kvite\\.$") to { match: MatchResult ->
+                "${match.groupValues[1]} more entries are available in the exported receipt."
+            },
+            Regex("^(.+) · (.+) · (.+)$") to { match: MatchResult ->
+                "${translate(match.groupValues[1], language)} · ${translate(match.groupValues[2], language)} · ${translate(match.groupValues[3], language)}"
+            },
             Regex("^Prisijungta · UID (\\d+)$") to { match: MatchResult -> "Connected · UID ${match.groupValues[1]}" },
             Regex("^Aplanke daugiau nei (\\d+) elementų$") to { match: MatchResult -> "The folder contains more than ${match.groupValues[1]} items" },
             Regex("^Pašalinti nepavyko: (.+)$") to { match: MatchResult -> "Could not remove: ${match.groupValues[1]}" },
@@ -932,6 +1161,30 @@ object UiTranslator {
             Regex("^Prieš išsaugodami pradiniame serveryje vėl prisijunkite prie (.+)$") to { match: MatchResult ->
                 "Reconnect to ${match.groupValues[1]} before saving to the original server"
             },
+            Regex("^Prieš sujungdami vėl prisijunkite prie (.+)$") to { match: MatchResult ->
+                "Reconnect to ${match.groupValues[1]} before merging"
+            },
+            Regex("^Redaktoriuje pažymėta konfliktų: (\\d+)\\. Išspręskite žymeklius ir išsaugokite\\.$") to { match: MatchResult ->
+                "Conflicts marked in the editor: ${match.groupValues[1]}. Resolve the markers and save."
+            },
+            Regex("^Visi pasirinkti elementai jau yra kopijavimo rinkinyje \\(iš viso (\\d+)\\)$") to { match: MatchResult ->
+                "All selected items are already in the copy set (${match.groupValues[1]} total)"
+            },
+            Regex("^Pridėta (\\d+) · iš viso (\\d+)$") to { match: MatchResult ->
+                "Added ${match.groupValues[1]} · ${match.groupValues[2]} total"
+            },
+            Regex("^Nukopijuota į rinkinį: (\\d+)$") to { match: MatchResult ->
+                "Copied to the set: ${match.groupValues[1]}"
+            },
+            Regex("^Pasiekta kopijavimo rinkinio riba: (\\d+) elementų$") to { match: MatchResult ->
+                "Copy-set limit reached: ${match.groupValues[1]} items"
+            },
+            Regex("^Iš šio serverio pridėta: (\\d+) · iš viso (\\d+)$") to { match: MatchResult ->
+                "Added from this server: ${match.groupValues[1]} · ${match.groupValues[2]} total"
+            },
+            Regex("^Nukopijuota iš serverio: (\\d+)$") to { match: MatchResult ->
+                "Copied from the server: ${match.groupValues[1]}"
+            },
             Regex("^Visi pasirinkti elementai jau buvo iškarpinėje \\((\\d+) iš viso\\)$") to { match: MatchResult ->
                 "All selected items were already in the clipboard (${match.groupValues[1]} total)"
             },
@@ -959,6 +1212,9 @@ object UiTranslator {
             Regex("^Pasirinkta: (.+)$") to { match: MatchResult -> "Selected: ${match.groupValues[1]}" },
             Regex("^Kopijuoti \\((\\d+)\\)$") to { match: MatchResult -> "Copy (${match.groupValues[1]})" },
             Regex("^Įklijuoti \\((\\d+)\\)$") to { match: MatchResult -> "Paste (${match.groupValues[1]})" },
+            Regex("^Įklijuoti į kelias vietas \\((\\d+)\\)$") to { match: MatchResult ->
+                "Paste to many (${match.groupValues[1]})"
+            },
             Regex("^Viename skydelyje galima turėti iki (\\d+) kortelių$") to { match: MatchResult -> "A pane can contain up to ${match.groupValues[1]} tabs" },
             Regex("^Žymos išsaugotos (\\d+) elementui\\(-ams\\)$") to { match: MatchResult -> "Tags saved for ${match.groupValues[1]} item(s)" },
             Regex("^Žymos eksportuotos: (.+)$") to { match: MatchResult -> "Tags exported: ${match.groupValues[1]}" },
@@ -1011,6 +1267,11 @@ object UiTranslator {
             Regex("^Rasta (\\d+) failų$") to { match: MatchResult -> "Found ${match.groupValues[1]} files" },
             Regex("^(\\d+) failų$") to { match: MatchResult -> "${match.groupValues[1]} files" },
             Regex("^(\\d+) elementų$") to { match: MatchResult -> "${match.groupValues[1]} items" },
+            Regex("^Rodomi naujausi (\\d+) failai$") to { match: MatchResult -> "Showing the newest ${match.groupValues[1]} files" },
+            Regex("^(\\d+) failų visoje saugykloje$") to { match: MatchResult -> "${match.groupValues[1]} files across storage" },
+            Regex("^Sesijos trukmė · (\\d+) min\\.$") to { match: MatchResult -> "Session duration · ${match.groupValues[1]} min" },
+            Regex("^Naudotojas: (.+)$") to { match: MatchResult -> "User: ${match.groupValues[1]}" },
+            Regex("^Kodas: (.+)$") to { match: MatchResult -> "Code: ${match.groupValues[1]}" },
             Regex("^(\\d+) elementų · galima atkurti arba išvalyti viską$") to { match: MatchResult ->
                 "${match.groupValues[1]} items · restore them or empty the trash"
             },
@@ -1081,6 +1342,47 @@ object UiTranslator {
 
         return text
     }
+
+    private val lithuanianPatterns = listOf(
+        Regex("^Įspėjimas: (.+)$") to { match: MatchResult ->
+            "Įspėjimas: ${translate(match.groupValues[1], AppLanguageManager.LITHUANIAN)}"
+        },
+        Regex("^Source unavailable: (.+) \\((.+)\\)$") to { match: MatchResult ->
+            "Šaltinis nepasiekiamas: ${match.groupValues[1]} (${match.groupValues[2]})"
+        },
+        Regex("^Source is empty or unavailable: (.+)$") to { match: MatchResult ->
+            "Šaltinis tuščias arba nepasiekiamas: ${match.groupValues[1]}"
+        },
+        Regex("^Source could not be content-verified: (.+) \\((.+)\\)$") to { match: MatchResult ->
+            "Nepavyko patikrinti šaltinio turinio: ${match.groupValues[1]} (${match.groupValues[2]})"
+        },
+        Regex("^Destination unavailable: (.+) \\((.+)\\)$") to { match: MatchResult ->
+            "Paskirtis nepasiekiama: ${match.groupValues[1]} (${match.groupValues[2]})"
+        },
+        Regex("^Destination is not a folder: (.+)$") to { match: MatchResult -> "Paskirtis nėra aplankas: ${match.groupValues[1]}" },
+        Regex("^Destination folder does not exist: (.+)$") to { match: MatchResult -> "Paskirties aplanko nėra: ${match.groupValues[1]}" },
+        Regex("^Could not inspect (.+): (.+)$") to { match: MatchResult -> "Nepavyko patikrinti ${match.groupValues[1]}: ${match.groupValues[2]}" },
+        Regex("^Free space could not be confirmed for (.+)$") to { match: MatchResult -> "Nepavyko patvirtinti laisvos vietos: ${match.groupValues[1]}" },
+        Regex("^Not enough free space at (.+)$") to { match: MatchResult -> "Nepakanka laisvos vietos: ${match.groupValues[1]}" },
+        Regex("^Choose how to resolve (.+)$") to { match: MatchResult -> "Pasirinkite, kaip išspręsti konfliktą: ${match.groupValues[1]}" },
+        Regex("^Only folders can be merged: (.+)$") to { match: MatchResult -> "Sujungti galima tik aplankus: ${match.groupValues[1]}" },
+        Regex("^A free name could not be found for (.+)$") to { match: MatchResult -> "Nepavyko rasti laisvo vardo: ${match.groupValues[1]}" },
+        Regex("^Multiple sources in this plan would write to the same destination: (.+)$") to { match: MatchResult -> "Keli šio plano šaltiniai rašytų į tą pačią paskirtį: ${match.groupValues[1]}" },
+        Regex("^Could not inspect a merged destination item: (.+) \\((.+)\\)$") to { match: MatchResult -> "Nepavyko patikrinti sujungiamos paskirties elemento: ${match.groupValues[1]} (${match.groupValues[2]})" },
+        Regex("^A file and folder conflict inside the merged tree: (.+)$") to { match: MatchResult -> "Sujungiamame medyje kertasi failas ir aplankas: ${match.groupValues[1]}" },
+        Regex("^Different file content already exists inside the merged tree: (.+)$") to { match: MatchResult -> "Sujungiamame medyje jau yra kitokio turinio failas: ${match.groupValues[1]}" },
+        Regex("^A merged source file could not be content-verified: (.+)$") to { match: MatchResult -> "Nepavyko patikrinti sujungiamo šaltinio failo turinio: ${match.groupValues[1]}" },
+        Regex("^A merged destination file could not be content-verified: (.+)$") to { match: MatchResult -> "Nepavyko patikrinti sujungiamos paskirties failo turinio: ${match.groupValues[1]}" },
+        Regex("^Source selections overlap: (.+)$") to { match: MatchResult -> "Pasirinkti šaltiniai persidengia: ${match.groupValues[1]}" },
+        Regex("^Archive source selections overlap: (.+)$") to { match: MatchResult -> "Pasirinkti archyvo šaltiniai persidengia: ${match.groupValues[1]}" },
+        Regex("^Destination folders overlap: (.+)$") to { match: MatchResult -> "Paskirties aplankai persidengia: ${match.groupValues[1]}" },
+        Regex("^A source cannot be copied into itself: (.+)$") to { match: MatchResult -> "Šaltinio negalima kopijuoti į jį patį: ${match.groupValues[1]}" },
+        Regex("^A remote source cannot be copied into itself: (.+)$") to { match: MatchResult -> "Nuotolinio šaltinio negalima kopijuoti į jį patį: ${match.groupValues[1]}" },
+        Regex("^Completed with (\\d+) errors$") to { match: MatchResult -> "Baigta su ${match.groupValues[1]} klaidomis" },
+        Regex("^Failed: (.+)$") to { match: MatchResult -> "Nepavyko: ${match.groupValues[1]}" },
+        Regex("^Undo: (.+)$") to { match: MatchResult -> "Atšaukti: ${match.groupValues[1]}" },
+        Regex("^AF Plan: (.+)$") to { match: MatchResult -> "AF planas: ${match.groupValues[1]}" },
+    )
 
     internal fun hasEnglishEntry(text: String): Boolean = english.containsKey(text) || RuntimeMessageTranslations.english.containsKey(text)
 }

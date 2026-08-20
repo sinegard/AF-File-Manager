@@ -4,6 +4,9 @@ enum class HomeSection {
     RECENT_FILES,
     STORAGE,
     QUICK_LOCATIONS,
+    TRASH,
+    FAVORITES,
+    TAGS,
 }
 
 data class HomeShortcut(
