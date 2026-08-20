@@ -83,6 +83,29 @@ class UiTranslatorTest {
                 AppLanguageManager.ENGLISH,
             ),
         )
+        assertEquals(
+            "Reconnect to Office NAS before merging",
+            UiTranslator.translate("Prieš sujungdami vėl prisijunkite prie Office NAS", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Conflicts marked in the editor: 2. Resolve the markers and save.",
+            UiTranslator.translate(
+                "Redaktoriuje pažymėta konfliktų: 2. Išspręskite žymeklius ir išsaugokite.",
+                AppLanguageManager.ENGLISH,
+            ),
+        )
+        assertEquals(
+            "Added 2 · 5 total",
+            UiTranslator.translate("Pridėta 2 · iš viso 5", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Added from this server: 3 · 8 total",
+            UiTranslator.translate("Iš šio serverio pridėta: 3 · iš viso 8", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Copy-set limit reached: 500 items",
+            UiTranslator.translate("Pasiekta kopijavimo rinkinio riba: 500 elementų", AppLanguageManager.ENGLISH),
+        )
         assertEquals("Local file is missing", UiTranslator.translate("Trūksta vietinio failo", AppLanguageManager.ENGLISH))
         assertEquals(
             "Open terminal in this folder",
@@ -104,6 +127,26 @@ class UiTranslatorTest {
             "Failed: The network profile was removed",
             UiTranslator.translate("Nepavyko: Tinklo profilis pašalintas", AppLanguageManager.ENGLISH),
         )
+        assertEquals(
+            "Review automation plan",
+            UiTranslator.translate("Peržiūrėti automatikos planą", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Estimated write: 1.2 GB",
+            UiTranslator.translate("Numatoma įrašyti: 1.2 GB", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "4 more destination actions",
+            UiTranslator.translate("Dar 4 paskirčių veiksmų", AppLanguageManager.ENGLISH),
+        )
+        assertEquals("Timeline", UiTranslator.translate("Istorija", AppLanguageManager.ENGLISH))
+        assertEquals("Automation", UiTranslator.translate("Automatika", AppLanguageManager.ENGLISH))
+        assertEquals("Required destination", UiTranslator.translate("Privaloma paskirtis", AppLanguageManager.ENGLISH))
+        assertEquals("Every 6 hours", UiTranslator.translate("Kas 6 val.", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Paste to many (4)",
+            UiTranslator.translate("Įklijuoti į kelias vietas (4)", AppLanguageManager.ENGLISH),
+        )
     }
 
     @Test
@@ -114,6 +157,21 @@ class UiTranslatorTest {
         assertEquals(
             "Failas per didelis redaguoti",
             UiTranslator.translate("File is too large to edit", AppLanguageManager.LITHUANIAN),
+        )
+        assertEquals(
+            "Šaltinis nepasiekiamas: report.txt (IOException)",
+            UiTranslator.translate("Source unavailable: report.txt (IOException)", AppLanguageManager.LITHUANIAN),
+        )
+        assertEquals(
+            "Įspėjimas: Nepavyko patvirtinti laisvos vietos privačioje laikinojoje saugykloje",
+            UiTranslator.translate(
+                "Įspėjimas: Private staging space could not be confirmed",
+                AppLanguageManager.LITHUANIAN,
+            ),
+        )
+        assertEquals(
+            "Baigta su 3 klaidomis",
+            UiTranslator.translate("Completed with 3 errors", AppLanguageManager.LITHUANIAN),
         )
     }
 

@@ -50,15 +50,21 @@ class PrivilegedFileRepository(
 
     private val previewCache = PrivilegedPreviewCache(context.cacheDir)
     private val primaryStorage = Environment.getExternalStorageDirectory().absolutePath
-    val roots: List<PrivilegedRoot> = listOf(
+    private val protectedRoots: List<PrivilegedRoot> = listOf(
         PrivilegedRoot("$primaryStorage/Android/data", "Android/data"),
         PrivilegedRoot("$primaryStorage/Android/obb", "Android/obb"),
     )
-    private val allowedRoots: List<String> = roots.map(PrivilegedRoot::path)
+    val roots: List<PrivilegedRoot>
+        get() = when (access.state.value.activeBackend) {
+            AdvancedAccessBackend.ROOT, AdvancedAccessBackend.SHIZUKU_ROOT -> listOf(PrivilegedRoot("/", "Root"))
+            else -> protectedRoots
+        }
+    private val allowedRoots: List<String>
+        get() = roots.map(PrivilegedRoot::path)
 
     suspend fun probeAndroidData(): Result<Boolean> = ioResult {
         val manager = access.fileSystemOrThrow()
-        val root = manager.getFile(roots.first().path)
+        val root = manager.getFile(protectedRoots.first().path)
         val accessible = root.isDirectory && root.list() != null
         access.reportAndroidDataProbe(accessible)
         accessible

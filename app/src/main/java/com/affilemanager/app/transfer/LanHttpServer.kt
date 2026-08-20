@@ -32,8 +32,15 @@ data class LanServerSession(
     val code: String,
     val expiresAtMillis: Long,
     val rootName: String,
+    val scheme: String = "http",
+    val username: String? = null,
 ) {
-    val url: String get() = "http://$address:$port/"
+    val url: String get() = "$scheme://$address:$port/"
+}
+
+internal interface TemporaryLanServer : AutoCloseable {
+    fun start(): LanServerSession
+    fun stop(reason: String)
 }
 
 class LanHttpServer(
@@ -44,7 +51,7 @@ class LanHttpServer(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val language: String = AppLanguageManager.ENGLISH,
     private val onStopped: (String) -> Unit = {},
-) : AutoCloseable {
+) : TemporaryLanServer {
     companion object {
         const val MAX_SESSION_MINUTES = 60
         const val MAX_CONCURRENT_REQUESTS = 4
@@ -78,7 +85,7 @@ class LanHttpServer(
     private var acceptThread: Thread? = null
     @Volatile private var session: LanServerSession? = null
 
-    fun start(): LanServerSession {
+    override fun start(): LanServerSession {
         check(running.compareAndSet(false, true)) { "LAN serveris jau veikia" }
         require(bindAddress is Inet4Address && (bindAddress.isSiteLocalAddress || bindAddress.isLoopbackAddress)) {
             "Serveris gali klausytis tik privačiame IPv4 tinkle"
@@ -109,7 +116,7 @@ class LanHttpServer(
 
     override fun close() = stop("Serveris sustabdytas")
 
-    fun stop(reason: String) {
+    override fun stop(reason: String) {
         if (!running.compareAndSet(true, false)) return
         runCatching { serverSocket?.close() }
         serverSocket = null

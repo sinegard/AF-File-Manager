@@ -12,6 +12,10 @@ import java.io.File
 import java.net.URI
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.PrintWriter
+import java.util.Base64
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
@@ -44,6 +48,57 @@ class LanTransferServiceTest {
             assertTrue(listing.startsWith("HTTP/1.1 200"))
             assertTrue(listing.contains("visible.txt"))
             assertFalse(listing.contains(root.canonicalPath))
+        } finally {
+            LanTransferController.stop(context)
+            awaitState { it.status == LanTransferStatus.STOPPED }
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun foregroundServiceRunsFtpWithTemporaryCredentials() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.cacheDir, "ftp-service-${UUID.randomUUID()}").apply { mkdirs() }
+        try {
+            LanTransferController.start(context, root.absolutePath, 1, LanTransferProtocol.FTP)
+            val running = awaitState { it.status == LanTransferStatus.RUNNING || it.status == LanTransferStatus.ERROR }
+            check(running.status == LanTransferStatus.RUNNING) { running.message ?: "FTP paslauga nepasileido" }
+            assertTrue(running.url.orEmpty().startsWith("ftp://"))
+            val uri = URI(running.url!!)
+            Socket(uri.host, uri.port).use { socket ->
+                socket.soTimeout = 5_000
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
+                assertTrue(reader.readLine().startsWith("220"))
+                writer.print("USER ${running.username}\r\n"); writer.flush()
+                assertTrue(reader.readLine().startsWith("331"))
+                writer.print("PASS ${running.code}\r\n"); writer.flush()
+                assertTrue(reader.readLine().startsWith("230"))
+            }
+        } finally {
+            LanTransferController.stop(context)
+            awaitState { it.status == LanTransferStatus.STOPPED }
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun foregroundServiceRunsWebDavWithTemporaryCredentials() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.cacheDir, "dav-service-${UUID.randomUUID()}").apply { mkdirs() }
+        try {
+            LanTransferController.start(context, root.absolutePath, 1, LanTransferProtocol.WEBDAV)
+            val running = awaitState { it.status == LanTransferStatus.RUNNING || it.status == LanTransferStatus.ERROR }
+            check(running.status == LanTransferStatus.RUNNING) { running.message ?: "WebDAV paslauga nepasileido" }
+            val uri = URI(running.url!!)
+            val token = Base64.getEncoder().encodeToString("${running.username}:${running.code}".toByteArray(StandardCharsets.UTF_8))
+            val response = request(
+                uri.host,
+                uri.port,
+                "OPTIONS / HTTP/1.1\r\nHost: ${uri.host}\r\nAuthorization: Basic $token\r\n\r\n",
+            )
+            assertTrue(response.startsWith("HTTP/1.1 200"))
+            assertTrue(response.contains("DAV: 1, 2"))
         } finally {
             LanTransferController.stop(context)
             awaitState { it.status == LanTransferStatus.STOPPED }

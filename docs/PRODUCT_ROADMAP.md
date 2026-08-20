@@ -33,6 +33,12 @@ This roadmap is designed for Android rather than copied blindly from desktop fil
 - A failed item can be retried or skipped according to the selected policy.
 - Move sources are removed only after the requested verification succeeds.
 - Operations expose only undo actions that can still be proved safe from the current file state.
+- AF Plans combine sources from the phone, saved searches, archives, and several saved server profiles with up to 16 required or optional destinations.
+- Every plan has a preflight summary for space, conflicts, identical data, replacement backups, write volume, and receipt limits before it can enter the operation queue.
+- AF Timeline stores bounded receipts, supports path history search and export, revalidates every target before undo, and consumes an undo proof after it is used.
+- Move-to-many always upgrades the final required-copy check to SHA-256 before deleting any source.
+- Automatic rules require a visible SHA-256 preview and an unchanged fingerprint; they stop rather than guessing when content, limits, or constraints change.
+- A generated Baseline Profile covers startup and critical local, thumbnail, and remote journeys. Macrobenchmarks guard cold start, first useful content, 10,000-item scroll, frame timing, and memory on the exact minified benchmark variant.
 
 ### Workspaces and transfer
 

@@ -5,11 +5,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
+import org.apache.commons.net.ftp.FTPCmd
 import org.apache.commons.net.ftp.FTPFile
 import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import org.apache.commons.net.util.TrustManagerUtils
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
+import java.net.Socket
+import java.nio.charset.Charset
 
 class FtpRemoteClient private constructor(
     private val client: FTPClient,
@@ -24,12 +29,13 @@ class FtpRemoteClient private constructor(
         suspend fun connect(profile: NetworkProfile, password: CharArray): FtpRemoteClient = withContext(Dispatchers.IO) {
             require(profile.protocol == NetworkProtocol.FTP || profile.protocol == NetworkProtocol.FTPS)
             val client: FTPClient = if (profile.protocol == NetworkProtocol.FTPS) {
-                FTPSClient(false).apply {
+                FastFtpsClient().apply {
                     setEndpointCheckingEnabled(true)
                     setTrustManager(TrustManagerUtils.getValidateServerCertificateTrustManager())
                 }
-            } else FTPClient()
+            } else FastFtpClient()
             try {
+                client.setAutodetectUTF8(true)
                 client.connectTimeout = CONNECT_TIMEOUT_MS
                 client.defaultTimeout = CONNECT_TIMEOUT_MS
                 client.dataTimeout = java.time.Duration.ofMillis(DATA_TIMEOUT_MS.toLong())
@@ -63,20 +69,26 @@ class FtpRemoteClient private constructor(
     override suspend fun list(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
         ensureControlAlive()
         val normalized = RemotePath.normalize(path)
-        val files = try {
-            client.listFiles(normalized)
+        try {
+            val machineReadable = if (
+                runCatching { client.hasFeature("MLST") || client.hasFeature("MLSD") }.getOrDefault(false)
+            ) {
+                fastMachineList(normalized)
+            } else {
+                null
+            }
+            machineReadable ?: client.listFiles(normalized).asSequence()
+                .filterNot { it.name == "." || it.name == ".." }
+                .map { it.toRemoteEntry(RemotePath.join(normalized, it.name)) }
+                .toList()
         } catch (error: Throwable) {
             throw FtpCommandException(FtpFailureStage.LIST, client.replyCode.takeIf { it > 0 }, error)
+        }.also { entries ->
+            if (!FTPReply.isPositiveCompletion(client.replyCode)) {
+                throw FtpCommandException(FtpFailureStage.LIST, client.replyCode)
+            }
+            require(entries.size <= MAX_LIST_ENTRIES) { "Nuotoliniame aplanke per daug elementų" }
         }
-        if (!FTPReply.isPositiveCompletion(client.replyCode)) {
-            throw FtpCommandException(FtpFailureStage.LIST, client.replyCode)
-        }
-        require(files.size <= MAX_LIST_ENTRIES) { "Nuotoliniame aplanke per daug elementų" }
-        files.asSequence()
-            .filterNot { it.name == "." || it.name == ".." }
-            .map { it.toRemoteEntry(RemotePath.join(normalized, it.name)) }
-            .sortedWith(compareByDescending<RemoteEntry> { it.directory }.thenBy { it.name.lowercase() })
-            .toList()
     }
 
     override suspend fun download(
@@ -171,6 +183,38 @@ class FtpRemoteClient private constructor(
         check(client.sendNoOp()) { "FTP connection closed without indication" }
     }
 
+    private fun fastMachineList(path: String): List<RemoteEntry>? {
+        val socket = (client as? MachineListConnection)?.openMachineList(path) ?: return null
+        var primaryFailure: Throwable? = null
+        return try {
+            val result = ArrayList<RemoteEntry>()
+            BufferedReader(InputStreamReader(socket.getInputStream(), Charset.forName(client.controlEncoding))).use { reader ->
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    FtpMachineListParser.parse(line, path)?.let { entry ->
+                        require(result.size < MAX_LIST_ENTRIES) { "Nuotoliniame aplanke per daug elementų" }
+                        result += entry
+                    }
+                }
+            }
+            result
+        } catch (error: Throwable) {
+            primaryFailure = error
+            throw error
+        } finally {
+            val failure = primaryFailure
+            runCatching { socket.close() }.exceptionOrNull()?.let { closeError ->
+                if (failure != null) failure.addSuppressed(closeError) else throw closeError
+            }
+            val completion = runCatching { client.completePendingCommand() }
+            if (failure != null) {
+                completion.exceptionOrNull()?.let(failure::addSuppressed)
+            } else {
+                check(completion.getOrThrow()) { "FTP katalogo sąrašas neužbaigtas" }
+            }
+        }
+    }
+
     private fun deleteInternal(path: String, recursive: Boolean, counter: Counter, depth: Int) {
         require(depth <= 64) { "Nuotolinių aplankų gylio riba viršyta" }
         counter.value += 1
@@ -196,4 +240,16 @@ class FtpRemoteClient private constructor(
     )
 
     private class Counter(var value: Int = 0)
+
+    private interface MachineListConnection {
+        fun openMachineList(path: String): Socket?
+    }
+
+    private class FastFtpClient : FTPClient(), MachineListConnection {
+        override fun openMachineList(path: String): Socket? = _openDataConnection_(FTPCmd.MLSD, path)
+    }
+
+    private class FastFtpsClient : FTPSClient(false), MachineListConnection {
+        override fun openMachineList(path: String): Socket? = _openDataConnection_(FTPCmd.MLSD, path)
+    }
 }

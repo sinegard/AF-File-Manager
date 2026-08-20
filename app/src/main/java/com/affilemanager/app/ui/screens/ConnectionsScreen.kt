@@ -129,6 +129,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val sync by viewModel.syncState.collectAsStateWithLifecycle()
     val localClipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val remoteClipboard by viewModel.remoteClipboard.collectAsStateWithLifecycle()
+    val afClipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
     val activeLocalState = if (activePanel == com.affilemanager.app.ui.PanelId.LEFT) left else right
     val activeSelection = activeLocalState.selectedPaths
 
@@ -205,10 +206,12 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onSelectAll = viewModel::selectAllRemote,
                     onDownloadSelected = viewModel::remoteDownloadSelection,
                     onCopySelected = viewModel::copyRemoteSelection,
-                    canAddToRemoteClipboard = remoteClipboard?.profileId == state.connectedProfile?.id,
+                    canAddToRemoteClipboard = afClipboard != null,
                     onAddToRemoteClipboard = viewModel::addRemoteSelectionToClipboard,
                     localClipboardCount = localClipboard?.takeIf { it.mode == ClipboardMode.COPY }?.paths?.size ?: 0,
+                    afClipboardCount = afClipboard?.sources?.size ?: 0,
                     onPasteLocalClipboard = { viewModel.pasteLocalClipboardToRemote() },
+                    onPasteToMany = { viewModel.startAfPlanFromClipboard(remoteDestination = true) },
                     onChooseUpload = { showUploadPicker = true },
                     onCreateFolder = { createRemoteFolder = true },
                     onRename = { renameRemote = it },
@@ -396,7 +399,9 @@ internal fun RemoteBrowser(
     canAddToRemoteClipboard: Boolean = false,
     onAddToRemoteClipboard: () -> Unit = {},
     localClipboardCount: Int,
+    afClipboardCount: Int = 0,
     onPasteLocalClipboard: () -> Unit,
+    onPasteToMany: () -> Unit = {},
     onChooseUpload: () -> Unit,
     onCreateFolder: () -> Unit,
     onRename: (RemoteEntry) -> Unit,
@@ -429,9 +434,16 @@ internal fun RemoteBrowser(
         val query = searchQuery.trim()
         if (query.isEmpty()) orderedEntries else orderedEntries.filter { it.name.contains(query, ignoreCase = true) }
     }
-    val selectableEntries = displayedEntries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
-    val allSelected = selectableEntries.isNotEmpty() && selectableEntries.all { it.path in state.selectedPaths }
-    val selectedEntries = displayedEntries.filter { it.path in state.selectedPaths }
+    val selectableEntries = remember(displayedEntries) {
+        displayedEntries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
+    }
+    val allSelected = remember(selectableEntries, state.selectedPaths) {
+        state.selectedPaths.isNotEmpty() && selectableEntries.all { it.path in state.selectedPaths }
+    }
+    val selectedEntries = remember(displayedEntries, state.selectedPaths) {
+        if (state.selectedPaths.isEmpty()) emptyList()
+        else displayedEntries.filter { it.path in state.selectedPaths }
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         if (state.selectedPaths.isNotEmpty()) {
             SelectionHeader(
@@ -447,11 +459,13 @@ internal fun RemoteBrowser(
                 state = state,
                 localDirectory = localDirectory,
                 localClipboardCount = localClipboardCount,
+                afClipboardCount = afClipboardCount,
                 onBack = onBack,
                 onForward = onForward,
                 onUp = onUp,
                 onRefresh = onRefresh,
                 onPasteLocalClipboard = onPasteLocalClipboard,
+                onPasteToMany = onPasteToMany,
                 onChooseUpload = onChooseUpload,
                 onSync = onSync,
                 onToggleHidden = onToggleHidden,
@@ -493,6 +507,7 @@ internal fun RemoteBrowser(
                 displayedEntries.isEmpty() -> RemoteEmptyPanel("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
                 state.grid -> RemoteEntryGrid(
                     entries = displayedEntries,
+                    loading = state.loading,
                     selectedPaths = state.selectedPaths,
                     selectionActive = state.selectedPaths.isNotEmpty(),
                     openingPath = state.openingPath,
@@ -508,6 +523,7 @@ internal fun RemoteBrowser(
                 )
                 else -> RemoteEntryList(
                     entries = displayedEntries,
+                    loading = state.loading,
                     selectedPaths = state.selectedPaths,
                     selectionActive = state.selectedPaths.isNotEmpty(),
                     openingPath = state.openingPath,
@@ -568,11 +584,13 @@ private fun RemoteFolderToolbar(
     state: com.affilemanager.app.ui.NetworkUiState,
     localDirectory: String,
     localClipboardCount: Int,
+    afClipboardCount: Int,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onUp: () -> Unit,
     onRefresh: () -> Unit,
     onPasteLocalClipboard: () -> Unit,
+    onPasteToMany: () -> Unit,
     onChooseUpload: () -> Unit,
     onSync: () -> Unit,
     onToggleHidden: () -> Unit,
@@ -585,7 +603,11 @@ private fun RemoteFolderToolbar(
     onToggleSearch: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(22.dp))
+            .padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack, enabled = state.backHistory.isNotEmpty()) {
@@ -621,7 +643,9 @@ private fun RemoteFolderToolbar(
             state = state,
             localDirectory = localDirectory,
             localClipboardCount = localClipboardCount,
+            afClipboardCount = afClipboardCount,
             onPasteLocalClipboard = onPasteLocalClipboard,
+            onPasteToMany = onPasteToMany,
             onChooseUpload = onChooseUpload,
             onSync = onSync,
             onToggleHidden = onToggleHidden,
@@ -640,7 +664,9 @@ private fun RemoteFolderActionsMenu(
     state: com.affilemanager.app.ui.NetworkUiState,
     localDirectory: String,
     localClipboardCount: Int,
+    afClipboardCount: Int,
     onPasteLocalClipboard: () -> Unit,
+    onPasteToMany: () -> Unit,
     onChooseUpload: () -> Unit,
     onSync: () -> Unit,
     onToggleHidden: () -> Unit,
@@ -664,6 +690,15 @@ private fun RemoteFolderActionsMenu(
                     enabled = !state.loading,
                     modifier = Modifier.testTag("remote_paste_local"),
                     onClick = { expanded = false; onPasteLocalClipboard() },
+                )
+            }
+            if (afClipboardCount > 0) {
+                DropdownMenuItem(
+                    text = { LText("Įklijuoti į kelias vietas ($afClipboardCount)") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
+                    enabled = !state.loading,
+                    modifier = Modifier.testTag("remote_paste_to_many"),
+                    onClick = { expanded = false; onPasteToMany() },
                 )
             }
             DropdownMenuItem(
@@ -750,6 +785,7 @@ private fun RemoteBreadcrumbs(path: String, onNavigate: (String) -> Unit) {
 @Composable
 private fun RemoteEntryList(
     entries: List<RemoteEntry>,
+    loading: Boolean,
     selectedPaths: Set<String>,
     selectionActive: Boolean,
     openingPath: String?,
@@ -763,30 +799,37 @@ private fun RemoteEntryList(
     onDelete: (RemoteEntry) -> Unit,
 ) {
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
-        items(entries, key = RemoteEntry::path) { entry ->
-            RemoteEntryRow(
-                entry = entry,
-                metadata = remoteEntryMeta(entry, dateFormat),
-                selected = entry.path in selectedPaths,
-                selectionActive = selectionActive,
-                opening = entry.path == openingPath,
-                iconScalePercent = iconScalePercent,
-                spacingScalePercent = spacingScalePercent,
-                onOpen = { onOpen(entry) },
-                onDownload = { onDownload(entry) },
-                onToggleSelection = { onToggleSelection(entry.path) },
-                onRename = { onRename(entry) },
-                onInfo = { onInfo(entry) },
-                onDelete = { onDelete(entry) },
-            )
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().testTag("remote_list"),
+            contentPadding = PaddingValues(bottom = 88.dp),
+        ) {
+            items(entries, key = RemoteEntry::path) { entry ->
+                RemoteEntryRow(
+                    entry = entry,
+                    metadata = remoteEntryMeta(entry, dateFormat),
+                    selected = entry.path in selectedPaths,
+                    selectionActive = selectionActive,
+                    opening = entry.path == openingPath,
+                    iconScalePercent = iconScalePercent,
+                    spacingScalePercent = spacingScalePercent,
+                    onOpen = { onOpen(entry) },
+                    onDownload = { onDownload(entry) },
+                    onToggleSelection = { onToggleSelection(entry.path) },
+                    onRename = { onRename(entry) },
+                    onInfo = { onInfo(entry) },
+                    onDelete = { onDelete(entry) },
+                )
+            }
         }
+        if (!loading) Spacer(Modifier.size(1.dp).testTag("remote_list_ready"))
     }
 }
 
 @Composable
 private fun RemoteEntryGrid(
     entries: List<RemoteEntry>,
+    loading: Boolean,
     selectedPaths: Set<String>,
     selectionActive: Boolean,
     openingPath: String?,
@@ -800,29 +843,32 @@ private fun RemoteEntryGrid(
     onInfo: (RemoteEntry) -> Unit,
     onDelete: (RemoteEntry) -> Unit,
 ) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(gridColumns.coerceIn(1, 6)),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(8.dp, 6.dp, 8.dp, 88.dp),
-        horizontalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
-        verticalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
-    ) {
-        items(entries, key = RemoteEntry::path) { entry ->
-            RemoteEntryTile(
-                entry = entry,
-                selected = entry.path in selectedPaths,
-                selectionActive = selectionActive,
-                opening = entry.path == openingPath,
-                iconScalePercent = iconScalePercent,
-                spacingScalePercent = spacingScalePercent,
-                onOpen = { onOpen(entry) },
-                onDownload = { onDownload(entry) },
-                onToggleSelection = { onToggleSelection(entry.path) },
-                onRename = { onRename(entry) },
-                onInfo = { onInfo(entry) },
-                onDelete = { onDelete(entry) },
-            )
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(gridColumns.coerceIn(1, 6)),
+            modifier = Modifier.fillMaxSize().testTag("remote_grid"),
+            contentPadding = PaddingValues(8.dp, 6.dp, 8.dp, 88.dp),
+            horizontalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
+            verticalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
+        ) {
+            items(entries, key = RemoteEntry::path) { entry ->
+                RemoteEntryTile(
+                    entry = entry,
+                    selected = entry.path in selectedPaths,
+                    selectionActive = selectionActive,
+                    opening = entry.path == openingPath,
+                    iconScalePercent = iconScalePercent,
+                    spacingScalePercent = spacingScalePercent,
+                    onOpen = { onOpen(entry) },
+                    onDownload = { onDownload(entry) },
+                    onToggleSelection = { onToggleSelection(entry.path) },
+                    onRename = { onRename(entry) },
+                    onInfo = { onInfo(entry) },
+                    onDelete = { onDelete(entry) },
+                )
+            }
         }
+        if (!loading) Spacer(Modifier.size(1.dp).testTag("remote_grid_ready"))
     }
 }
 

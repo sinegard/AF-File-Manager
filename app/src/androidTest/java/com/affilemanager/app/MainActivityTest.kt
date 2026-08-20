@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -73,7 +74,7 @@ class MainActivityTest {
         compose.onNodeWithTag("home_customize").performClick()
         compose.onNodeWithText("Customize home").fetchSemanticsNode()
         compose.onNodeWithText("Section order").fetchSemanticsNode()
-        compose.onNodeWithText("Add a file or folder shortcut").performScrollTo()
+        compose.onNodeWithText("Add a file or folder shortcut").assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
     }
 
@@ -91,6 +92,16 @@ class MainActivityTest {
         compose.onNodeWithText("Files").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.filesHomeVisible.value }
         compose.onNodeWithText("File locations").fetchSemanticsNode()
+    }
+
+    @Test
+    fun shareDestinationOffersWebFtpAndWebDav() {
+        compose.onNodeWithText("Share").performClick()
+        compose.onNodeWithText("Share with a computer").assertIsDisplayed()
+        compose.onNodeWithText("Web").assertIsDisplayed()
+        compose.onNodeWithText("FTP").assertIsDisplayed()
+        compose.onNodeWithText("WebDAV").assertIsDisplayed()
+        compose.onNodeWithText("Start sharing").assertIsDisplayed()
     }
 
     @Test
@@ -165,7 +176,7 @@ class MainActivityTest {
         }
         try {
             compose.runOnUiThread { viewModel.refreshProfiles() }
-            compose.onNodeWithText("Connections").performClick()
+            compose.onNodeWithText("Network").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.networkState.value.profiles.any { it.id == created.id } }
             compose.onNodeWithContentDescription("Edit connection").performClick()
             compose.onNodeWithText("Edit connection").fetchSemanticsNode()
@@ -238,6 +249,24 @@ class MainActivityTest {
                 viewModel.setAmoledBlack(false)
             }
         }
+    }
+
+    @Test
+    fun afWorkflowCenterExposesPlansTimelineAndAutomationWithoutMixedLanguage() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        compose.runOnUiThread { viewModel.openAfWorkflowCenter() }
+
+        compose.onNodeWithTag("af_plans_list").fetchSemanticsNode()
+        compose.onNodeWithText("AF Plans").fetchSemanticsNode()
+        compose.onNodeWithText("Timeline").performClick()
+        compose.onNodeWithTag("af_timeline_list").fetchSemanticsNode()
+        compose.onNodeWithText("Where did my file go?").fetchSemanticsNode()
+        compose.onNodeWithText("Automation").performClick()
+        compose.onNodeWithTag("af_automation_list").fetchSemanticsNode()
+        compose.onNodeWithText("Safe automation").fetchSemanticsNode()
+
+        compose.onNodeWithContentDescription("Close").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { !viewModel.afWorkflowUi.value.open }
     }
 
     @Test

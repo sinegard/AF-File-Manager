@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.affilemanager.app.AFFileManagerApplication
 import com.affilemanager.app.R
 import com.affilemanager.app.advanced.AdvancedAccessMode
+import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.advanced.AdvancedAccessState
 import com.affilemanager.app.advanced.PrivilegedPathRules
 import com.affilemanager.app.archive.ArchiveEntryInfo
@@ -31,6 +32,7 @@ import com.affilemanager.app.data.WorkspaceSession
 import com.affilemanager.app.data.WorkspaceTab
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagSnapshot
+import com.affilemanager.app.data.FileCategory
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.HomeCustomization
@@ -96,6 +98,21 @@ import com.affilemanager.app.terminal.TerminalModifierState
 import com.affilemanager.app.terminal.TerminalSessionController
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
+import com.affilemanager.app.workflow.AfAutomationRule
+import com.affilemanager.app.workflow.AfAutomationSchedule
+import com.affilemanager.app.workflow.AfDestinationRef
+import com.affilemanager.app.workflow.AfLocationKind
+import com.affilemanager.app.workflow.AfLocationRef
+import com.affilemanager.app.workflow.AfOperationReceipt
+import com.affilemanager.app.workflow.AfPlanDefinition
+import com.affilemanager.app.workflow.AfPreflightSummary
+import com.affilemanager.app.workflow.AfPreflightFingerprint
+import com.affilemanager.app.workflow.AfSourceRef
+import com.affilemanager.app.workflow.AfSourceKind
+import com.affilemanager.app.workflow.AfUndoPreview
+import com.affilemanager.app.workflow.AfWorkflowLimits
+import com.affilemanager.app.workflow.AfWorkflowSnapshot
+import com.affilemanager.app.workflow.identityKey
 import com.affilemanager.app.ui.preview.RemotePreviewCache
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.preview.previewSource
@@ -126,6 +143,7 @@ enum class AppSection {
     FILES,
     ANALYZE,
     CONNECTIONS,
+    SHARE,
     TOOLS,
 }
 
@@ -193,14 +211,29 @@ data class AnalysisUiState(
     val error: String? = null,
 )
 
+data class FileCategoryUiState(
+    val open: Boolean = false,
+    val category: FileCategory? = null,
+    val entries: List<FileEntry> = emptyList(),
+    val selectedPaths: Set<String> = emptySet(),
+    val scannedRows: Int = 0,
+    val truncated: Boolean = false,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
 data class AdvancedBrowserUiState(
     val open: Boolean = false,
+    val title: String = "Apsaugoti Android failai",
     val path: String = "",
     val entries: List<FileEntry> = emptyList(),
     val selectedPaths: Set<String> = emptySet(),
     val backHistory: List<String> = emptyList(),
     val includeHidden: Boolean = false,
     val grid: Boolean = false,
+    val iconScalePercent: Int = 100,
+    val spacingScalePercent: Int = 100,
+    val gridColumns: Int = 3,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val loading: Boolean = false,
@@ -249,6 +282,33 @@ data class NetworkUiState(
 data class RemoteClipboardState(
     val profileId: String,
     val entries: List<RemoteEntry>,
+)
+
+data class AfClipboardState(
+    val sources: List<AfSourceRef>,
+    val moveAfterVerifiedCopies: Boolean = false,
+)
+
+enum class AfWorkflowTab { PLANS, TIMELINE, AUTOMATION }
+
+data class AfWorkflowUiState(
+    val open: Boolean = false,
+    val tab: AfWorkflowTab = AfWorkflowTab.PLANS,
+    val editingPlanId: String? = null,
+    val name: String = "",
+    val sources: List<AfSourceRef> = emptyList(),
+    val destinations: List<AfDestinationRef> = emptyList(),
+    val conflictPolicy: ConflictPolicy = ConflictPolicy.KEEP_BOTH,
+    val verification: TransferVerification = TransferVerification.SIZE,
+    val failurePolicy: TransferFailurePolicy = TransferFailurePolicy.STOP,
+    val deleteSourcesAfterVerifiedCopies: Boolean = false,
+    val preview: AfPreflightSummary? = null,
+    val automationPreview: AfPreflightSummary? = null,
+    val undoPreview: AfUndoPreview? = null,
+    val selectedReceiptId: String? = null,
+    val timelineQuery: String = "",
+    val working: Boolean = false,
+    val error: String? = null,
 )
 
 data class SafBrowserUiState(
@@ -406,6 +466,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).absolutePath,
             builtIn = true,
         ),
+        HomeShortcut(
+            id = "builtin.archives",
+            title = "Archyvai",
+            path = initialPrimaryPath,
+            builtIn = true,
+        ),
+        HomeShortcut(
+            id = "builtin.apps",
+            title = "Programos",
+            path = initialPrimaryPath,
+            builtIn = true,
+        ),
     )
 
     private val _section = MutableStateFlow(AppSection.FILES)
@@ -452,11 +524,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _recentFiles = MutableStateFlow(RecentFilesUiState())
     val recentFiles: StateFlow<RecentFilesUiState> = _recentFiles.asStateFlow()
 
+    private val _fileCategory = MutableStateFlow(FileCategoryUiState())
+    val fileCategory: StateFlow<FileCategoryUiState> = _fileCategory.asStateFlow()
+
+    private val _cleanupRequested = MutableStateFlow(false)
+    val cleanupRequested: StateFlow<Boolean> = _cleanupRequested.asStateFlow()
+
     private val _clipboard = MutableStateFlow<ClipboardState?>(null)
     val clipboard: StateFlow<ClipboardState?> = _clipboard.asStateFlow()
 
     private val _remoteClipboard = MutableStateFlow<RemoteClipboardState?>(null)
     val remoteClipboard: StateFlow<RemoteClipboardState?> = _remoteClipboard.asStateFlow()
+
+    private val _afClipboard = MutableStateFlow<AfClipboardState?>(null)
+    val afClipboard: StateFlow<AfClipboardState?> = _afClipboard.asStateFlow()
+
+    val afWorkflowSnapshot: StateFlow<AfWorkflowSnapshot> = graph.workflows.snapshot
+    private val _afWorkflowUi = MutableStateFlow(AfWorkflowUiState())
+    val afWorkflowUi: StateFlow<AfWorkflowUiState> = _afWorkflowUi.asStateFlow()
 
     private val _searchState = MutableStateFlow(SearchUiState())
     val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
@@ -534,6 +619,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var advancedBrowserJob: Job? = null
     private var advancedFileOpenJob: Job? = null
     private var recentFilesJob: Job? = null
+    private var fileCategoryJob: Job? = null
     private var batchRenamePreviewJob: Job? = null
     private var remoteFileOpenJob: Job? = null
     private var remoteFileOpenRequestId = 0L
@@ -604,16 +690,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshAdvancedAccess() = graph.advancedAccess.refreshCapabilities()
 
-    fun openAdvancedBrowser() {
+    fun openAdvancedBrowser(preferredPath: String? = null) {
         advancedBrowserJob?.cancel()
-        _advancedBrowser.value = AdvancedBrowserUiState(open = true, loading = true)
+        val rootBackend = graph.advancedAccess.state.value.activeBackend in setOf(
+            AdvancedAccessBackend.ROOT,
+            AdvancedAccessBackend.SHIZUKU_ROOT,
+        )
+        val title = if (preferredPath == "/" || (preferredPath == null && rootBackend)) "Root" else "Apsaugoti Android failai"
+        _advancedBrowser.value = AdvancedBrowserUiState(open = true, title = title, loading = true)
         advancedBrowserJob = viewModelScope.launch {
             try {
-                val accessible = graph.privilegedFiles.probeAndroidData().getOrThrow()
-                require(accessible) { "Android/data šiuo privilegijuotu režimu nepasiekiamas" }
-                val firstRoot = graph.privilegedFiles.availableRoots().getOrThrow().firstOrNull()
-                    ?: throw IllegalStateException("Android/data ir Android/obb aplankai nepasiekiami")
-                loadAdvancedDirectory(firstRoot.path, pushHistory = false)
+                if (!rootBackend) {
+                    val accessible = graph.privilegedFiles.probeAndroidData().getOrThrow()
+                    require(accessible) { "Android/data šiuo privilegijuotu režimu nepasiekiamas" }
+                }
+                val roots = graph.privilegedFiles.availableRoots().getOrThrow()
+                val target = preferredPath ?: roots.firstOrNull()?.path
+                    ?: throw IllegalStateException("Privilegijuoti aplankai nepasiekiami")
+                loadAdvancedDirectory(target, pushHistory = false)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -655,10 +749,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         advancedBrowserJob?.cancel()
         advancedBrowserJob = viewModelScope.launch {
             _advancedBrowser.update { it.copy(backHistory = it.backHistory.dropLast(1), loading = true, selectedPaths = emptySet(), error = null) }
-            graph.privilegedFiles.list(previous, state.includeHidden, state.sortMode, state.sortDirection).fold(
-                onSuccess = { entries -> _advancedBrowser.update { it.copy(path = previous, entries = entries, loading = false, error = null) } },
-                onFailure = { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atidaryti nepavyko") } },
-            )
+            runCatching { loadAdvancedDirectory(previous, pushHistory = false) }
+                .onFailure { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atidaryti nepavyko") } }
             advancedBrowserJob = null
         }
         return true
@@ -684,7 +776,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleAdvancedLayout() {
-        _advancedBrowser.update { it.copy(grid = !it.grid) }
+        val state = _advancedBrowser.value
+        setAdvancedDisplaySettings(
+            DirectoryDisplaySettings(
+                layoutMode = if (state.grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
+                gridColumns = state.gridColumns,
+                showThumbnails = false,
+            ),
+        )
+    }
+
+    fun setAdvancedDisplaySettings(settings: DirectoryDisplaySettings) {
+        val state = _advancedBrowser.value
+        if (state.path.isBlank()) return
+        val normalized = settings.copy(showThumbnails = false)
+        runCatching { graph.navigation.setDirectoryDisplaySettings("privileged:${state.path}", normalized) }
+            .onSuccess {
+                _advancedBrowser.update { current ->
+                    current.copy(
+                        grid = normalized.layoutMode == DirectoryLayoutMode.GRID,
+                        iconScalePercent = normalized.iconScalePercent,
+                        spacingScalePercent = normalized.spacingScalePercent,
+                        gridColumns = normalized.gridColumns,
+                    )
+                }
+            }
+            .onFailure { message(it.message ?: "Rodinio nustatymo išsaugoti nepavyko", true) }
     }
 
     fun setAdvancedSort(mode: SortMode, direction: SortDirection) {
@@ -736,6 +855,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mode = if (move) ClipboardMode.MOVE else ClipboardMode.COPY,
             source = ClipboardSource.PRIVILEGED,
         )
+        _afClipboard.value = null
         _remoteClipboard.value = null
         clearAdvancedSelection()
         message(
@@ -821,13 +941,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun loadAdvancedDirectory(path: String, pushHistory: Boolean) {
         val before = _advancedBrowser.value
+        val display = runCatching { graph.navigation.directoryDisplaySettings("privileged:$path") }.getOrNull()
+            ?: DirectoryDisplaySettings()
         _advancedBrowser.update { it.copy(loading = true, error = null, selectedPaths = emptySet()) }
         val entries = graph.privilegedFiles.list(path, before.includeHidden, before.sortMode, before.sortDirection).getOrThrow()
         _advancedBrowser.update { state ->
             val history = if (pushHistory && before.path.isNotBlank() && before.path != path) {
                 (before.backHistory + before.path).takeLast(128)
             } else before.backHistory
-            state.copy(path = path, entries = entries, backHistory = history, loading = false, error = null)
+            state.copy(
+                path = path,
+                entries = entries,
+                backHistory = history,
+                grid = display.layoutMode == DirectoryLayoutMode.GRID,
+                iconScalePercent = display.iconScalePercent,
+                spacingScalePercent = display.spacingScalePercent,
+                gridColumns = display.gridColumns,
+                loading = false,
+                error = null,
+            )
         }
     }
 
@@ -1408,47 +1540,137 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (normalized.isEmpty()) return false
         val mode = if (move) ClipboardMode.MOVE else ClipboardMode.COPY
+        val additional = normalized.map { path ->
+            AfSourceRef(
+                location = AfLocationRef.local(path),
+                displayName = File(path).name.ifBlank { path },
+            ).normalized()
+        }
         val existing = if (append) {
-            val current = _clipboard.value
+            val current = _afClipboard.value
             if (current == null) {
-                message("Nėra vietinio kopijavimo rinkinio, kurį būtų galima papildyti", true)
+                message("Nėra kopijavimo rinkinio, kurį būtų galima papildyti", true)
                 return false
             }
-            if (current.source != ClipboardSource.LOCAL) {
-                message("Vietinių failų negalima pridėti prie privilegijuoto kopijavimo rinkinio", true)
+            if (current.moveAfterVerifiedCopies) {
+                message("Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują rinkinį.", true)
                 return false
             }
-            if (current.mode != ClipboardMode.COPY) {
-                message("Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują kopijavimo rinkinį.", true)
-                return false
-            }
-            current.paths
+            current.sources
         } else {
             emptyList()
         }
         val merged = ClipboardMergeRules.merge(
             existing = existing,
-            additional = normalized,
-            maximum = DurableTransferPlanner.MAX_SOURCE_PATHS,
-            key = { path -> runCatching { File(path).canonicalPath }.getOrDefault(File(path).absolutePath) },
+            additional = additional,
+            maximum = AfWorkflowLimits.MAX_SOURCE_ROOTS,
+            key = { source -> "${source.kind}:${source.location.identityKey()}:${source.archiveEntryPath.orEmpty()}" },
         )
-        _clipboard.value = ClipboardState(merged.items, mode, ClipboardSource.LOCAL)
+        _afClipboard.value = AfClipboardState(merged.items, moveAfterVerifiedCopies = move)
+        val allLocal = merged.items.all { it.kind == com.affilemanager.app.workflow.AfSourceKind.FILE_SYSTEM && it.location.kind == AfLocationKind.LOCAL }
+        _clipboard.value = if (allLocal) {
+            ClipboardState(merged.items.map { it.location.path }, mode, ClipboardSource.LOCAL)
+        } else {
+            null
+        }
         _remoteClipboard.value = null
         if (append) {
             message(
                 if (merged.addedCount == 0) {
-                    "Visi pasirinkti elementai jau buvo iškarpinėje (${merged.items.size} iš viso)"
+                    "Visi pasirinkti elementai jau yra kopijavimo rinkinyje (iš viso ${merged.items.size})"
                 } else {
-                    "Į iškarpinę įtraukta: ${merged.addedCount} · iš viso: ${merged.items.size}"
+                    "Pridėta ${merged.addedCount} · iš viso ${merged.items.size}"
                 },
             )
         } else {
-            message(if (move) "Paruošta perkelti: ${merged.items.size}" else "Nukopijuota į iškarpinę: ${merged.items.size}")
+            message(if (move) "Paruošta perkelti: ${merged.items.size}" else "Nukopijuota į rinkinį: ${merged.items.size}")
         }
         if (merged.limitReached) {
-            message("Pasiekta iškarpinės riba: ${DurableTransferPlanner.MAX_SOURCE_PATHS} elementų", true)
+            message("Pasiekta kopijavimo rinkinio riba: ${AfWorkflowLimits.MAX_SOURCE_ROOTS} elementų", true)
         }
         return true
+    }
+
+    fun openFileCategory(category: FileCategory) {
+        fileCategoryJob?.cancel()
+        _fileCategory.value = FileCategoryUiState(open = true, category = category, loading = true)
+        fileCategoryJob = viewModelScope.launch {
+            try {
+                val result = graph.fileCategories.load(category)
+                _fileCategory.update {
+                    it.copy(
+                        entries = result.entries,
+                        scannedRows = result.scannedRows,
+                        truncated = result.truncated,
+                        loading = false,
+                        error = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _fileCategory.update {
+                    it.copy(loading = false, error = error.message ?: "Failų kategorijos atidaryti nepavyko")
+                }
+            } finally {
+                fileCategoryJob = null
+            }
+        }
+    }
+
+    fun refreshFileCategory() {
+        _fileCategory.value.category?.let(::openFileCategory)
+    }
+
+    fun closeFileCategory() {
+        fileCategoryJob?.cancel()
+        fileCategoryJob = null
+        _fileCategory.value = FileCategoryUiState()
+    }
+
+    fun openTrashFromHome() {
+        _section.value = AppSection.TOOLS
+        openTrashBrowser()
+    }
+
+    fun openCleanupFromHome() {
+        _cleanupRequested.value = true
+        _section.value = AppSection.ANALYZE
+    }
+
+    fun consumeCleanupRequest() {
+        _cleanupRequested.value = false
+    }
+
+    fun openTagFromHome(tag: String) {
+        _section.value = AppSection.ANALYZE
+        val searchRoots = _roots.value.map(StorageRoot::path).distinct().ifEmpty { listOf(initialPrimaryPath) }
+        search(SearchFilters(tags = setOf(tag)), searchRoots)
+    }
+
+    fun toggleFileCategorySelection(path: String) {
+        _fileCategory.update { state ->
+            val selected = state.selectedPaths.toMutableSet()
+            if (!selected.add(path)) selected.remove(path)
+            state.copy(selectedPaths = selected)
+        }
+    }
+
+    fun toggleAllFileCategoryEntries(visiblePaths: Set<String>) {
+        _fileCategory.update { state ->
+            val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(state.selectedPaths::contains)
+            state.copy(selectedPaths = if (allSelected) state.selectedPaths - visiblePaths else state.selectedPaths + visiblePaths)
+        }
+    }
+
+    fun clearFileCategorySelection() {
+        _fileCategory.update { it.copy(selectedPaths = emptySet()) }
+    }
+
+    fun copyFileCategorySelection(move: Boolean, append: Boolean = false) {
+        val paths = _fileCategory.value.selectedPaths.toList()
+        if (paths.isEmpty()) return
+        if (setLocalClipboard(paths, move, append)) clearFileCategorySelection()
     }
 
     fun paste(
@@ -1470,7 +1692,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     operation = this,
                 )
                 note("Nukopijuota: ${result.copiedRoots} · praleista: ${result.skippedRoots}")
-                if (moving && result.skippedRoots == 0) _clipboard.value = null
+                if (moving && result.skippedRoots == 0) {
+                    _clipboard.value = null
+                    _afClipboard.value = null
+                }
                 refreshPanel(panel)
                 refreshRecentFiles()
                 if (_advancedBrowser.value.open) refreshAdvancedBrowser()
@@ -1486,7 +1711,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 verification = verification,
                 failurePolicy = if (moving) TransferFailurePolicy.STOP else failurePolicy,
             ).onSuccess {
-                if (moving) _clipboard.value = null
+                if (moving) {
+                    _clipboard.value = null
+                    _afClipboard.value = null
+                }
                 message("Patvarus planas išsaugotas ir įtrauktas į operacijų eilę")
             }.onFailure { message(it.message ?: "Operacijos plano sukurti nepavyko", true) }
         }
@@ -1584,6 +1812,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun open(entry: FileEntry) {
         if (entry.isDirectory) {
+            if (shouldOpenWithAdvancedAccess(entry.absolutePath)) {
+                openAdvancedBrowser(entry.absolutePath)
+                return
+            }
             _section.value = AppSection.FILES
             navigate(_activePanel.value, entry.absolutePath)
             return
@@ -2148,6 +2380,443 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissFileEditConflict() {
         _fileEditState.update { it.copy(conflict = null) }
     }
+
+    private fun shouldOpenWithAdvancedAccess(path: String): Boolean {
+        if (!graph.advancedAccess.state.value.connected) return false
+        val primary = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+        return listOf("$primary/Android/data", "$primary/Android/obb").any { protectedRoot ->
+            path == protectedRoot || path.startsWith("$protectedRoot/")
+        }
+    }
+
+    fun mergeFileEditConflict() {
+        val snapshot = _fileEditState.value
+        val session = snapshot.session ?: return
+        val origin = session.origin as? EditOrigin.Remote ?: run {
+            message("Trijų versijų sujungimas dabar galimas nuotoliniams teksto failams", true)
+            return
+        }
+        if (!session.usesInternalTextEditor || snapshot.conflict == null || snapshot.saving) return
+        val profile = _networkState.value.connectedProfile
+        val client = remoteClient
+        if (profile?.id != origin.profileId || client == null) {
+            message("Prieš sujungdami vėl prisijunkite prie ${origin.connectionName}", true)
+            return
+        }
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        _fileEditState.update { it.copy(saving = true, status = "Lyginamos trys versijos…", error = null) }
+        fileEditJob = viewModelScope.launch {
+            try {
+                val encoding = snapshot.encoding ?: TextEncoding.UTF8
+                val base = withContext(Dispatchers.IO) { graph.editSessions.readBaseTextDocument(session, encoding) }
+                val yours = withContext(Dispatchers.IO) { graph.editSessions.readTextDocument(session, encoding) }
+                val current = graph.remoteEdits.readCurrentText(session, client, encoding)
+                    ?: throw IllegalStateException("The current remote file no longer exists")
+                val merge = withContext(Dispatchers.Default) {
+                    graph.textMerge.merge(base.text, yours.text, current.document.text)
+                }
+                val rebased = withContext(Dispatchers.IO) {
+                    graph.editSessions.rebaseAfterMerge(session, current.revision, current.document)
+                }
+                _fileEditState.update { state ->
+                    if (state.session?.id != session.id) state else state.copy(
+                        session = rebased,
+                        text = merge.text,
+                        textChanged = merge.text != yours.text,
+                        saving = false,
+                        conflict = null,
+                        status = if (merge.clean) {
+                            "Pakeitimai sujungti. Peržiūrėkite ir išsaugokite rezultatą."
+                        } else {
+                            "Redaktoriuje pažymėta konfliktų: ${merge.conflicts.size}. Išspręskite žymeklius ir išsaugokite."
+                        },
+                        error = null,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _fileEditState.update {
+                    it.copy(saving = false, error = error.message ?: "Trijų versijų sujungimas nepavyko")
+                }
+            } finally {
+                if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
+    fun openAfWorkflowCenter(tab: AfWorkflowTab = AfWorkflowTab.PLANS) {
+        _afWorkflowUi.update { it.copy(open = true, tab = tab, error = null) }
+        viewModelScope.launch(Dispatchers.IO) { runCatching { graph.workflows.refresh() } }
+    }
+
+    fun closeAfWorkflowCenter() {
+        _afWorkflowUi.value = AfWorkflowUiState()
+    }
+
+    fun startAfPlanFromClipboard(destinationPanel: PanelId? = null, remoteDestination: Boolean = false) {
+        val clipboard = _afClipboard.value
+        if (clipboard == null || clipboard.sources.isEmpty()) {
+            message("Pirmiausia nukopijuokite failus, tada atverkite „Įklijuoti į kelias vietas“", true)
+            return
+        }
+        val destinations = buildList {
+            destinationPanel?.let { panel ->
+                add(AfDestinationRef(AfLocationRef.local(panelFlow(panel).value.path)))
+            }
+            if (remoteDestination) {
+                val profile = _networkState.value.connectedProfile
+                if (profile != null) {
+                    add(AfDestinationRef(AfLocationRef.remote(profile.id, profile.name, _networkState.value.path)))
+                }
+            }
+        }
+        _afWorkflowUi.value = AfWorkflowUiState(
+            open = true,
+            tab = AfWorkflowTab.PLANS,
+            name = "AF Plan ${System.currentTimeMillis()}",
+            sources = clipboard.sources,
+            destinations = destinations,
+            deleteSourcesAfterVerifiedCopies = clipboard.moveAfterVerifiedCopies,
+        )
+    }
+
+    fun editAfPlan(plan: AfPlanDefinition) {
+        _afWorkflowUi.value = AfWorkflowUiState(
+            open = true,
+            tab = AfWorkflowTab.PLANS,
+            editingPlanId = plan.id,
+            name = plan.name,
+            sources = plan.sources,
+            destinations = plan.destinations,
+            conflictPolicy = plan.conflictPolicy,
+            verification = plan.verification,
+            failurePolicy = plan.failurePolicy,
+            deleteSourcesAfterVerifiedCopies = plan.deleteSourcesAfterVerifiedCopies,
+        )
+    }
+
+    fun newAfPlanDraft() {
+        val sources = _afClipboard.value?.sources.orEmpty()
+        _afWorkflowUi.update {
+            AfWorkflowUiState(
+                open = true,
+                tab = AfWorkflowTab.PLANS,
+                name = if (sources.isEmpty()) "" else "AF Plan ${System.currentTimeMillis()}",
+                sources = sources,
+                deleteSourcesAfterVerifiedCopies = _afClipboard.value?.moveAfterVerifiedCopies == true,
+            )
+        }
+    }
+
+    fun setAfWorkflowTab(tab: AfWorkflowTab) {
+        _afWorkflowUi.update { it.copy(tab = tab, error = null, undoPreview = null) }
+    }
+
+    fun setAfPlanName(name: String) = _afWorkflowUi.update {
+        it.copy(name = name.take(AfWorkflowLimits.MAX_NAME_LENGTH), preview = null, error = null)
+    }
+
+    fun setAfPlanConflictPolicy(policy: ConflictPolicy) = _afWorkflowUi.update {
+        it.copy(
+            conflictPolicy = policy,
+            failurePolicy = if (policy == ConflictPolicy.REPLACE) TransferFailurePolicy.STOP else it.failurePolicy,
+            preview = null,
+            error = null,
+        )
+    }
+
+    fun setAfPlanVerification(verification: TransferVerification) = _afWorkflowUi.update {
+        it.copy(verification = verification, preview = null, error = null)
+    }
+
+    fun setAfPlanFailurePolicy(policy: TransferFailurePolicy) = _afWorkflowUi.update {
+        it.copy(
+            failurePolicy = if (it.conflictPolicy == ConflictPolicy.REPLACE) TransferFailurePolicy.STOP else policy,
+            preview = null,
+            error = null,
+        )
+    }
+
+    fun setAfPlanDeleteSources(enabled: Boolean) = _afWorkflowUi.update {
+        it.copy(
+            deleteSourcesAfterVerifiedCopies = enabled,
+            failurePolicy = if (enabled) TransferFailurePolicy.STOP else it.failurePolicy,
+            preview = null,
+            error = null,
+        )
+    }
+
+    fun addActiveLocalAfDestination() {
+        addAfDestination(AfDestinationRef(AfLocationRef.local(activePanelState().path)))
+    }
+
+    fun addCurrentRemoteAfDestination() {
+        val profile = _networkState.value.connectedProfile
+        if (profile == null) {
+            message("Prieš pridėdami dabartinį serverio aplanką prisijunkite prie serverio", true)
+            return
+        }
+        addAfDestination(AfDestinationRef(AfLocationRef.remote(profile.id, profile.name, _networkState.value.path)))
+    }
+
+    fun removeAfDestination(index: Int) = _afWorkflowUi.update { state ->
+        if (index !in state.destinations.indices) state
+        else state.copy(destinations = state.destinations.filterIndexed { itemIndex, _ -> itemIndex != index }, preview = null)
+    }
+
+    fun removeAfSource(index: Int) = _afWorkflowUi.update { state ->
+        if (index !in state.sources.indices) state
+        else state.copy(sources = state.sources.filterIndexed { itemIndex, _ -> itemIndex != index }, preview = null)
+    }
+
+    fun toggleAfDestinationRequired(index: Int) = _afWorkflowUi.update { state ->
+        if (index !in state.destinations.indices) state else state.copy(
+            destinations = state.destinations.mapIndexed { itemIndex, destination ->
+                if (itemIndex == index) destination.copy(required = !destination.required) else destination
+            },
+            preview = null,
+        )
+    }
+
+    fun previewAfPlan() {
+        val snapshot = _afWorkflowUi.value
+        if (snapshot.working) return
+        val plan = runCatching { snapshot.toPlanDefinition() }.getOrElse { error ->
+            _afWorkflowUi.update { it.copy(error = error.message ?: "AF planas neužbaigtas") }
+            return
+        }
+        _afWorkflowUi.update { it.copy(working = true, preview = null, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.preview(plan) }
+                .onSuccess { preview -> _afWorkflowUi.update { it.copy(working = false, preview = preview, error = null) } }
+                .onFailure { error -> _afWorkflowUi.update { it.copy(working = false, error = error.message ?: "AF plano peržiūra nepavyko") } }
+        }
+    }
+
+    fun saveAfPlan() {
+        val snapshot = _afWorkflowUi.value
+        if (snapshot.working) return
+        val plan = runCatching { snapshot.toPlanDefinition() }.getOrElse { error ->
+            _afWorkflowUi.update { it.copy(error = error.message ?: "AF planas neužbaigtas") }
+            return
+        }
+        _afWorkflowUi.update { it.copy(working = true, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.savePlan(plan) }
+                .onSuccess { saved ->
+                    _afWorkflowUi.update { it.copy(working = false, editingPlanId = saved.id, error = null) }
+                    message("AF planas išsaugotas")
+                }
+                .onFailure { error -> _afWorkflowUi.update { it.copy(working = false, error = error.message ?: "AF plano išsaugoti nepavyko") } }
+        }
+    }
+
+    fun runAfPlan() {
+        val snapshot = _afWorkflowUi.value
+        val preview = snapshot.preview ?: run {
+            _afWorkflowUi.update { it.copy(error = "Prieš vykdydami peržiūrėkite AF planą") }
+            return
+        }
+        if (!preview.canRun || snapshot.working) return
+        _afWorkflowUi.update { it.copy(working = true, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val saved = graph.workflows.savePlan(preview.plan)
+                val fresh = graph.workflows.preview(saved)
+                require(AfPreflightFingerprint.create(fresh) == AfPreflightFingerprint.create(preview)) {
+                    "Po peržiūros failai pasikeitė; peržiūrėkite atnaujintą planą"
+                }
+                graph.workflows.submit(fresh)
+            }.onSuccess {
+                _afWorkflowUi.update { it.copy(working = false, editingPlanId = preview.plan.id, error = null) }
+                message("AF planas įtrauktas į operacijų eilę")
+            }.onFailure { error ->
+                _afWorkflowUi.update { it.copy(working = false, error = error.message ?: "AF plano paleisti nepavyko") }
+            }
+        }
+    }
+
+    fun removeAfPlan(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.removePlan(id) }
+                .onFailure { message(it.message ?: "AF plano pašalinti nepavyko", true) }
+        }
+    }
+
+    fun setAfTimelineQuery(query: String) = _afWorkflowUi.update { it.copy(timelineQuery = query.take(240)) }
+
+    fun selectAfReceipt(id: String?) = _afWorkflowUi.update {
+        it.copy(selectedReceiptId = id, undoPreview = null, error = null)
+    }
+
+    fun previewAfUndo(receiptId: String) {
+        _afWorkflowUi.update { it.copy(working = true, undoPreview = null, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.previewUndo(receiptId) }
+                .onSuccess { preview -> _afWorkflowUi.update { it.copy(working = false, undoPreview = preview) } }
+                .onFailure { error -> _afWorkflowUi.update { it.copy(working = false, error = error.message ?: "Atšaukimo peržiūra nepavyko") } }
+        }
+    }
+
+    fun runAfUndo() {
+        val state = _afWorkflowUi.value
+        val receiptId = state.selectedReceiptId ?: return
+        val preview = state.undoPreview ?: return
+        graph.workflows.submitUndo(receiptId, preview)
+            .onSuccess {
+                _afWorkflowUi.update { it.copy(undoPreview = null, selectedReceiptId = null) }
+                message("Saugus atšaukimas įtrauktas į operacijų eilę")
+            }
+            .onFailure { error -> _afWorkflowUi.update { it.copy(error = error.message ?: "Atšaukimo paleisti nepavyko") } }
+    }
+
+    fun createAfAutomation(
+        plan: AfPlanDefinition,
+        name: String,
+        schedule: AfAutomationSchedule,
+        unmeteredOnly: Boolean,
+        chargingOnly: Boolean,
+    ) {
+        require(schedule != AfAutomationSchedule.MANUAL_ONLY) { "Pasirinkite automatinį tvarkaraštį" }
+        val approved = _afWorkflowUi.value.automationPreview
+        if (approved == null || approved.plan.id != plan.id || !approved.canRun) {
+            _afWorkflowUi.update { it.copy(error = "Pirmiausia peržiūrėkite automatikos planą") }
+            return
+        }
+        _afWorkflowUi.update { it.copy(working = true, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val preview = graph.workflows.preview(plan.copy(verification = TransferVerification.SHA256))
+                require(com.affilemanager.app.workflow.AfAutomationPolicy.blocker(preview) == null) {
+                    com.affilemanager.app.workflow.AfAutomationPolicy.blocker(preview)
+                        ?: "AF plano peržiūroje yra kliūčių"
+                }
+                require(AfPreflightFingerprint.create(preview) == AfPreflightFingerprint.create(approved)) {
+                    "Failai pasikeitė po peržiūros; peržiūrėkite automatikos planą iš naujo"
+                }
+                val rule = graph.workflows.saveAutomation(
+                    AfAutomationRule(
+                        name = name,
+                        planId = plan.id,
+                        enabled = true,
+                        schedule = schedule,
+                        unmeteredOnly = unmeteredOnly,
+                        chargingOnly = chargingOnly,
+                    ),
+                )
+                graph.workflows.approveAutomationPreview(rule.id, preview)
+            }.onSuccess {
+                _afWorkflowUi.update { it.copy(working = false, automationPreview = null, error = null) }
+                message("Automatika išsaugota su dabartine peržiūra")
+            }.onFailure { error -> _afWorkflowUi.update { it.copy(working = false, error = error.message ?: "Automatikos išsaugoti nepavyko") } }
+        }
+    }
+
+    fun previewAfAutomation(plan: AfPlanDefinition) {
+        if (_afWorkflowUi.value.working) return
+        _afWorkflowUi.update { it.copy(working = true, automationPreview = null, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.preview(plan.copy(verification = TransferVerification.SHA256)) }
+                .onSuccess { preview ->
+                    val blocker = com.affilemanager.app.workflow.AfAutomationPolicy.blocker(preview)
+                    val reviewed = if (blocker == null || blocker in preview.blockers) preview
+                    else preview.copy(blockers = (preview.blockers + blocker).distinct())
+                    _afWorkflowUi.update { it.copy(working = false, automationPreview = reviewed, error = null) }
+                }
+                .onFailure { error ->
+                    _afWorkflowUi.update {
+                        it.copy(working = false, error = error.message ?: "Automatikos plano peržiūra nepavyko")
+                    }
+                }
+        }
+    }
+
+    fun clearAfAutomationPreview() = _afWorkflowUi.update {
+        it.copy(automationPreview = null, error = null)
+    }
+
+    fun setAfAutomationEnabled(rule: AfAutomationRule, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.saveAutomation(rule.copy(enabled = enabled)) }
+                .onFailure { message(it.message ?: "Automatikos atnaujinti nepavyko", true) }
+        }
+    }
+
+    fun removeAfAutomation(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { graph.workflows.removeAutomation(id) }
+                .onFailure { message(it.message ?: "Automatikos pašalinti nepavyko", true) }
+        }
+    }
+
+    fun afReceiptJson(receiptId: String): String = graph.workflows.exportReceiptJson(receiptId)
+    fun afReceiptText(receiptId: String): String = graph.workflows.exportReceiptText(receiptId)
+
+    fun clearAfClipboard() {
+        _afClipboard.value = null
+        _clipboard.value = null
+        _remoteClipboard.value = null
+    }
+
+    fun copyArchiveEntryToSet(entryPath: String) {
+        val target = _preview.value as? PreviewTarget.Archive ?: run {
+            message("Į AF planą galima pridėti tik vietinio archyvo įrašą", true)
+            return
+        }
+        val source = runCatching {
+            AfSourceRef(
+                location = AfLocationRef.local(target.file.absolutePath),
+                displayName = entryPath.trim('/').substringAfterLast('/').ifBlank {
+                    target.file.name.substringBeforeLast('.', target.file.name)
+                },
+                kind = AfSourceKind.ARCHIVE_ENTRY,
+                archiveEntryPath = entryPath,
+            ).normalized()
+        }.getOrElse { error ->
+            message(error.message ?: "Archyvo įrašo pridėti nepavyko", true)
+            return
+        }
+        val existing = _afClipboard.value
+        if (existing?.moveAfterVerifiedCopies == true) {
+            message("Archyvo įrašų negalima pridėti prie iškirpimo rinkinio", true)
+            return
+        }
+        val merged = ClipboardMergeRules.merge(
+            existing = existing?.sources.orEmpty(),
+            additional = listOf(source),
+            maximum = AfWorkflowLimits.MAX_SOURCE_ROOTS,
+            key = { item -> "${item.kind}:${item.location.identityKey()}:${item.archiveEntryPath.orEmpty()}" },
+        )
+        _afClipboard.value = AfClipboardState(merged.items)
+        _clipboard.value = null
+        _remoteClipboard.value = null
+        message(if (merged.addedCount > 0) "Archyvo įrašas pridėtas prie kopijavimo rinkinio" else "Archyvo įrašas jau yra kopijavimo rinkinyje")
+    }
+
+    private fun addAfDestination(destination: AfDestinationRef) {
+        _afWorkflowUi.update { state ->
+            if (state.destinations.any { it.location.identityKey() == destination.location.identityKey() }) {
+                state.copy(error = "Ši paskirtis jau yra AF plane")
+            } else if (state.destinations.size >= AfWorkflowLimits.MAX_DESTINATIONS) {
+                state.copy(error = "Pasiekta AF plano paskirčių riba")
+            } else {
+                state.copy(destinations = state.destinations + destination, preview = null, error = null)
+            }
+        }
+    }
+
+    private fun AfWorkflowUiState.toPlanDefinition(): AfPlanDefinition = AfPlanDefinition(
+        id = editingPlanId ?: UUID.randomUUID().toString(),
+        name = name,
+        sources = sources,
+        destinations = destinations,
+        conflictPolicy = conflictPolicy,
+        verification = verification,
+        failurePolicy = if (deleteSourcesAfterVerifiedCopies) TransferFailurePolicy.STOP else failurePolicy,
+        deleteSourcesAfterVerifiedCopies = deleteSourcesAfterVerifiedCopies,
+    ).normalized()
 
     fun closePreview() {
         if (_fileEditState.value.saving) {
@@ -3390,43 +4059,81 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun setRemoteClipboard(entries: List<RemoteEntry>, append: Boolean = false) {
         val profile = _networkState.value.connectedProfile ?: return
+        val additional = entries.map { entry ->
+            AfSourceRef(
+                location = AfLocationRef.remote(profile.id, profile.name, entry.path),
+                displayName = entry.name,
+            ).normalized()
+        }
         val existing = if (append) {
-            val current = _remoteClipboard.value
+            val current = _afClipboard.value
             if (current == null) {
-                message("Nėra serverio kopijavimo rinkinio, kurį būtų galima papildyti", true)
+                message("Nėra kopijavimo rinkinio, kurį būtų galima papildyti", true)
                 return
             }
-            if (current.profileId != profile.id) {
-                message("„Kopijuoti daugiau“ galima tik iš tos pačios serverio jungties", true)
+            if (current.moveAfterVerifiedCopies) {
+                message("Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują rinkinį.", true)
                 return
             }
-            current.entries
+            current.sources
         } else {
             emptyList()
         }
         val merged = ClipboardMergeRules.merge(
             existing = existing,
-            additional = entries,
-            maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
-            key = { entry -> RemotePath.normalize(entry.path) },
+            additional = additional,
+            maximum = AfWorkflowLimits.MAX_SOURCE_ROOTS,
+            key = { source -> "${source.kind}:${source.location.identityKey()}:${source.archiveEntryPath.orEmpty()}" },
         )
         if (merged.items.isEmpty()) return
-        _remoteClipboard.value = RemoteClipboardState(profile.id, merged.items)
+        _afClipboard.value = AfClipboardState(merged.items)
+        val onlyThisProfile = merged.items.all {
+            it.kind == com.affilemanager.app.workflow.AfSourceKind.FILE_SYSTEM &&
+                it.location.kind == AfLocationKind.REMOTE &&
+                it.location.profileId == profile.id
+        }
+        _remoteClipboard.value = if (onlyThisProfile) {
+            val legacyExisting = if (append && _remoteClipboard.value?.profileId == profile.id) {
+                _remoteClipboard.value?.entries.orEmpty()
+            } else {
+                emptyList()
+            }
+            val legacy = ClipboardMergeRules.merge(
+                existing = legacyExisting,
+                additional = entries,
+                maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
+                key = { entry -> RemotePath.normalize(entry.path) },
+            )
+            RemoteClipboardState(profile.id, legacy.items)
+        } else {
+            null
+        }
         _clipboard.value = null
         clearRemoteSelection()
         if (append) {
             message(
                 if (merged.addedCount == 0) {
-                    "Visi pasirinkti serverio elementai jau buvo iškarpinėje (${merged.items.size} iš viso)"
+                    "Visi pasirinkti elementai jau yra kopijavimo rinkinyje (iš viso ${merged.items.size})"
                 } else {
-                    "Iš serverio įtraukta: ${merged.addedCount} · iš viso: ${merged.items.size}"
+                    "Iš šio serverio pridėta: ${merged.addedCount} · iš viso ${merged.items.size}"
                 },
             )
         } else {
-            message("Nukopijuota iš serverio į iškarpinę: ${merged.items.size}")
+            message("Nukopijuota iš serverio: ${merged.items.size}")
         }
         if (merged.limitReached) {
-            message("Pasiekta serverio iškarpinės riba: ${RemoteCopyEngine.MAX_SELECTED_ROOTS} elementų", true)
+            message("Pasiekta kopijavimo rinkinio riba: ${AfWorkflowLimits.MAX_SOURCE_ROOTS} elementų", true)
+        }
+    }
+
+    fun connectSavedNetworkProfile(profileId: String) {
+        viewModelScope.launch {
+            val profile = graph.networkProfiles.list().firstOrNull { it.id == profileId }
+            if (profile == null) {
+                _networkState.update { it.copy(loading = false, error = RemoteErrorPresenter.invalidProfile("Profilis neberastas")) }
+            } else {
+                connectNetwork(profile)
+            }
         }
     }
 
@@ -3680,8 +4387,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelOperation(id: String) = graph.durableTransfers.cancel(id)
     fun pauseOperation(id: String) = graph.operationManager.pause(id)
     fun resumeOperation(id: String) = graph.operationManager.resume(id)
-    fun retryOperation(id: String) = graph.durableTransfers.retry(id)
-        .onFailure { message(it.message ?: "Operacijos pakartoti nepavyko", true) }
+    fun retryOperation(id: String) {
+        graph.durableTransfers.retry(id).onFailure {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { graph.workflows.retryExecution(id) }
+                    .onFailure { error -> message(error.message ?: "Operacijos pakartoti nepavyko", true) }
+            }
+        }
+    }
     fun dismissFinishedOperations() = graph.operationManager.dismissFinished()
 
     fun activePanelState(): PanelUiState = panelFlow(_activePanel.value).value

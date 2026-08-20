@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -57,6 +58,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -74,9 +77,11 @@ import com.affilemanager.app.ui.components.BatchRenameDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.screens.AnalyzeScreen
+import com.affilemanager.app.ui.screens.AfWorkflowDialog
 import com.affilemanager.app.ui.screens.ConnectionsScreen
 import com.affilemanager.app.ui.screens.FilesScreen
 import com.affilemanager.app.ui.screens.ToolsScreen
+import com.affilemanager.app.ui.screens.SharingScreen
 import com.affilemanager.app.ui.terminal.TerminalOverlay
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
@@ -91,6 +96,7 @@ private val destinations = listOf(
     SectionDestination(AppSection.FILES, "Failai", Icons.Rounded.Folder),
     SectionDestination(AppSection.ANALYZE, "Analizė", Icons.Rounded.Analytics),
     SectionDestination(AppSection.CONNECTIONS, "Ryšiai", Icons.Rounded.Storage),
+    SectionDestination(AppSection.SHARE, "Bendrinti", Icons.Rounded.Share),
     SectionDestination(AppSection.TOOLS, "Daugiau", Icons.Rounded.MoreHoriz),
 )
 
@@ -206,7 +212,7 @@ fun AFFileManagerApp(
         }
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         val wideNavigation = maxWidth >= 900.dp
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -264,6 +270,7 @@ fun AFFileManagerApp(
                         )
                         AppSection.ANALYZE -> AnalyzeScreen(viewModel, padding)
                         AppSection.CONNECTIONS -> ConnectionsScreen(viewModel, padding)
+                        AppSection.SHARE -> SharingScreen(viewModel, padding)
                         AppSection.TOOLS -> ToolsScreen(
                             viewModel = viewModel,
                             contentPadding = padding,
@@ -314,14 +321,18 @@ fun AFFileManagerApp(
             loadRemoteSaveDirectory = viewModel::listRemoteDirectoryForEdit,
             onExternalEditorReturned = viewModel::refreshFileEditAfterExternalEditor,
             onDismissEditConflict = viewModel::dismissFileEditConflict,
+            onMergeEditConflict = viewModel::mergeFileEditConflict,
             onKeepEditing = viewModel::keepEditing,
             onDiscardEditAndClose = viewModel::discardFileEditAndClose,
+            onCopyArchiveEntry = viewModel::copyArchiveEntryToSet,
             onExtract = { file, password -> viewModel.extractArchive(file, password) },
             onDecrypt = { file, password -> viewModel.decryptVault(file, password) },
         )
     }
 
     BatchRenameDialog(viewModel)
+
+    AfWorkflowDialog(viewModel)
 
     TerminalOverlay(
         state = terminalState,

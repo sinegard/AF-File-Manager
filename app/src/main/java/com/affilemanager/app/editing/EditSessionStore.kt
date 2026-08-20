@@ -77,9 +77,20 @@ class EditSessionStore(cacheDirectory: File) {
     fun readText(session: EditSession): String = readTextDocument(session).text
 
     fun readTextDocument(session: EditSession, forcedEncoding: TextEncoding? = null): TextDocument {
-        require(session.workingFile.length() <= EditLimits.MAX_TEXT_BYTES) { "File is too large for the built-in editor" }
-        val output = ByteArrayOutputStream(session.workingFile.length().toInt().coerceAtLeast(8_192))
-        session.workingFile.inputStream().buffered().use { input ->
+        return readTextFile(session.workingFile, forcedEncoding)
+    }
+
+    fun readBaseTextDocument(session: EditSession, forcedEncoding: TextEncoding? = null): TextDocument {
+        val base = baseFile(session)
+        require(base.isFile) { "Original edit base is unavailable" }
+        return readTextFile(base, forcedEncoding)
+    }
+
+    fun readTextFile(file: File, forcedEncoding: TextEncoding? = null): TextDocument {
+        require(file.isFile && file.canRead()) { "Text file is unavailable" }
+        require(file.length() <= EditLimits.MAX_TEXT_BYTES) { "File is too large for the built-in editor" }
+        val output = ByteArrayOutputStream(file.length().toInt().coerceAtLeast(8_192))
+        file.inputStream().buffered().use { input ->
             copyBounded(input, output, EditLimits.MAX_TEXT_BYTES.toLong(), null)
         }
         val bytes = output.toByteArray()
@@ -221,11 +232,30 @@ class EditSessionStore(cacheDirectory: File) {
         return session.workingRevision
     }
 
-    fun markOriginSaved(session: EditSession, originRevision: FileRevision): EditSession = session.copy(
-        originRevision = originRevision,
-        workingRevision = revisionOf(session.workingFile),
-        lastSavedRevision = revisionOf(session.workingFile),
-    )
+    fun markOriginSaved(session: EditSession, originRevision: FileRevision): EditSession {
+        if (session.usesInternalTextEditor) replaceBaseWithWorking(session)
+        return session.copy(
+            originRevision = originRevision,
+            workingRevision = revisionOf(session.workingFile),
+            lastSavedRevision = revisionOf(session.workingFile),
+        )
+    }
+
+    fun rebaseAfterMerge(
+        session: EditSession,
+        currentOriginRevision: FileRevision,
+        currentOriginDocument: TextDocument,
+    ): EditSession {
+        require(session.usesInternalTextEditor) { "Three-way merge requires the built-in text editor" }
+        val base = baseFile(session)
+        val bytes = TextDocumentCodec.encode(currentOriginDocument)
+        try {
+            atomicReplace(base) { output -> output.write(bytes) }
+        } finally {
+            bytes.fill(0)
+        }
+        return session.copy(originRevision = currentOriginRevision)
+    }
 
     fun markSavedElsewhere(session: EditSession): EditSession {
         val current = revisionOf(session.workingFile)
@@ -239,6 +269,7 @@ class EditSessionStore(cacheDirectory: File) {
     ): EditSession {
         val current = revisionOf(session.workingFile)
         require(current.hasSameContent(savedRevision)) { "Saved destination does not match the editable copy" }
+        if (session.usesInternalTextEditor) replaceBaseWithWorking(session)
         val origin = when (destination) {
             is EditDestination.Local -> EditOrigin.Local(destination.path, canWrite = true)
             is EditDestination.Content -> EditOrigin.Content(destination.uri, canWrite = true)
@@ -294,7 +325,9 @@ class EditSessionStore(cacheDirectory: File) {
         }
         resetRoot()
         require(root.mkdirs() || root.isDirectory) { "Could not create the edit cache" }
-        val requiredSpace = Math.addExact(expectedSizeBytes ?: EditLimits.MIN_FREE_BYTES, EditLimits.MIN_FREE_BYTES)
+        val estimated = expectedSizeBytes ?: EditLimits.MIN_FREE_BYTES
+        val editableCopies = if (internalTextEditor) Math.multiplyExact(estimated, 2) else estimated
+        val requiredSpace = Math.addExact(editableCopies, EditLimits.MIN_FREE_BYTES)
         require(root.usableSpace >= requiredSpace) { "Not enough free space for a safe editable copy" }
 
         val id = UUID.randomUUID().toString()
@@ -317,6 +350,10 @@ class EditSessionStore(cacheDirectory: File) {
             }
             val revision = FileRevision(copied, modifiedAtMillis, digest.hex())
             working.setLastModified(modifiedAtMillis ?: System.currentTimeMillis())
+            if (internalTextEditor) {
+                require(copied <= EditLimits.MAX_TEXT_BYTES) { "File is too large for the built-in editor" }
+                Files.copy(working.toPath(), File(directory, BASE_FILE_NAME).toPath())
+            }
             return EditSession(
                 id = id,
                 sourceKey = sourceKey,
@@ -457,6 +494,15 @@ class EditSessionStore(cacheDirectory: File) {
         return directory
     }
 
+    private fun baseFile(session: EditSession): File = File(requireSessionDirectory(session), BASE_FILE_NAME).also { file ->
+        requireContained(requireSessionDirectory(session), file)
+    }
+
+    private fun replaceBaseWithWorking(session: EditSession) {
+        val base = baseFile(session)
+        atomicReplace(base) { output -> copyWorking(session, output) }
+    }
+
     private fun requireContained(parent: File, child: File) {
         val parentPath = parent.canonicalFile.toPath()
         val childPath = child.canonicalFile.toPath()
@@ -490,6 +536,7 @@ class EditSessionStore(cacheDirectory: File) {
     private fun MessageDigest.hex(): String = digest().joinToString("") { "%02x".format(it) }
 
     private companion object {
+        const val BASE_FILE_NAME = ".original-base"
         const val MAX_DESTINATION_ENTRIES = 100_000
         const val MAX_NAME_ATTEMPTS = 10_000
     }

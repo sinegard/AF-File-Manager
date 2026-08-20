@@ -24,6 +24,7 @@ import java.net.NetworkInterface
 import java.util.Collections
 
 enum class LanTransferStatus { STOPPED, STARTING, RUNNING, ERROR }
+enum class LanTransferProtocol { WEB, FTP, WEBDAV }
 
 data class LanTransferState(
     val status: LanTransferStatus = LanTransferStatus.STOPPED,
@@ -31,6 +32,8 @@ data class LanTransferState(
     val rootName: String? = null,
     val url: String? = null,
     val code: String? = null,
+    val username: String? = null,
+    val protocol: LanTransferProtocol = LanTransferProtocol.WEB,
     val expiresAtMillis: Long? = null,
     val message: String? = null,
 )
@@ -39,11 +42,17 @@ object LanTransferController {
     private val _state = MutableStateFlow(LanTransferState())
     val state: StateFlow<LanTransferState> = _state.asStateFlow()
 
-    fun start(context: Context, rootPath: String, durationMinutes: Int = 15) {
+    fun start(
+        context: Context,
+        rootPath: String,
+        durationMinutes: Int = 15,
+        protocol: LanTransferProtocol = LanTransferProtocol.WEB,
+    ) {
         val intent = Intent(context, LanTransferService::class.java)
             .setAction(LanTransferService.ACTION_START)
             .putExtra(LanTransferService.EXTRA_ROOT, rootPath)
             .putExtra(LanTransferService.EXTRA_DURATION_MINUTES, durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES))
+            .putExtra(LanTransferService.EXTRA_PROTOCOL, protocol.name)
         ContextCompat.startForegroundService(context, intent)
     }
 
@@ -62,11 +71,12 @@ class LanTransferService : Service() {
         const val ACTION_STOP = "com.affilemanager.app.action.STOP_LAN_TRANSFER"
         const val EXTRA_ROOT = "root"
         const val EXTRA_DURATION_MINUTES = "duration_minutes"
+        const val EXTRA_PROTOCOL = "protocol"
         private const val CHANNEL_ID = "lan_transfer"
         private const val NOTIFICATION_ID = 41
     }
 
-    private var server: LanHttpServer? = null
+    private var server: TemporaryLanServer? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -89,11 +99,15 @@ class LanTransferService : Service() {
 
         val rootPath = intent.getStringExtra(EXTRA_ROOT).orEmpty()
         val duration = intent.getIntExtra(EXTRA_DURATION_MINUTES, 15).coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES)
+        val protocol = runCatching {
+            LanTransferProtocol.valueOf(intent.getStringExtra(EXTRA_PROTOCOL).orEmpty())
+        }.getOrDefault(LanTransferProtocol.WEB)
         LanTransferController.publish(
             LanTransferState(
                 status = LanTransferStatus.STARTING,
                 rootPath = rootPath,
                 rootName = File(rootPath).name,
+                protocol = protocol,
                 message = "Ieškomas privatus vietinio tinklo adresas",
             ),
         )
@@ -101,14 +115,20 @@ class LanTransferService : Service() {
             val root = File(rootPath).canonicalFile
             require(root.isDirectory && root.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
             val address = privateLanAddress() ?: throw IllegalStateException("Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas")
-            LanHttpServer(
-                rootDirectory = root,
-                bindAddress = address,
-                durationMinutes = duration,
-                language = resources.configuration.locales[0].language,
-            ) { reason ->
+            val stopped: (String) -> Unit = { reason ->
                 LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
                 stopSelf()
+            }
+            when (protocol) {
+                LanTransferProtocol.WEB -> LanHttpServer(
+                    rootDirectory = root,
+                    bindAddress = address,
+                    durationMinutes = duration,
+                    language = resources.configuration.locales[0].language,
+                    onStopped = stopped,
+                )
+                LanTransferProtocol.FTP -> LanFtpServer(root, address, duration, onStopped = stopped)
+                LanTransferProtocol.WEBDAV -> LanWebDavServer(root, address, duration, onStopped = stopped)
             }.also { server = it }.start()
         }.onSuccess { session ->
             LanTransferController.publish(
@@ -118,6 +138,8 @@ class LanTransferService : Service() {
                     rootName = session.rootName,
                     url = session.url,
                     code = session.code,
+                    username = session.username,
+                    protocol = protocol,
                     expiresAtMillis = session.expiresAtMillis,
                     message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
                 ),
@@ -130,6 +152,7 @@ class LanTransferService : Service() {
                     status = LanTransferStatus.ERROR,
                     rootPath = rootPath,
                     rootName = File(rootPath).name,
+                    protocol = protocol,
                     message = error.message ?: "LAN serverio paleisti nepavyko",
                 ),
             )

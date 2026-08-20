@@ -22,10 +22,15 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 - SMB 2/3, SFTP, HTTPS WebDAV, FTP, and FTPS connections with bidirectional recursive transfers;
 - one cross-location clipboard: copy locally and paste into the current server folder, or copy remotely and paste into the current local folder;
 - `Copy more` appends missed local, search-result, or same-server items to the current copy set without duplicates or replacing its earlier contents;
+- named **AF Plans** can combine local, search-result, archive, and multiple-server sources, then copy them to several required or optional destinations after one explicit conflict and free-space preview;
+- **AF Timeline** keeps bounded human-readable and JSON operation receipts, supports path search, and offers undo only while the current destination still matches its recorded SHA-256 proof;
+- move-to-many removes a source only after every required destination has passed a final SHA-256 verification, while interrupted plans resume from durable checkpoints;
+- scheduled rules are disabled until their exact SHA-256 preview is shown and approved; changed files, oversized work, metered-network rules, and charging constraints stop execution safely;
 - a browsable local upload picker with folder navigation, persistent multi-folder selection, and system-back history;
 - the same long-press selection, clear/select-all toggle, strong highlight, and grouped copy flow for local and remote files;
 - one consistent local and remote browser layout with back/forward/up history, breadcrumbs, list/grid views, hidden-file controls, folders-first sorting, file-type icons, and matching action menus;
 - editable network profiles, Android Keystore-protected secrets, SFTP host-key pinning, and safe reconnect after transient transport failures;
+- three-way remote text merging compares the downloaded original, the user's edit, and the current server version; overlapping changes remain visibly marked for a human decision;
 - a full-screen, touch-friendly terminal in the current folder: a real local Android PTY on the phone, or an SSH shell that reuses the active SFTP profile and opens at the current server path;
 - local Wi-Fi file transfer page with a one-time code and an automatic expiry;
 - self-update from signed [GitHub Releases](https://github.com/sinegard/AF-File-Manager/releases).
@@ -74,7 +79,11 @@ $env:JAVA_HOME = 'path-to-jdk-17'
 $env:ANDROID_HOME = 'path-to-android-sdk'
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 .\gradlew.bat connectedDebugAndroidTest
+powershell -File .\scripts\generate-baseline-profile.ps1 -EmulatorSerial emulator-5554
+powershell -File .\scripts\run-performance-gate.ps1 -EmulatorSerial emulator-5554
 ```
+
+The performance suite uses a separate non-obfuscated `profile` variant to generate stable Baseline/Startup Profile rules and the minified `benchmark` variant to measure cold start, first useful content, 10,000-item scrolling, thumbnails, remote listing, frame times, and memory. Emulator budgets are regression guards rather than claims about physical-device speed.
 
 Unsigned release builds can be created locally with `assembleRelease`. A distributable release must use the same private signing key for every version. The key is never stored in this repository. The release workflow expects these GitHub Actions secrets:
 

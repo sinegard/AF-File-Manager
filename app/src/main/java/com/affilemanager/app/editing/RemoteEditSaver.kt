@@ -10,7 +10,43 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
+data class RemoteTextSnapshot(
+    val revision: FileRevision,
+    val document: TextDocument,
+)
+
 class RemoteEditSaver(private val sessions: EditSessionStore) {
+    suspend fun readCurrentText(
+        session: EditSession,
+        client: RemoteClient,
+        forcedEncoding: TextEncoding? = null,
+    ): RemoteTextSnapshot? {
+        val origin = session.origin as? EditOrigin.Remote ?: error("Edit session is not remote")
+        val normalizedPath = RemotePath.normalize(origin.path)
+        val remoteEntry = findEntry(client, normalizedPath) ?: return null
+        require(!remoteEntry.directory) { "The remote path is now a folder" }
+        require(remoteEntry.sizeBytes in 0..EditLimits.MAX_TEXT_BYTES.toLong()) {
+            "The remote text is too large for a three-way merge"
+        }
+        val verification = withContext(Dispatchers.IO) { sessions.verificationFile(session) }
+        return try {
+            client.download(
+                remotePath = normalizedPath,
+                localDestination = verification,
+                operation = OperationContext.background(),
+                maxBytes = EditLimits.MAX_TEXT_BYTES.toLong(),
+            )
+            withContext(Dispatchers.IO) {
+                RemoteTextSnapshot(
+                    revision = sessions.revisionFromStream(remoteEntry.modifiedAtMillis, verification::inputStream),
+                    document = sessions.readTextFile(verification, forcedEncoding),
+                )
+            }
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) { sessions.discardVerification(verification) }
+        }
+    }
+
     suspend fun saveOrigin(
         session: EditSession,
         client: RemoteClient,

@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "AFFileManager"
 include(":app")
+include(":benchmark")

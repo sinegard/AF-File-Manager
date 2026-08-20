@@ -1,5 +1,8 @@
 param(
-    [string]$SigningDirectory = (Join-Path $env:USERPROFILE '.android\af-file-manager-signing')
+    [string]$SigningDirectory = (Join-Path $env:USERPROFILE '.android\af-file-manager-signing'),
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^emulator-\d+$')]
+    [string]$EmulatorSerial
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +15,11 @@ if (-not (Test-Path -LiteralPath $keystorePath -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $credentialPath -PathType Leaf)) {
     throw "DPAPI credential not found: $credentialPath"
+}
+
+& (Join-Path $PSScriptRoot 'run-performance-gate.ps1') -EmulatorSerial $EmulatorSerial
+if ($LASTEXITCODE -ne 0) {
+    throw "Release stopped by the performance gate."
 }
 
 $credential = Import-Clixml -LiteralPath $credentialPath

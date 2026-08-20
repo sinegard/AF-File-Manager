@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -26,7 +27,6 @@ import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DriveFileRenameOutline
-import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Refresh
@@ -71,6 +71,9 @@ import com.affilemanager.app.ui.AdvancedBrowserUiState
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
+import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.localization.LText
@@ -89,6 +92,7 @@ fun AdvancedStorageBrowserDialog(
     var createFile by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<FileEntry?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showDisplaySettings by remember { mutableStateOf(false) }
     val allSelected = state.entries.isNotEmpty() && state.entries.all { it.absolutePath in state.selectedPaths }
 
     BackHandler { viewModel.navigateAdvancedBack() }
@@ -106,7 +110,7 @@ fun AdvancedStorageBrowserDialog(
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Grįžti"))
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        LText("Apsaugoti Android failai", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        LText(state.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
                             text = state.path.ifBlank { uiText("Jungiama") },
                             style = MaterialTheme.typography.bodySmall,
@@ -137,7 +141,7 @@ fun AdvancedStorageBrowserDialog(
                             )
                             DropdownMenuItem(
                                 text = { LText("Naujas failas") },
-                                leadingIcon = { Icon(Icons.Rounded.InsertDriveFile, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.InsertDriveFile, contentDescription = null) },
                                 onClick = { menu = false; createFile = true },
                             )
                             DropdownMenuItem(
@@ -158,7 +162,7 @@ fun AdvancedStorageBrowserDialog(
                                 onToggleHidden = viewModel::toggleAdvancedHidden,
                                 onToggleLayout = viewModel::toggleAdvancedLayout,
                                 onToggleThumbnails = {},
-                                onOpenSettings = {},
+                                onOpenSettings = { showDisplaySettings = true },
                                 onSort = { mode ->
                                     val direction = if (state.sortMode == mode) {
                                         if (state.sortDirection == SortDirection.ASCENDING) SortDirection.DESCENDING else SortDirection.ASCENDING
@@ -216,7 +220,7 @@ fun AdvancedStorageBrowserDialog(
                         LText("Aplankas tuščias")
                     }
                     state.grid -> LazyVerticalGrid(
-                        columns = GridCells.Adaptive(132.dp),
+                        columns = GridCells.Fixed(state.gridColumns.coerceIn(2, 8)),
                         modifier = Modifier.fillMaxSize().testTag("advanced_grid"),
                         contentPadding = PaddingValues(10.dp, 8.dp, 10.dp, 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -269,6 +273,26 @@ fun AdvancedStorageBrowserDialog(
                 }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { LText("Atšaukti") } },
+        )
+    }
+    if (showDisplaySettings) {
+        DirectoryDisplaySettingsDialog(
+            initialSettings = DirectoryDisplaySettings(
+                layoutMode = if (state.grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
+                gridColumns = state.gridColumns,
+                showThumbnails = false,
+            ),
+            thumbnailsAvailable = false,
+            onDismiss = { showDisplaySettings = false },
+            onApply = {
+                viewModel.setAdvancedDisplaySettings(it)
+                showDisplaySettings = false
+            },
+            onApplySort = viewModel::setAdvancedSort,
+            initialSortMode = state.sortMode,
+            initialSortDirection = state.sortDirection,
         )
     }
 }
