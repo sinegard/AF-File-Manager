@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
@@ -101,7 +102,17 @@ class MainActivityTest {
         compose.onNodeWithText("Web").assertIsDisplayed()
         compose.onNodeWithText("FTP").assertIsDisplayed()
         compose.onNodeWithText("WebDAV").assertIsDisplayed()
+        compose.onNodeWithTag("sharing_list").performScrollToNode(hasText("Start sharing"))
         compose.onNodeWithText("Start sharing").assertIsDisplayed()
+    }
+
+    @Test
+    fun storageOverviewUsesTheSelectedInterfaceLanguage() {
+        compose.onNodeWithText("Analyze").performClick()
+
+        compose.onNodeWithText("Storage usage").assertIsDisplayed()
+        compose.onNodeWithText("Internal storage").assertIsDisplayed()
+        assertTrue(compose.onAllNodesWithText("Vidinė atmintis").fetchSemanticsNodes().isEmpty())
     }
 
     @Test

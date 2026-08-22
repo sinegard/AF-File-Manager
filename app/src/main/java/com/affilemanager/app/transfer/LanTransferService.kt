@@ -34,6 +34,7 @@ data class LanTransferState(
     val code: String? = null,
     val username: String? = null,
     val protocol: LanTransferProtocol = LanTransferProtocol.WEB,
+    val readOnly: Boolean = false,
     val expiresAtMillis: Long? = null,
     val message: String? = null,
 )
@@ -47,12 +48,18 @@ object LanTransferController {
         rootPath: String,
         durationMinutes: Int = 15,
         protocol: LanTransferProtocol = LanTransferProtocol.WEB,
+        options: LanTransferOptions = LanTransferOptions(),
     ) {
+        val validatedOptions = options.validated(protocol)
         val intent = Intent(context, LanTransferService::class.java)
             .setAction(LanTransferService.ACTION_START)
             .putExtra(LanTransferService.EXTRA_ROOT, rootPath)
             .putExtra(LanTransferService.EXTRA_DURATION_MINUTES, durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES))
             .putExtra(LanTransferService.EXTRA_PROTOCOL, protocol.name)
+            .putExtra(LanTransferService.EXTRA_PORT, validatedOptions.port)
+            .putExtra(LanTransferService.EXTRA_USERNAME, validatedOptions.username)
+            .putExtra(LanTransferService.EXTRA_PASSWORD, validatedOptions.password)
+            .putExtra(LanTransferService.EXTRA_READ_ONLY, validatedOptions.readOnly)
         ContextCompat.startForegroundService(context, intent)
     }
 
@@ -72,6 +79,10 @@ class LanTransferService : Service() {
         const val EXTRA_ROOT = "root"
         const val EXTRA_DURATION_MINUTES = "duration_minutes"
         const val EXTRA_PROTOCOL = "protocol"
+        const val EXTRA_PORT = "port"
+        const val EXTRA_USERNAME = "username"
+        const val EXTRA_PASSWORD = "password"
+        const val EXTRA_READ_ONLY = "read_only"
         private const val CHANNEL_ID = "lan_transfer"
         private const val NOTIFICATION_ID = 41
     }
@@ -102,12 +113,34 @@ class LanTransferService : Service() {
         val protocol = runCatching {
             LanTransferProtocol.valueOf(intent.getStringExtra(EXTRA_PROTOCOL).orEmpty())
         }.getOrDefault(LanTransferProtocol.WEB)
+        val rawOptions = LanTransferOptions(
+            port = intent.getIntExtra(EXTRA_PORT, 0),
+            username = intent.getStringExtra(EXTRA_USERNAME).orEmpty(),
+            password = intent.getStringExtra(EXTRA_PASSWORD).orEmpty(),
+            readOnly = intent.getBooleanExtra(EXTRA_READ_ONLY, false),
+        )
+        val options = runCatching { rawOptions.validated(protocol) }.getOrElse { error ->
+            LanTransferController.publish(
+                LanTransferState(
+                    status = LanTransferStatus.ERROR,
+                    rootPath = rootPath,
+                    rootName = File(rootPath).name,
+                    protocol = protocol,
+                    readOnly = rawOptions.readOnly,
+                    message = error.message ?: "Netinkami bendrinimo nustatymai",
+                ),
+            )
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         LanTransferController.publish(
             LanTransferState(
                 status = LanTransferStatus.STARTING,
                 rootPath = rootPath,
                 rootName = File(rootPath).name,
                 protocol = protocol,
+                readOnly = options.readOnly,
                 message = "Ieškomas privatus vietinio tinklo adresas",
             ),
         )
@@ -124,11 +157,32 @@ class LanTransferService : Service() {
                     rootDirectory = root,
                     bindAddress = address,
                     durationMinutes = duration,
+                    requestedPort = options.port,
+                    requestedCode = options.password.ifBlank { null },
+                    readOnly = options.readOnly,
                     language = resources.configuration.locales[0].language,
                     onStopped = stopped,
                 )
-                LanTransferProtocol.FTP -> LanFtpServer(root, address, duration, onStopped = stopped)
-                LanTransferProtocol.WEBDAV -> LanWebDavServer(root, address, duration, onStopped = stopped)
+                LanTransferProtocol.FTP -> LanFtpServer(
+                    rootDirectory = root,
+                    bindAddress = address,
+                    durationMinutes = duration,
+                    requestedPort = options.port,
+                    requestedUsername = options.username.ifBlank { null },
+                    requestedCode = options.password.ifBlank { null },
+                    readOnly = options.readOnly,
+                    onStopped = stopped,
+                )
+                LanTransferProtocol.WEBDAV -> LanWebDavServer(
+                    rootDirectory = root,
+                    bindAddress = address,
+                    durationMinutes = duration,
+                    requestedPort = options.port,
+                    requestedUsername = options.username.ifBlank { null },
+                    requestedCode = options.password.ifBlank { null },
+                    readOnly = options.readOnly,
+                    onStopped = stopped,
+                )
             }.also { server = it }.start()
         }.onSuccess { session ->
             LanTransferController.publish(
@@ -140,6 +194,7 @@ class LanTransferService : Service() {
                     code = session.code,
                     username = session.username,
                     protocol = protocol,
+                    readOnly = session.readOnly,
                     expiresAtMillis = session.expiresAtMillis,
                     message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
                 ),
@@ -153,6 +208,7 @@ class LanTransferService : Service() {
                     rootPath = rootPath,
                     rootName = File(rootPath).name,
                     protocol = protocol,
+                    readOnly = options.readOnly,
                     message = error.message ?: "LAN serverio paleisti nepavyko",
                 ),
             )

@@ -7,6 +7,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -71,6 +72,8 @@ import com.affilemanager.app.model.DirectoryUsage
 import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SearchFilters
+import com.affilemanager.app.model.StorageAnalysis
+import com.affilemanager.app.model.StorageRoot
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.LocalFileVisual
@@ -114,9 +117,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var duplicateGroup by remember { mutableStateOf<DuplicateGroup?>(null) }
     var showCleanupReview by remember { mutableStateOf(false) }
 
-    LaunchedEffect(cleanupRequested) {
-        if (cleanupRequested) {
+    LaunchedEffect(cleanupRequested, analysisState.analysis, analysisState.running, analysisState.error) {
+        if (cleanupRequested && analysisState.analysis != null && !analysisState.running) {
             showCleanupReview = true
+            viewModel.consumeCleanupRequest()
+        } else if (cleanupRequested && analysisState.error != null && !analysisState.running) {
             viewModel.consumeCleanupRequest()
         }
     }
@@ -169,6 +174,10 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         useRegex = regex,
         tags = tags,
     )
+    val overviewRoot = storageRoots
+        .filter { root -> activePath == root.path || activePath.startsWith(root.path.trimEnd('/') + "/") }
+        .maxByOrNull { it.path.length }
+        ?: storageRoots.firstOrNull()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(contentPadding).testTag("analyze_list"),
@@ -194,6 +203,18 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         }
                     }
                 }
+            }
+        }
+        if (overviewRoot != null) {
+            item {
+                StorageOverviewCard(
+                    root = overviewRoot,
+                    analysis = analysisState.analysis.takeIf { analysisState.rootPath == overviewRoot.path },
+                    running = analysisState.running && analysisState.rootPath == overviewRoot.path,
+                    onAnalyze = { viewModel.analyze(overviewRoot.path) },
+                    onCleanup = { showCleanupReview = true },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
             }
         }
         item {
@@ -386,8 +407,17 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 
         if (searchState.running || analysisState.running) {
             item {
-                Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     CircularProgressIndicator()
+                    if (searchState.running) {
+                        OutlinedButton(onClick = viewModel::cancelSearch, modifier = Modifier.testTag("search_cancel")) {
+                            LText("Sustabdyti paiešką")
+                        }
+                    }
                 }
             }
         }
@@ -645,6 +675,61 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 onMoveToTrash = viewModel::trashAnalysisSelection,
                 onDismiss = { showCleanupReview = false },
             )
+        }
+    }
+}
+
+@Composable
+private fun StorageOverviewCard(
+    root: StorageRoot,
+    analysis: StorageAnalysis?,
+    running: Boolean,
+    onAnalyze: () -> Unit,
+    onCleanup: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val total = root.totalBytes.coerceAtLeast(0L)
+    val used = (total - root.freeBytes.coerceAtLeast(0L)).coerceIn(0L, total)
+    val fraction = if (total > 0L) (used.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
+    val percentage = (fraction * 100f).toInt().coerceIn(0, 100)
+    Card(modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Box(modifier = Modifier.size(86.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxSize(),
+                        strokeWidth = 8.dp,
+                    )
+                    Text("$percentage%", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    LText("Saugyklos užpildymas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    LText(root.title.ifBlank { root.path }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    LText(
+                        "Naudojama ${FileSystemRules.humanBytes(used)} iš ${FileSystemRules.humanBytes(total)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (analysis != null) {
+                        LText(
+                            "Nuskaityta ${analysis.scannedFiles} failų ir ${analysis.scannedDirectories} aplankų",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onAnalyze, enabled = !running, modifier = Modifier.weight(1f)) {
+                    LText(if (analysis == null) "Nuskaityti saugyklą" else "Nuskaityti iš naujo")
+                }
+                if (analysis != null) {
+                    OutlinedButton(onClick = onCleanup, enabled = !running, modifier = Modifier.weight(1f)) {
+                        LText("Peržiūrėti valymą")
+                    }
+                }
+            }
         }
     }
 }

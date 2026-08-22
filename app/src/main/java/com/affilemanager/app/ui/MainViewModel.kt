@@ -1581,7 +1581,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
-    fun openFileCategory(category: FileCategory) {
+    fun openFileCategory(category: FileCategory, forceRefresh: Boolean = false) {
         fileCategoryJob?.cancel()
         val display = savedDirectoryDisplaySettings(fileCategoryIdentity(category))
         _fileCategory.value = FileCategoryUiState(
@@ -1596,7 +1596,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         fileCategoryJob = viewModelScope.launch {
             try {
-                val result = graph.fileCategories.load(category)
+                val result = graph.fileCategories.load(category, forceRefresh)
                 _fileCategory.update {
                     it.copy(
                         entries = result.entries,
@@ -1619,7 +1619,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshFileCategory() {
-        _fileCategory.value.category?.let(::openFileCategory)
+        _fileCategory.value.category?.let { openFileCategory(it, forceRefresh = true) }
     }
 
     fun toggleFileCategoryLayout() {
@@ -1658,13 +1658,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openTrashFromHome() {
-        _section.value = AppSection.TOOLS
         openTrashBrowser()
     }
 
     fun openCleanupFromHome() {
         _cleanupRequested.value = true
         _section.value = AppSection.ANALYZE
+        val activePath = activePanelState().path
+        val normalizedActivePath = runCatching { File(activePath).absoluteFile.toPath().normalize() }.getOrNull()
+        val analysisRoot = _roots.value
+            .filter { root ->
+                val normalizedRootPath = runCatching { File(root.path).absoluteFile.toPath().normalize() }.getOrNull()
+                normalizedActivePath != null && normalizedRootPath != null && normalizedActivePath.startsWith(normalizedRootPath)
+            }
+            .maxByOrNull { it.path.length }
+            ?.path
+            ?: activePath
+        analyze(analysisRoot)
     }
 
     fun consumeCleanupRequest() {
@@ -2951,9 +2961,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _searchState.value = SearchUiState(filters = filters, roots = roots, running = true)
             try {
                 val taggedPaths = if (filters.tags.isEmpty()) null else graph.fileTags.pathsWithAll(filters.tags)
-                val result = graph.search.search(roots, filters) { entry ->
+                val pathPredicate: (FileEntry) -> Boolean = { entry ->
                     taggedPaths == null || entry.absolutePath in taggedPaths
                 }
+                val result = graph.fileCategories.searchIndexed(roots, filters, pathPredicate)
+                    ?: graph.search.search(roots, filters, pathPredicate)
                 _searchState.value = SearchUiState(
                     filters = filters,
                     roots = roots,
@@ -2968,6 +2980,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _searchState.value = SearchUiState(filters = filters, roots = roots, running = false, error = error.message)
             }
         }
+    }
+
+    fun cancelSearch() {
+        searchJob?.cancel()
+        searchJob = null
+        _searchState.update { it.copy(running = false, error = null) }
     }
 
     fun toggleSearchSelection(path: String) {
@@ -3036,8 +3054,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun analyze(path: String = activePanelState().path) {
         analysisJob?.cancel()
         similarImagesJob?.cancel()
+        _analysisState.value = AnalysisUiState(rootPath = path, running = true)
         analysisJob = viewModelScope.launch {
-            _analysisState.value = AnalysisUiState(rootPath = path, running = true)
             try {
                 val analysis = graph.search.analyze(listOf(path))
                 val duplicates = graph.search.duplicates(listOf(path))

@@ -2,6 +2,7 @@ package com.affilemanager.app
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -9,7 +10,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.lifecycle.ViewModelProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.affilemanager.app.advanced.AdvancedAccessBackend
+import com.affilemanager.app.advanced.AdvancedAccessMode
 import com.affilemanager.app.data.FileCategory
 import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.MainViewModel
@@ -17,6 +21,7 @@ import com.affilemanager.app.ui.FileScrollKey
 import com.affilemanager.app.ui.PanelId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -180,6 +185,10 @@ class FileNavigationUiTest {
         ).forEach { (shortcutId, expectedCategory) ->
             compose.runOnUiThread { viewModel.setSection(AppSection.FILES) }
             compose.onNodeWithTag("quick_location_$shortcutId").performScrollTo().performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                val state = viewModel.fileCategory.value
+                state.open && state.category == expectedCategory && !state.loading
+            }
             compose.waitForIdle()
             assertEquals(
                 "Quick location $shortcutId opened the wrong browser state: ${viewModel.fileCategory.value}",
@@ -187,6 +196,7 @@ class FileNavigationUiTest {
                 viewModel.fileCategory.value.category,
             )
             assertTrue(viewModel.fileCategory.value.open)
+            assertEquals(null, viewModel.fileCategory.value.error)
 
             compose.onNodeWithTag("panel_tabs_${viewModel.activePanel.value}").assertIsDisplayed()
             compose.onNodeWithTag("directory_toolbar_category").assertIsDisplayed()
@@ -196,6 +206,129 @@ class FileNavigationUiTest {
 
             compose.onNodeWithText("Files").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.fileCategory.value.open }
+        }
+    }
+
+    @Test
+    fun systemBackClosesFileOverlaysWithoutChangingTheirOriginSection() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.openTrashFromHome()
+            }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.trashBrowser.value.open }
+            compose.onNodeWithTag("trash-browser-dialog").assertIsDisplayed()
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 5_000) { !viewModel.trashBrowser.value.open }
+            assertEquals(AppSection.FILES, viewModel.section.value)
+            assertTrue(viewModel.filesHomeVisible.value)
+
+            compose.runOnUiThread { viewModel.openFileCategory(FileCategory.ARCHIVES) }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.fileCategory.value.open }
+            compose.onNodeWithTag("directory_toolbar_category").assertIsDisplayed()
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 5_000) { !viewModel.fileCategory.value.open }
+            assertEquals(AppSection.FILES, viewModel.section.value)
+
+            compose.runOnUiThread { viewModel.setSection(AppSection.SHARE) }
+            compose.onNodeWithText("Browse folders").performScrollTo().performClick()
+            compose.onNodeWithTag("share_folder_picker").assertIsDisplayed()
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithTag("share_folder_picker").fetchSemanticsNodes().isEmpty()
+            }
+            assertEquals(AppSection.SHARE, viewModel.section.value)
+        } finally {
+            compose.runOnUiThread {
+                viewModel.closeTrashBrowser()
+                viewModel.closeFileCategory()
+                viewModel.setSection(AppSection.FILES)
+            }
+            compose.waitForIdle()
+        }
+    }
+
+    @Test
+    fun rootStorageOpensAsAFileOverlayAndBackReturnsToFiles() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("afRoot") == "true")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.ROOT)
+                viewModel.requestRootAccess()
+            }
+            compose.waitUntil(timeoutMillis = 20_000) {
+                val state = viewModel.advancedAccess.value
+                state.activeBackend == AdvancedAccessBackend.ROOT || (!state.connecting && state.error != null)
+            }
+            assertEquals(
+                "Root backend did not connect: ${viewModel.advancedAccess.value}",
+                AdvancedAccessBackend.ROOT,
+                viewModel.advancedAccess.value.activeBackend,
+            )
+            compose.runOnUiThread { viewModel.openAdvancedBrowser("/") }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.advancedBrowser.value
+                state.open && !state.loading && state.path == "/" && state.error == null
+            }
+            compose.onNodeWithTag("directory_toolbar_advanced").assertIsDisplayed()
+
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 5_000) { !viewModel.advancedBrowser.value.open }
+            assertEquals(AppSection.FILES, viewModel.section.value)
+            assertTrue(viewModel.filesHomeVisible.value)
+        } finally {
+            compose.runOnUiThread {
+                viewModel.closeAdvancedBrowser()
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.OFF)
+                viewModel.setSection(AppSection.FILES)
+            }
+            compose.waitForIdle()
+        }
+    }
+
+    @Test
+    fun shizukuRootOpensProtectedStorageAndBackReturnsToFiles() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("afShizukuRoot") == "true")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.SHIZUKU)
+                viewModel.requestShizukuAccess()
+            }
+            compose.waitUntil(timeoutMillis = 20_000) {
+                val state = viewModel.advancedAccess.value
+                state.activeBackend == AdvancedAccessBackend.SHIZUKU_ROOT || (!state.connecting && state.error != null)
+            }
+            assertEquals(
+                "Shizuku root backend did not connect: ${viewModel.advancedAccess.value}",
+                AdvancedAccessBackend.SHIZUKU_ROOT,
+                viewModel.advancedAccess.value.activeBackend,
+            )
+            compose.runOnUiThread { viewModel.openAdvancedBrowser("/storage/emulated/0/Android/data") }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.advancedBrowser.value
+                state.open && !state.loading && state.path.endsWith("/Android/data") && state.error == null
+            }
+            compose.onNodeWithTag("directory_toolbar_advanced").assertIsDisplayed()
+
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 5_000) { !viewModel.advancedBrowser.value.open }
+            assertEquals(AppSection.FILES, viewModel.section.value)
+            assertTrue(viewModel.filesHomeVisible.value)
+        } finally {
+            compose.runOnUiThread {
+                viewModel.closeAdvancedBrowser()
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.OFF)
+                viewModel.setSection(AppSection.FILES)
+            }
+            compose.waitForIdle()
         }
     }
 

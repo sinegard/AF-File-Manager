@@ -34,6 +34,7 @@ data class LanServerSession(
     val rootName: String,
     val scheme: String = "http",
     val username: String? = null,
+    val readOnly: Boolean = false,
 ) {
     val url: String get() = "$scheme://$address:$port/"
 }
@@ -47,7 +48,9 @@ class LanHttpServer(
     rootDirectory: File,
     private val bindAddress: InetAddress,
     durationMinutes: Int = 15,
+    private val requestedPort: Int = 0,
     private val requestedCode: String? = null,
+    private val readOnly: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val language: String = AppLanguageManager.ENGLISH,
     private val onStopped: (String) -> Unit = {},
@@ -93,16 +96,17 @@ class LanHttpServer(
         val socket = ServerSocket().apply {
             reuseAddress = false
             soTimeout = 1_000
-            bind(InetSocketAddress(bindAddress, 0), MAX_QUEUED_REQUESTS)
+            bind(InetSocketAddress(bindAddress, validateRequestedPort(requestedPort)), MAX_QUEUED_REQUESTS)
         }
         serverSocket = socket
-        val code = requestedCode?.also { require(it.matches(Regex("[0-9]{8}"))) } ?: randomCode()
+        val code = validateRequestedSecret(requestedCode) ?: randomCode()
         val created = LanServerSession(
             address = bindAddress.hostAddress ?: error("Tinklo adresas nepasiekiamas"),
             port = socket.localPort,
             code = code,
             expiresAtMillis = Math.addExact(nowMillis(), durationMillis),
             rootName = root.name.ifBlank { "Pasirinktas katalogas" },
+            readOnly = readOnly,
         )
         session = created
         acceptThread = Thread({ acceptLoop(created) }, "af-lan-accept").apply {
@@ -193,6 +197,8 @@ class LanHttpServer(
             request.method == "GET" && request.path == "/" -> showDirectory(output, "")
             request.method == "GET" && request.path == "/list" -> showDirectory(output, request.query["path"].orEmpty())
             request.method == "GET" && request.path == "/download" -> download(output, request.query["path"].orEmpty())
+            request.method == "POST" && request.path == "/upload" && readOnly ->
+                writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
             request.method == "POST" && request.path == "/upload" -> upload(request, input, output)
             else -> writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
         }
@@ -246,12 +252,17 @@ class LanHttpServer(
                 }
             }
         }
+        val uploadControls = if (readOnly) {
+            "<hr><p>${html(t("Ši sesija leidžia tik skaityti"))}</p>"
+        } else {
+            """<hr><h2>${html(t("Įkelti failą"))}</h2><input id="file" type="file"><button onclick="upload()">${html(t("Įkelti"))}</button><pre id="status"></pre>
+            <script>async function upload(){let f=document.getElementById('file').files[0];if(!f)return;let u='/upload?dir=${url(relative)}&name='+encodeURIComponent(f.name);let r=await fetch(u,{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});document.getElementById('status').textContent=await r.text();if(r.ok)location.reload();}</script>"""
+        }
         val page = """
             <!doctype html><html lang="${html(language)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <title>AF File Manager</title><style>body{font-family:system-ui;max-width:900px;margin:auto;padding:20px;background:#111;color:#eee}a{color:#80cbc4}li{padding:8px}input,button{padding:10px;margin:4px}</style></head>
             <body><h1>${html(session?.rootName.orEmpty())}</h1><p>${html(t("Vieta"))}: /${html(relative)}</p><ul>$rows</ul>
-            <hr><h2>${html(t("Įkelti failą"))}</h2><input id="file" type="file"><button onclick="upload()">${html(t("Įkelti"))}</button><pre id="status"></pre>
-            <script>async function upload(){let f=document.getElementById('file').files[0];if(!f)return;let u='/upload?dir=${url(relative)}&name='+encodeURIComponent(f.name);let r=await fetch(u,{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});document.getElementById('status').textContent=await r.text();if(r.ok)location.reload();}</script>
+            $uploadControls
             </body></html>
         """.trimIndent()
         writeText(output, 200, page, "text/html; charset=utf-8")
@@ -318,13 +329,26 @@ class LanHttpServer(
         return cookies.any { it == "af_session=$cookieToken" }
     }
 
-    private fun loginPage(session: LanServerSession, error: String? = null): String = """
+    private fun loginPage(session: LanServerSession, error: String? = null): String {
+        val numericCode = session.code.matches(Regex("[0-9]{8}"))
+        val prompt = if (numericCode) {
+            "Įveskite telefone rodomą 8 skaitmenų vienkartinį kodą."
+        } else {
+            "Įveskite telefone nustatytą laikiną slaptažodį."
+        }
+        val inputAttributes = if (numericCode) {
+            "inputmode=\"numeric\" maxlength=\"8\" autocomplete=\"one-time-code\""
+        } else {
+            "type=\"password\" maxlength=\"128\" autocomplete=\"current-password\""
+        }
+        return """
         <!doctype html><html lang="${html(language)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AF File Manager</title></head>
         <body style="font-family:system-ui;max-width:480px;margin:40px auto;padding:20px"><h1>AF File Manager</h1>
-        <p>${html(t("Įveskite telefone rodomą 8 skaitmenų vienkartinį kodą."))}</p>${error?.let { "<p style='color:#b00020'>${html(it)}</p>" }.orEmpty()}
-        <form method="post" action="/login"><input name="code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required><button type="submit">${html(t("Prisijungti"))}</button></form>
+        <p>${html(t(prompt))}</p>${error?.let { "<p style='color:#b00020'>${html(it)}</p>" }.orEmpty()}
+        <form method="post" action="/login"><input name="code" $inputAttributes required><button type="submit">${html(t("Prisijungti"))}</button></form>
         <p>${html(t("Sesija baigsis automatiškai."))} ${html(t("Katalogas"))}: ${html(session.rootName)}</p></body></html>
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     private data class Request(
         val method: String,

@@ -77,11 +77,13 @@ import com.affilemanager.app.ui.components.BatchRenameDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.screens.AnalyzeScreen
+import com.affilemanager.app.ui.screens.AdvancedStorageBrowserDialog
 import com.affilemanager.app.ui.screens.AfWorkflowDialog
 import com.affilemanager.app.ui.screens.ConnectionsScreen
 import com.affilemanager.app.ui.screens.FilesScreen
 import com.affilemanager.app.ui.screens.ToolsScreen
 import com.affilemanager.app.ui.screens.SharingScreen
+import com.affilemanager.app.ui.screens.TrashBrowserDialog
 import com.affilemanager.app.ui.terminal.TerminalOverlay
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
@@ -119,6 +121,11 @@ fun AFFileManagerApp(
     val leftPanel by viewModel.leftPanel.collectAsStateWithLifecycle()
     val rightPanel by viewModel.rightPanel.collectAsStateWithLifecycle()
     val storageRoots by viewModel.roots.collectAsStateWithLifecycle()
+    val trashItems by viewModel.trashItems.collectAsStateWithLifecycle()
+    val trashBrowser by viewModel.trashBrowser.collectAsStateWithLifecycle()
+    val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
+    val advancedBrowser by viewModel.advancedBrowser.collectAsStateWithLifecycle()
+    val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val networkState by viewModel.networkState.collectAsStateWithLifecycle()
@@ -298,6 +305,22 @@ fun AFFileManagerApp(
             }
         }
     }
+
+    if (trashBrowser.open) {
+        TrashBrowserDialog(
+            state = trashBrowser,
+            itemCount = trashItems.size,
+            viewModel = viewModel,
+            onDismiss = viewModel::closeTrashBrowser,
+        )
+    }
+
+    AdvancedStorageBrowserDialog(
+        state = advancedBrowser,
+        access = advancedAccess,
+        clipboard = clipboard,
+        viewModel = viewModel,
+    )
 
     preview?.let { target ->
         FilePreviewDialog(

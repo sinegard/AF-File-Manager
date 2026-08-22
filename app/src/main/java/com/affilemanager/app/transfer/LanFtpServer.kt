@@ -33,7 +33,10 @@ class LanFtpServer(
     rootDirectory: File,
     private val bindAddress: InetAddress,
     durationMinutes: Int = 15,
+    private val requestedPort: Int = 0,
+    requestedUsername: String? = null,
     private val requestedCode: String? = null,
+    private val readOnly: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
@@ -54,6 +57,7 @@ class LanFtpServer(
         require(it.isDirectory && it.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
     }
     private val durationMillis = durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES) * 60_000L
+    private val username = validateRequestedUsername(requestedUsername, USERNAME)
     private val running = AtomicBoolean(false)
     private val commandCount = AtomicInteger(0)
     private val authGuard = Any()
@@ -80,10 +84,10 @@ class LanFtpServer(
         val socket = ServerSocket().apply {
             reuseAddress = false
             soTimeout = 1_000
-            bind(InetSocketAddress(bindAddress, 0), MAX_QUEUE)
+            bind(InetSocketAddress(bindAddress, validateRequestedPort(requestedPort)), MAX_QUEUE)
         }
         controlSocket = socket
-        val code = requestedCode?.also { require(it.matches(Regex("[0-9]{8}"))) } ?: randomCode()
+        val code = validateRequestedSecret(requestedCode) ?: randomCode()
         val created = LanServerSession(
             address = requireNotNull(bindAddress.hostAddress),
             port = socket.localPort,
@@ -91,7 +95,8 @@ class LanFtpServer(
             expiresAtMillis = Math.addExact(nowMillis(), durationMillis),
             rootName = root.name.ifBlank { "Pasirinktas katalogas" },
             scheme = "ftp",
-            username = USERNAME,
+            username = username,
+            readOnly = readOnly,
         )
         session = created
         acceptThread = Thread({ acceptLoop(created) }, "af-ftp-accept").apply { isDaemon = true; start() }
@@ -148,6 +153,13 @@ class LanFtpServer(
             return false
         }
 
+        fun requireWrite(): Boolean {
+            if (!requireAuth()) return false
+            if (!readOnly) return true
+            reply(550, "This session is read-only")
+            return false
+        }
+
         fun openPassive(): ServerSocket {
             passive?.close()
             activeTarget = null
@@ -200,11 +212,12 @@ class LanFtpServer(
                 require(line.toByteArray(StandardCharsets.UTF_8).size <= MAX_COMMAND_BYTES) { "FTP komanda per ilga" }
                 if (commandCount.incrementAndGet() > MAX_COMMANDS_PER_SESSION) break
                 val command = line.substringBefore(' ').uppercase(Locale.ROOT)
-                val argument = line.substringAfter(' ', "").trim()
+                val rawArgument = line.substringAfter(' ', "")
+                val argument = if (command == "PASS") rawArgument else rawArgument.trim()
                 try {
                     when (command) {
                     "USER" -> {
-                        acceptedUser = argument == USERNAME
+                        acceptedUser = argument == active.username
                         reply(if (acceptedUser) 331 else 530, if (acceptedUser) "Password required" else "Unknown user")
                     }
                     "PASS" -> {
@@ -281,7 +294,7 @@ class LanFtpServer(
                         if (!file.isFile || !file.canRead()) reply(550, "File unavailable")
                         else withData { data -> file.inputStream().use { it.copyTo(data.getOutputStream(), 256 * 1_024) } }
                     }
-                    "STOR" -> if (requireAuth()) {
+                    "STOR" -> if (requireWrite()) {
                         val target = resolveWritablePath(cwd, argument)
                         val partial = File(target.parentFile, ".af-ftp-${UUID.randomUUID()}.partial")
                         try {
@@ -310,23 +323,23 @@ class LanFtpServer(
                         val file = resolvePath(cwd, argument)
                         if (file.exists()) reply(213, ftpDate(file.lastModified())) else reply(550, "File unavailable")
                     }
-                    "MKD", "XMKD" -> if (requireAuth()) {
+                    "MKD", "XMKD" -> if (requireWrite()) {
                         val dir = resolveWritablePath(cwd, argument)
                         if (!dir.exists() && dir.mkdir()) reply(257, "\"${virtualPath(dir)}\" created") else reply(550, "Create failed")
                     }
-                    "DELE" -> if (requireAuth()) {
+                    "DELE" -> if (requireWrite()) {
                         val file = resolvePath(cwd, argument)
                         if (file != root && file.isFile && file.delete()) reply(250, "Deleted") else reply(550, "Delete failed")
                     }
-                    "RMD", "XRMD" -> if (requireAuth()) {
+                    "RMD", "XRMD" -> if (requireWrite()) {
                         val dir = resolvePath(cwd, argument)
                         if (dir != root && dir.isDirectory && dir.list()?.isEmpty() == true && dir.delete()) reply(250, "Removed") else reply(550, "Remove failed")
                     }
-                    "RNFR" -> if (requireAuth()) {
+                    "RNFR" -> if (requireWrite()) {
                         val source = resolvePath(cwd, argument)
                         if (source != root && source.exists()) { renameFrom = source; reply(350, "Ready for RNTO") } else reply(550, "Source unavailable")
                     }
-                    "RNTO" -> if (requireAuth()) {
+                    "RNTO" -> if (requireWrite()) {
                         val source = renameFrom
                         renameFrom = null
                         val target = resolveWritablePath(cwd, argument)

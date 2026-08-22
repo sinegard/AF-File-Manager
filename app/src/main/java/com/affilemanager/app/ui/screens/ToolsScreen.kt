@@ -92,7 +92,6 @@ fun ToolsScreen(
 ) {
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val trash by viewModel.trashItems.collectAsStateWithLifecycle()
-    val trashBrowser by viewModel.trashBrowser.collectAsStateWithLifecycle()
     val safLocations by viewModel.safLocations.collectAsStateWithLifecycle()
     val safBrowser by viewModel.safBrowser.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
@@ -100,8 +99,6 @@ fun ToolsScreen(
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val appearanceSettings by viewModel.appearanceSettings.collectAsStateWithLifecycle()
     val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
-    val advancedBrowser by viewModel.advancedBrowser.collectAsStateWithLifecycle()
-    val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val afClipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
     val active = viewModel.activePanelState()
     val selectedEntry = active.entries.singleOrNull { it.absolutePath in active.selectedPaths }
@@ -430,21 +427,6 @@ fun ToolsScreen(
         )
     }
 
-    if (trashBrowser.open) {
-        TrashBrowserDialog(
-            state = trashBrowser,
-            itemCount = trash.size,
-            viewModel = viewModel,
-            onDismiss = viewModel::closeTrashBrowser,
-        )
-    }
-
-    AdvancedStorageBrowserDialog(
-        state = advancedBrowser,
-        access = advancedAccess,
-        clipboard = clipboard,
-        viewModel = viewModel,
-    )
 }
 
 private fun advancedModeLabel(mode: AdvancedAccessMode): String = when (mode) {

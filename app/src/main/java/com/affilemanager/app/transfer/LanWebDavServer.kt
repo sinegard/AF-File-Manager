@@ -39,7 +39,10 @@ class LanWebDavServer(
     rootDirectory: File,
     private val bindAddress: InetAddress,
     durationMinutes: Int = 15,
+    private val requestedPort: Int = 0,
+    requestedUsername: String? = null,
     private val requestedCode: String? = null,
+    private val readOnly: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
@@ -58,6 +61,8 @@ class LanWebDavServer(
         private const val MAX_CLIENTS = 4
         private const val MAX_QUEUE = 16
         private const val ALLOW = "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK"
+        private const val READ_ONLY_ALLOW = "OPTIONS, PROPFIND, GET, HEAD"
+        private val READ_ONLY_METHODS = setOf("OPTIONS", "PROPFIND", "GET", "HEAD")
         private val LOCK_TOKEN_PATTERN = Regex("<(opaquelocktoken:[^>]+)>", RegexOption.IGNORE_CASE)
     }
 
@@ -65,6 +70,7 @@ class LanWebDavServer(
         require(it.isDirectory && it.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
     }
     private val durationMillis = durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES) * 60_000L
+    private val username = validateRequestedUsername(requestedUsername, USERNAME)
     private val running = AtomicBoolean(false)
     private val requestCount = AtomicInteger(0)
     private val authGuard = Any()
@@ -93,10 +99,10 @@ class LanWebDavServer(
         val socket = ServerSocket().apply {
             reuseAddress = false
             soTimeout = 1_000
-            bind(InetSocketAddress(bindAddress, 0), MAX_QUEUE)
+            bind(InetSocketAddress(bindAddress, validateRequestedPort(requestedPort)), MAX_QUEUE)
         }
         serverSocket = socket
-        val code = requestedCode?.also { require(it.matches(Regex("[0-9]{8}"))) } ?: randomCode()
+        val code = validateRequestedSecret(requestedCode) ?: randomCode()
         val created = LanServerSession(
             address = requireNotNull(bindAddress.hostAddress),
             port = socket.localPort,
@@ -104,7 +110,8 @@ class LanWebDavServer(
             expiresAtMillis = Math.addExact(nowMillis(), durationMillis),
             rootName = root.name.ifBlank { "Pasirinktas katalogas" },
             scheme = "http",
-            username = USERNAME,
+            username = username,
+            readOnly = readOnly,
         )
         session = created
         acceptThread = Thread({ acceptLoop(created) }, "af-webdav-accept").apply { isDaemon = true; start() }
@@ -187,8 +194,13 @@ class LanWebDavServer(
 
     private fun dispatch(request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
         val target = resolve(request.path)
+        val allow = if (readOnly) READ_ONLY_ALLOW else ALLOW
+        if (readOnly && request.method !in READ_ONLY_METHODS) {
+            write(output, 403, "text/plain; charset=utf-8", "This session is read-only".toByteArray(), listOf("Allow: $allow"))
+            return
+        }
         when (request.method) {
-            "OPTIONS" -> write(output, 200, "text/plain", ByteArray(0), listOf("DAV: 1, 2", "Allow: $ALLOW"))
+            "OPTIONS" -> write(output, 200, "text/plain", ByteArray(0), listOf("DAV: 1, 2", "Allow: $allow"))
             "PROPFIND" -> propfind(target, request.headers["depth"].orEmpty(), output)
             "GET", "HEAD" -> get(target, output, headOnly = request.method == "HEAD")
             "PUT" -> {
@@ -212,7 +224,7 @@ class LanWebDavServer(
             "COPY" -> copy(target, request, output)
             "LOCK" -> lock(target, request, input, output)
             "UNLOCK" -> unlock(target, request, output)
-            else -> write(output, 405, "text/plain", ByteArray(0), listOf("Allow: $ALLOW"))
+            else -> write(output, 405, "text/plain", ByteArray(0), listOf("Allow: $allow"))
         }
     }
 
@@ -335,7 +347,7 @@ class LanWebDavServer(
         } else {
             null
         }
-        val expected = "$USERNAME:${active.code}".toByteArray(StandardCharsets.UTF_8)
+        val expected = "${active.username}:${active.code}".toByteArray(StandardCharsets.UTF_8)
         val matches = supplied != null && MessageDigest.isEqual(supplied, expected)
         if (matches) {
             authFailures = 0

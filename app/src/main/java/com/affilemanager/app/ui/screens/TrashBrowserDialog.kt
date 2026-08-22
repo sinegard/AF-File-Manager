@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -120,7 +122,7 @@ fun TrashBrowserDialog(
             modifier = Modifier.fillMaxSize().testTag("trash-browser-dialog"),
             color = MaterialTheme.colorScheme.surface,
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 DirectoryBrowserToolbar(
                     title = state.rootName ?: uiText("Šiukšliadėžė"),
                     path = trashLocationLabel(state),

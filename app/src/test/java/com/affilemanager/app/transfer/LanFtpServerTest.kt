@@ -132,6 +132,40 @@ class LanFtpServerTest {
         }
     }
 
+    @Test
+    fun customCredentialsAndReadOnlyModeRejectMutatingCommands() {
+        val root = temporary.newFolder("ftp-read-only").apply { resolve("visible.txt").writeText("visible") }
+        val password = "  temporary-pass  "
+        LanFtpServer(
+            rootDirectory = root,
+            bindAddress = InetAddress.getLoopbackAddress(),
+            requestedUsername = "owner",
+            requestedCode = password,
+            readOnly = true,
+        ).use { server ->
+            val session = server.start()
+            assertEquals("owner", session.username)
+            assertTrue(session.readOnly)
+            Socket(InetAddress.getLoopbackAddress(), session.port).use { socket ->
+                socket.soTimeout = 5_000
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
+                assertTrue(reader.readLine().startsWith("220"))
+                command(writer, "USER owner")
+                assertTrue(reader.readLine().startsWith("331"))
+                command(writer, "PASS $password")
+                assertTrue(reader.readLine().startsWith("230"))
+
+                command(writer, "MKD blocked")
+                assertTrue(reader.readLine().startsWith("550"))
+                command(writer, "STOR blocked.txt")
+                assertTrue(reader.readLine().startsWith("550"))
+                assertTrue(!root.resolve("blocked").exists())
+                assertTrue(!root.resolve("blocked.txt").exists())
+            }
+        }
+    }
+
     private fun login(reader: BufferedReader, writer: PrintWriter) {
         command(writer, "USER af")
         assertTrue(reader.readLine().startsWith("331"))

@@ -210,6 +210,41 @@ class LanWebDavServerTest {
         }
     }
 
+    @Test
+    fun customCredentialsAndReadOnlyModeKeepWebDavNonMutating() {
+        val root = temporary.newFolder("dav-read-only").apply { resolve("visible.txt").writeText("visible") }
+        LanWebDavServer(
+            rootDirectory = root,
+            bindAddress = InetAddress.getLoopbackAddress(),
+            requestedUsername = "owner",
+            requestedCode = "temporary-pass",
+            readOnly = true,
+        ).use { server ->
+            val session = server.start()
+            assertEquals("owner", session.username)
+            assertTrue(session.readOnly)
+            val token = Base64.getEncoder().encodeToString("owner:temporary-pass".toByteArray(StandardCharsets.UTF_8))
+            fun authorized(lines: String): String =
+                lines.trimEnd('\r', '\n') + "\r\nAuthorization: Basic $token\r\n\r\n"
+
+            val options = request(session.port, authorized("OPTIONS / HTTP/1.1\r\nHost: localhost\r\n"))
+            assertTrue(options.startsWith("HTTP/1.1 200"))
+            assertTrue(options.contains("Allow: OPTIONS, PROPFIND, GET, HEAD"))
+            assertFalse(options.contains("PUT, DELETE"))
+
+            val listing = request(session.port, authorized("PROPFIND / HTTP/1.1\r\nHost: localhost\r\nDepth: 1\r\n"))
+            assertTrue(listing.startsWith("HTTP/1.1 207"))
+            assertTrue(listing.contains("visible.txt"))
+
+            val blocked = request(
+                session.port,
+                authorized("PUT /blocked.txt HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1\r\n") + "x",
+            )
+            assertTrue(blocked.startsWith("HTTP/1.1 403"))
+            assertFalse(root.resolve("blocked.txt").exists())
+        }
+    }
+
     private fun authenticated(firstLines: String): String {
         val token = Base64.getEncoder().encodeToString("af:12345678".toByteArray(StandardCharsets.UTF_8))
         return firstLines.trimEnd('\r', '\n') + "\r\nAuthorization: Basic $token\r\n\r\n"

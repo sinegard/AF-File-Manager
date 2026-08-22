@@ -8,6 +8,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 
@@ -97,12 +98,59 @@ class LanHttpServerTest {
     }
 
     @Test
+    fun readOnlySessionKeepsBrowsingButRejectsUploads() {
+        val root = temporary.newFolder("read-only-web").apply { resolve("visible.txt").writeText("visible") }
+        LanHttpServer(
+            root,
+            InetAddress.getLoopbackAddress(),
+            requestedCode = "custom-pass",
+            readOnly = true,
+        ).use { server ->
+            val session = server.start()
+            val body = "code=custom-pass"
+            val login = request(
+                session.port,
+                "POST /login HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n$body",
+            )
+            val cookie = login.lineSequence().first { it.startsWith("Set-Cookie:") }
+                .substringAfter("Set-Cookie:").substringBefore(';').trim()
+            val listing = request(session.port, "GET / HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n\r\n")
+            assertTrue(listing.contains("visible.txt"))
+            assertFalse(listing.contains("onclick=\"upload()\""))
+
+            val content = "blocked"
+            val upload = request(
+                session.port,
+                "POST /upload?dir=&name=blocked.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${content.length}\r\n\r\n$content",
+            )
+            assertTrue(upload.startsWith("HTTP/1.1 403"))
+            assertFalse(root.resolve("blocked.txt").exists())
+        }
+    }
+
+    @Test
     fun resourceAndAuthenticationLimitsAreExplicit() {
         assertEquals(4, LanHttpServer.MAX_CONCURRENT_REQUESTS)
         assertEquals(16, LanHttpServer.MAX_QUEUED_REQUESTS)
         assertEquals(10_000, LanHttpServer.MAX_REQUESTS_PER_SESSION)
         assertEquals(20, LanHttpServer.MAX_AUTH_FAILURES)
         assertEquals(60, LanHttpServer.MAX_SESSION_MINUTES)
+    }
+
+    @Test
+    fun customPortIsUsedWhenItIsAvailable() {
+        val address = InetAddress.getLoopbackAddress()
+        val requestedPort = ServerSocket(0, 1, address).use { it.localPort }
+        val root = temporary.newFolder("custom-port")
+
+        LanHttpServer(
+            rootDirectory = root,
+            bindAddress = address,
+            requestedPort = requestedPort,
+            requestedCode = "12345678",
+        ).use { server ->
+            assertEquals(requestedPort, server.start().port)
+        }
     }
 
     private fun login(port: Int): String {
