@@ -30,6 +30,7 @@
     <application
         android:name=".AFFileManagerApplication"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@drawable/ic_app"

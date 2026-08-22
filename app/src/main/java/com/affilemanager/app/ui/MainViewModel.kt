@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Environment
 import android.content.ContentResolver
 import android.provider.OpenableColumns
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.affilemanager.app.AFFileManagerApplication
@@ -31,7 +32,9 @@ import com.affilemanager.app.data.WorkspaceTab
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.data.DirectoryDisplayDefaults
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.HomeCustomization
 import com.affilemanager.app.data.HomeCustomizationRules
@@ -160,6 +163,7 @@ data class PanelUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val loading: Boolean = false,
     val listingScannedEntries: Int = 0,
     val listingMetadataEntries: Int = 0,
@@ -198,6 +202,8 @@ data class BatchRenameUiState(
 data class AnalysisUiState(
     val analysis: StorageAnalysis? = null,
     val duplicates: List<DuplicateGroup> = emptyList(),
+    val duplicateCandidatesScanned: Int = 0,
+    val duplicateScanTruncated: Boolean = false,
     val similarImages: List<SimilarImageGroup> = emptyList(),
     val rootPath: String? = null,
     val running: Boolean = false,
@@ -216,6 +222,7 @@ data class FileCategoryUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
@@ -237,6 +244,7 @@ data class AdvancedBrowserUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val loading: Boolean = false,
@@ -275,6 +283,7 @@ data class NetworkUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val openingPath: String? = null,
@@ -324,6 +333,7 @@ data class SafBrowserUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
@@ -341,6 +351,7 @@ data class TrashBrowserUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
@@ -465,6 +476,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         HomeShortcut(
             id = "builtin.apps",
             title = "Programos",
+            path = initialPrimaryPath,
+            builtIn = true,
+        ),
+        HomeShortcut(
+            id = "builtin.installed_apps",
+            title = "Įdiegtos programos",
             path = initialPrimaryPath,
             builtIn = true,
         ),
@@ -682,12 +699,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openAdvancedBrowser(preferredPath: String? = null) {
         advancedBrowserJob?.cancel()
+        val displayDefaults = runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
         val rootBackend = graph.advancedAccess.state.value.activeBackend in setOf(
             AdvancedAccessBackend.ROOT,
             AdvancedAccessBackend.SHIZUKU_ROOT,
         )
         val title = if (preferredPath == "/" || (preferredPath == null && rootBackend)) "Root" else "Apsaugoti Android failai"
-        _advancedBrowser.value = AdvancedBrowserUiState(open = true, title = title, loading = true)
+        _advancedBrowser.value = AdvancedBrowserUiState(
+            open = true,
+            title = title,
+            loading = true,
+            sortMode = displayDefaults?.sortMode ?: SortMode.NAME,
+            sortDirection = displayDefaults?.sortDirection ?: SortDirection.ASCENDING,
+        )
         advancedBrowserJob = viewModelScope.launch {
             try {
                 if (!rootBackend) {
@@ -773,6 +797,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridStyle = state.gridStyle,
                 showThumbnails = false,
             ),
         )
@@ -790,6 +815,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         iconScalePercent = normalized.iconScalePercent,
                         spacingScalePercent = normalized.spacingScalePercent,
                         gridColumns = normalized.gridColumns,
+                        gridStyle = normalized.gridStyle,
                     )
                 }
             }
@@ -947,6 +973,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iconScalePercent = display.iconScalePercent,
                 spacingScalePercent = display.spacingScalePercent,
                 gridColumns = display.gridColumns,
+                gridStyle = display.gridStyle,
                 loading = false,
                 error = null,
             )
@@ -1005,6 +1032,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onSuccess { _filesHomeDisplaySettings.value = homeSettings }
             .onFailure { message(it.message ?: "Pradžios rodinio nustatymo išsaugoti nepavyko", true) }
     }
+
+    fun applyDirectoryDisplaySettingsToAll(
+        settings: DirectoryDisplaySettings,
+        requestedSortMode: SortMode?,
+        requestedSortDirection: SortDirection,
+    ) {
+        val normalized = DirectoryDisplaySettings(
+            layoutMode = settings.layoutMode,
+            iconScalePercent = settings.iconScalePercent,
+            spacingScalePercent = settings.spacingScalePercent,
+            gridColumns = settings.gridColumns,
+            gridStyle = settings.gridStyle,
+            showThumbnails = settings.showThumbnails,
+        )
+        val previousDefaults = runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
+        val sortMode = requestedSortMode ?: previousDefaults?.sortMode ?: SortMode.NAME
+        val sortDirection = requestedSortMode?.let { requestedSortDirection }
+            ?: previousDefaults?.sortDirection
+            ?: SortDirection.ASCENDING
+        runCatching {
+            graph.navigation.setDirectoryDisplayDefaults(
+                DirectoryDisplayDefaults(normalized, sortMode, sortDirection),
+            )
+        }.onSuccess {
+            _filesHomeDisplaySettings.value = normalized.copy(showThumbnails = false)
+            _leftPanel.update { it.withDirectoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection) }
+            _rightPanel.update { it.withDirectoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection) }
+            _fileCategory.update {
+                it.withFileCategoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection)
+            }
+            _trashBrowser.update {
+                it.withTrashDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection)
+            }
+            _safBrowser.update {
+                it.withSafDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection)
+            }
+            _advancedBrowser.update {
+                it.copy(
+                    grid = normalized.layoutMode == DirectoryLayoutMode.GRID,
+                    iconScalePercent = normalized.iconScalePercent,
+                    spacingScalePercent = normalized.spacingScalePercent,
+                    gridColumns = normalized.gridColumns,
+                    gridStyle = normalized.gridStyle,
+                    sortMode = sortMode,
+                    sortDirection = sortDirection,
+                )
+            }
+            _networkState.update {
+                it.withDirectoryDisplaySettings(normalized.copy(showThumbnails = false))
+                    .copy(sortMode = sortMode, sortDirection = sortDirection)
+            }
+            _leftTabs.update { workspace -> workspace.withGlobalDisplayDefaults(normalized, sortMode, sortDirection) }
+            _rightTabs.update { workspace -> workspace.withGlobalDisplayDefaults(normalized, sortMode, sortDirection) }
+            persistWorkspace()
+            refreshPanel(PanelId.LEFT)
+            refreshPanel(PanelId.RIGHT)
+            if (_advancedBrowser.value.open) refreshAdvancedBrowser()
+            if (_trashBrowser.value.open) refreshTrashBrowser()
+            if (_safBrowser.value.location != null) refreshSafBrowser()
+            message("Rodinio nustatymai pritaikyti visiems aplankams")
+        }.onFailure { error ->
+            message(error.message ?: "Bendrų rodinio nustatymų išsaugoti nepavyko", true)
+        }
+    }
+
+    fun currentDirectoryDisplayDefaults(): DirectoryDisplayDefaults =
+        runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
+            ?: activePanelState().let { state ->
+                DirectoryDisplayDefaults(state.directoryDisplaySettings(), state.sortMode, state.sortDirection)
+            }
 
     fun moveHomeSection(section: HomeSection, offset: Int) {
         updateHomeCustomization { HomeCustomizationRules.moveSection(it, section, offset) }
@@ -1583,6 +1680,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openFileCategory(category: FileCategory, forceRefresh: Boolean = false) {
         fileCategoryJob?.cancel()
+        val displayDefaults = runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
         val display = savedDirectoryDisplaySettings(fileCategoryIdentity(category))
         _fileCategory.value = FileCategoryUiState(
             open = true,
@@ -1592,7 +1690,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             iconScalePercent = display.iconScalePercent,
             spacingScalePercent = display.spacingScalePercent,
             gridColumns = display.gridColumns,
+            gridStyle = display.gridStyle,
             showThumbnails = display.showThumbnails,
+            sortMode = displayDefaults?.sortMode ?: SortMode.NAME,
+            sortDirection = displayDefaults?.sortDirection ?: SortDirection.ASCENDING,
         )
         fileCategoryJob = viewModelScope.launch {
             try {
@@ -1620,6 +1721,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFileCategory() {
         _fileCategory.value.category?.let { openFileCategory(it, forceRefresh = true) }
+    }
+
+    @Suppress("DEPRECATION")
+    fun openFileCategoryEntry(entry: FileEntry) {
+        if (_fileCategory.value.category != FileCategory.INSTALLED_APPS) {
+            open(entry)
+            return
+        }
+        val application = getApplication<Application>()
+        runCatching {
+            val packageName = application.packageManager
+                .getPackageArchiveInfo(entry.absolutePath, 0)
+                ?.packageName
+                ?: error("Programos paketo nustatyti nepavyko")
+            val intent = application.packageManager.getLaunchIntentForPackage(packageName)
+                ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+            application.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { message(it.message ?: "Programos atidaryti nepavyko", true) }
     }
 
     fun toggleFileCategoryLayout() {
@@ -3058,10 +3177,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         analysisJob = viewModelScope.launch {
             try {
                 val analysis = graph.search.analyze(listOf(path))
-                val duplicates = graph.search.duplicates(listOf(path))
+                val duplicateAnalysis = graph.search.duplicates(listOf(path))
                 _analysisState.value = AnalysisUiState(
                     analysis = analysis,
-                    duplicates = duplicates,
+                    duplicates = duplicateAnalysis.groups,
+                    duplicateCandidatesScanned = duplicateAnalysis.scannedCandidates,
+                    duplicateScanTruncated = duplicateAnalysis.truncated,
                     rootPath = path,
                     running = false,
                 )
@@ -3163,8 +3284,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openTrashBrowser() {
+        val displayDefaults = runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
         val display = savedDirectoryDisplaySettings(trashDirectoryIdentity(null, ""))
-        _trashBrowser.value = TrashBrowserUiState(open = true).withTrashDisplaySettings(display)
+        _trashBrowser.value = TrashBrowserUiState(
+            open = true,
+            sortMode = displayDefaults?.sortMode ?: SortMode.NAME,
+            sortDirection = displayDefaults?.sortDirection ?: SortDirection.ASCENDING,
+        ).withTrashDisplaySettings(display)
         refreshTrashBrowser()
     }
 
@@ -3436,11 +3562,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSafLocation(location: SafLocation) {
+        val displayDefaults = runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
         val display = savedDirectoryDisplaySettings(safDirectoryIdentity(location.uri))
         _safBrowser.value = SafBrowserUiState(
             location = location,
             currentUri = location.uri,
             title = location.title,
+            sortMode = displayDefaults?.sortMode ?: SortMode.NAME,
+            sortDirection = displayDefaults?.sortDirection ?: SortDirection.ASCENDING,
         ).withSafDisplaySettings(display)
         refreshSafBrowser()
     }
@@ -3748,6 +3877,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     refreshProfiles()
                 }
                 val path = RemotePath.normalize(normalizedProfile.basePath)
+                val displayDefaults = runCatching { graph.navigation.directoryDisplayDefaults() }.getOrNull()
                 val displaySettings = savedDirectoryDisplaySettings(remoteDirectoryIdentity(normalizedProfile.id, path))
                 _networkState.update {
                     it.copy(
@@ -3759,6 +3889,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         forwardHistory = emptyList(),
                         loading = false,
                         error = null,
+                        sortMode = displayDefaults?.sortMode ?: SortMode.NAME,
+                        sortDirection = displayDefaults?.sortDirection ?: SortDirection.ASCENDING,
                     ).withDirectoryDisplaySettings(displaySettings)
                 }
                 _syncState.update { it.copy(remoteRoot = path, localRoot = activePanelState().path, preview = null, error = null) }
@@ -4488,6 +4620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
 
@@ -4496,6 +4629,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
 
@@ -4506,6 +4640,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
 
@@ -4514,6 +4649,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
 
@@ -4522,6 +4658,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
 
@@ -4530,6 +4667,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
 
@@ -4538,6 +4676,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
 
@@ -4546,6 +4685,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
 
@@ -4554,6 +4694,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridStyle = gridStyle,
         showThumbnails = false,
     )
 
@@ -4562,9 +4703,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridStyle = settings.gridStyle,
     )
 
     private fun tabsFlow(panel: PanelId): MutableStateFlow<PanelWorkspace> = if (panel == PanelId.LEFT) _leftTabs else _rightTabs
+
+    private fun PanelWorkspace.withGlobalDisplayDefaults(
+        settings: DirectoryDisplaySettings,
+        sortMode: SortMode,
+        sortDirection: SortDirection,
+    ): PanelWorkspace = copy(
+        tabs = tabs.map { tab ->
+            tab.copy(
+                grid = settings.layoutMode == DirectoryLayoutMode.GRID,
+                sortMode = sortMode,
+                sortDirection = sortDirection,
+            )
+        },
+    )
 
     private fun syncActiveTab(panel: PanelId, persist: Boolean = true) {
         val state = panelFlow(panel).value

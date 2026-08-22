@@ -17,6 +17,10 @@ import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.util.Base64
 import java.util.UUID
+import com.affilemanager.app.network.NetworkProfile
+import com.affilemanager.app.network.NetworkProfileRules
+import com.affilemanager.app.network.NetworkProtocol
+import com.affilemanager.app.network.WebDavRemoteClient
 
 @RunWith(AndroidJUnit4::class)
 class LanTransferServiceTest {
@@ -86,6 +90,7 @@ class LanTransferServiceTest {
     fun foregroundServiceRunsWebDavWithTemporaryCredentials() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.cacheDir, "dav-service-${UUID.randomUUID()}").apply { mkdirs() }
+        File(root, "visible.txt").writeText("hello")
         try {
             LanTransferController.start(context, root.absolutePath, 1, LanTransferProtocol.WEBDAV)
             val running = awaitState { it.status == LanTransferStatus.RUNNING || it.status == LanTransferStatus.ERROR }
@@ -99,6 +104,24 @@ class LanTransferServiceTest {
             )
             assertTrue(response.startsWith("HTTP/1.1 200"))
             assertTrue(response.contains("DAV: 1, 2"))
+
+            val endpoint = requireNotNull(NetworkProfileRules.parseWebDavEndpoint(uri.toString()))
+            val profile = NetworkProfile(
+                id = "local-af-webdav",
+                name = "Local AF WebDAV",
+                protocol = NetworkProtocol.WEBDAV,
+                host = endpoint.host,
+                port = endpoint.port,
+                username = running.username.orEmpty(),
+                basePath = endpoint.basePath,
+                webDavUseTls = endpoint.useTls,
+            )
+            val client = WebDavRemoteClient.connect(profile, running.code.orEmpty().toCharArray())
+            try {
+                assertTrue(client.list(profile.basePath).any { it.name == "visible.txt" })
+            } finally {
+                client.close()
+            }
         } finally {
             LanTransferController.stop(context)
             awaitState { it.status == LanTransferStatus.STOPPED }

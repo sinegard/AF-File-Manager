@@ -154,6 +154,23 @@ class FileSearchEngineTest {
         assertEquals(30, analysis.typeUsage.first { it.kind == EntryKind.DOCUMENT }.sizeBytes)
     }
 
+    @Test
+    fun duplicateCandidateLimitReturnsPartialResultsInsteadOfFailingAnalysis() = runBlocking {
+        val root = temporary.newFolder("duplicate-limited")
+        repeat(8) { index -> File(root, "file-$index.bin").writeBytes(byteArrayOf(index.toByte())) }
+        val engine = FileSearchEngine(
+            ::entry,
+            maxScannedEntries = 100,
+            maxResults = 100,
+            maxDuplicateCandidates = 3,
+        )
+
+        val result = engine.duplicates(listOf(root.absolutePath))
+
+        assertEquals(3, result.scannedCandidates)
+        assertTrue(result.truncated)
+    }
+
     private fun engine() = FileSearchEngine(::entry)
 
     private fun entry(file: File) = FileEntry(

@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.ClipboardMode
@@ -167,7 +168,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 ) {
                     if (state.profiles.isEmpty()) {
                         item {
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                                 Column(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Rounded.Link, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
                                     LText("Dar nėra jungčių", style = MaterialTheme.typography.titleMedium)
@@ -333,6 +334,10 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 showDisplaySettings = false
             },
             onApplySort = viewModel::setRemoteSort,
+            onApplyToAll = { settings, mode, direction ->
+                viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
+                showDisplaySettings = false
+            },
         )
     }
 }
@@ -515,6 +520,7 @@ internal fun RemoteBrowser(
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
                     gridColumns = state.gridColumns,
+                    gridStyle = state.gridStyle,
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
@@ -816,6 +822,7 @@ private fun RemoteEntryGrid(
     iconScalePercent: Int,
     spacingScalePercent: Int,
     gridColumns: Int,
+    gridStyle: DirectoryGridStyle,
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
@@ -839,6 +846,7 @@ private fun RemoteEntryGrid(
                     opening = entry.path == openingPath,
                     iconScalePercent = iconScalePercent,
                     spacingScalePercent = spacingScalePercent,
+                    gridStyle = gridStyle,
                     onOpen = { onOpen(entry) },
                     onDownload = { onDownload(entry) },
                     onToggleSelection = { onToggleSelection(entry.path) },
@@ -922,6 +930,7 @@ private fun RemoteEntryTile(
     opening: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onToggleSelection: () -> Unit,
@@ -942,9 +951,13 @@ private fun RemoteEntryTile(
                 onClick = { if (selectionActive) onToggleSelection() else onOpen() },
                 onLongClick = onToggleSelection,
             ),
-        shape = selectionShape,
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) RoundedCornerShape(4.dp) else selectionShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+            containerColor = when {
+                selected -> MaterialTheme.colorScheme.primaryContainer
+                gridStyle == DirectoryGridStyle.CLASSIC -> MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                else -> MaterialTheme.colorScheme.surfaceContainer
+            },
         ),
     ) {
         Box(modifier = Modifier.fillMaxWidth().height(cardHeight)) {
@@ -1081,6 +1094,7 @@ private fun com.affilemanager.app.ui.NetworkUiState.toDirectoryDisplaySettings()
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridStyle = gridStyle,
         showThumbnails = false,
     )
 
@@ -1454,11 +1468,12 @@ internal fun NetworkProfileDialog(
 ) {
     val stateKey = existingProfile?.id ?: "new"
     var protocol by remember(stateKey) { mutableStateOf(existingProfile?.protocol ?: NetworkProtocol.SFTP) }
+    var webDavUseTls by remember(stateKey) { mutableStateOf(existingProfile?.webDavUseTls ?: true) }
     var name by remember(stateKey) { mutableStateOf(existingProfile?.name.orEmpty().firstInputLine()) }
     var host by remember(stateKey) {
         mutableStateOf(NetworkProfileRules.sanitizeHostInput(existingProfile?.host.orEmpty().firstInputLine()))
     }
-    var port by remember(stateKey) { mutableStateOf((existingProfile?.port ?: defaultPort(protocol)).toString()) }
+    var port by remember(stateKey) { mutableStateOf((existingProfile?.port ?: defaultPort(protocol, webDavUseTls)).toString()) }
     var username by remember(stateKey) { mutableStateOf(existingProfile?.username.orEmpty().firstInputLine()) }
     var password by remember(stateKey) { mutableStateOf("") }
     var privateKeyPem by remember(stateKey) { mutableStateOf("") }
@@ -1470,7 +1485,11 @@ internal fun NetworkProfileDialog(
     var trustFirstUse by remember(stateKey) { mutableStateOf(existingProfile?.allowFirstUseTrust ?: true) }
     val hasNewSecret = password.isNotEmpty() || (protocol == NetworkProtocol.SFTP && usePrivateKey && privateKeyPem.isNotBlank())
     val nameProblem = NetworkProfileRules.nameError(name)
-    val hostProblem = NetworkProfileRules.hostError(host)
+    val hostProblem = if (protocol == NetworkProtocol.WEBDAV) {
+        NetworkProfileRules.webDavServerError(host)
+    } else {
+        NetworkProfileRules.hostError(host)
+    }
     val usernameProblem = NetworkProfileRules.usernameError(username)
     val basePathProblem = NetworkProfileRules.basePathError(basePath)
     val portValue = port.toIntOrNull()
@@ -1492,9 +1511,9 @@ internal fun NetworkProfileDialog(
                         NetworkProtocol.entries.forEach { candidate ->
                             AssistChip(
                                 onClick = {
-                                    val previousDefault = defaultPort(protocol).toString()
+                                    val previousDefault = defaultPort(protocol, webDavUseTls).toString()
                                     protocol = candidate
-                                    if (port == previousDefault) port = defaultPort(candidate).toString()
+                                    if (port == previousDefault) port = defaultPort(candidate, webDavUseTls).toString()
                                 },
                                 label = { Text(candidate.name) },
                             )
@@ -1519,9 +1538,23 @@ internal fun NetworkProfileDialog(
                         modifier = Modifier
                             .testTag("network_host")
                             .onFocusChanged { focus ->
-                                if (!focus.isFocused) host = NetworkProfileRules.sanitizeHostInput(host)
+                                if (!focus.isFocused) {
+                                    val endpoint = if (protocol == NetworkProtocol.WEBDAV) {
+                                        NetworkProfileRules.parseWebDavEndpoint(host)
+                                    } else {
+                                        null
+                                    }
+                                    if (endpoint != null) {
+                                        host = endpoint.host
+                                        port = endpoint.port.toString()
+                                        basePath = endpoint.basePath
+                                        webDavUseTls = endpoint.useTls
+                                    } else {
+                                        host = NetworkProfileRules.sanitizeHostInput(host)
+                                    }
+                                }
                             },
-                        label = { LText("Serveris") },
+                        label = { LText(if (protocol == NetworkProtocol.WEBDAV) "Serveris arba WebDAV URL" else "Serveris") },
                         singleLine = true,
                         isError = hostProblem != null,
                         supportingText = { hostProblem?.let { LText(it) } },
@@ -1619,7 +1652,31 @@ internal fun NetworkProfileDialog(
                     }
                 }
                 if (protocol == NetworkProtocol.WEBDAV) {
-                    item { LText("WebDAV jungiamas tik per HTTPS; peradresavimai su prisijungimu nevykdomi.", style = MaterialTheme.typography.bodySmall) }
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = webDavUseTls,
+                                onCheckedChange = { enabled ->
+                                    val previousDefault = if (webDavUseTls) 443 else 80
+                                    webDavUseTls = enabled
+                                    if (port == previousDefault.toString()) port = (if (enabled) 443 else 80).toString()
+                                },
+                            )
+                            Column {
+                                LText("Naudoti HTTPS/TLS")
+                                LText("Galite įklijuoti visą http:// arba https:// WebDAV adresą.", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    if (!webDavUseTls) {
+                        item {
+                            LText(
+                                "HTTP ryšys nešifruotas. Naudokite jį tik patikimame vietiniame tinkle.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                 }
                 }
             }
@@ -1632,13 +1689,14 @@ internal fun NetworkProfileDialog(
                         name = name,
                         protocol = protocol,
                         host = host,
-                        port = port.toIntOrNull() ?: defaultPort(protocol),
+                        port = port.toIntOrNull() ?: defaultPort(protocol, webDavUseTls),
                         username = username,
                         basePath = basePath.ifBlank { "/" },
                         domain = domain,
                         smbShare = share,
                         expectedHostKeySha256 = fingerprint.ifBlank { null },
                         allowFirstUseTrust = protocol == NetworkProtocol.SFTP && trustFirstUse,
+                        webDavUseTls = webDavUseTls,
                     ))
                     onSave(
                         profile,
@@ -1703,10 +1761,10 @@ internal fun NetworkError(error: RemoteErrorInfo) {
     }
 }
 
-private fun defaultPort(protocol: NetworkProtocol): Int = when (protocol) {
+private fun defaultPort(protocol: NetworkProtocol, webDavUseTls: Boolean = true): Int = when (protocol) {
     NetworkProtocol.SFTP -> 22
     NetworkProtocol.SMB -> 445
-    NetworkProtocol.WEBDAV -> 443
+    NetworkProtocol.WEBDAV -> if (webDavUseTls) 443 else 80
     NetworkProtocol.FTP -> 21
     NetworkProtocol.FTPS -> 21
 }

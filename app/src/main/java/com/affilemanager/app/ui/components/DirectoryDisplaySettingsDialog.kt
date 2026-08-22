@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.data.DirectoryDisplayRules
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
@@ -46,6 +47,7 @@ fun DirectoryDisplaySettingsDialog(
     onDismiss: () -> Unit,
     onApply: (DirectoryDisplaySettings) -> Unit,
     onApplySort: ((SortMode, SortDirection) -> Unit)? = null,
+    onApplyToAll: ((DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit)? = null,
 ) {
     require(gridColumnRange.first >= DirectoryDisplayRules.MIN_GRID_COLUMNS)
     require(gridColumnRange.last <= DirectoryDisplayRules.MAX_GRID_COLUMNS)
@@ -112,6 +114,21 @@ fun DirectoryDisplaySettingsDialog(
                             )
                         }
                     }
+                    LText("Tinklelio stilius", fontWeight = FontWeight.SemiBold)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = draft.gridStyle == DirectoryGridStyle.CARDS,
+                            onClick = { draft = draft.copy(gridStyle = DirectoryGridStyle.CARDS) },
+                            label = { LText("Kortelės") },
+                            modifier = Modifier.weight(1f).testTag("display_grid_style_cards"),
+                        )
+                        FilterChip(
+                            selected = draft.gridStyle == DirectoryGridStyle.CLASSIC,
+                            onClick = { draft = draft.copy(gridStyle = DirectoryGridStyle.CLASSIC) },
+                            label = { LText("Klasikinis") },
+                            modifier = Modifier.weight(1f).testTag("display_grid_style_classic"),
+                        )
+                    }
                 }
 
                 if (thumbnailsAvailable) {
@@ -170,11 +187,27 @@ fun DirectoryDisplaySettingsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                onApply(DirectoryDisplayRules.requireValid(draft))
-                if (initialSortMode != null) onApplySort?.invoke(draftSortMode, draftSortDirection)
-            }, modifier = Modifier.testTag("display_apply")) {
-                LText("Taikyti")
+            Row {
+                onApplyToAll?.let { applyToAll ->
+                    TextButton(
+                        onClick = {
+                            applyToAll(
+                                DirectoryDisplayRules.requireValid(draft),
+                                initialSortMode?.let { draftSortMode },
+                                draftSortDirection,
+                            )
+                        },
+                        modifier = Modifier.testTag("display_apply_all"),
+                    ) {
+                        LText("Taikyti visiems")
+                    }
+                }
+                TextButton(onClick = {
+                    onApply(DirectoryDisplayRules.requireValid(draft))
+                    if (initialSortMode != null) onApplySort?.invoke(draftSortMode, draftSortDirection)
+                }, modifier = Modifier.testTag("display_apply")) {
+                    LText("Taikyti")
+                }
             }
         },
         dismissButton = {

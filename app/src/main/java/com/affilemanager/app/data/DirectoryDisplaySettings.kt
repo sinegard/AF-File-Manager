@@ -5,11 +5,17 @@ enum class DirectoryLayoutMode {
     GRID,
 }
 
+enum class DirectoryGridStyle {
+    CARDS,
+    CLASSIC,
+}
+
 data class DirectoryDisplaySettings(
     val layoutMode: DirectoryLayoutMode = DirectoryLayoutMode.LIST,
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
 )
 

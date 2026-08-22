@@ -3,6 +3,8 @@ package com.affilemanager.app.data
 import android.content.Context
 import com.affilemanager.app.model.SearchFilters
 import com.affilemanager.app.model.EntryKind
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -43,6 +45,12 @@ data class SavedSearch(
     )
 }
 
+data class DirectoryDisplayDefaults(
+    val settings: DirectoryDisplaySettings,
+    val sortMode: SortMode,
+    val sortDirection: SortDirection,
+)
+
 class NavigationRepository(context: Context) {
     companion object {
         private const val PREFS = "navigation_v1"
@@ -52,6 +60,7 @@ class NavigationRepository(context: Context) {
         private const val KEY_THUMBNAIL_DIRECTORIES = "thumbnail_directories"
         private const val KEY_DIRECTORY_DISPLAY_INDEX = "directory_display_index"
         private const val KEY_DIRECTORY_DISPLAY_PREFIX = "directory_display_"
+        private const val KEY_DIRECTORY_DISPLAY_DEFAULTS = "directory_display_defaults"
         private const val KEY_HOME_CUSTOMIZATION = "home_customization"
         private const val MAX_FAVORITES = 100
         private const val MAX_RECENTS = 100
@@ -179,20 +188,12 @@ class NavigationRepository(context: Context) {
     fun directoryDisplaySettings(directoryIdentity: String): DirectoryDisplaySettings? {
         val identity = validateDirectoryIdentity(directoryIdentity)
         val storageKey = directoryDisplayStorageKey(identity)
-        val raw = preferences.getString(storageKey, null) ?: return null
+        val raw = preferences.getString(storageKey, null)
+            ?: return directoryDisplayDefaults()?.settings
         require(raw.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Katalogo rodinio nustatymas per didelis" }
         val item = JSONObject(raw)
         require(item.getString("identity") == identity) { "Katalogo rodinio tapatybė nesutampa" }
-        val settings = DirectoryDisplaySettings(
-            layoutMode = runCatching {
-                DirectoryLayoutMode.valueOf(item.optString("layout", DirectoryLayoutMode.LIST.name))
-            }.getOrDefault(DirectoryLayoutMode.LIST),
-            iconScalePercent = item.optInt("iconScale", 100),
-            spacingScalePercent = item.optInt("spacingScale", 100),
-            gridColumns = item.optInt("gridColumns", 3),
-            showThumbnails = item.optBoolean("thumbnails", false),
-        )
-        return DirectoryDisplayRules.requireValid(settings)
+        return decodeDirectoryDisplaySettings(item)
     }
 
     @Synchronized
@@ -213,16 +214,48 @@ class NavigationRepository(context: Context) {
         while (index.size > MAX_DIRECTORY_DISPLAY_SETTINGS) evicted += index.removeAt(0)
         val item = JSONObject()
             .put("identity", identity)
-            .put("layout", valid.layoutMode.name)
-            .put("iconScale", valid.iconScalePercent)
-            .put("spacingScale", valid.spacingScalePercent)
-            .put("gridColumns", valid.gridColumns)
-            .put("thumbnails", valid.showThumbnails)
+            .putDirectoryDisplaySettings(valid)
         val editor = preferences.edit()
             .putString(storageKey, item.toString())
             .putString(KEY_DIRECTORY_DISPLAY_INDEX, JSONArray().apply { index.forEach(::put) }.toString())
         evicted.forEach { editor.remove("$KEY_DIRECTORY_DISPLAY_PREFIX$it") }
         check(editor.commit()) { "Katalogo rodinio nustatymo įrašyti nepavyko" }
+    }
+
+    fun directoryDisplayDefaults(): DirectoryDisplayDefaults? {
+        val raw = preferences.getString(KEY_DIRECTORY_DISPLAY_DEFAULTS, null) ?: return null
+        require(raw.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Bendras rodinio nustatymas per didelis" }
+        val item = JSONObject(raw)
+        return DirectoryDisplayDefaults(
+            settings = decodeDirectoryDisplaySettings(item),
+            sortMode = runCatching { SortMode.valueOf(item.optString("sortMode", SortMode.NAME.name)) }
+                .getOrDefault(SortMode.NAME),
+            sortDirection = runCatching {
+                SortDirection.valueOf(item.optString("sortDirection", SortDirection.ASCENDING.name))
+            }.getOrDefault(SortDirection.ASCENDING),
+        )
+    }
+
+    /**
+     * Makes the selected view the new default for every browser and removes older
+     * per-folder overrides in the same committed preferences transaction.
+     */
+    @Synchronized
+    fun setDirectoryDisplayDefaults(defaults: DirectoryDisplayDefaults) {
+        val valid = DirectoryDisplayRules.requireValid(defaults.settings)
+        val index = readStringArray(KEY_DIRECTORY_DISPLAY_INDEX, MAX_DIRECTORY_DISPLAY_SETTINGS)
+        val encoded = JSONObject()
+            .putDirectoryDisplaySettings(valid)
+            .put("sortMode", defaults.sortMode.name)
+            .put("sortDirection", defaults.sortDirection.name)
+            .toString()
+        require(encoded.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Bendras rodinio nustatymas per didelis" }
+        val editor = preferences.edit()
+            .putString(KEY_DIRECTORY_DISPLAY_DEFAULTS, encoded)
+            .putString(KEY_DIRECTORY_DISPLAY_INDEX, "[]")
+            .remove(KEY_THUMBNAIL_DIRECTORIES)
+        index.forEach { digest -> editor.remove("$KEY_DIRECTORY_DISPLAY_PREFIX$digest") }
+        check(editor.commit()) { "Bendro rodinio nustatymo įrašyti nepavyko" }
     }
 
     @Synchronized
@@ -343,6 +376,30 @@ class NavigationRepository(context: Context) {
     private fun directoryDisplayDigest(identity: String): String = MessageDigest.getInstance("SHA-256")
         .digest(identity.toByteArray(Charsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
+    private fun decodeDirectoryDisplaySettings(item: JSONObject): DirectoryDisplaySettings =
+        DirectoryDisplayRules.requireValid(
+            DirectoryDisplaySettings(
+                layoutMode = runCatching {
+                    DirectoryLayoutMode.valueOf(item.optString("layout", DirectoryLayoutMode.LIST.name))
+                }.getOrDefault(DirectoryLayoutMode.LIST),
+                iconScalePercent = item.optInt("iconScale", 100),
+                spacingScalePercent = item.optInt("spacingScale", 100),
+                gridColumns = item.optInt("gridColumns", 3),
+                gridStyle = runCatching {
+                    DirectoryGridStyle.valueOf(item.optString("gridStyle", DirectoryGridStyle.CARDS.name))
+                }.getOrDefault(DirectoryGridStyle.CARDS),
+                showThumbnails = item.optBoolean("thumbnails", false),
+            ),
+        )
+
+    private fun JSONObject.putDirectoryDisplaySettings(settings: DirectoryDisplaySettings): JSONObject =
+        put("layout", settings.layoutMode.name)
+            .put("iconScale", settings.iconScalePercent)
+            .put("spacingScale", settings.spacingScalePercent)
+            .put("gridColumns", settings.gridColumns)
+            .put("gridStyle", settings.gridStyle.name)
+            .put("thumbnails", settings.showThumbnails)
 
     private fun readStringArray(key: String, limit: Int): List<String> {
         val array = readArray(key, limit)

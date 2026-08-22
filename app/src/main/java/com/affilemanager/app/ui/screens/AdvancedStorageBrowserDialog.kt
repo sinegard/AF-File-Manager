@@ -77,6 +77,7 @@ import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
@@ -256,7 +257,7 @@ fun AdvancedStorageBrowserDialog(
                         LText("Atitikmenų nerasta")
                     }
                     state.grid -> LazyVerticalGrid(
-                        columns = GridCells.Fixed(state.gridColumns.coerceIn(2, 8)),
+                        columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
                         modifier = Modifier.fillMaxSize().testTag("advanced_grid"),
                         contentPadding = PaddingValues(10.dp, 8.dp, 10.dp, 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -269,6 +270,7 @@ fun AdvancedStorageBrowserDialog(
                                 state.selectedPaths.isNotEmpty(),
                                 state.iconScalePercent,
                                 state.spacingScalePercent,
+                                state.gridStyle,
                                 viewModel,
                             )
                         }
@@ -332,6 +334,7 @@ fun AdvancedStorageBrowserDialog(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridStyle = state.gridStyle,
                 showThumbnails = false,
             ),
             thumbnailsAvailable = false,
@@ -343,6 +346,10 @@ fun AdvancedStorageBrowserDialog(
             onApplySort = viewModel::setAdvancedSort,
             initialSortMode = state.sortMode,
             initialSortDirection = state.sortDirection,
+            onApplyToAll = { settings, mode, direction ->
+                viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
+                showDisplaySettings = false
+            },
         )
     }
 }
@@ -383,6 +390,7 @@ private fun AdvancedGridEntry(
     selectionActive: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     viewModel: MainViewModel,
 ) {
     val iconSize = (72f * iconScalePercent / 100f).dp
@@ -391,6 +399,10 @@ private fun AdvancedGridEntry(
         modifier = Modifier.fillMaxWidth().combinedClickable(
             onClick = { if (selectionActive) viewModel.toggleAdvancedSelection(entry.absolutePath) else viewModel.openAdvancedEntry(entry) },
             onLongClick = { viewModel.toggleAdvancedSelection(entry.absolutePath) },
+        ),
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
         Column(

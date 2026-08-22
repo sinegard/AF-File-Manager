@@ -118,6 +118,12 @@ data class DuplicateGroup(
     val paths: List<String>,
 )
 
+data class DuplicateAnalysisResult(
+    val groups: List<DuplicateGroup>,
+    val scannedCandidates: Int,
+    val truncated: Boolean,
+)
+
 data class SimilarImageGroup(
     val id: String,
     val files: List<FileEntry>,

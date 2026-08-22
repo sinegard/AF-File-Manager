@@ -28,8 +28,13 @@ data class HomeCustomization(
  */
 object HomeShortcutNavigationRules {
     private val virtualCategories = mapOf(
+        "builtin.documents" to FileCategory.DOCUMENTS,
+        "builtin.pictures" to FileCategory.IMAGES,
+        "builtin.videos" to FileCategory.VIDEOS,
+        "builtin.music" to FileCategory.AUDIO,
         "builtin.archives" to FileCategory.ARCHIVES,
         "builtin.apps" to FileCategory.APPS,
+        "builtin.installed_apps" to FileCategory.INSTALLED_APPS,
     )
 
     fun categoryFor(shortcutId: String): FileCategory? = virtualCategories[shortcutId]

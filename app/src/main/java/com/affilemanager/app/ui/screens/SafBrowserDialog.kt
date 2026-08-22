@@ -66,6 +66,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
@@ -219,6 +220,7 @@ fun SafBrowserDialog(
                                     entry = entry,
                                     showThumbnails = state.showThumbnails,
                                     iconScalePercent = state.iconScalePercent,
+                                    gridStyle = state.gridStyle,
                                     onOpen = { viewModel.openSafEntry(entry) },
                                     onRename = { rename = entry },
                                     onInfo = { info = entry },
@@ -289,6 +291,7 @@ fun SafBrowserDialog(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridStyle = state.gridStyle,
                 showThumbnails = state.showThumbnails,
             ),
             thumbnailsAvailable = true,
@@ -300,6 +303,10 @@ fun SafBrowserDialog(
                 showDisplaySettings = false
             },
             onApplySort = viewModel::setSafSort,
+            onApplyToAll = { settings, mode, direction ->
+                viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
+                showDisplaySettings = false
+            },
         )
     }
 }
@@ -360,6 +367,7 @@ private fun SafEntryGridItem(
     entry: SafEntry,
     showThumbnails: Boolean,
     iconScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onInfo: () -> Unit,
@@ -368,7 +376,14 @@ private fun SafEntryGridItem(
 ) {
     var menu by remember { mutableStateOf(false) }
     val iconSize = (72f * iconScalePercent / 100f).dp
-    Card(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth(),
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
+        ),
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

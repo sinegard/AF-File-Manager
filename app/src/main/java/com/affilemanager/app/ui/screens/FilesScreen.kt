@@ -143,6 +143,7 @@ import com.affilemanager.app.model.StorageRoot
 import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.data.PanelWorkspace
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.FileTagDefinition
 import com.affilemanager.app.data.FileTagSnapshot
@@ -537,6 +538,10 @@ fun FilesScreen(
                 displayPanel = null
             },
             onApplySort = { mode, direction -> viewModel.setSort(panel, mode, direction) },
+            onApplyToAll = { settings, mode, direction ->
+                viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
+                displayPanel = null
+            },
         )
     }
     if (showHomeDisplaySettings) {
@@ -682,7 +687,7 @@ private fun FilesHome(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainer,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -849,10 +854,19 @@ private fun StorageHomeSection(
         )
     }
     if (rootStorageAvailable) {
+        val rootSpace = remember {
+            File("/").let { root -> root.totalSpace.coerceAtLeast(0L) to root.usableSpace.coerceAtLeast(0L) }
+        }
+        val rootUsageFraction = rootSpace.first.takeIf { it > 0L }?.let { total ->
+            (total - rootSpace.second).coerceIn(0L, total).toFloat() / total.toFloat()
+        }
         StorageLocationCard(
             title = "Root",
-            description = "Sistemos failai · privilegijuota prieiga",
+            description = rootSpace.first.takeIf { it > 0L }?.let { total ->
+                "${FileSystemRules.humanBytes(rootSpace.second)} laisva iš ${FileSystemRules.humanBytes(total)}"
+            } ?: "Sistemos failai · privilegijuota prieiga",
             icon = Icons.Rounded.LockOpen,
+            usageFraction = rootUsageFraction,
             onClick = onOpenRoot,
         )
     }
@@ -1108,13 +1122,18 @@ private fun homeShortcutIcon(shortcut: HomeShortcut): ImageVector = when (shortc
     "builtin.music" -> Icons.Rounded.MusicNote
     "builtin.archives" -> Icons.Rounded.Archive
     "builtin.apps" -> Icons.Rounded.Android
+    "builtin.installed_apps" -> Icons.Rounded.Android
     else -> if (File(shortcut.path).isDirectory) Icons.Rounded.Folder else Icons.Rounded.Description
 }
 
 @Composable
 private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
     val context = LocalContext.current
-    ElevatedCard(onClick = onOpen, modifier = Modifier.width(188.dp).height(172.dp)) {
+    ElevatedCard(
+        onClick = onOpen,
+        modifier = Modifier.width(188.dp).height(172.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
         Column(
             modifier = Modifier.fillMaxSize().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -1139,7 +1158,11 @@ private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
 @Composable
 private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
     val context = LocalContext.current
-    ElevatedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+    ElevatedCard(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1183,7 +1206,11 @@ private fun QuickLocationTile(
     onClick: () -> Unit,
 ) {
     val iconSize = (32f * iconScalePercent / 100f).dp
-    ElevatedCard(onClick = onClick, modifier = modifier.height(92.dp)) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = modifier.height(92.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
         Column(
             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 9.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -1215,7 +1242,11 @@ private fun StorageLocationCard(
         animationSpec = spring(),
         label = "storage usage",
     )
-    ElevatedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1257,6 +1288,7 @@ private fun PanelUiState.toDirectoryDisplaySettings(): DirectoryDisplaySettings 
     iconScalePercent = iconScalePercent,
     spacingScalePercent = spacingScalePercent,
     gridColumns = gridColumns,
+    gridStyle = gridStyle,
     showThumbnails = showThumbnails,
 )
 
@@ -1885,6 +1917,7 @@ private fun FileGrid(
                     showThumbnails = state.showThumbnails,
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
+                    gridStyle = state.gridStyle,
                     onClick = { handleEntryClick(panel, state, entry, viewModel) },
                     onLongClick = { viewModel.toggleSelection(panel, entry.absolutePath) },
                     onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
@@ -1988,6 +2021,7 @@ private fun FileTile(
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPreview: () -> Unit,
@@ -2007,9 +2041,13 @@ private fun FileTile(
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
             .alpha(itemAlpha)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = selectionShape,
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) RoundedCornerShape(4.dp) else selectionShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+            containerColor = when {
+                selected -> MaterialTheme.colorScheme.primaryContainer
+                gridStyle == DirectoryGridStyle.CLASSIC -> MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                else -> MaterialTheme.colorScheme.surfaceContainer
+            },
         ),
     ) {
         Box(modifier = Modifier.fillMaxWidth().height(cardHeight)) {

@@ -80,6 +80,7 @@ object UiTranslator {
         "Failų kategorijos atidaryti nepavyko" to "Could not open the file category",
         "Vaizdai" to "Images",
         "Programos" to "Apps",
+        "Įdiegtos programos" to "Installed apps",
         "Visa saugykla" to "All storage",
         "Sistemos failai · privilegijuota prieiga" to "System files · privileged access",
         "1 elementas" to "1 item",
@@ -434,6 +435,9 @@ object UiTranslator {
         "Rodyti sąrašą" to "Show list",
         "Rodyti tinklelį" to "Show grid",
         "Rodinio nustatymai" to "Display settings",
+        "Rodinio nustatymai pritaikyti visiems aplankams" to "Display settings applied to all folders",
+        "Bendrų rodinio nustatymų išsaugoti nepavyko" to "Could not save the global display settings",
+        "Bendro rodinio nustatymo įrašyti nepavyko" to "Could not write the global display setting",
         "Greita paieška šiame aplanke" to "Quick search in this folder",
         "Uždaryti greitą paiešką" to "Close quick search",
         "Filtruoti šį aplanką" to "Filter this folder",
@@ -445,6 +449,10 @@ object UiTranslator {
         "Piktogramų ir aplankų dydis" to "Icon and folder size",
         "Elementų tarpai" to "Item spacing",
         "Tinklelio stulpeliai" to "Grid columns",
+        "Tinklelio stilius" to "Grid style",
+        "Kortelės" to "Cards",
+        "Klasikinis" to "Classic",
+        "Taikyti visiems" to "Apply to all",
         "Rūšiavimas" to "Sorting",
         "Didėjančiai" to "Ascending",
         "Mažėjančiai" to "Descending",
@@ -462,6 +470,14 @@ object UiTranslator {
         "Paslėpti failai" to "Hidden files",
         "Čia dar nėra failų" to "No files here yet",
         "Aplankas tuščias" to "Folder is empty",
+        "Dublikatų paieška dalinė" to "Duplicate search is partial",
+        "Serveris arba WebDAV URL" to "Server or WebDAV URL",
+        "Naudoti HTTPS/TLS" to "Use HTTPS/TLS",
+        "Galite įklijuoti visą http:// arba https:// WebDAV adresą." to "You can paste the complete http:// or https:// WebDAV URL.",
+        "HTTP ryšys nešifruotas. Naudokite jį tik patikimame vietiniame tinkle." to "HTTP is not encrypted. Use it only on a trusted local network.",
+        "Įrašykite tinkamą HTTP arba HTTPS WebDAV adresą" to "Enter a valid HTTP or HTTPS WebDAV URL",
+        "Programos paketo nustatyti nepavyko" to "Could not identify the app package",
+        "Programos atidaryti nepavyko" to "Could not open the app",
         "Atidaryti aplanką" to "Open folder",
         "Kraunami duomenys…" to "Loading data…",
         "Aplankas · kraunami duomenys…" to "Folder · loading data…",
@@ -1112,6 +1128,9 @@ object UiTranslator {
         }
 
         val patterns = listOf(
+            Regex("^Patikrinta (\\d+) failų\\. Rastos grupės rodomos, tačiau likusioje saugyklos dalyje gali būti daugiau dublikatų\\.$") to { match: MatchResult ->
+                "Checked ${match.groupValues[1]} files. Found groups are shown, but more duplicates may exist in the rest of storage."
+            },
             Regex("^Naujas iš kopijavimo rinkinio \\((\\d+)\\)$") to { match: MatchResult ->
                 "New from copy set (${match.groupValues[1]})"
             },

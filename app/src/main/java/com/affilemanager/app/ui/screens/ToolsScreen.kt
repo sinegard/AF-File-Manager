@@ -121,7 +121,7 @@ fun ToolsScreen(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -205,7 +205,7 @@ fun ToolsScreen(
             Card(
                 onClick = viewModel::openTrashBrowser,
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -253,7 +253,7 @@ fun ToolsScreen(
 
         item { SectionHeader("Programos užraktas", if (appLockEnabled) "Įjungtas" else "Išjungtas") }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Fingerprint, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
@@ -311,7 +311,7 @@ fun ToolsScreen(
 
         item { SectionHeader("Pažengusio naudotojo režimas", "Neprivalomas") }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     LText("Apsaugotų Android aplankų prieiga", fontWeight = FontWeight.SemiBold)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -458,7 +458,7 @@ private fun AppearanceSettingsCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().testTag("appearance_settings"),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -561,7 +561,7 @@ private fun AppUpdateCard(
     onInstall: () -> Unit,
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -691,7 +691,7 @@ private fun SectionHeader(title: String, detail: String) {
 
 @Composable
 private fun InfoCard(title: String, description: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer), modifier = Modifier.fillMaxWidth()) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest), modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(34.dp), tint = MaterialTheme.colorScheme.primary)
             Column(modifier = Modifier.padding(start = 12.dp)) {

@@ -26,6 +26,7 @@ enum class FileCategory(val kind: EntryKind) {
     DOCUMENTS(EntryKind.DOCUMENT),
     ARCHIVES(EntryKind.ARCHIVE),
     APPS(EntryKind.APK),
+    INSTALLED_APPS(EntryKind.APK),
 }
 
 data class FileCategoryResult(
@@ -128,6 +129,14 @@ class FileCategoryRepository(
     }
 
     private suspend fun queryCategory(category: FileCategory): FileCategoryResult {
+        if (category == FileCategory.INSTALLED_APPS) {
+            val entries = queryLaunchableApps(MAX_RESULTS)
+            return FileCategoryResult(
+                entries = entries,
+                scannedRows = entries.size,
+                truncated = entries.size >= MAX_RESULTS,
+            )
+        }
         val projection = arrayOf(
             MediaStore.MediaColumns.DATA,
             MediaStore.MediaColumns.DISPLAY_NAME,
@@ -144,7 +153,6 @@ class FileCategoryRepository(
             putInt(ContentResolver.QUERY_ARG_LIMIT, MAX_QUERY_ROWS)
         }
         val entries = ArrayList<FileEntry>(minOf(MAX_RESULTS, 512))
-        if (category == FileCategory.APPS) entries += queryLaunchableApps(MAX_RESULTS)
         var scanned = 0
         resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, null)?.use { cursor ->
             val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
@@ -215,6 +223,7 @@ class FileCategoryRepository(
             mimeTypes = listOf("application/vnd.android.package-archive"),
             extensions = listOf("apk", "apks", "xapk"),
         )
+        FileCategory.INSTALLED_APPS -> error("Installed applications are obtained from PackageManager")
     }
 
     private fun mediaTypeQuery(mediaType: Int) = CategoryQuery(
@@ -271,7 +280,7 @@ class FileCategoryRepository(
                 val file = File(applicationInfo.sourceDir ?: return@mapNotNull null)
                 if (!file.isFile || !file.canRead()) return@mapNotNull null
                 val label = applicationInfo.loadLabel(applicationContext.packageManager).toString().trim()
-                localFiles.toEntry(file).copy(name = "${label.ifBlank { applicationInfo.packageName }}.apk")
+                localFiles.toEntry(file).copy(name = label.ifBlank { applicationInfo.packageName })
             }
             .distinctBy(FileEntry::absolutePath)
             .take(limit.coerceIn(0, MAX_RESULTS))

@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.TrashBrowserEntry
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
@@ -211,6 +212,7 @@ fun TrashBrowserDialog(
                                     entry = entry,
                                     showThumbnails = state.showThumbnails,
                                     iconScalePercent = state.iconScalePercent,
+                                    gridStyle = state.gridStyle,
                                     onOpen = { viewModel.openTrashEntry(entry) },
                                     onRestore = { viewModel.restoreTrash(entry.itemId) },
                                     onDelete = { deleteTarget = entry },
@@ -274,6 +276,7 @@ fun TrashBrowserDialog(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridStyle = state.gridStyle,
                 showThumbnails = state.showThumbnails,
             ),
             thumbnailsAvailable = true,
@@ -285,6 +288,10 @@ fun TrashBrowserDialog(
                 showDisplaySettings = false
             },
             onApplySort = viewModel::setTrashSort,
+            onApplyToAll = { settings, mode, direction ->
+                viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
+                showDisplaySettings = false
+            },
         )
     }
 }
@@ -345,6 +352,7 @@ private fun TrashBrowserGridItem(
     entry: TrashBrowserEntry,
     showThumbnails: Boolean,
     iconScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     onOpen: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
@@ -353,7 +361,10 @@ private fun TrashBrowserGridItem(
     val iconSize = (72f * iconScalePercent / 100f).dp
     Card(
         onClick = onOpen,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
+        ),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(8.dp),

@@ -55,13 +55,7 @@ class HomeCustomizationRulesTest {
 
     @Test
     fun realQuickLocationFoldersUseStandardDirectoryNavigation() {
-        val folderIds = listOf(
-            "builtin.downloads",
-            "builtin.documents",
-            "builtin.pictures",
-            "builtin.videos",
-            "builtin.music",
-        )
+        val folderIds = listOf("builtin.downloads")
 
         folderIds.forEach { id ->
             assertEquals(null, HomeShortcutNavigationRules.categoryFor(id))
@@ -70,10 +64,17 @@ class HomeCustomizationRulesTest {
     }
 
     @Test
-    fun onlyNonFolderShortcutsRemainVirtualCategories() {
+    fun mediaArchivesAndAppsUseDirectVirtualCategories() {
+        assertEquals(FileCategory.DOCUMENTS, HomeShortcutNavigationRules.categoryFor("builtin.documents"))
+        assertEquals(FileCategory.IMAGES, HomeShortcutNavigationRules.categoryFor("builtin.pictures"))
+        assertEquals(FileCategory.VIDEOS, HomeShortcutNavigationRules.categoryFor("builtin.videos"))
+        assertEquals(FileCategory.AUDIO, HomeShortcutNavigationRules.categoryFor("builtin.music"))
         assertEquals(FileCategory.ARCHIVES, HomeShortcutNavigationRules.categoryFor("builtin.archives"))
         assertEquals(FileCategory.APPS, HomeShortcutNavigationRules.categoryFor("builtin.apps"))
+        assertEquals(FileCategory.INSTALLED_APPS, HomeShortcutNavigationRules.categoryFor("builtin.installed_apps"))
+        assertTrue(HomeShortcutNavigationRules.isVirtualCategory("builtin.documents"))
         assertTrue(HomeShortcutNavigationRules.isVirtualCategory("builtin.archives"))
         assertTrue(HomeShortcutNavigationRules.isVirtualCategory("builtin.apps"))
+        assertTrue(HomeShortcutNavigationRules.isVirtualCategory("builtin.installed_apps"))
     }
 }

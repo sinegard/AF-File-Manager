@@ -220,7 +220,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         item {
             Card(
                 modifier = Modifier.padding(horizontal = 16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     LText("Kur ieškoti", style = MaterialTheme.typography.labelLarge)
@@ -423,6 +423,22 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         }
         searchState.error?.let { error -> item { ErrorCard(error, Modifier.padding(horizontal = 16.dp)) } }
         analysisState.error?.let { error -> item { ErrorCard(error, Modifier.padding(horizontal = 16.dp)) } }
+        if (analysisState.duplicateScanTruncated) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        LText("Dublikatų paieška dalinė", fontWeight = FontWeight.SemiBold)
+                        LText(
+                            "Patikrinta ${analysisState.duplicateCandidatesScanned} failų. Rastos grupės rodomos, tačiau likusioje saugyklos dalyje gali būti daugiau dublikatų.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
 
         if (searchState.results.isNotEmpty()) {
             item {
@@ -692,7 +708,10 @@ private fun StorageOverviewCard(
     val used = (total - root.freeBytes.coerceAtLeast(0L)).coerceIn(0L, total)
     val fraction = if (total > 0L) (used.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
     val percentage = (fraction * 100f).toInt().coerceIn(0, 100)
-    Card(modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Box(modifier = Modifier.size(86.dp), contentAlignment = Alignment.Center) {

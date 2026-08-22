@@ -22,6 +22,8 @@ import java.time.Duration
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
+internal fun webDavScheme(profile: NetworkProfile): String = if (profile.webDavUseTls) "https" else "http"
+
 class WebDavRemoteClient private constructor(
     private val client: OkHttpClient,
     private val baseUrl: HttpUrl,
@@ -44,7 +46,7 @@ class WebDavRemoteClient private constructor(
                 .build()
             try {
                 val baseUrl = HttpUrl.Builder()
-                    .scheme("https")
+                    .scheme(webDavScheme(profile))
                     .host(profile.host)
                     .port(profile.port)
                     .build()

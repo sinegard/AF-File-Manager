@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -57,6 +56,7 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategory
 import com.affilemanager.app.data.FileEntryOrdering
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.ui.FileCategoryUiState
@@ -112,7 +112,7 @@ fun FileCategoryBrowser(
     val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(state.selectedPaths::contains)
 
     BackHandler { viewModel.closeFileCategory() }
-    Surface(modifier = modifier.fillMaxSize().statusBarsPadding(), color = MaterialTheme.colorScheme.background) {
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize()) {
                 if (state.selectedPaths.isNotEmpty()) {
                     SelectionActionBar(
@@ -244,6 +244,7 @@ fun FileCategoryBrowser(
                                 state.showThumbnails,
                                 state.iconScalePercent,
                                 state.spacingScalePercent,
+                                state.gridStyle,
                                 viewModel,
                             )
                         }
@@ -273,6 +274,7 @@ fun FileCategoryBrowser(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridStyle = state.gridStyle,
                 showThumbnails = state.showThumbnails,
             ),
             thumbnailsAvailable = true,
@@ -284,6 +286,10 @@ fun FileCategoryBrowser(
                 showDisplaySettings = false
             },
             onApplySort = viewModel::setFileCategorySort,
+            onApplyToAll = { settings, mode, direction ->
+                viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
+                showDisplaySettings = false
+            },
         )
     }
 }
@@ -303,7 +309,7 @@ private fun CategoryListItem(
     val verticalPadding = (8f * spacingScalePercent / 100f).dp
     Row(
         modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else viewModel.open(entry) },
+            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else viewModel.openFileCategoryEntry(entry) },
             onLongClick = { viewModel.toggleFileCategorySelection(entry.absolutePath) },
         ).padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -332,14 +338,19 @@ private fun CategoryGridItem(
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     viewModel: MainViewModel,
 ) {
     val height = (100f * iconScalePercent / 100f).dp
     val padding = (8f * spacingScalePercent / 100f).dp
     Card(
         modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else viewModel.open(entry) },
+            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else viewModel.openFileCategoryEntry(entry) },
             onLongClick = { viewModel.toggleFileCategorySelection(entry.absolutePath) },
+        ),
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
         Box(modifier = Modifier.fillMaxWidth().height(height).padding(padding)) {
@@ -361,4 +372,5 @@ private fun categoryTitle(category: FileCategory): String = when (category) {
     FileCategory.DOCUMENTS -> "Dokumentai"
     FileCategory.ARCHIVES -> "Archyvai"
     FileCategory.APPS -> "Programos"
+    FileCategory.INSTALLED_APPS -> "Įdiegtos programos"
 }

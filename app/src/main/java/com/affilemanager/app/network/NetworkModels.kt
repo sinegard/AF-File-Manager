@@ -22,6 +22,7 @@ data class NetworkProfile(
     val smbShare: String = "",
     val expectedHostKeySha256: String? = null,
     val allowFirstUseTrust: Boolean = false,
+    val webDavUseTls: Boolean = true,
 )
 
 data class RemoteEntry(

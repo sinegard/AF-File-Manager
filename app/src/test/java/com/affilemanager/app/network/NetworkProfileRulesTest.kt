@@ -66,6 +66,42 @@ class NetworkProfileRulesTest {
         )
     }
 
+    @Test
+    fun normalizesFullLocalWebDavUrlIntoExplicitHttpProfile() {
+        val normalized = NetworkProfileRules.normalize(
+            profile().copy(
+                protocol = NetworkProtocol.WEBDAV,
+                host = "http://172.20.4.17:8080/",
+                port = 443,
+                basePath = "/",
+            ),
+        )
+
+        assertEquals("172.20.4.17", normalized.host)
+        assertEquals(8080, normalized.port)
+        assertEquals("/", normalized.basePath)
+        assertEquals(false, normalized.webDavUseTls)
+        assertEquals("http", webDavScheme(normalized))
+        assertEquals(null, NetworkProfileRules.webDavServerError("http://172.20.4.17:8080/"))
+    }
+
+    @Test
+    fun fullWebDavUrlPreservesHttpsAndPath() {
+        val endpoint = NetworkProfileRules.parseWebDavEndpoint("https://files.example.test:9443/dav/shared/")
+
+        assertEquals("files.example.test", endpoint?.host)
+        assertEquals(9443, endpoint?.port)
+        assertEquals("/dav/shared", endpoint?.basePath)
+        assertEquals(true, endpoint?.useTls)
+        assertEquals("https", webDavScheme(profile().copy(protocol = NetworkProtocol.WEBDAV, webDavUseTls = true)))
+    }
+
+    @Test
+    fun rejectsWebDavUrlsContainingCredentialsOrQueryData() {
+        assertTrue(NetworkProfileRules.webDavServerError("http://user:secret@example.test/") != null)
+        assertTrue(NetworkProfileRules.webDavServerError("https://example.test/dav?token=secret") != null)
+    }
+
     private fun profile() = NetworkProfile(
         id = "profile",
         name = "Office FTP",

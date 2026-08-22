@@ -138,6 +138,7 @@ class NetworkProfileStore(
                     smbShare = json.optString("smbShare"),
                     expectedHostKeySha256 = json.optString("expectedHostKeySha256").ifBlank { null },
                     allowFirstUseTrust = json.optBoolean("allowFirstUseTrust", false),
+                    webDavUseTls = json.optBoolean("webDavUseTls", true),
                 ),
                 encryptedSecret = json.getString("encryptedSecret"),
             )
@@ -161,6 +162,7 @@ class NetworkProfileStore(
                     .put("smbShare", profile.smbShare)
                     .put("expectedHostKeySha256", profile.expectedHostKeySha256 ?: "")
                     .put("allowFirstUseTrust", profile.allowFirstUseTrust)
+                    .put("webDavUseTls", profile.webDavUseTls)
                     .put("encryptedSecret", record.encryptedSecret),
             )
         }

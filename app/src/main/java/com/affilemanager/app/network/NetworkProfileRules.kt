@@ -1,15 +1,31 @@
 package com.affilemanager.app.network
 
+import java.net.URI
+import java.util.Locale
+
 object NetworkProfileRules {
-    fun normalize(profile: NetworkProfile): NetworkProfile = profile.copy(
-        name = profile.name.trim(),
-        host = sanitizeHostInput(profile.host).removeIpv6Brackets(),
-        username = profile.username.trim(),
-        basePath = profile.basePath.trim().ifBlank { "/" },
-        domain = profile.domain.trim(),
-        smbShare = profile.smbShare.trim(),
-        expectedHostKeySha256 = profile.expectedHostKeySha256?.trim()?.ifBlank { null },
+    data class WebDavEndpoint(
+        val host: String,
+        val port: Int,
+        val basePath: String,
+        val useTls: Boolean,
     )
+
+    fun normalize(profile: NetworkProfile): NetworkProfile {
+        val webDavEndpoint = if (profile.protocol == NetworkProtocol.WEBDAV) parseWebDavEndpoint(profile.host) else null
+        val requestedBasePath = profile.basePath.trim().ifBlank { "/" }
+        return profile.copy(
+            name = profile.name.trim(),
+            host = webDavEndpoint?.host ?: sanitizeHostInput(profile.host).removeIpv6Brackets(),
+            port = webDavEndpoint?.port ?: profile.port,
+            username = profile.username.trim(),
+            basePath = webDavEndpoint?.basePath?.takeIf { requestedBasePath == "/" } ?: requestedBasePath,
+            domain = profile.domain.trim(),
+            smbShare = profile.smbShare.trim(),
+            expectedHostKeySha256 = profile.expectedHostKeySha256?.trim()?.ifBlank { null },
+            webDavUseTls = webDavEndpoint?.useTls ?: profile.webDavUseTls,
+        )
+    }
 
     fun validate(profile: NetworkProfile) {
         val error = nameError(profile.name)
@@ -51,6 +67,37 @@ object NetworkProfileRules {
             else -> null
         }
     }
+
+    fun webDavServerError(value: String): String? {
+        val sanitized = sanitizeHostInput(value)
+        if (sanitized.startsWith("http://", ignoreCase = true) || sanitized.startsWith("https://", ignoreCase = true)) {
+            return if (parseWebDavEndpoint(sanitized) == null) {
+                "Įrašykite tinkamą HTTP arba HTTPS WebDAV adresą"
+            } else {
+                null
+            }
+        }
+        return hostError(value)
+    }
+
+    fun parseWebDavEndpoint(value: String): WebDavEndpoint? = runCatching {
+        val raw = sanitizeHostInput(value)
+        if (raw.any { it.isHostLineBreak() } || '\u0000' in raw) return@runCatching null
+        val uri = URI(raw)
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
+        if (scheme != "http" && scheme != "https") return@runCatching null
+        if (uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null) return@runCatching null
+        val host = uri.host?.removeIpv6Brackets()?.takeIf(String::isNotBlank) ?: return@runCatching null
+        if (hostError(host) != null) return@runCatching null
+        val port = if (uri.port >= 0) uri.port else if (scheme == "https") 443 else 80
+        if (portError(port) != null) return@runCatching null
+        WebDavEndpoint(
+            host = host,
+            port = port,
+            basePath = RemotePath.normalize(uri.path.orEmpty().ifBlank { "/" }),
+            useTls = scheme == "https",
+        )
+    }.getOrNull()
 
     /**
      * Server names and numeric IP addresses cannot contain spacing. Phone keyboards and copy/paste

@@ -3,6 +3,7 @@ package com.affilemanager.app.search
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.model.DuplicateGroup
+import com.affilemanager.app.model.DuplicateAnalysisResult
 import com.affilemanager.app.model.DirectoryUsage
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
@@ -22,6 +23,7 @@ class FileSearchEngine(
     private val toEntry: (File) -> FileEntry,
     private val maxScannedEntries: Int = MAX_SCANNED_ENTRIES,
     private val maxResults: Int = MAX_RESULTS,
+    private val maxDuplicateCandidates: Int = MAX_DUPLICATE_CANDIDATES,
 ) {
     companion object {
         const val MAX_SCANNED_ENTRIES = 200_000
@@ -74,27 +76,32 @@ class FileSearchEngine(
         )
     }
 
-    suspend fun duplicates(roots: List<String>): List<DuplicateGroup> = withContext(Dispatchers.IO) {
+    suspend fun duplicates(roots: List<String>): DuplicateAnalysisResult = withContext(Dispatchers.IO) {
         val bySize = mutableMapOf<Long, MutableList<File>>()
         var candidates = 0
         val walk = walk(roots) { file ->
             if (file.isFile && file.length() > 0) {
+                if (candidates >= maxDuplicateCandidates) return@walk WalkAction.STOP
                 candidates += 1
-                require(candidates <= MAX_DUPLICATE_CANDIDATES) { "Dublikatų analizės riba viršyta" }
                 bySize.getOrPut(file.length()) { mutableListOf() }.add(file)
             }
             WalkAction.DESCEND
         }
-        require(!walk.limitReached) { "Dublikatų analizės skenavimo riba viršyta" }
 
         val groups = mutableListOf<DuplicateGroup>()
         bySize.filterValues { it.size > 1 }.forEach { (size, files) ->
-            val byHash = files.groupBy(::sha256)
+            val byHash = files.mapNotNull { file ->
+                runCatching { sha256(file) }.getOrNull()?.let { hash -> hash to file }
+            }.groupBy(keySelector = { it.first }, valueTransform = { it.second })
             byHash.filterValues { it.size > 1 }.forEach { (hash, duplicates) ->
                 groups += DuplicateGroup(hash, size, duplicates.map(File::getAbsolutePath).sorted())
             }
         }
-        groups.sortedByDescending { it.sizeBytes * it.paths.size }
+        DuplicateAnalysisResult(
+            groups = groups.sortedByDescending { it.sizeBytes * it.paths.size },
+            scannedCandidates = candidates,
+            truncated = walk.limitReached || walk.stoppedEarly,
+        )
     }
 
     suspend fun analyze(roots: List<String>): StorageAnalysis = withContext(Dispatchers.IO) {

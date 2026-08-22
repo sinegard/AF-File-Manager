@@ -160,7 +160,7 @@ class FileNavigationUiTest {
         try {
             compose.runOnUiThread {
                 viewModel.activatePanel(PanelId.LEFT)
-                viewModel.openHomeShortcut("builtin.documents", directory.absolutePath, PanelId.LEFT)
+                viewModel.openHomeShortcut("builtin.downloads", directory.absolutePath, PanelId.LEFT)
             }
             waitForPathAndListing(viewModel, directory)
 
@@ -176,16 +176,21 @@ class FileNavigationUiTest {
     }
 
     @Test
-    fun archivesAndAppsUseTheSharedBrowserChrome() {
+    fun mediaArchivesAndAppsUseTheSharedBrowserChrome() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
 
         listOf(
+            "builtin.documents" to FileCategory.DOCUMENTS,
+            "builtin.pictures" to FileCategory.IMAGES,
+            "builtin.videos" to FileCategory.VIDEOS,
+            "builtin.music" to FileCategory.AUDIO,
             "builtin.archives" to FileCategory.ARCHIVES,
             "builtin.apps" to FileCategory.APPS,
+            "builtin.installed_apps" to FileCategory.INSTALLED_APPS,
         ).forEach { (shortcutId, expectedCategory) ->
             compose.runOnUiThread { viewModel.setSection(AppSection.FILES) }
             compose.onNodeWithTag("quick_location_$shortcutId").performScrollTo().performClick()
-            compose.waitUntil(timeoutMillis = 5_000) {
+            compose.waitUntil(timeoutMillis = 10_000) {
                 val state = viewModel.fileCategory.value
                 state.open && state.category == expectedCategory && !state.loading
             }

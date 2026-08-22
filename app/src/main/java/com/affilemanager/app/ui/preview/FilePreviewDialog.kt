@@ -134,6 +134,8 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryDisplayDefaults
+import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.ui.PreviewTarget
@@ -166,6 +168,8 @@ private data class PdfDocumentInfo(val pageAspectRatios: List<Float>) {
 fun FilePreviewDialog(
     target: PreviewTarget,
     editState: FileEditUiState,
+    archiveDisplayDefaults: DirectoryDisplayDefaults,
+    onApplyArchiveDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
     onClose: () -> Unit,
     onPrepareEdit: () -> Unit,
     onEditTextChanged: (String) -> Unit,
@@ -366,6 +370,8 @@ fun FilePreviewDialog(
                         onPathChanged = { archivePath = it },
                         onCopyEntry = onCopyArchiveEntry,
                         onExtract = onExtract,
+                        initialDisplayDefaults = archiveDisplayDefaults,
+                        onApplyDisplayToAll = onApplyArchiveDisplayToAll,
                     )
                     is PreviewTarget.RemoteArchive -> ArchivePreview(
                         file = target.file,
@@ -374,6 +380,8 @@ fun FilePreviewDialog(
                         onPathChanged = { archivePath = it },
                         onCopyEntry = null,
                         onExtract = null,
+                        initialDisplayDefaults = archiveDisplayDefaults,
+                        onApplyDisplayToAll = onApplyArchiveDisplayToAll,
                     )
                     is PreviewTarget.Vault -> VaultPreview(target, onDecrypt)
                     is PreviewTarget.LocalFile,
@@ -1032,15 +1040,17 @@ private fun ArchivePreview(
     onPathChanged: (String) -> Unit,
     onCopyEntry: ((String) -> Unit)?,
     onExtract: ((FileEntry, CharArray?) -> Unit)?,
+    initialDisplayDefaults: DirectoryDisplayDefaults,
+    onApplyDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
 ) {
     var askPassword by remember { mutableStateOf(false) }
     var searchVisible by remember(file.absolutePath) { mutableStateOf(false) }
     var searchQuery by remember(file.absolutePath) { mutableStateOf("") }
     var menu by remember(file.absolutePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(file.absolutePath) { mutableStateOf(false) }
-    var displaySettings by remember(file.absolutePath) { mutableStateOf(DirectoryDisplaySettings()) }
-    var sortMode by remember(file.absolutePath) { mutableStateOf(SortMode.NAME) }
-    var sortDirection by remember(file.absolutePath) { mutableStateOf(SortDirection.ASCENDING) }
+    var displaySettings by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.settings.copy(showThumbnails = false)) }
+    var sortMode by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.sortMode) }
+    var sortDirection by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.sortDirection) }
     LaunchedEffect(currentPath) {
         searchVisible = false
         searchQuery = ""
@@ -1158,7 +1168,7 @@ private fun ArchivePreview(
                 verticalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
             ) {
                 gridItems(visibleEntries, key = { it.path }) { entry ->
-                    ArchiveGridItem(entry, displaySettings.iconScalePercent, onPathChanged, onCopyEntry)
+                    ArchiveGridItem(entry, displaySettings.iconScalePercent, displaySettings.gridStyle, onPathChanged, onCopyEntry)
                 }
             }
             else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -1189,6 +1199,13 @@ private fun ArchivePreview(
             onApplySort = { mode, direction ->
                 sortMode = mode
                 sortDirection = direction
+            },
+            onApplyToAll = { settings, mode, direction ->
+                displaySettings = settings.copy(showThumbnails = false)
+                mode?.let { sortMode = it }
+                sortDirection = direction
+                onApplyDisplayToAll(settings, mode, direction)
+                showDisplaySettings = false
             },
         )
     }
@@ -1254,6 +1271,7 @@ private fun ArchiveListItem(
 private fun ArchiveGridItem(
     entry: ArchiveBrowserItem,
     iconScalePercent: Int,
+    gridStyle: DirectoryGridStyle,
     onPathChanged: (String) -> Unit,
     onCopyEntry: ((String) -> Unit)?,
 ) {
@@ -1263,8 +1281,9 @@ private fun ArchiveGridItem(
             .fillMaxWidth()
             .clickable(enabled = entry.directory) { if (entry.directory) onPathChanged(entry.path) }
             .testTag("archive-entry-${entry.path}"),
-        tonalElevation = 2.dp,
-        shape = MaterialTheme.shapes.medium,
+        tonalElevation = if (gridStyle == DirectoryGridStyle.CLASSIC) 0.dp else 2.dp,
+        color = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surface,
+        shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else MaterialTheme.shapes.medium,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(8.dp),

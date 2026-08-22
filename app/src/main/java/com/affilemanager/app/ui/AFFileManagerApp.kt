@@ -323,9 +323,12 @@ fun AFFileManagerApp(
     )
 
     preview?.let { target ->
+        val archiveDisplayDefaults = remember(target) { viewModel.currentDirectoryDisplayDefaults() }
         FilePreviewDialog(
             target = target,
             editState = fileEditState,
+            archiveDisplayDefaults = archiveDisplayDefaults,
+            onApplyArchiveDisplayToAll = viewModel::applyDirectoryDisplaySettingsToAll,
             onClose = viewModel::closePreview,
             onPrepareEdit = viewModel::prepareFileEdit,
             onEditTextChanged = viewModel::updateEditText,
