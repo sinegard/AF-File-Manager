@@ -38,6 +38,7 @@ class UiTranslatorTest {
         assertEquals("Appearance", UiTranslator.translate("Išvaizda", AppLanguageManager.ENGLISH))
         assertEquals("Dynamic", UiTranslator.translate("Dinaminė", AppLanguageManager.ENGLISH))
         assertEquals("Recent files", UiTranslator.translate("Naujausi failai", AppLanguageManager.ENGLISH))
+        assertEquals("Analyze storage", UiTranslator.translate("Analizuoti saugyklą", AppLanguageManager.ENGLISH))
         assertEquals("Display settings", UiTranslator.translate("Rodinio nustatymai", AppLanguageManager.ENGLISH))
         assertEquals("Grid columns", UiTranslator.translate("Tinklelio stulpeliai", AppLanguageManager.ENGLISH))
         assertEquals("8.0 GB free of 9.7 GB", UiTranslator.translate("8.0 GB laisva iš 9.7 GB", AppLanguageManager.ENGLISH))

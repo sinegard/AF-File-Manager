@@ -11,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.terminal.TerminalLimits
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -98,6 +99,36 @@ class TerminalFlowTest {
             assertTrue(application.graph.terminalSessions.state.value.running)
         } finally {
             application.graph.terminalSessions.closeNow()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun largePasteDoesNotOverwhelmTheTerminalSession() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val directory = File(compose.activity.getExternalFilesDir(null), "terminal-paste-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            compose.runOnUiThread {
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.openLocalTerminal(PanelId.LEFT)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.terminalState.value.running }
+
+            compose.runOnUiThread {
+                viewModel.pasteIntoTerminal("x".repeat(TerminalLimits.MAX_PASTE_BYTES))
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                viewModel.terminalState.value.running && viewModel.terminalState.value.emulator != null
+            }
+            compose.onNodeWithTag("terminal-screen").fetchSemanticsNode()
+            assertTrue(viewModel.terminalState.value.running)
+
+            compose.runOnUiThread {
+                viewModel.pasteIntoTerminal("y".repeat(TerminalLimits.MAX_PASTE_BYTES + 1))
+            }
+            assertTrue(viewModel.terminalState.value.running)
+        } finally {
+            compose.runOnUiThread { viewModel.confirmTerminalClose() }
             directory.deleteRecursively()
         }
     }

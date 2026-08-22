@@ -7,6 +7,7 @@ import com.affilemanager.app.terminal.TerminalBackend
 import com.affilemanager.app.terminal.TerminalKeepAliveService
 import com.affilemanager.app.terminal.TerminalLimits
 import com.affilemanager.app.terminal.TerminalModifierState
+import com.affilemanager.app.terminal.TerminalPasteResult
 import com.affilemanager.app.terminal.TerminalSessionController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -187,7 +188,7 @@ class TerminalSessionStore(
         closeNow()
     }
 
-    fun paste(text: String): Boolean = session?.paste(text) == true
+    fun paste(text: String): TerminalPasteResult = session?.paste(text) ?: TerminalPasteResult.BUSY
 
     fun dispatchKey(key: Int) {
         session?.dispatchKey(key)

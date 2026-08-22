@@ -22,8 +22,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 31
-        versionName = "0.20.0"
+        versionCode = 32
+        versionName = "0.20.1"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -206,6 +206,8 @@ tasks.register("verifyReleaseDynamicRuntimeClasses") {
             "Lcom/jcraft/jsch/DH25519;",
             "Lcom/jcraft/jsch/jce/AES256CTR;",
             "Lcom/jcraft/jsch/jce/SignatureEd25519;",
+            "Lorg/connectbot/terminal/CellRun;",
+            "Lorg/connectbot/terminal/ScreenCell;",
         )
         val dexContents = ZipFile(releaseApk).use { archive ->
             archive.entries().asSequence()
@@ -237,6 +239,55 @@ tasks.register("verifyReleaseDynamicRuntimeClasses") {
         }
         check(missing.isEmpty()) {
             "Optimized release APK is missing runtime-resolved classes: ${missing.joinToString()}"
+        }
+
+        val seedsFile = layout.buildDirectory.file("outputs/mapping/release/seeds.txt").get().asFile
+        check(seedsFile.isFile) {
+            "R8 seeds were not produced for the optimized release: ${seedsFile.absolutePath}"
+        }
+        val keptMembers = seedsFile.readLines().toHashSet()
+        val nativeFieldContracts = mapOf(
+            "org.connectbot.terminal.CellRun" to listOf(
+                "int fgRed",
+                "int fgGreen",
+                "int fgBlue",
+                "int bgRed",
+                "int bgGreen",
+                "int bgBlue",
+                "boolean bold",
+                "int underline",
+                "boolean italic",
+                "boolean blink",
+                "boolean reverse",
+                "boolean strike",
+                "int font",
+                "boolean dwl",
+                "int dhl",
+                "char[] chars",
+                "int runLength",
+            ),
+            "org.connectbot.terminal.ScreenCell" to listOf(
+                "char char",
+                "java.util.List combiningChars",
+                "int fgRed",
+                "int fgGreen",
+                "int fgBlue",
+                "int bgRed",
+                "int bgGreen",
+                "int bgBlue",
+                "boolean bold",
+                "boolean italic",
+                "int underline",
+                "boolean reverse",
+                "boolean strike",
+                "int width",
+            ),
+        )
+        val missingNativeFields = nativeFieldContracts.flatMap { (className, fieldSignatures) ->
+            fieldSignatures.map { "$className: $it" }.filterNot(keptMembers::contains)
+        }
+        check(missingNativeFields.isEmpty()) {
+            "Optimized release does not preserve termlib JNI fields: ${missingNativeFields.joinToString()}"
         }
     }
 }

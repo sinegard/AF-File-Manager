@@ -28,6 +28,7 @@ class SshTerminalBackend private constructor(
             password: CharArray,
             privateKeyPem: CharArray,
             workingDirectory: String,
+            pathStyle: RemoteShellPathStyle = RemoteShellPathStyle.POSIX,
             rows: Int = TerminalLimits.INITIAL_ROWS,
             columns: Int = TerminalLimits.INITIAL_COLUMNS,
         ): SshTerminalBackend {
@@ -36,7 +37,7 @@ class SshTerminalBackend private constructor(
                 return withContext(Dispatchers.IO) {
                     require(profile.protocol == NetworkProtocol.SFTP) { "A server terminal is available for SFTP/SSH connections only" }
                     TerminalLimits.requireDimensions(rows, columns)
-                    val changeDirectory = ShellCommandRules.changeDirectory(workingDirectory)
+                    val changeDirectory = ShellCommandRules.changeDirectory(workingDirectory, pathStyle)
                     val verified = VerifiedSshSessionFactory.connect(profile, password, privateKeyPem)
                     val session = verified.session
                     var channel: ChannelShell? = null
@@ -48,8 +49,10 @@ class SshTerminalBackend private constructor(
                         val input = channel.inputStream
                         val output = channel.outputStream
                         channel.connect(CONNECT_TIMEOUT_MS)
-                        output.write(changeDirectory)
-                        output.flush()
+                        if (changeDirectory.isNotEmpty()) {
+                            output.write(changeDirectory)
+                            output.flush()
+                        }
                         SshTerminalBackend(session, channel, input, output, verified.fingerprint)
                             .also { created = it }
                     } catch (error: Throwable) {
@@ -75,10 +78,13 @@ class SshTerminalBackend private constructor(
         if (closed.get()) -1 else input.read(destination)
     }
 
-    override suspend fun write(source: ByteArray) = withContext(Dispatchers.IO) {
-        require(source.size <= TerminalLimits.MAX_INPUT_CHUNK_BYTES) { "Terminal input is too large" }
+    override suspend fun write(source: ByteArray, offset: Int, length: Int) = withContext(Dispatchers.IO) {
+        require(offset >= 0 && length >= 0 && offset <= source.size && length <= source.size - offset) {
+            "Invalid terminal input range"
+        }
+        require(length <= TerminalLimits.TRANSPORT_WRITE_CHUNK_BYTES) { "Terminal input chunk is too large" }
         check(!closed.get()) { "Terminal is closed" }
-        output.write(source)
+        output.write(source, offset, length)
         output.flush()
     }
 

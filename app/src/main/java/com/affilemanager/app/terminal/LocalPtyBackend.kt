@@ -61,15 +61,18 @@ class LocalPtyBackend private constructor(
         if (closed.get()) -1 else LocalPtyNative.read(handle, destination)
     }
 
-    override suspend fun write(source: ByteArray) = withContext(Dispatchers.IO) {
-        require(source.size <= TerminalLimits.MAX_INPUT_CHUNK_BYTES) { "Terminal input is too large" }
-        var offset = 0
-        while (offset < source.size) {
+    override suspend fun write(source: ByteArray, offset: Int, length: Int) = withContext(Dispatchers.IO) {
+        require(offset >= 0 && length >= 0 && offset <= source.size && length <= source.size - offset) {
+            "Invalid terminal input range"
+        }
+        require(length <= TerminalLimits.TRANSPORT_WRITE_CHUNK_BYTES) { "Terminal input chunk is too large" }
+        var writtenTotal = 0
+        while (writtenTotal < length) {
             if (closed.get()) throw IOException("Terminal is closed")
-            val written = LocalPtyNative.write(handle, source, offset, source.size - offset)
+            val written = LocalPtyNative.write(handle, source, offset + writtenTotal, length - writtenTotal)
             if (written < 0) throw IOException("Terminal input failed")
             if (written == 0) continue
-            offset += written
+            writtenTotal += written
         }
     }
 

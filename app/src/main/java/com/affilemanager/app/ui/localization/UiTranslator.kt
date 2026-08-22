@@ -28,6 +28,7 @@ object UiTranslator {
         "Pasirinkite saugyklą, kategoriją arba dažną vietą." to "Choose storage, a category, or a frequent location.",
         "Šiukšlinė" to "Trash",
         "Peržiūrėti valytinus failus" to "Review files to clean",
+        "Analizuoti saugyklą" to "Analyze storage",
         "Mėgstami" to "Favorites",
         "Mėgstamų vietų dar nėra" to "No favorite locations yet",
         "Žymos" to "Tags",

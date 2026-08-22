@@ -47,13 +47,13 @@ import androidx.compose.material.icons.automirrored.rounded.Label
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
@@ -818,8 +818,13 @@ private fun StorageHomeSection(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        IconButton(onClick = onOpenCleanup) {
-            Icon(Icons.Rounded.DeleteSweep, contentDescription = uiText("Peržiūrėti valytinus failus"))
+        TextButton(
+            onClick = onOpenCleanup,
+            modifier = Modifier.testTag("analyze_storage_button"),
+        ) {
+            Icon(Icons.Rounded.Analytics, contentDescription = null)
+            Spacer(modifier = Modifier.width(6.dp))
+            LText("Analizuoti saugyklą")
         }
     }
     roots.forEach { root ->

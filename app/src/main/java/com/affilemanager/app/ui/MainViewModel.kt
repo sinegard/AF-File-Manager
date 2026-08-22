@@ -90,8 +90,9 @@ import com.affilemanager.app.sync.SyncMode
 import com.affilemanager.app.sync.SyncPreview
 import com.affilemanager.app.sync.SyncSchedule
 import com.affilemanager.app.terminal.LocalPtyBackend
+import com.affilemanager.app.terminal.ShellCommandRules
 import com.affilemanager.app.terminal.SshTerminalBackend
-import com.affilemanager.app.terminal.TerminalLimits
+import com.affilemanager.app.terminal.TerminalPasteResult
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
 import com.affilemanager.app.workflow.AfAutomationRule
@@ -3593,6 +3594,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profileId = connected.id
         val remotePath = snapshot.path
+        val pathStyle = ShellCommandRules.inferPathStyle(
+            path = remotePath,
+            directoryNames = snapshot.entries.asSequence().filter(RemoteEntry::directory).map(RemoteEntry::name).toList(),
+        )
         graph.terminalSessions.begin(
             location = TerminalLocation.SERVER,
             title = connected.name,
@@ -3606,6 +3611,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         password = secret.password.copyOf(),
                         privateKeyPem = secret.privateKeyPem.copyOf(),
                         workingDirectory = remotePath,
+                        pathStyle = pathStyle,
                     )
                 }
                 if (latest.expectedHostKeySha256 == null) {
@@ -3640,13 +3646,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pasteIntoTerminal(text: String) {
         if (text.isEmpty()) return
-        val size = text.toByteArray(Charsets.UTF_8).size
-        if (size > TerminalLimits.MAX_PASTE_BYTES) {
-            message("Iškarpinės turinys viršija 64 KiB terminalo įklijavimo ribą", true)
-            return
-        }
-        if (!graph.terminalSessions.paste(text)) {
-            message("Terminalo įvestis užimta; bandykite įklijuoti dar kartą", true)
+        when (graph.terminalSessions.paste(text)) {
+            TerminalPasteResult.ACCEPTED -> Unit
+            TerminalPasteResult.TOO_LARGE ->
+                message("Iškarpinės turinys viršija 64 KiB terminalo įklijavimo ribą", true)
+            TerminalPasteResult.BUSY ->
+                message("Terminalo įvestis užimta; bandykite įklijuoti dar kartą", true)
         }
     }
 

@@ -101,13 +101,11 @@ class TerminalSessionController private constructor(
         return accepted
     }
 
-    fun paste(text: String): Boolean {
-        val bytes = text.toByteArray(Charsets.UTF_8)
-        if (bytes.size > TerminalLimits.MAX_PASTE_BYTES) {
-            bytes.fill(0)
-            return false
-        }
-        return enqueue(bytes).also { bytes.fill(0) }
+    fun paste(text: String): TerminalPasteResult {
+        val bytes = TerminalPasteRules.encode(text) ?: return TerminalPasteResult.TOO_LARGE
+        val accepted = enqueue(bytes)
+        bytes.fill(0)
+        return if (accepted) TerminalPasteResult.ACCEPTED else TerminalPasteResult.BUSY
     }
 
     fun dispatchKey(key: Int) {
@@ -146,7 +144,9 @@ class TerminalSessionController private constructor(
             try {
                 for (data in pendingInput) {
                     try {
-                        backend.write(data)
+                        TerminalPasteRules.writeInChunks(data.size) { offset, length ->
+                            backend.write(data, offset, length)
+                        }
                     } finally {
                         data.fill(0)
                     }

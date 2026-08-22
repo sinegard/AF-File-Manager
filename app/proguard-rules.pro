@@ -47,9 +47,10 @@
 -dontwarn org.ietf.jgss.GSSName
 -dontwarn org.ietf.jgss.Oid
 
-# termlib's native renderer resolves these private CellRun fields by their
-# exact JVM names. The library's consumer rules keep only its public API, so a
-# minified build otherwise renames the fields and aborts during nativeInit.
+# termlib's native bridge resolves these private CellRun and ScreenCell fields
+# by their exact JVM names. The library's consumer rules keep only its public
+# API, so a minified build otherwise renames the fields and aborts when JNI
+# initializes or restores scrollback during a terminal resize.
 -keepclassmembers class org.connectbot.terminal.CellRun {
     int fgRed;
     int fgGreen;
@@ -68,4 +69,21 @@
     int dhl;
     char[] chars;
     int runLength;
+}
+
+-keepclassmembers class org.connectbot.terminal.ScreenCell {
+    char char;
+    java.util.List combiningChars;
+    int fgRed;
+    int fgGreen;
+    int fgBlue;
+    int bgRed;
+    int bgGreen;
+    int bgBlue;
+    boolean bold;
+    boolean italic;
+    int underline;
+    boolean reverse;
+    boolean strike;
+    int width;
 }
