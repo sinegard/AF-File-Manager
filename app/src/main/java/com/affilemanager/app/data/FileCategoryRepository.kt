@@ -6,16 +6,22 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
+import android.provider.BaseColumns
 import android.provider.MediaStore
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.FileSearchResult
 import com.affilemanager.app.model.SearchFilters
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.LinkedHashMap
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
@@ -35,6 +41,32 @@ data class FileCategoryResult(
     val truncated: Boolean,
 )
 
+data class FileCategoryPage(
+    val entries: List<FileEntry>,
+    val scannedRows: Int,
+    val nextOffset: Int?,
+    val truncated: Boolean,
+)
+
+internal object FileCategoryPagingRules {
+    const val FIRST_PAGE_RESULTS = 160
+    const val NEXT_PAGE_RESULTS = 240
+    const val MAX_SCANNED_ROWS_PER_PAGE = 640
+
+    fun resultLimit(offset: Int): Int = if (offset == 0) FIRST_PAGE_RESULTS else NEXT_PAGE_RESULTS
+
+    fun nextOffset(
+        offset: Int,
+        scannedRows: Int,
+        moreRowsAvailable: Boolean,
+        maxQueryRows: Int,
+    ): Int? {
+        if (!moreRowsAvailable || scannedRows <= 0) return null
+        val next = offset.toLong() + scannedRows.toLong()
+        return next.takeIf { it < maxQueryRows.toLong() }?.toInt()
+    }
+}
+
 /**
  * Bounded MediaStore-backed virtual folders. Opening a category never performs a
  * recursive filesystem walk on the UI thread, and the coroutine remains cancellable.
@@ -47,9 +79,17 @@ class FileCategoryRepository(
         const val MAX_QUERY_ROWS = 10_000
         const val MAX_RESULTS = 5_000
         private const val CACHE_TTL_NANOS = 60L * 1_000L * 1_000L * 1_000L
+        private const val MAX_CACHED_PAGES = 16
     }
 
-    private data class CachedCategory(val result: FileCategoryResult, val createdAtNanos: Long)
+    private data class PageKey(
+        val category: FileCategory,
+        val offset: Int,
+        val sortMode: SortMode,
+        val sortDirection: SortDirection,
+    )
+
+    private data class CachedPage(val page: FileCategoryPage, val createdAtNanos: Long)
 
     private data class CategoryQuery(
         val selection: String,
@@ -58,16 +98,57 @@ class FileCategoryRepository(
 
     private val applicationContext = context.applicationContext
     private val resolver = applicationContext.contentResolver
-    private val cache = mutableMapOf<FileCategory, CachedCategory>()
+    private val cache = object : LinkedHashMap<PageKey, CachedPage>(MAX_CACHED_PAGES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PageKey, CachedPage>?): Boolean =
+            size > MAX_CACHED_PAGES
+    }
     private val cacheLock = Any()
 
     suspend fun load(category: FileCategory, forceRefresh: Boolean = false): FileCategoryResult = withContext(Dispatchers.IO) {
-        if (!forceRefresh) cached(category)?.let { return@withContext it }
-        val result = queryCategory(category)
-        synchronized(cacheLock) {
-            cache[category] = CachedCategory(result, System.nanoTime())
+        if (forceRefresh) invalidate(category)
+        val entries = ArrayList<FileEntry>(minOf(MAX_RESULTS, 512))
+        var scannedRows = 0
+        var nextOffset: Int? = 0
+        var truncated = false
+        while (nextOffset != null && entries.size < MAX_RESULTS && scannedRows < MAX_QUERY_ROWS) {
+            coroutineContext.ensureActive()
+            val page = loadPage(
+                category = category,
+                offset = nextOffset,
+                sortMode = SortMode.NAME,
+                sortDirection = SortDirection.ASCENDING,
+            )
+            entries += page.entries
+            scannedRows = (scannedRows + page.scannedRows).coerceAtMost(MAX_QUERY_ROWS)
+            truncated = truncated || page.truncated
+            nextOffset = page.nextOffset
         }
-        result
+        if (entries.size >= MAX_RESULTS && nextOffset != null) truncated = true
+        FileCategoryResult(
+            entries = entries.distinctBy(FileEntry::absolutePath).take(MAX_RESULTS),
+            scannedRows = scannedRows,
+            truncated = truncated,
+        )
+    }
+
+    suspend fun loadPage(
+        category: FileCategory,
+        offset: Int,
+        sortMode: SortMode,
+        sortDirection: SortDirection,
+        forceRefresh: Boolean = false,
+    ): FileCategoryPage = withContext(Dispatchers.IO) {
+        require(offset in 0 until MAX_QUERY_ROWS) { "Invalid category page offset" }
+        if (forceRefresh) invalidate(category)
+        val key = PageKey(category, offset, sortMode, sortDirection)
+        cached(key)?.let { return@withContext it }
+        val page = queryCategoryPage(category, offset, sortMode, sortDirection)
+        synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
+        page
+    }
+
+    fun invalidate(category: FileCategory) {
+        synchronized(cacheLock) { cache.keys.removeAll { it.category == category } }
     }
 
     /**
@@ -128,13 +209,22 @@ class FileCategoryRepository(
         )
     }
 
-    private suspend fun queryCategory(category: FileCategory): FileCategoryResult {
+    private suspend fun queryCategoryPage(
+        category: FileCategory,
+        offset: Int,
+        sortMode: SortMode,
+        sortDirection: SortDirection,
+    ): FileCategoryPage {
+        val resultLimit = FileCategoryPagingRules.resultLimit(offset)
         if (category == FileCategory.INSTALLED_APPS) {
-            val entries = queryLaunchableApps(MAX_RESULTS)
-            return FileCategoryResult(
+            val allEntries = FileEntryOrdering.order(queryLaunchableApps(MAX_RESULTS), sortMode, sortDirection)
+            val entries = allEntries.drop(offset).take(resultLimit)
+            val nextOffset = (offset + entries.size).takeIf { it < allEntries.size && it < MAX_RESULTS }
+            return FileCategoryPage(
                 entries = entries,
                 scannedRows = entries.size,
-                truncated = entries.size >= MAX_RESULTS,
+                nextOffset = nextOffset,
+                truncated = allEntries.size > MAX_RESULTS,
             )
         }
         val projection = arrayOf(
@@ -148,50 +238,84 @@ class FileCategoryRepository(
         val queryArgs = Bundle().apply {
             putString(ContentResolver.QUERY_ARG_SQL_SELECTION, query.selection)
             putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, query.arguments)
-            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.MediaColumns.DATE_MODIFIED))
-            putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
-            putInt(ContentResolver.QUERY_ARG_LIMIT, MAX_QUERY_ROWS)
+            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, mediaStoreSortColumns(sortMode))
+            putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, sortDirection.toQueryDirection())
+            putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+            putInt(ContentResolver.QUERY_ARG_LIMIT, FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE)
         }
-        val entries = ArrayList<FileEntry>(minOf(MAX_RESULTS, 512))
+        val entries = ArrayList<FileEntry>(resultLimit)
         var scanned = 0
-        resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, null)?.use { cursor ->
-            val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
-            val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-            val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-            val modifiedIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
-            val mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-            while (cursor.moveToNext() && scanned < MAX_QUERY_ROWS && entries.size < MAX_RESULTS) {
-                coroutineContext.ensureActive()
-                scanned += 1
-                val path = cursor.getString(pathIndex)?.takeIf(String::isNotBlank) ?: continue
-                val file = File(path)
-                val name = cursor.getString(nameIndex)?.takeIf(String::isNotBlank) ?: file.name
-                val mime = cursor.getString(mimeIndex)
-                val kind = FileSystemRules.detectKind(name, mime, isDirectory = false)
-                if (kind != category.kind || name.startsWith('.') || !file.isFile || !file.canRead()) continue
-                entries += FileEntry(
-                    absolutePath = file.absolutePath,
-                    name = name,
-                    kind = kind,
-                    sizeBytes = cursor.getLong(sizeIndex).coerceAtLeast(0L),
-                    modifiedAtMillis = cursor.getLong(modifiedIndex).coerceAtLeast(0L) * 1_000L,
-                    isHidden = false,
-                    isReadable = true,
-                    isWritable = file.canWrite(),
-                )
+        var moreRowsAvailable = false
+        val cancellationSignal = CancellationSignal()
+        val cancellationHandle = coroutineContext.job.invokeOnCompletion { cancellationSignal.cancel() }
+        try {
+            resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, cancellationSignal)?.use { cursor ->
+                val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                val modifiedIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                val mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+                while (
+                    scanned < FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE &&
+                    entries.size < resultLimit &&
+                    cursor.moveToNext()
+                ) {
+                    coroutineContext.ensureActive()
+                    scanned += 1
+                    val path = cursor.getString(pathIndex)?.takeIf(String::isNotBlank) ?: continue
+                    val file = File(path)
+                    val name = cursor.getString(nameIndex)?.takeIf(String::isNotBlank) ?: file.name
+                    val mime = cursor.getString(mimeIndex)
+                    val kind = FileSystemRules.detectKind(name, mime, isDirectory = false)
+                    if (kind != category.kind || name.startsWith('.')) continue
+                    entries += FileEntry(
+                        absolutePath = file.absolutePath,
+                        name = name,
+                        kind = kind,
+                        sizeBytes = cursor.getLong(sizeIndex).coerceAtLeast(0L),
+                        modifiedAtMillis = cursor.getLong(modifiedIndex).coerceAtLeast(0L) * 1_000L,
+                        isHidden = false,
+                        isReadable = true,
+                        isWritable = file.canWrite(),
+                    )
+                }
+                moreRowsAvailable = cursor.position + 1 < cursor.count ||
+                    cursor.count >= FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE
             }
+        } finally {
+            cancellationHandle.dispose()
         }
-        return FileCategoryResult(
-            entries = entries.distinctBy(FileEntry::absolutePath).sortedBy { it.name.lowercase() },
+        val nextOffset = FileCategoryPagingRules.nextOffset(
+            offset = offset,
             scannedRows = scanned,
-            truncated = scanned >= MAX_QUERY_ROWS || entries.size >= MAX_RESULTS,
+            moreRowsAvailable = moreRowsAvailable,
+            maxQueryRows = MAX_QUERY_ROWS,
+        )
+        return FileCategoryPage(
+            entries = entries.distinctBy(FileEntry::absolutePath),
+            scannedRows = scanned,
+            nextOffset = nextOffset,
+            truncated = moreRowsAvailable && nextOffset == null,
         )
     }
 
-    private fun cached(category: FileCategory): FileCategoryResult? = synchronized(cacheLock) {
-        val cached = cache[category] ?: return@synchronized null
-        if (System.nanoTime() - cached.createdAtNanos <= CACHE_TTL_NANOS) cached.result
-        else null.also { cache.remove(category) }
+    private fun cached(key: PageKey): FileCategoryPage? = synchronized(cacheLock) {
+        val cached = cache[key] ?: return@synchronized null
+        if (System.nanoTime() - cached.createdAtNanos <= CACHE_TTL_NANOS) cached.page
+        else null.also { cache.remove(key) }
+    }
+
+    private fun mediaStoreSortColumns(mode: SortMode): Array<String> = when (mode) {
+        SortMode.NAME -> arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
+        SortMode.SIZE -> arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
+        SortMode.MODIFIED -> arrayOf(MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
+        SortMode.TYPE -> arrayOf(MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
+    }
+
+    private fun SortDirection.toQueryDirection(): Int = if (this == SortDirection.ASCENDING) {
+        ContentResolver.QUERY_SORT_DIRECTION_ASCENDING
+    } else {
+        ContentResolver.QUERY_SORT_DIRECTION_DESCENDING
     }
 
     private fun categoryQuery(category: FileCategory): CategoryQuery = when (category) {

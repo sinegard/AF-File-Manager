@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -45,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,7 +58,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategory
-import com.affilemanager.app.data.FileEntryOrdering
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
@@ -71,7 +74,17 @@ import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.withContext
+
+private const val CATEGORY_PREFETCH_DISTANCE = 24
+
+private data class CategoryTransform(
+    val entries: List<FileEntry> = emptyList(),
+    val parentPaths: List<String> = emptyList(),
+)
 
 @Composable
 fun FileCategoryBrowser(
@@ -89,29 +102,52 @@ fun FileCategoryBrowser(
         searchVisible = false
         query = ""
     }
-    val parentPaths = remember(state.entries) {
-        state.entries.mapNotNull { File(it.absolutePath).parent }.distinct().sorted().take(40)
-    }
-    var visible by remember(state.category) { mutableStateOf<List<FileEntry>>(emptyList()) }
+    var transformed by remember(state.category) { mutableStateOf(CategoryTransform()) }
     var transforming by remember(state.category) { mutableStateOf(false) }
     LaunchedEffect(state.entries, query, selectedParent, state.sortMode, state.sortDirection) {
         val entries = state.entries
         val requestedQuery = query
         val requestedParent = selectedParent
         transforming = true
-        visible = emptyList()
-        visible = withContext(Dispatchers.Default) {
-            FileEntryOrdering.order(entries, state.sortMode, state.sortDirection).filter { entry ->
-                (requestedQuery.isBlank() || entry.name.contains(requestedQuery, ignoreCase = true)) &&
-                    (requestedParent == null || File(entry.absolutePath).parent == requestedParent)
-            }
+        transformed = withContext(Dispatchers.Default) {
+            CategoryTransform(
+                entries = entries.filter { entry ->
+                    (requestedQuery.isBlank() || entry.name.contains(requestedQuery, ignoreCase = true)) &&
+                        (requestedParent == null || File(entry.absolutePath).parent == requestedParent)
+                },
+                parentPaths = entries.asSequence()
+                    .mapNotNull { File(it.absolutePath).parent }
+                    .distinct()
+                    .sorted()
+                    .take(40)
+                    .toList(),
+            )
         }
         transforming = false
     }
+    val visible = transformed.entries
+    val parentPaths = transformed.parentPaths
     val visiblePaths = remember(visible) { visible.mapTo(linkedSetOf(), FileEntry::absolutePath) }
     val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(state.selectedPaths::contains)
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
 
-    BackHandler { viewModel.closeFileCategory() }
+    LaunchedEffect(state.category, state.grid, state.nextOffset, state.loadingMore, visible.size) {
+        if (state.nextOffset == null || state.loading || state.loadingMore || visible.isEmpty()) return@LaunchedEffect
+        snapshotFlow {
+            if (state.grid) gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            else listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }
+            .distinctUntilChanged()
+            .filter { lastVisible -> lastVisible >= visible.lastIndex - CATEGORY_PREFETCH_DISTANCE }
+            .take(1)
+            .collect { viewModel.loadMoreFileCategory() }
+    }
+
+    BackHandler {
+        if (state.selectedPaths.isNotEmpty()) viewModel.clearFileCategorySelection()
+        else viewModel.closeFileCategory()
+    }
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize()) {
                 if (state.selectedPaths.isNotEmpty()) {
@@ -135,8 +171,12 @@ fun FileCategoryBrowser(
                     DirectoryBrowserToolbar(
                         title = uiText(categoryTitle(state.category)),
                         path = uiText(
-                            if (state.truncated) "Rodomi naujausi ${state.entries.size} failai"
-                            else "${state.entries.size} failų visoje saugykloje",
+                            when {
+                                state.loadingMore -> "Rodoma ${state.entries.size} failų · kraunama daugiau"
+                                state.nextOffset != null -> "Rodoma ${state.entries.size} failų · daugiau slenkant žemyn"
+                                state.truncated -> "Rodomi pirmi ${state.entries.size} failai pagal pasirinktą tvarką"
+                                else -> "${state.entries.size} failų visoje saugykloje"
+                            },
                         ),
                         backEnabled = true,
                         forwardEnabled = false,
@@ -172,7 +212,18 @@ fun FileCategoryBrowser(
                                     onToggleLayout = viewModel::toggleFileCategoryLayout,
                                     onToggleThumbnails = viewModel::toggleFileCategoryThumbnails,
                                     onOpenSettings = { showDisplaySettings = true },
-                                    onSort = { mode -> viewModel.setFileCategorySort(mode, state.sortDirection) },
+                                    onSort = { mode ->
+                                        val direction = if (mode == state.sortMode) {
+                                            if (state.sortDirection == com.affilemanager.app.model.SortDirection.ASCENDING) {
+                                                com.affilemanager.app.model.SortDirection.DESCENDING
+                                            } else {
+                                                com.affilemanager.app.model.SortDirection.ASCENDING
+                                            }
+                                        } else {
+                                            com.affilemanager.app.model.SortDirection.ASCENDING
+                                        }
+                                        viewModel.setFileCategorySort(mode, direction)
+                                    },
                                     onDismissMenu = { menu = false },
                                 )
                                 HorizontalDivider()
@@ -216,6 +267,14 @@ fun FileCategoryBrowser(
                         }
                     }
                 }
+                if (state.error != null && state.entries.isNotEmpty()) {
+                    LText(
+                        state.error,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 when {
                     state.loading && state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
@@ -231,12 +290,13 @@ fun FileCategoryBrowser(
                     }
                     state.grid -> LazyVerticalGrid(
                         columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                        state = gridState,
                         modifier = Modifier.fillMaxSize().testTag("category_grid"),
                         contentPadding = PaddingValues(10.dp, 6.dp, 10.dp, 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(visible, key = FileEntry::absolutePath) { entry ->
+                        items(visible, key = FileEntry::absolutePath, contentType = { it.kind }) { entry ->
                             CategoryGridItem(
                                 entry,
                                 entry.absolutePath in state.selectedPaths,
@@ -248,9 +308,20 @@ fun FileCategoryBrowser(
                                 viewModel,
                             )
                         }
+                        if (state.loadingMore) {
+                            item(key = "category_loading_more", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                }
+                            }
+                        }
                     }
-                    else -> LazyColumn(modifier = Modifier.fillMaxSize().testTag("category_list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-                        items(visible, key = FileEntry::absolutePath) { entry ->
+                    else -> LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().testTag("category_list"),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                    ) {
+                        items(visible, key = FileEntry::absolutePath, contentType = { it.kind }) { entry ->
                             CategoryListItem(
                                 entry,
                                 entry.absolutePath in state.selectedPaths,
@@ -261,6 +332,13 @@ fun FileCategoryBrowser(
                                 viewModel,
                             )
                             HorizontalDivider()
+                        }
+                        if (state.loadingMore) {
+                            item(key = "category_loading_more", contentType = "loading") {
+                                Box(Modifier.fillMaxWidth().padding(14.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                }
+                            }
                         }
                     }
                 }

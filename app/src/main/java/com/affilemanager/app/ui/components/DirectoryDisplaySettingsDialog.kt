@@ -129,6 +129,13 @@ fun DirectoryDisplaySettingsDialog(
                             modifier = Modifier.weight(1f).testTag("display_grid_style_classic"),
                         )
                     }
+                    if (draftSortMode == SortMode.SIZE) {
+                        LText(
+                            "Failai rūšiuojami pagal dydį. Aplankai lieka pagal pavadinimą, kad naršant nereikėtų lėtai skenuoti viso jų turinio.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 if (thumbnailsAvailable) {

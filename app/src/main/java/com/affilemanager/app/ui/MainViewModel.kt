@@ -229,8 +229,10 @@ data class FileCategoryUiState(
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val scannedRows: Int = 0,
+    val nextOffset: Int? = null,
     val truncated: Boolean = false,
     val loading: Boolean = false,
+    val loadingMore: Boolean = false,
     val error: String? = null,
 )
 
@@ -1736,15 +1738,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sortMode = displayDefaults?.sortMode ?: SortMode.NAME,
             sortDirection = displayDefaults?.sortDirection ?: SortDirection.ASCENDING,
         )
+        loadFileCategoryPage(reset = true, forceRefresh = forceRefresh)
+    }
+
+    private fun loadFileCategoryPage(reset: Boolean, forceRefresh: Boolean = false) {
+        val snapshot = _fileCategory.value
+        val category = snapshot.category ?: return
+        val offset = if (reset) 0 else snapshot.nextOffset ?: return
+        if (!reset && (snapshot.loading || snapshot.loadingMore)) return
+        val sortMode = snapshot.sortMode
+        val sortDirection = snapshot.sortDirection
+        fileCategoryJob?.cancel()
+        _fileCategory.update { current ->
+            if (current.category != category) current else if (reset) {
+                current.copy(
+                    entries = emptyList(),
+                    selectedPaths = emptySet(),
+                    scannedRows = 0,
+                    nextOffset = null,
+                    truncated = false,
+                    loading = true,
+                    loadingMore = false,
+                    error = null,
+                )
+            } else {
+                current.copy(loadingMore = true, error = null)
+            }
+        }
         fileCategoryJob = viewModelScope.launch {
             try {
-                val result = graph.fileCategories.load(category, forceRefresh)
+                var currentOffset = offset
+                var refresh = forceRefresh
+                var pageEntries: List<FileEntry>
+                var pageScanned = 0
+                var nextOffset: Int?
+                var pageTruncated = false
+                do {
+                    val page = graph.fileCategories.loadPage(
+                        category = category,
+                        offset = currentOffset,
+                        sortMode = sortMode,
+                        sortDirection = sortDirection,
+                        forceRefresh = refresh,
+                    )
+                    refresh = false
+                    pageEntries = page.entries
+                    pageScanned = Math.addExact(pageScanned, page.scannedRows)
+                    nextOffset = page.nextOffset
+                    pageTruncated = pageTruncated || page.truncated
+                    if (pageEntries.isEmpty() && nextOffset != null) currentOffset = nextOffset
+                } while (pageEntries.isEmpty() && nextOffset != null)
+
+                val current = _fileCategory.value
+                if (!current.open || current.category != category ||
+                    current.sortMode != sortMode || current.sortDirection != sortDirection
+                ) return@launch
                 _fileCategory.update {
+                    val merged = (if (reset) pageEntries else it.entries + pageEntries)
+                        .distinctBy(FileEntry::absolutePath)
+                        .take(com.affilemanager.app.data.FileCategoryRepository.MAX_RESULTS)
+                    val reachedResultLimit = merged.size >= com.affilemanager.app.data.FileCategoryRepository.MAX_RESULTS
                     it.copy(
-                        entries = result.entries,
-                        scannedRows = result.scannedRows,
-                        truncated = result.truncated,
+                        entries = merged,
+                        scannedRows = (if (reset) pageScanned else it.scannedRows + pageScanned)
+                            .coerceAtMost(com.affilemanager.app.data.FileCategoryRepository.MAX_QUERY_ROWS),
+                        nextOffset = nextOffset.takeUnless { reachedResultLimit },
+                        truncated = it.truncated || pageTruncated || (reachedResultLimit && nextOffset != null),
                         loading = false,
+                        loadingMore = false,
                         error = null,
                     )
                 }
@@ -1752,17 +1813,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 throw cancelled
             } catch (error: Throwable) {
                 _fileCategory.update {
-                    it.copy(loading = false, error = error.message ?: "Failų kategorijos atidaryti nepavyko")
+                    it.copy(
+                        loading = false,
+                        loadingMore = false,
+                        error = error.message ?: "Failų kategorijos atidaryti nepavyko",
+                    )
                 }
-            } finally {
-                fileCategoryJob = null
             }
         }
     }
 
     fun refreshFileCategory() {
-        _fileCategory.value.category?.let { openFileCategory(it, forceRefresh = true) }
+        if (_fileCategory.value.category != null) loadFileCategoryPage(reset = true, forceRefresh = true)
     }
+
+    fun loadMoreFileCategory() = loadFileCategoryPage(reset = false)
 
     @Suppress("DEPRECATION")
     fun openFileCategoryEntry(entry: FileEntry) {
@@ -1808,7 +1873,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setFileCategorySort(mode: SortMode, direction: SortDirection) {
+        val state = _fileCategory.value
+        if (state.category == null || (state.sortMode == mode && state.sortDirection == direction)) return
         _fileCategory.update { it.copy(sortMode = mode, sortDirection = direction, selectedPaths = emptySet()) }
+        loadFileCategoryPage(reset = true)
     }
 
     fun closeFileCategory() {

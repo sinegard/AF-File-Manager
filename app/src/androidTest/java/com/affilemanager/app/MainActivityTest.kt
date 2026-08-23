@@ -26,6 +26,7 @@ import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
+import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.ui.theme.AppColorPalette
 import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.network.NetworkProfile
@@ -138,6 +139,9 @@ class MainActivityTest {
         }
         compose.onNodeWithTag("root_storage_location").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("root_storage_location").performClick()
+        compose.onNodeWithTag("root_access_explanation").assertIsDisplayed()
+        assertEquals(AppSection.FILES, viewModel.section.value)
+        compose.onNodeWithTag("root_access_settings").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.section.value == AppSection.TOOLS }
         compose.onNodeWithTag("tools_list").performScrollToNode(hasTestTag("advanced_mode_off"))
         compose.onNodeWithTag("advanced_mode_off").assertIsDisplayed()
@@ -161,6 +165,22 @@ class MainActivityTest {
         compose.onNodeWithText("Storage usage").assertIsDisplayed()
         compose.onNodeWithText("Internal storage").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Vidinė atmintis").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun analysisOffersMountedStorageSelectionAndExplicitSdUsbStates() {
+        compose.onNodeWithText("Analyze").performClick()
+
+        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_storage_sd_absent"))
+        compose.onNodeWithTag("analyze_storage_sd_absent").assertIsDisplayed()
+        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_storage_usb_absent"))
+        compose.onNodeWithTag("analyze_storage_usb_absent").assertIsDisplayed()
+        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("search_scope_selected"))
+        compose.onNodeWithTag("search_scope_selected").performClick()
+        compose.onNodeWithTag("search_storage_primary").assertIsDisplayed()
+        compose.onNodeWithTag("search_storage_apply").performClick()
+
+        compose.onNodeWithText("Selected storage locations: 1").assertIsDisplayed()
     }
 
     @Test
@@ -429,6 +449,56 @@ class MainActivityTest {
             compose.onNodeWithTag("display_sort_name").fetchSemanticsNode()
             compose.onNodeWithTag("display_sort_ascending").fetchSemanticsNode()
             compose.onNodeWithText("Cancel").performClick()
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun displaySettingsApplySizeDateAndTypeSortingToTheOpenFolder() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "sorting-${System.nanoTime()}").apply { mkdirs() }
+        val smallText = File(directory, "z.txt").apply { writeBytes(ByteArray(1)); setLastModified(200_000L) }
+        val largePdf = File(directory, "a.pdf").apply { writeBytes(ByteArray(30)); setLastModified(300_000L) }
+        val mediumCsv = File(directory, "m.csv").apply { writeBytes(ByteArray(10)); setLastModified(100_000L) }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.path == directory.canonicalPath &&
+                    viewModel.leftPanel.value.entries.all { it.metadataComplete }
+            }
+
+            compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
+            compose.onNodeWithTag("display_sort_size").performClick()
+            compose.onNodeWithTag("display_sort_descending").performClick()
+            compose.onNodeWithTag("display_apply").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.map(FileEntry::name) == listOf(largePdf.name, mediumCsv.name, smallText.name)
+            }
+
+            compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
+            compose.onNodeWithTag("display_sort_modified").performClick()
+            compose.onNodeWithTag("display_sort_ascending").performClick()
+            compose.onNodeWithTag("display_apply").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.map(FileEntry::name) == listOf(mediumCsv.name, smallText.name, largePdf.name)
+            }
+
+            compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
+            compose.onNodeWithTag("display_sort_type").performClick()
+            compose.onNodeWithTag("display_sort_ascending").performClick()
+            compose.onNodeWithTag("display_apply").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.map(FileEntry::name) == listOf(mediumCsv.name, largePdf.name, smallText.name)
+            }
         } finally {
             directory.deleteRecursively()
         }

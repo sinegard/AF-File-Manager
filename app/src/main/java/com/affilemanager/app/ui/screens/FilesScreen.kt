@@ -156,6 +156,7 @@ import com.affilemanager.app.data.HomeShortcut
 import com.affilemanager.app.data.HomeShortcutNavigationRules
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.FileScrollKey
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.PanelUiState
@@ -220,6 +221,7 @@ fun FilesScreen(
     var displayPanel by remember { mutableStateOf<PanelId?>(null) }
     var showHomeDisplaySettings by remember { mutableStateOf(false) }
     var showHomeCustomization by remember { mutableStateOf(false) }
+    var showRootAccessInfo by remember { mutableStateOf(false) }
     var infoTarget by remember { mutableStateOf<FileEntry?>(null) }
     val clipboardAvailable = clipboard != null || remoteClipboard != null || afClipboard != null
 
@@ -337,7 +339,17 @@ fun FilesScreen(
                     ),
                     onOpen = { location -> viewModel.openHomeShortcut(location.id, location.path, activePanel) },
                     onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
-                    onOpenRoot = viewModel::openRootFromHome,
+                    onOpenRoot = {
+                        if (advancedAccess.activeBackend in setOf(
+                                AdvancedAccessBackend.ROOT,
+                                AdvancedAccessBackend.SHIZUKU_ROOT,
+                            )
+                        ) {
+                            viewModel.openRootFromHome()
+                        } else {
+                            showRootAccessInfo = true
+                        }
+                    },
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
                     onOpenFavorite = { path -> viewModel.openQuickPath(path, activePanel) },
                     onOpenTrash = viewModel::openTrashFromHome,
@@ -422,6 +434,47 @@ fun FilesScreen(
                 )
             }
         }
+    }
+
+    if (showRootAccessInfo) {
+        val shizukuShellConnected = advancedAccess.activeBackend == AdvancedAccessBackend.SHIZUKU_SHELL
+        AlertDialog(
+            onDismissRequest = { showRootAccessInfo = false },
+            title = { LText("Root prieiga neaktyvi") },
+            text = {
+                LText(
+                    if (shizukuShellConnected) {
+                        "Įprasta Shizuku prieiga veikia kaip Android shell ir negali atverti sistemos šaknies /. Root saugyklai reikia rootinto įrenginio arba Shizuku tarnybos, veikiančios su root teisėmis."
+                    } else {
+                        "Sistemos šaknis / atveriama tik su Root arba Shizuku root prieiga. Tai nėra įprastas Android leidimas ir AF File Manager jo neapeina."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRootAccessInfo = false
+                        viewModel.setSection(AppSection.TOOLS)
+                    },
+                    modifier = Modifier.testTag("root_access_settings"),
+                ) { LText("Išplėstiniai nustatymai") }
+            },
+            dismissButton = {
+                Row {
+                    if (shizukuShellConnected) {
+                        TextButton(
+                            onClick = {
+                                showRootAccessInfo = false
+                                viewModel.openAdvancedBrowser()
+                            },
+                            modifier = Modifier.testTag("root_open_protected_android"),
+                        ) { LText("Apsaugoti Android failai") }
+                    }
+                    TextButton(onClick = { showRootAccessInfo = false }) { LText("Atšaukti") }
+                }
+            },
+            modifier = Modifier.testTag("root_access_explanation"),
+        )
     }
 
     createFor?.let { panel ->

@@ -1,7 +1,6 @@
 package com.affilemanager.app.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,7 +8,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -114,7 +116,7 @@ internal fun CleanupReviewDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -190,7 +192,11 @@ internal fun CleanupReviewDialog(
                         }
                     }
                 } else {
-                    LazyColumn(modifier = Modifier.weight(1f).testTag("cleanup_candidates")) {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).testTag("cleanup_candidates"),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 5.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         items(candidates, key = CleanupCandidate::path) { candidate ->
                             CleanupCandidateRow(
                                 candidate = candidate,
@@ -201,7 +207,6 @@ internal fun CleanupReviewDialog(
                                 },
                                 onOpen = { onOpenLocation(candidate.path, candidate.directory) },
                             )
-                            HorizontalDivider()
                         }
                     }
                 }
@@ -252,35 +257,48 @@ private fun CleanupCandidateRow(
         NumberFormat.getPercentInstance(locale).apply { maximumFractionDigits = 2 }
     }
     val percentage = if (totalBytes <= 0L) 0.0 else candidate.sizeBytes.toDouble() / totalBytes.toDouble()
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    Card(
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp).testTag("cleanup_candidate_card"),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
     ) {
-        Checkbox(checked = selected, onCheckedChange = { onToggle() })
-        Icon(
-            if (candidate.directory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
-            contentDescription = null,
-            modifier = Modifier.size(34.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(candidate.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-            Text(candidate.path, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-            candidate.groupLabel?.let { LText(it, style = MaterialTheme.typography.labelSmall) }
-            if (!candidate.directory) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(FileSystemRules.humanBytes(candidate.sizeBytes), style = MaterialTheme.typography.labelSmall)
-                    Text(percentFormat.format(percentage), style = MaterialTheme.typography.labelSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Checkbox(
+                checked = selected,
+                onCheckedChange = { onToggle() },
+                modifier = Modifier.testTag("cleanup_candidate_checkbox"),
+            )
+            Icon(
+                if (candidate.directory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
+                contentDescription = null,
+                modifier = Modifier.size(34.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(candidate.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                Text(candidate.path, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                candidate.groupLabel?.let { LText(it, style = MaterialTheme.typography.labelSmall) }
+                if (candidate.sizeBytes > 0L) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(FileSystemRules.humanBytes(candidate.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                        Text(percentFormat.format(percentage), style = MaterialTheme.typography.labelSmall)
+                    }
+                    LinearProgressIndicator(
+                        progress = { percentage.toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
-                LinearProgressIndicator(
-                    progress = { percentage.toFloat().coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
-        }
-        IconButton(onClick = onOpen) {
-            Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Rodyti aplanke"))
+            IconButton(onClick = onOpen) {
+                Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Rodyti aplanke"))
+            }
         }
     }
 }

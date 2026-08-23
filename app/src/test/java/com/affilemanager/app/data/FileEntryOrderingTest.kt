@@ -65,6 +65,67 @@ class FileEntryOrderingTest {
         assertEquals(listOf("z-folder", "a-folder", "z-file", "a-file"), ordered.map(FileEntry::name))
     }
 
+    @Test
+    fun sizeAndModifiedSortingUseTheRequestedDirection() {
+        val entries = listOf(
+            entry("middle.txt", EntryKind.DOCUMENT, size = 50, modified = 500),
+            entry("largest.txt", EntryKind.DOCUMENT, size = 900, modified = 100),
+            entry("smallest.txt", EntryKind.DOCUMENT, size = 1, modified = 900),
+        )
+
+        assertEquals(
+            listOf("smallest.txt", "middle.txt", "largest.txt"),
+            FileEntryOrdering.order(entries, SortMode.SIZE, SortDirection.ASCENDING).map(FileEntry::name),
+        )
+        assertEquals(
+            listOf("largest.txt", "middle.txt", "smallest.txt"),
+            FileEntryOrdering.order(entries, SortMode.SIZE, SortDirection.DESCENDING).map(FileEntry::name),
+        )
+        assertEquals(
+            listOf("largest.txt", "middle.txt", "smallest.txt"),
+            FileEntryOrdering.order(entries, SortMode.MODIFIED, SortDirection.ASCENDING).map(FileEntry::name),
+        )
+        assertEquals(
+            listOf("smallest.txt", "middle.txt", "largest.txt"),
+            FileEntryOrdering.order(entries, SortMode.MODIFIED, SortDirection.DESCENDING).map(FileEntry::name),
+        )
+    }
+
+    @Test
+    fun typeSortingUsesTheFileExtensionInsideTheSameKind() {
+        val entries = listOf(
+            entry("page.pdf", EntryKind.DOCUMENT),
+            entry("notes.txt", EntryKind.DOCUMENT),
+            entry("data.csv", EntryKind.DOCUMENT),
+        )
+
+        assertEquals(
+            listOf("data.csv", "page.pdf", "notes.txt"),
+            FileEntryOrdering.order(entries, SortMode.TYPE, SortDirection.ASCENDING).map(FileEntry::name),
+        )
+        assertEquals(
+            listOf("notes.txt", "page.pdf", "data.csv"),
+            FileEntryOrdering.order(entries, SortMode.TYPE, SortDirection.DESCENDING).map(FileEntry::name),
+        )
+    }
+
+    @Test
+    fun unfinishedMetadataAlwaysStaysBehindStableResults() {
+        val complete = entry("complete.txt", EntryKind.DOCUMENT, size = 10, modified = 10)
+        val pending = entry("pending.txt", EntryKind.DOCUMENT, size = 999, modified = 999).copy(metadataComplete = false)
+
+        SortDirection.entries.forEach { direction ->
+            assertEquals(
+                listOf("complete.txt", "pending.txt"),
+                FileEntryOrdering.order(listOf(pending, complete), SortMode.SIZE, direction).map(FileEntry::name),
+            )
+            assertEquals(
+                listOf("complete.txt", "pending.txt"),
+                FileEntryOrdering.order(listOf(pending, complete), SortMode.MODIFIED, direction).map(FileEntry::name),
+            )
+        }
+    }
+
     private fun entry(
         name: String,
         kind: EntryKind,

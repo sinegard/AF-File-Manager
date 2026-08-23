@@ -11,16 +11,26 @@ internal object FileEntryOrdering {
         sortMode: SortMode,
         sortDirection: SortDirection,
     ): List<FileEntry> {
-        val ascending = when (sortMode) {
+        val baseComparator = when (sortMode) {
             SortMode.NAME -> compareBy<FileEntry> { it.name.lowercase(Locale.ROOT) }
-            SortMode.SIZE -> compareBy<FileEntry> { if (it.metadataComplete) it.sizeBytes else Long.MAX_VALUE }
+            SortMode.SIZE -> compareBy<FileEntry> { it.sizeBytes }
                 .thenBy { it.name.lowercase(Locale.ROOT) }
-            SortMode.MODIFIED -> compareBy<FileEntry> {
-                if (it.metadataComplete) it.modifiedAtMillis else Long.MAX_VALUE
-            }.thenBy { it.name.lowercase(Locale.ROOT) }
-            SortMode.TYPE -> compareBy<FileEntry> { it.kind }.thenBy { it.name.lowercase(Locale.ROOT) }
+            SortMode.MODIFIED -> compareBy<FileEntry> { it.modifiedAtMillis }
+                .thenBy { it.name.lowercase(Locale.ROOT) }
+            SortMode.TYPE -> compareBy<FileEntry> { it.kind }
+                .thenBy { if (it.isDirectory) "" else it.extension }
+                .thenBy { it.name.lowercase(Locale.ROOT) }
         }
-        val selected = if (sortDirection == SortDirection.ASCENDING) ascending else ascending.reversed()
+        val metadataAware = sortMode == SortMode.SIZE || sortMode == SortMode.MODIFIED
+        val selected = Comparator<FileEntry> { left, right ->
+            if (metadataAware && left.metadataComplete != right.metadataComplete) {
+                if (left.metadataComplete) -1 else 1
+            } else if (sortDirection == SortDirection.ASCENDING) {
+                baseComparator.compare(left, right)
+            } else {
+                baseComparator.compare(right, left)
+            }
+        }
         val directories = ArrayList<FileEntry>(entries.size)
         val files = ArrayList<FileEntry>(entries.size)
         entries.forEach { entry ->
