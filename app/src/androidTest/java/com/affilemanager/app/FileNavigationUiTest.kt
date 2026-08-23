@@ -15,6 +15,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.advanced.AdvancedAccessMode
 import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.FileScrollKey
@@ -47,6 +49,13 @@ class FileNavigationUiTest {
 
         try {
             navigateAndWait(viewModel, firstDirectory)
+            compose.runOnUiThread {
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitForIdle()
             compose.onNodeWithTag("file_list_LEFT").performScrollToIndex(35)
             compose.onNodeWithText("a-035.txt").assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 5_000) {
@@ -207,9 +216,9 @@ class FileNavigationUiTest {
             compose.onNodeWithTag("directory_toolbar_category").assertIsDisplayed()
             compose.onNodeWithTag("directory_search_category").assertIsDisplayed()
             compose.onNodeWithTag("directory_layout_category").assertIsDisplayed()
-            compose.onNodeWithText("Files").assertIsDisplayed()
+            compose.onNodeWithTag("nav_files").assertIsDisplayed()
 
-            compose.onNodeWithText("Files").performClick()
+            compose.onNodeWithTag("nav_files").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.fileCategory.value.open }
         }
     }
@@ -349,6 +358,13 @@ class FileNavigationUiTest {
 
         try {
             navigateAndWait(viewModel, directory)
+            compose.runOnUiThread {
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitForIdle()
             compose.onNodeWithTag("file_list_LEFT").performScrollToIndex(32)
             compose.onNodeWithText("tab-032.txt").assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 5_000) {

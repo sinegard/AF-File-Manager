@@ -771,7 +771,7 @@ private fun MediaPreview(source: PreviewSource) {
                     val controls = MediaController(context)
                     controls.setAnchorView(this)
                     setMediaController(controls)
-                    setVideoURI(source.uri(context))
+                    setVideoURI(source.localFile?.let(Uri::fromFile) ?: source.uri(context))
                     setOnPreparedListener { seekTo(1) }
                 }
             },
@@ -1523,8 +1523,9 @@ internal fun openWith(context: android.content.Context, source: PreviewSource) {
 
 internal fun canEditExternally(context: android.content.Context, source: PreviewSource): Boolean {
     if (!EditabilityRules.mayUseExternalEditor(source.kind, source.extension)) return false
+    val uri = runCatching { source.uri(context) }.getOrNull() ?: return false
     val intent = Intent(Intent.ACTION_EDIT).apply {
-        setDataAndType(source.uri(context), source.mimeType(context))
+        setDataAndType(uri, source.mimeType(context))
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
     }
     @Suppress("DEPRECATION")

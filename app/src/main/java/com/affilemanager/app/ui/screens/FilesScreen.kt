@@ -337,7 +337,7 @@ fun FilesScreen(
                     ),
                     onOpen = { location -> viewModel.openHomeShortcut(location.id, location.path, activePanel) },
                     onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
-                    onOpenRoot = { viewModel.openAdvancedBrowser("/") },
+                    onOpenRoot = viewModel::openRootFromHome,
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
                     onOpenFavorite = { path -> viewModel.openQuickPath(path, activePanel) },
                     onOpenTrash = viewModel::openTrashFromHome,
@@ -853,23 +853,26 @@ private fun StorageHomeSection(
             onClick = { onOpen(root) },
         )
     }
-    if (rootStorageAvailable) {
-        val rootSpace = remember {
+    val rootSpace = remember(rootStorageAvailable) {
+        if (rootStorageAvailable) {
             File("/").let { root -> root.totalSpace.coerceAtLeast(0L) to root.usableSpace.coerceAtLeast(0L) }
-        }
-        val rootUsageFraction = rootSpace.first.takeIf { it > 0L }?.let { total ->
-            (total - rootSpace.second).coerceIn(0L, total).toFloat() / total.toFloat()
-        }
-        StorageLocationCard(
-            title = "Root",
-            description = rootSpace.first.takeIf { it > 0L }?.let { total ->
-                "${FileSystemRules.humanBytes(rootSpace.second)} laisva iš ${FileSystemRules.humanBytes(total)}"
-            } ?: "Sistemos failai · privilegijuota prieiga",
-            icon = Icons.Rounded.LockOpen,
-            usageFraction = rootUsageFraction,
-            onClick = onOpenRoot,
-        )
+        } else 0L to 0L
     }
+    val rootUsageFraction = rootSpace.first.takeIf { rootStorageAvailable && it > 0L }?.let { total ->
+        (total - rootSpace.second).coerceIn(0L, total).toFloat() / total.toFloat()
+    }
+    StorageLocationCard(
+        title = "Root",
+        description = if (!rootStorageAvailable) {
+            "Įjunkite Root arba Shizuku root prieigą skiltyje Daugiau"
+        } else rootSpace.first.takeIf { it > 0L }?.let { total ->
+            "${FileSystemRules.humanBytes(rootSpace.second)} laisva iš ${FileSystemRules.humanBytes(total)}"
+        } ?: "Sistemos failai · privilegijuota prieiga",
+        icon = if (rootStorageAvailable) Icons.Rounded.LockOpen else Icons.Rounded.Lock,
+        usageFraction = rootUsageFraction,
+        onClick = onOpenRoot,
+        modifier = Modifier.testTag("root_storage_location"),
+    )
 }
 
 @Composable

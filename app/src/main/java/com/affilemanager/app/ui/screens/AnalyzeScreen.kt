@@ -78,6 +78,7 @@ import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
+import java.io.File
 import java.util.Locale
 
 private const val MEBIBYTE = 1_024L * 1_024L
@@ -116,9 +117,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var confirmTrash by remember { mutableStateOf(false) }
     var duplicateGroup by remember { mutableStateOf<DuplicateGroup?>(null) }
     var showCleanupReview by remember { mutableStateOf(false) }
+    var cleanupCategory by remember { mutableStateOf(CleanupCategory.LARGE) }
 
     LaunchedEffect(cleanupRequested, analysisState.analysis, analysisState.running, analysisState.error) {
         if (cleanupRequested && analysisState.analysis != null && !analysisState.running) {
+            cleanupCategory = CleanupCategory.LARGE
             showCleanupReview = true
             viewModel.consumeCleanupRequest()
         } else if (cleanupRequested && analysisState.error != null && !analysisState.running) {
@@ -212,7 +215,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     analysis = analysisState.analysis.takeIf { analysisState.rootPath == overviewRoot.path },
                     running = analysisState.running && analysisState.rootPath == overviewRoot.path,
                     onAnalyze = { viewModel.analyze(overviewRoot.path) },
-                    onCleanup = { showCleanupReview = true },
+                    onCleanup = { cleanupCategory = CleanupCategory.LARGE; showCleanupReview = true },
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
@@ -487,6 +490,9 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         }
 
         analysisState.analysis?.let { analysis ->
+            val largestFolders = analysis.largestDirectories.filterNot { usage ->
+                sameAnalysisPath(usage.path, analysisState.rootPath)
+            }
             item {
                 Card(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -508,83 +514,104 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             }
             item {
                 OutlinedButton(
-                    onClick = { showCleanupReview = true },
+                    onClick = { cleanupCategory = CleanupCategory.LARGE; showCleanupReview = true },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("open_cleanup_review"),
                 ) {
                     Icon(Icons.Rounded.DeleteSweep, contentDescription = null)
                     LText("Atidaryti saugaus valymo peržiūrą", modifier = Modifier.padding(start = 7.dp))
                 }
             }
-            item { SectionTitle("Didžiausi failai", analysis.largestFiles.size.toString(), Modifier.padding(horizontal = 16.dp)) }
-            items(analysis.largestFiles.take(30), key = { "large:${it.absolutePath}" }) { entry ->
-                ResultRow(
-                    entry = entry,
-                    onOpen = { viewModel.open(entry) },
-                    onReveal = { viewModel.revealSearchResult(entry) },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-            if (analysis.typeUsage.isNotEmpty()) {
-                item { SectionTitle("Failų tipų pasiskirstymas", analysis.typeUsage.size.toString(), Modifier.padding(horizontal = 16.dp), Icons.Rounded.Analytics) }
-                item {
-                    val maxTypeBytes = analysis.typeUsage.maxOfOrNull { it.sizeBytes }?.coerceAtLeast(1L) ?: 1L
-                    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                            analysis.typeUsage.forEach { usage ->
-                                Column {
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        LText(kindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
-                                        LText("${FileSystemRules.humanBytes(usage.sizeBytes)} · ${usage.fileCount}", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    LinearProgressIndicator(
-                                        progress = { usage.sizeBytes.toFloat() / maxTypeBytes.toFloat() },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
+            item {
+                AnalysisOverviewCard(
+                    title = "Failų tipų pasiskirstymas",
+                    testTag = "analysis_overview_types",
+                    count = analysis.typeUsage.size,
+                    icon = Icons.Rounded.Analytics,
+                    onViewAll = { cleanupCategory = CleanupCategory.TYPE_USAGE; showCleanupReview = true },
+                ) {
+                    val maximum = analysis.typeUsage.maxOfOrNull { it.sizeBytes }?.coerceAtLeast(1L) ?: 1L
+                    analysis.typeUsage.take(3).forEach { usage ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                LText(kindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
+                                Text(FileSystemRules.humanBytes(usage.sizeBytes), style = MaterialTheme.typography.bodySmall)
                             }
+                            LinearProgressIndicator(
+                                progress = { usage.sizeBytes.toFloat() / maximum.toFloat() },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                         }
                     }
                 }
             }
-            if (analysis.largestDirectories.isNotEmpty()) {
-                item { SectionTitle("Didžiausi aplankai", analysis.largestDirectories.size.toString(), Modifier.padding(horizontal = 16.dp), Icons.Rounded.FolderOpen) }
-                items(analysis.largestDirectories.take(50), key = { "directory:${it.path}" }) { usage ->
-                    DirectoryUsageRow(
-                        usage = usage,
-                        maximumBytes = analysis.largestDirectories.first().sizeBytes.coerceAtLeast(1L),
-                        onOpen = { viewModel.openQuickPath(usage.path) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
+            item {
+                AnalysisOverviewCard(
+                    title = "Didžiausi aplankai",
+                    testTag = "analysis_overview_folders",
+                    count = largestFolders.size,
+                    icon = Icons.Rounded.FolderOpen,
+                    onViewAll = { cleanupCategory = CleanupCategory.LARGEST_FOLDERS; showCleanupReview = true },
+                ) {
+                    val maximum = largestFolders.firstOrNull()?.sizeBytes?.coerceAtLeast(1L) ?: 1L
+                    largestFolders.take(2).forEach { usage ->
+                        DirectoryUsageRow(usage, maximum, onOpen = { viewModel.openQuickPath(usage.path) })
+                    }
                 }
             }
-            item { SectionTitle("Seniausiai keisti failai", analysis.oldestFiles.size.toString(), Modifier.padding(horizontal = 16.dp)) }
-            items(analysis.oldestFiles.take(30), key = { "old:${it.absolutePath}" }) { entry ->
-                ResultRow(
-                    entry = entry,
-                    onOpen = { viewModel.open(entry) },
-                    onReveal = { viewModel.revealSearchResult(entry) },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-            item { SectionTitle("Tušti aplankai", analysis.emptyDirectories.size.toString(), Modifier.padding(horizontal = 16.dp), Icons.Rounded.FolderOff) }
-            items(analysis.emptyDirectories.take(50), key = { "empty:$it" }) { pathValue ->
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text(pathValue, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    HorizontalDivider()
+            item {
+                AnalysisOverviewCard(
+                    title = "Didžiausi failai",
+                    testTag = "analysis_overview_files",
+                    count = analysis.largestFiles.size,
+                    icon = Icons.Rounded.DeleteSweep,
+                    onViewAll = { cleanupCategory = CleanupCategory.LARGE; showCleanupReview = true },
+                ) {
+                    analysis.largestFiles.take(2).forEach { entry ->
+                        ResultRow(entry, onOpen = { viewModel.open(entry) }, onReveal = { viewModel.revealSearchResult(entry) })
+                    }
                 }
             }
-        }
-
-        if (analysisState.duplicates.isNotEmpty()) {
-            item { SectionTitle("Dublikatų grupės", analysisState.duplicates.size.toString(), Modifier.padding(horizontal = 16.dp), Icons.Rounded.ContentCopy) }
-            items(analysisState.duplicates.take(100), key = { it.sha256 }) { group ->
-                Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        LText("${group.paths.size} vienodi failai · ${FileSystemRules.humanBytes(group.sizeBytes)} kiekvienas", fontWeight = FontWeight.SemiBold)
-                        group.paths.take(5).forEach { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        if (group.paths.size > 5) LText("… ir dar ${group.paths.size - 5}", style = MaterialTheme.typography.labelSmall)
-                        LText("SHA-256 ${group.sha256.take(16)}…", style = MaterialTheme.typography.labelSmall)
-                        OutlinedButton(onClick = { duplicateGroup = group }) { LText("Tvarkyti kopijas") }
+            item {
+                AnalysisOverviewCard(
+                    title = "Seniausiai keisti failai",
+                    testTag = "analysis_overview_oldest",
+                    count = analysis.oldestFiles.size,
+                    icon = Icons.Rounded.Analytics,
+                    onViewAll = { cleanupCategory = CleanupCategory.OLDEST; showCleanupReview = true },
+                ) {
+                    analysis.oldestFiles.take(2).forEach { entry ->
+                        ResultRow(entry, onOpen = { viewModel.open(entry) }, onReveal = { viewModel.revealSearchResult(entry) })
+                    }
+                }
+            }
+            item {
+                AnalysisOverviewCard(
+                    title = "Tušti aplankai",
+                    testTag = "analysis_overview_empty",
+                    count = analysis.emptyDirectories.size,
+                    icon = Icons.Rounded.FolderOff,
+                    onViewAll = { cleanupCategory = CleanupCategory.EMPTY_FOLDERS; showCleanupReview = true },
+                ) {
+                    analysis.emptyDirectories.take(2).forEach { pathValue ->
+                        Text(pathValue, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        HorizontalDivider()
+                    }
+                }
+            }
+            item {
+                AnalysisOverviewCard(
+                    title = "Dublikatų grupės",
+                    testTag = "analysis_overview_duplicates",
+                    count = analysisState.duplicates.size,
+                    icon = Icons.Rounded.ContentCopy,
+                    onViewAll = { cleanupCategory = CleanupCategory.DUPLICATES; showCleanupReview = true },
+                ) {
+                    analysisState.duplicates.take(2).forEach { group ->
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            LText("${group.paths.size} vienodi failai · ${FileSystemRules.humanBytes(group.sizeBytes)} kiekvienas", fontWeight = FontWeight.SemiBold)
+                            Text(group.paths.firstOrNull().orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            OutlinedButton(onClick = { duplicateGroup = group }) { LText("Tvarkyti kopijas") }
+                        }
                     }
                 }
             }
@@ -687,10 +714,59 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 similarImagesRunning = analysisState.similarImagesRunning,
                 similarImagesAnalyzed = analysisState.similarImagesAnalyzed,
                 similarImagesError = analysisState.similarImagesError,
+                initialCategory = cleanupCategory,
+                analysisRootPath = analysisState.rootPath,
                 onAnalyzeSimilarImages = viewModel::analyzeSimilarImages,
                 onMoveToTrash = viewModel::trashAnalysisSelection,
+                onOpenLocation = { path, directory ->
+                    showCleanupReview = false
+                    val target = if (directory) path else File(path).parentFile?.absolutePath ?: path
+                    viewModel.openQuickPath(target)
+                },
                 onDismiss = { showCleanupReview = false },
             )
+        }
+    }
+}
+
+private fun sameAnalysisPath(first: String, second: String?): Boolean {
+    if (second == null) return false
+    fun normalized(value: String): String {
+        val path = value.replace('\\', '/')
+        return if (path == "/") path else path.trimEnd('/')
+    }
+    return normalized(first) == normalized(second)
+}
+
+@Composable
+private fun AnalysisOverviewCard(
+    title: String,
+    testTag: String,
+    count: Int,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onViewAll: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag(testTag),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                LText(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                Text(count.toString(), style = MaterialTheme.typography.labelLarge)
+                TextButton(
+                    onClick = onViewAll,
+                    enabled = count > 0,
+                    modifier = Modifier.testTag("${testTag}_view_all"),
+                ) { LText("Rodyti visus") }
+            }
+            if (count == 0) {
+                LText("Šioje grupėje elementų nerasta", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                content()
+            }
         }
     }
 }

@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
@@ -48,7 +50,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,7 +83,7 @@ import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
-import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.PrivilegedFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
@@ -256,41 +260,16 @@ fun AdvancedStorageBrowserDialog(
                     displayedEntries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         LText("Atitikmenų nerasta")
                     }
-                    state.grid -> LazyVerticalGrid(
-                        columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
-                        modifier = Modifier.fillMaxSize().testTag("advanced_grid"),
-                        contentPadding = PaddingValues(10.dp, 8.dp, 10.dp, 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(displayedEntries, key = FileEntry::absolutePath) { entry ->
-                            AdvancedGridEntry(
-                                entry,
-                                entry.absolutePath in state.selectedPaths,
-                                state.selectedPaths.isNotEmpty(),
-                                state.iconScalePercent,
-                                state.spacingScalePercent,
-                                state.gridStyle,
-                                viewModel,
-                            )
-                        }
-                    }
-                    else -> LazyColumn(
-                        modifier = Modifier.fillMaxSize().testTag("advanced_list"),
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                    ) {
-                        items(displayedEntries, key = FileEntry::absolutePath) { entry ->
-                            AdvancedListEntry(
-                                entry,
-                                entry.absolutePath in state.selectedPaths,
-                                state.selectedPaths.isNotEmpty(),
-                                state.iconScalePercent,
-                                state.spacingScalePercent,
-                                viewModel,
-                            )
-                            HorizontalDivider()
-                        }
-                    }
+                    state.grid -> AdvancedGrid(
+                        state = state,
+                        displayedEntries = displayedEntries,
+                        viewModel = viewModel,
+                    )
+                    else -> AdvancedList(
+                        state = state,
+                        displayedEntries = displayedEntries,
+                        viewModel = viewModel,
+                    )
                 }
             }
         }
@@ -354,9 +333,109 @@ fun AdvancedStorageBrowserDialog(
     }
 }
 
+@Composable
+private fun AdvancedList(
+    state: AdvancedBrowserUiState,
+    displayedEntries: List<FileEntry>,
+    viewModel: MainViewModel,
+) {
+    val initialPosition = remember(state.path, state.grid) { viewModel.advancedScrollPosition(state.path, grid = false) }
+    val initialIndex = initialPosition.firstVisibleItemIndex.coerceAtMost(displayedEntries.lastIndex.coerceAtLeast(0))
+    val listState = key(state.path) {
+        rememberLazyListState(
+            initialFirstVisibleItemIndex = initialIndex,
+            initialFirstVisibleItemScrollOffset = if (initialIndex == initialPosition.firstVisibleItemIndex) {
+                initialPosition.firstVisibleItemScrollOffset
+            } else {
+                0
+            },
+        )
+    }
+    DisposableEffect(state.path, listState) {
+        onDispose {
+            viewModel.saveAdvancedScrollPosition(
+                state.path,
+                grid = false,
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+            )
+        }
+    }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize().testTag("advanced_list"),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        items(displayedEntries, key = FileEntry::absolutePath) { entry ->
+            AdvancedListEntry(
+                parentPath = state.path,
+                entry = entry,
+                selected = entry.absolutePath in state.selectedPaths,
+                selectionActive = state.selectedPaths.isNotEmpty(),
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
+                viewModel = viewModel,
+            )
+            HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun AdvancedGrid(
+    state: AdvancedBrowserUiState,
+    displayedEntries: List<FileEntry>,
+    viewModel: MainViewModel,
+) {
+    val initialPosition = remember(state.path, state.grid) { viewModel.advancedScrollPosition(state.path, grid = true) }
+    val initialIndex = initialPosition.firstVisibleItemIndex.coerceAtMost(displayedEntries.lastIndex.coerceAtLeast(0))
+    val gridState = key(state.path) {
+        rememberLazyGridState(
+            initialFirstVisibleItemIndex = initialIndex,
+            initialFirstVisibleItemScrollOffset = if (initialIndex == initialPosition.firstVisibleItemIndex) {
+                initialPosition.firstVisibleItemScrollOffset
+            } else {
+                0
+            },
+        )
+    }
+    DisposableEffect(state.path, gridState) {
+        onDispose {
+            viewModel.saveAdvancedScrollPosition(
+                state.path,
+                grid = true,
+                gridState.firstVisibleItemIndex,
+                gridState.firstVisibleItemScrollOffset,
+            )
+        }
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+        state = gridState,
+        modifier = Modifier.fillMaxSize().testTag("advanced_grid"),
+        contentPadding = PaddingValues(10.dp, 8.dp, 10.dp, 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(displayedEntries, key = FileEntry::absolutePath) { entry ->
+            AdvancedGridEntry(
+                parentPath = state.path,
+                entry = entry,
+                selected = entry.absolutePath in state.selectedPaths,
+                selectionActive = state.selectedPaths.isNotEmpty(),
+                iconScalePercent = state.iconScalePercent,
+                spacingScalePercent = state.spacingScalePercent,
+                gridStyle = state.gridStyle,
+                viewModel = viewModel,
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AdvancedListEntry(
+    parentPath: String,
     entry: FileEntry,
     selected: Boolean,
     selectionActive: Boolean,
@@ -374,7 +453,7 @@ private fun AdvancedListEntry(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(checked = selected, onCheckedChange = { viewModel.toggleAdvancedSelection(entry.absolutePath) })
-        LocalFileVisual(entry, iconSize, iconSize, showThumbnails = false, modifier = Modifier.size(iconSize))
+        PrivilegedFileVisual(parentPath, entry, iconSize, iconSize, modifier = Modifier.size(iconSize))
         Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
             Text(entry.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             LText(entryMeta(entry), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -385,6 +464,7 @@ private fun AdvancedListEntry(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AdvancedGridEntry(
+    parentPath: String,
     entry: FileEntry,
     selected: Boolean,
     selectionActive: Boolean,
@@ -411,7 +491,7 @@ private fun AdvancedGridEntry(
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Checkbox(checked = selected, onCheckedChange = { viewModel.toggleAdvancedSelection(entry.absolutePath) }, modifier = Modifier.align(Alignment.End))
-            LocalFileVisual(entry, iconSize, iconSize, showThumbnails = false, modifier = Modifier.size(iconSize))
+            PrivilegedFileVisual(parentPath, entry, iconSize, iconSize, modifier = Modifier.size(iconSize))
             Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
             LText(entryMeta(entry), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

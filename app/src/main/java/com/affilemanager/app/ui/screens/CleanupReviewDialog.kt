@@ -15,12 +15,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -61,7 +62,16 @@ import com.affilemanager.app.ui.localization.uiText
 import java.io.File
 import java.text.NumberFormat
 
-private enum class CleanupCategory { LARGE, PACKAGES, DUPLICATES, EMPTY_FOLDERS, SIMILAR_IMAGES }
+internal enum class CleanupCategory {
+    TYPE_USAGE,
+    LARGEST_FOLDERS,
+    LARGE,
+    OLDEST,
+    EMPTY_FOLDERS,
+    DUPLICATES,
+    PACKAGES,
+    SIMILAR_IMAGES,
+}
 
 private data class CleanupCandidate(
     val path: String,
@@ -72,25 +82,28 @@ private data class CleanupCandidate(
 )
 
 @Composable
-fun CleanupReviewDialog(
+internal fun CleanupReviewDialog(
     analysis: StorageAnalysis,
     duplicates: List<DuplicateGroup>,
     similarImages: List<SimilarImageGroup>,
     similarImagesRunning: Boolean,
     similarImagesAnalyzed: Boolean,
     similarImagesError: String?,
+    initialCategory: CleanupCategory,
+    analysisRootPath: String?,
     onAnalyzeSimilarImages: () -> Unit,
     onMoveToTrash: (Set<String>) -> Unit,
+    onOpenLocation: (String, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var category by remember { mutableStateOf(CleanupCategory.LARGE) }
+    var category by remember(initialCategory) { mutableStateOf(initialCategory) }
     var selected by remember(analysis) { mutableStateOf(emptySet<String>()) }
     var confirmTrash by remember { mutableStateOf(false) }
-    val candidates = remember(category, analysis, duplicates, similarImages) {
-        cleanupCandidates(category, analysis, duplicates, similarImages)
+    val candidates = remember(category, analysis, duplicates, similarImages, analysisRootPath) {
+        cleanupCandidates(category, analysis, duplicates, similarImages, analysisRootPath)
     }
-    val selectedBytes = remember(selected, analysis, duplicates, similarImages) {
-        allCleanupCandidates(analysis, duplicates, similarImages)
+    val selectedBytes = remember(selected, analysis, duplicates, similarImages, analysisRootPath) {
+        allCleanupCandidates(analysis, duplicates, similarImages, analysisRootPath)
             .filter { it.path in selected }
             .distinctBy(CleanupCandidate::path)
             .sumOf(CleanupCandidate::sizeBytes)
@@ -128,15 +141,34 @@ fun CleanupReviewDialog(
                         )
                     }
                 }
-                Card(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        LText("Pažymėta: ${selected.size}", fontWeight = FontWeight.SemiBold)
-                        LText("Galima atlaisvinti: ${FileSystemRules.humanBytes(selectedBytes)}", style = MaterialTheme.typography.bodySmall)
-                        LText("Pasirinkti elementai bus perkelti į atkuriamą AF File Manager šiukšlinę.", style = MaterialTheme.typography.bodySmall)
+                if (category != CleanupCategory.TYPE_USAGE) {
+                    Card(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            LText("Pažymėta: ${selected.size}", fontWeight = FontWeight.SemiBold)
+                            LText("Galima atlaisvinti: ${FileSystemRules.humanBytes(selectedBytes)}", style = MaterialTheme.typography.bodySmall)
+                            LText("Pasirinkti elementai bus perkelti į atkuriamą AF File Manager šiukšlinę.", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
 
-                if (category == CleanupCategory.SIMILAR_IMAGES && !similarImagesAnalyzed) {
+                if (category == CleanupCategory.TYPE_USAGE) {
+                    val maximum = analysis.typeUsage.maxOfOrNull { it.sizeBytes }?.coerceAtLeast(1L) ?: 1L
+                    LazyColumn(modifier = Modifier.weight(1f).testTag("analysis_type_usage")) {
+                        items(analysis.typeUsage, key = { it.kind }) { usage ->
+                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    LText(cleanupKindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
+                                    LText("${FileSystemRules.humanBytes(usage.sizeBytes)} · ${usage.fileCount}", style = MaterialTheme.typography.bodySmall)
+                                }
+                                LinearProgressIndicator(
+                                    progress = { usage.sizeBytes.toFloat() / maximum.toFloat() },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                                )
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                } else if (category == CleanupCategory.SIMILAR_IMAGES && !similarImagesAnalyzed) {
                     Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                         if (similarImagesRunning) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -167,20 +199,23 @@ fun CleanupReviewDialog(
                                 onToggle = {
                                     selected = if (candidate.path in selected) selected - candidate.path else selected + candidate.path
                                 },
+                                onOpen = { onOpenLocation(candidate.path, candidate.directory) },
                             )
                             HorizontalDivider()
                         }
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(10.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = { selected = emptySet() }, enabled = selected.isNotEmpty()) { LText("Atžymėti visus") }
-                    Button(onClick = { confirmTrash = true }, enabled = selected.isNotEmpty()) {
-                        LText("Perkelti į šiukšlinę (${selected.size})")
+                if (category != CleanupCategory.TYPE_USAGE) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = { selected = emptySet() }, enabled = selected.isNotEmpty()) { LText("Atžymėti visus") }
+                        Button(onClick = { confirmTrash = true }, enabled = selected.isNotEmpty()) {
+                            LText("Perkelti į šiukšlinę (${selected.size})")
+                        }
                     }
                 }
             }
@@ -210,6 +245,7 @@ private fun CleanupCandidateRow(
     totalBytes: Long,
     selected: Boolean,
     onToggle: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val percentFormat = remember(locale) {
@@ -223,7 +259,7 @@ private fun CleanupCandidateRow(
     ) {
         Checkbox(checked = selected, onCheckedChange = { onToggle() })
         Icon(
-            if (candidate.directory) Icons.Rounded.Folder else Icons.Rounded.InsertDriveFile,
+            if (candidate.directory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
             contentDescription = null,
             modifier = Modifier.size(34.dp),
             tint = MaterialTheme.colorScheme.primary,
@@ -243,6 +279,9 @@ private fun CleanupCandidateRow(
                 )
             }
         }
+        IconButton(onClick = onOpen) {
+            Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Rodyti aplanke"))
+        }
     }
 }
 
@@ -251,8 +290,22 @@ private fun cleanupCandidates(
     analysis: StorageAnalysis,
     duplicates: List<DuplicateGroup>,
     similarImages: List<SimilarImageGroup>,
+    analysisRootPath: String?,
 ): List<CleanupCandidate> = when (category) {
+    CleanupCategory.TYPE_USAGE -> emptyList()
+    CleanupCategory.LARGEST_FOLDERS -> analysis.largestDirectories
+        .filterNot { usage -> cleanupPathKey(usage.path) == analysisRootPath?.let(::cleanupPathKey) }
+        .map { usage ->
+            CleanupCandidate(
+                path = usage.path,
+                name = File(usage.path).name.ifBlank { usage.path },
+                sizeBytes = usage.sizeBytes,
+                directory = true,
+                groupLabel = "${usage.fileCount} failų",
+            )
+        }
     CleanupCategory.LARGE -> analysis.largestFiles.map(FileEntry::toCleanupCandidate)
+    CleanupCategory.OLDEST -> analysis.oldestFiles.map(FileEntry::toCleanupCandidate)
     CleanupCategory.PACKAGES -> analysis.installerAndArchiveFiles.map(FileEntry::toCleanupCandidate)
     CleanupCategory.DUPLICATES -> duplicates.flatMapIndexed { index, group ->
         group.paths.map { path ->
@@ -271,7 +324,15 @@ private fun allCleanupCandidates(
     analysis: StorageAnalysis,
     duplicates: List<DuplicateGroup>,
     similarImages: List<SimilarImageGroup>,
-): List<CleanupCandidate> = CleanupCategory.entries.flatMap { cleanupCandidates(it, analysis, duplicates, similarImages) }
+    analysisRootPath: String?,
+): List<CleanupCandidate> = CleanupCategory.entries.flatMap {
+    cleanupCandidates(it, analysis, duplicates, similarImages, analysisRootPath)
+}
+
+private fun cleanupPathKey(value: String): String {
+    val path = value.replace('\\', '/')
+    return if (path == "/") path else path.trimEnd('/')
+}
 
 private fun FileEntry.toCleanupCandidate(groupLabel: String? = null) = CleanupCandidate(
     path = absolutePath,
@@ -282,7 +343,10 @@ private fun FileEntry.toCleanupCandidate(groupLabel: String? = null) = CleanupCa
 )
 
 private fun cleanupCategoryLabel(category: CleanupCategory): String = when (category) {
+    CleanupCategory.TYPE_USAGE -> "Failų tipų pasiskirstymas"
+    CleanupCategory.LARGEST_FOLDERS -> "Didžiausi aplankai"
     CleanupCategory.LARGE -> "Didžiausi failai"
+    CleanupCategory.OLDEST -> "Seniausiai keisti failai"
     CleanupCategory.PACKAGES -> "APK ir archyvai"
     CleanupCategory.DUPLICATES -> "Vienodi failai"
     CleanupCategory.EMPTY_FOLDERS -> "Tušti aplankai"
@@ -290,9 +354,23 @@ private fun cleanupCategoryLabel(category: CleanupCategory): String = when (cate
 }
 
 private fun cleanupCategoryIcon(category: CleanupCategory): ImageVector = when (category) {
-    CleanupCategory.LARGE -> Icons.Rounded.InsertDriveFile
+    CleanupCategory.TYPE_USAGE -> Icons.AutoMirrored.Rounded.InsertDriveFile
+    CleanupCategory.LARGEST_FOLDERS -> Icons.Rounded.Folder
+    CleanupCategory.LARGE -> Icons.AutoMirrored.Rounded.InsertDriveFile
+    CleanupCategory.OLDEST -> Icons.AutoMirrored.Rounded.InsertDriveFile
     CleanupCategory.PACKAGES -> Icons.Rounded.Archive
     CleanupCategory.DUPLICATES -> Icons.Rounded.ContentCopy
     CleanupCategory.EMPTY_FOLDERS -> Icons.Rounded.Folder
     CleanupCategory.SIMILAR_IMAGES -> Icons.Rounded.Image
+}
+
+private fun cleanupKindLabel(kind: com.affilemanager.app.model.EntryKind): String = when (kind) {
+    com.affilemanager.app.model.EntryKind.DIRECTORY -> "Aplankai"
+    com.affilemanager.app.model.EntryKind.IMAGE -> "Nuotraukos"
+    com.affilemanager.app.model.EntryKind.VIDEO -> "Vaizdo įrašai"
+    com.affilemanager.app.model.EntryKind.AUDIO -> "Garso failai"
+    com.affilemanager.app.model.EntryKind.DOCUMENT -> "Dokumentai"
+    com.affilemanager.app.model.EntryKind.ARCHIVE -> "Archyvai"
+    com.affilemanager.app.model.EntryKind.APK -> "APK"
+    com.affilemanager.app.model.EntryKind.OTHER -> "Kita"
 }

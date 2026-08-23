@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
@@ -230,6 +231,7 @@ fun AFFileManagerApp(
                             NavigationBarItem(
                                 selected = section == destination.section,
                                 onClick = { viewModel.setSection(destination.section) },
+                                modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
                                 icon = {
                                     DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
                                 },
@@ -247,6 +249,7 @@ fun AFFileManagerApp(
                             NavigationRailItem(
                                 selected = section == destination.section,
                                 onClick = { viewModel.setSection(destination.section) },
+                                modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
                                 icon = {
                                     DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
                                 },

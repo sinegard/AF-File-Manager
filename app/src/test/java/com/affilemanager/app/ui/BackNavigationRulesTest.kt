@@ -67,4 +67,11 @@ class BackNavigationRulesTest {
             BackNavigationRules.decide(false, AppSection.FILES, false, 0, false, false),
         )
     }
+
+    @Test
+    fun filesHomeOnlyOpensWhenTheAlreadySelectedDestinationIsTappedAgain() {
+        assertEquals(false, SectionNavigationRules.shouldShowFilesHome(AppSection.ANALYZE, AppSection.FILES))
+        assertEquals(false, SectionNavigationRules.shouldShowFilesHome(AppSection.FILES, AppSection.ANALYZE))
+        assertEquals(true, SectionNavigationRules.shouldShowFilesHome(AppSection.FILES, AppSection.FILES))
+    }
 }

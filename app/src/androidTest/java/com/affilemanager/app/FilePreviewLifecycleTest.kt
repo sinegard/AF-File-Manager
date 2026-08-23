@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.hardware.usb.UsbManager
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -259,6 +260,22 @@ class FilePreviewLifecycleTest {
         } finally {
             fixture.delete()
         }
+    }
+
+    @Test
+    fun removableStoragePathsCanBeSharedAndUsbAttachmentCanLaunchAf() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        listOf(
+            File("/storage/AF_REMOVABLE_TEST/example.mp4"),
+            File("/mnt/media_rw/AF_REMOVABLE_TEST/example.mp4"),
+        ).forEach { removableFile ->
+            val uri = FileProvider.getUriForFile(application, "${application.packageName}.files", removableFile)
+            assertEquals("content", uri.scheme)
+        }
+
+        @Suppress("DEPRECATION")
+        val handlers = application.packageManager.queryIntentActivities(Intent(UsbManager.ACTION_USB_DEVICE_ATTACHED), 0)
+        assertTrue(handlers.any { it.activityInfo.packageName == application.packageName })
     }
 
     @Test

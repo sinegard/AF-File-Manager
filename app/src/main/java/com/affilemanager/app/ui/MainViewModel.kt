@@ -138,6 +138,8 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.util.UUID
 
+private const val ADVANCED_STORAGE_SCROLL_OWNER = "advanced-storage"
+
 enum class AppSection {
     FILES,
     ANALYZE,
@@ -672,10 +674,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSection(section: AppSection) {
-        if (_fileCategory.value.open) closeFileCategory()
+        val previousSection = _section.value
+        val filesDestinationReselected = SectionNavigationRules.shouldShowFilesHome(previousSection, section)
+        if (filesDestinationReselected && _fileCategory.value.open) closeFileCategory()
         _section.value = section
         if (section == AppSection.FILES) {
-            _filesHomeVisible.value = true
+            if (filesDestinationReselected) _filesHomeVisible.value = true
             refreshRecentFiles()
         }
         if (section == AppSection.TOOLS) {
@@ -696,6 +700,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestRootAccess() = graph.advancedAccess.requestRootAccess()
 
     fun refreshAdvancedAccess() = graph.advancedAccess.refreshCapabilities()
+
+    fun openRootFromHome() {
+        val rootBackend = graph.advancedAccess.state.value.activeBackend in setOf(
+            AdvancedAccessBackend.ROOT,
+            AdvancedAccessBackend.SHIZUKU_ROOT,
+        )
+        if (rootBackend) {
+            openAdvancedBrowser("/")
+        } else {
+            setSection(AppSection.TOOLS)
+            message("Įjunkite Root arba Shizuku root prieigą skiltyje Daugiau", true)
+        }
+    }
+
+    fun showFilesHome() {
+        if (_fileCategory.value.open) closeFileCategory()
+        _section.value = AppSection.FILES
+        _filesHomeVisible.value = true
+        refreshRecentFiles()
+    }
 
     fun openAdvancedBrowser(preferredPath: String? = null) {
         advancedBrowserJob?.cancel()
@@ -721,7 +745,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val roots = graph.privilegedFiles.availableRoots().getOrThrow()
                 val target = preferredPath ?: roots.firstOrNull()?.path
                     ?: throw IllegalStateException("Privilegijuoti aplankai nepasiekiami")
-                loadAdvancedDirectory(target, pushHistory = false)
+                loadAdvancedDirectory(target, pushHistory = false, resetScroll = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -742,7 +766,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         advancedBrowserJob?.cancel()
         advancedBrowserJob = viewModelScope.launch {
             try {
-                loadAdvancedDirectory(path, pushHistory = true)
+                loadAdvancedDirectory(path, pushHistory = true, resetScroll = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -763,7 +787,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         advancedBrowserJob?.cancel()
         advancedBrowserJob = viewModelScope.launch {
             _advancedBrowser.update { it.copy(backHistory = it.backHistory.dropLast(1), loading = true, selectedPaths = emptySet(), error = null) }
-            runCatching { loadAdvancedDirectory(previous, pushHistory = false) }
+            runCatching { loadAdvancedDirectory(previous, pushHistory = false, resetScroll = false) }
                 .onFailure { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atidaryti nepavyko") } }
             advancedBrowserJob = null
         }
@@ -800,6 +824,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 gridStyle = state.gridStyle,
                 showThumbnails = false,
             ),
+        )
+    }
+
+    fun advancedScrollPosition(path: String, grid: Boolean): FileScrollPosition =
+        fileScrollPositions.read(FileScrollKey(ADVANCED_STORAGE_SCROLL_OWNER, path, grid))
+
+    fun saveAdvancedScrollPosition(
+        path: String,
+        grid: Boolean,
+        firstVisibleItemIndex: Int,
+        firstVisibleItemScrollOffset: Int,
+    ) {
+        fileScrollPositions.write(
+            FileScrollKey(ADVANCED_STORAGE_SCROLL_OWNER, path, grid),
+            firstVisibleItemIndex,
+            firstVisibleItemScrollOffset,
         )
     }
 
@@ -955,8 +995,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun loadAdvancedDirectory(path: String, pushHistory: Boolean) {
+    private suspend fun loadAdvancedDirectory(path: String, pushHistory: Boolean, resetScroll: Boolean) {
         val before = _advancedBrowser.value
+        if (resetScroll && before.path != path) fileScrollPositions.reset(ADVANCED_STORAGE_SCROLL_OWNER, path)
         val display = runCatching { graph.navigation.directoryDisplaySettings("privileged:$path") }.getOrNull()
             ?: DirectoryDisplaySettings()
         _advancedBrowser.update { it.copy(loading = true, error = null, selectedPaths = emptySet()) }

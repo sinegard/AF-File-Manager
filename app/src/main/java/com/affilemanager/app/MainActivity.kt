@@ -1,6 +1,7 @@
 package com.affilemanager.app
 
 import android.content.Intent
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -16,6 +17,7 @@ import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.theme.AFFileManagerTheme
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import kotlinx.coroutines.delay
 import java.io.File
 
 data class IncomingViewRequest(val uri: Uri, val mimeType: String?)
@@ -23,18 +25,29 @@ data class IncomingViewRequest(val uri: Uri, val mimeType: String?)
 class MainActivity : AppCompatActivity() {
     private val pendingViewRequest = mutableStateOf<IncomingViewRequest?>(null)
     private val pendingBenchmarkRequest = mutableStateOf<BenchmarkRequest?>(null)
+    private val pendingUsbRefresh = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppLanguageManager.ensureEnglishDefault(this)
         super.onCreate(savedInstanceState)
         pendingViewRequest.value = intent.toIncomingViewRequest()
         pendingBenchmarkRequest.value = intent.toBenchmarkRequest()
+        pendingUsbRefresh.value = intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED
         enableEdgeToEdge()
         setContent {
             val mainViewModel: MainViewModel = viewModel()
             val appearance = mainViewModel.appearanceSettings.collectAsStateWithLifecycle()
             val leftPanel = mainViewModel.leftPanel.collectAsStateWithLifecycle()
             val network = mainViewModel.networkState.collectAsStateWithLifecycle()
+            LaunchedEffect(pendingUsbRefresh.value) {
+                if (pendingUsbRefresh.value) {
+                    mainViewModel.showFilesHome()
+                    mainViewModel.refreshPermissionDependentState()
+                    delay(750)
+                    mainViewModel.refreshPermissionDependentState()
+                    pendingUsbRefresh.value = false
+                }
+            }
             LaunchedEffect(pendingBenchmarkRequest.value) {
                 pendingBenchmarkRequest.value?.let { request ->
                     when (request) {
@@ -72,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         pendingViewRequest.value = intent.toIncomingViewRequest()
         pendingBenchmarkRequest.value = intent.toBenchmarkRequest()
+        pendingUsbRefresh.value = intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED
     }
 
     private fun Intent.toIncomingViewRequest(): IncomingViewRequest? {

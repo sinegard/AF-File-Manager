@@ -3,6 +3,7 @@ package com.affilemanager.app
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -31,6 +32,7 @@ import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProtocol
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
@@ -90,9 +92,55 @@ class MainActivityTest {
         compose.waitUntil(timeoutMillis = 5_000) { !viewModel.filesHomeVisible.value }
         assertTrue(compose.onAllNodesWithText("Kairysis:").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithText("Files").performClick()
+        compose.onNodeWithTag("nav_files").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.filesHomeVisible.value }
         compose.onNodeWithText("File locations").fetchSemanticsNode()
+    }
+
+    @Test
+    fun returningFromAnotherBottomDestinationKeepsTheOpenFolder() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "bottom-nav-${System.nanoTime()}").apply { mkdirs() }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val previousPath = viewModel.leftPanel.value.path
+        try {
+            compose.runOnUiThread {
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                !viewModel.filesHomeVisible.value && viewModel.leftPanel.value.path == directory.canonicalPath
+            }
+
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.ANALYZE)
+                viewModel.setSection(AppSection.FILES)
+            }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.section.value == AppSection.FILES }
+            assertFalse(viewModel.filesHomeVisible.value)
+            assertEquals(directory.canonicalPath, viewModel.leftPanel.value.path)
+
+            compose.runOnUiThread { viewModel.setSection(AppSection.FILES) }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.filesHomeVisible.value }
+        } finally {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, previousPath) }
+            compose.waitForIdle()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rootStorageRemainsVisibleWhenPrivilegedAccessIsOff() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        compose.runOnUiThread {
+            viewModel.setAdvancedAccessMode(com.affilemanager.app.advanced.AdvancedAccessMode.OFF)
+            viewModel.setSection(AppSection.FILES)
+            viewModel.setSection(AppSection.FILES)
+        }
+        compose.onNodeWithTag("root_storage_location").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("root_storage_location").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.section.value == AppSection.TOOLS }
+        compose.onNodeWithTag("tools_list").performScrollToNode(hasTestTag("advanced_mode_off"))
+        compose.onNodeWithTag("advanced_mode_off").assertIsDisplayed()
     }
 
     @Test
@@ -113,6 +161,47 @@ class MainActivityTest {
         compose.onNodeWithText("Storage usage").assertIsDisplayed()
         compose.onNodeWithText("Internal storage").assertIsDisplayed()
         assertTrue(compose.onAllNodesWithText("Vidinė atmintis").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun analysisUsesConciseSectionsAndOpensAFullCategoryView() {
+        val root = File(compose.activity.getExternalFilesDir(null), "analysis-${System.nanoTime()}").apply { mkdirs() }
+        val empty = File(root, "empty").apply { mkdirs() }
+        File(root, "photo.jpg").writeBytes(ByteArray(32) { it.toByte() })
+        File(root, "notes.txt").apply {
+            writeText("notes")
+            setLastModified(1_700_000_000_000L)
+        }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.analyze(root.absolutePath)
+                viewModel.setSection(AppSection.ANALYZE)
+            }
+            compose.waitUntil(timeoutMillis = 15_000) {
+                viewModel.analysisState.value.analysis != null && !viewModel.analysisState.value.running
+            }
+
+            listOf(
+                "analysis_overview_types",
+                "analysis_overview_folders",
+                "analysis_overview_files",
+                "analysis_overview_oldest",
+                "analysis_overview_empty",
+                "analysis_overview_duplicates",
+            ).forEach { tag ->
+                compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag(tag))
+                compose.onNodeWithTag(tag).assertIsDisplayed()
+            }
+
+            compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analysis_overview_types_view_all"))
+            compose.onNodeWithTag("analysis_overview_types_view_all").performClick()
+            compose.onNodeWithTag("analysis_type_usage").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Close").performClick()
+        } finally {
+            empty.delete()
+            root.deleteRecursively()
+        }
     }
 
     @Test

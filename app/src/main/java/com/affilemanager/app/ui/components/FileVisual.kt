@@ -146,6 +146,21 @@ internal object FileVisualRules {
             "local-type|$kind|$normalizedExtension|$dimensions"
         }
     }
+
+    fun installedAppCacheKey(packageName: String, widthPx: Int, heightPx: Int): String =
+        "installed-app|$packageName|${boundedDimension(widthPx)}x${boundedDimension(heightPx)}"
+}
+
+internal object PrivilegedAppDirectoryRules {
+    private val packageNamePattern = Regex("^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$")
+
+    fun packageName(parentPath: String, entry: FileEntry): String? {
+        if (!entry.isDirectory || !packageNamePattern.matches(entry.name)) return null
+        val normalizedParent = parentPath.replace('\\', '/').trimEnd('/')
+        return entry.name.takeIf {
+            normalizedParent.endsWith("/Android/data") || normalizedParent.endsWith("/Android/obb")
+        }
+    }
 }
 
 internal enum class FileIconFamily {
@@ -202,6 +217,42 @@ fun LocalFileVisual(
             key2 = context,
         ) {
             value = FileVisualLoader.loadLocal(context, entry, widthPx, heightPx, showThumbnails, key)
+        }
+        loaded
+    }
+    FileVisualFrame(
+        name = entry.name,
+        kind = entry.kind,
+        extension = entry.extension,
+        visual = visual,
+        modifier = modifier,
+    )
+}
+
+@Composable
+fun PrivilegedFileVisual(
+    parentPath: String,
+    entry: FileEntry,
+    targetWidth: Dp,
+    targetHeight: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val packageName = PrivilegedAppDirectoryRules.packageName(parentPath, entry)
+    if (packageName == null) {
+        LocalFileVisual(entry, targetWidth, targetHeight, showThumbnails = false, modifier = modifier)
+        return
+    }
+    val context = LocalContext.current.applicationContext
+    val density = LocalDensity.current
+    val widthPx = FileVisualRules.boundedDimension(with(density) { targetWidth.roundToPx() })
+    val heightPx = FileVisualRules.boundedDimension(with(density) { targetHeight.roundToPx() })
+    val key = FileVisualRules.installedAppCacheKey(packageName, widthPx, heightPx)
+    val cached = FileVisualLoader.peek(key)
+    val visual = if (cached != null || FileVisualLoader.isKnownMissing(key)) {
+        cached
+    } else {
+        val loaded by produceState<LoadedFileVisual?>(initialValue = null, key1 = key, key2 = context) {
+            value = FileVisualLoader.loadInstalledApp(context, packageName, widthPx, heightPx, key)
         }
         loaded
     }
@@ -420,6 +471,33 @@ internal object FileVisualLoader {
             }
             result?.bitmap?.prepareToDraw()
             cacheResult(key, result, rememberMissing = false)
+            result
+        }
+    }
+
+    suspend fun loadInstalledApp(
+        context: Context,
+        packageName: String,
+        widthPx: Int,
+        heightPx: Int,
+        key: String = FileVisualRules.installedAppCacheKey(packageName, widthPx, heightPx),
+    ): LoadedFileVisual? {
+        peek(key)?.let { return it }
+        if (isKnownMissing(key)) return null
+        return decodePermits.withPermit {
+            peek(key)?.let { return@withPermit it }
+            if (isKnownMissing(key)) return@withPermit null
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    LoadedFileVisual(
+                        bitmap = drawableBitmap(context.packageManager.getApplicationIcon(packageName), widthPx, heightPx),
+                        crop = false,
+                        contentThumbnail = false,
+                    )
+                }.getOrNull()
+            }
+            result?.bitmap?.prepareToDraw()
+            cacheResult(key, result, rememberMissing = true)
             result
         }
     }

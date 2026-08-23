@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <root-path name="removable_storage" path="storage/" />
+    <root-path name="mounted_removable_storage" path="mnt/media_rw/" />
     <external-path name="shared" path="." />
     <external-files-path name="app_external" path="." />
     <files-path name="app_internal" path="." />

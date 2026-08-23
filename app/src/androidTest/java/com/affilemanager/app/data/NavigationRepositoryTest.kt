@@ -39,6 +39,7 @@ class NavigationRepositoryTest {
         val firstIdentity = "instrumentation:display:first:${System.nanoTime()}"
         val secondIdentity = "instrumentation:display:second:${System.nanoTime()}"
         val repository = NavigationRepository(application)
+        val inheritedDefaults = repository.directoryDisplayDefaults()?.settings
         val settings = DirectoryDisplaySettings(
             layoutMode = DirectoryLayoutMode.GRID,
             iconScalePercent = 130,
@@ -47,16 +48,16 @@ class NavigationRepositoryTest {
             showThumbnails = true,
         )
         try {
-            assertEquals(null, repository.directoryDisplaySettings(firstIdentity))
-            assertEquals(null, repository.directoryDisplaySettings(secondIdentity))
+            assertEquals(inheritedDefaults, repository.directoryDisplaySettings(firstIdentity))
+            assertEquals(inheritedDefaults, repository.directoryDisplaySettings(secondIdentity))
 
             repository.setDirectoryDisplaySettings(firstIdentity, settings)
 
             assertEquals(settings, NavigationRepository(application).directoryDisplaySettings(firstIdentity))
-            assertEquals(null, NavigationRepository(application).directoryDisplaySettings(secondIdentity))
+            assertEquals(inheritedDefaults, NavigationRepository(application).directoryDisplaySettings(secondIdentity))
 
             repository.clearDirectoryDisplaySettings(firstIdentity)
-            assertEquals(null, NavigationRepository(application).directoryDisplaySettings(firstIdentity))
+            assertEquals(inheritedDefaults, NavigationRepository(application).directoryDisplaySettings(firstIdentity))
         } finally {
             repository.clearDirectoryDisplaySettings(firstIdentity)
             repository.clearDirectoryDisplaySettings(secondIdentity)

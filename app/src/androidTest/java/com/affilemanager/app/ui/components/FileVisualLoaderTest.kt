@@ -82,6 +82,24 @@ class FileVisualLoaderTest {
     }
 
     @Test
+    fun installedPackageDirectoryCanLoadItsApplicationIcon() = runBlocking {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+
+        val visual = FileVisualLoader.loadInstalledApp(
+            context = application,
+            packageName = application.packageName,
+            widthPx = 96,
+            heightPx = 96,
+        )
+
+        assertNotNull(visual)
+        assertFalse(requireNotNull(visual).crop)
+        assertFalse(visual.contentThumbnail)
+        assertTrue(visual.bitmap.width <= 96)
+        assertTrue(visual.bitmap.height <= 96)
+    }
+
+    @Test
     fun xmlAndZipUseBuiltInTypeIconsInsteadOfAnAssociatedApplicationIcon() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val xml = File(application.cacheDir, "type-${System.nanoTime()}.xml").apply { writeText("<root />") }

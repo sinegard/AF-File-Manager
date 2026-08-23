@@ -37,3 +37,8 @@ internal object BackNavigationRules {
         else -> SystemBackAction.SHOW_FILES
     }
 }
+
+internal object SectionNavigationRules {
+    fun shouldShowFilesHome(current: AppSection, requested: AppSection): Boolean =
+        current == AppSection.FILES && requested == AppSection.FILES
+}
