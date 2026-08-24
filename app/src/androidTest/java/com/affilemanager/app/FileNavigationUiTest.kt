@@ -134,21 +134,20 @@ class FileNavigationUiTest {
             navigateAndWait(viewModel, directory)
             compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, first.canonicalPath) }
             compose.onNodeWithContentDescription("Copy").performClick()
-            compose.waitUntil(timeoutMillis = 5_000) {
-                viewModel.clipboard.value?.paths == listOf(first.canonicalPath)
-            }
+            compose.waitForIdle()
+            assertEquals(listOf(first.canonicalPath), viewModel.clipboard.value?.paths)
 
             compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, missed.canonicalPath) }
+            assertEquals(setOf(missed.canonicalPath), viewModel.leftPanel.value.selectedPaths)
             compose.onNodeWithTag("copy-more-local").assertIsDisplayed().performClick()
-            compose.waitUntil(timeoutMillis = 5_000) {
-                viewModel.clipboard.value?.paths == listOf(first.canonicalPath, missed.canonicalPath)
-            }
+            compose.waitForIdle()
+            assertEquals(emptySet<String>(), viewModel.leftPanel.value.selectedPaths)
+            assertEquals(listOf(first.canonicalPath, missed.canonicalPath), viewModel.clipboard.value?.paths)
 
             compose.runOnUiThread { viewModel.toggleSelection(PanelId.LEFT, first.canonicalPath) }
             compose.onNodeWithTag("copy-more-local").performClick()
-            compose.waitUntil(timeoutMillis = 5_000) {
-                viewModel.clipboard.value?.paths == listOf(first.canonicalPath, missed.canonicalPath)
-            }
+            compose.waitForIdle()
+            assertEquals(listOf(first.canonicalPath, missed.canonicalPath), viewModel.clipboard.value?.paths)
         } finally {
             compose.runOnUiThread {
                 viewModel.clearSelection(PanelId.LEFT)
@@ -220,6 +219,38 @@ class FileNavigationUiTest {
 
             compose.onNodeWithTag("nav_files").performClick()
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.fileCategory.value.open }
+        }
+    }
+
+    @Test
+    fun installedAppsSelectionOffersInfoBackupUninstallAndSystemFilter() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.openFileCategory(FileCategory.INSTALLED_APPS, forceRefresh = true) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.fileCategory.value
+                state.open && !state.loading && state.entries.isNotEmpty()
+            }
+
+            compose.onNodeWithTag("category_more").performClick()
+            compose.onNodeWithTag("installed_apps_show_system").assertIsDisplayed().performClick()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                viewModel.fileCategory.value.showSystemApps && !viewModel.fileCategory.value.loading
+            }
+            val entry = viewModel.fileCategory.value.entries.first()
+            compose.runOnUiThread { viewModel.toggleFileCategorySelection(entry.absolutePath) }
+
+            compose.onNodeWithTag("category_info").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("file_info_dialog").assertIsDisplayed()
+            compose.runOnUiThread { viewModel.clearFileCategorySelection() }
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+            compose.waitForIdle()
+
+            compose.runOnUiThread { viewModel.toggleFileCategorySelection(entry.absolutePath) }
+            compose.onNodeWithTag("installed_apps_export").assertIsDisplayed()
+            compose.onNodeWithTag("installed_apps_uninstall").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { viewModel.closeFileCategory() }
         }
     }
 

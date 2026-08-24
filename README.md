@@ -66,6 +66,8 @@ Android always shows its own installation confirmation. A regular third-party ap
 
 Full local browsing on Android 11+ uses the special **All files access** permission. Android and device-vendor restrictions can still block `Android/data` and `Android/obb`. The app also supports user-selected Storage Access Framework locations without this broad permission.
 
+The optional **Installed apps** view uses Android package visibility to list apps locally, including system apps only when you enable that filter. The list is not uploaded or used for analytics. Uninstall always goes through Android's own confirmation screen, and APK backups are written only to the folder you choose.
+
 An optional advanced mode under **More → Tools and security → Protected Android folder access** can use an already running Shizuku service or a compatible root manager. It is off by default, asks before connecting, accepts only a privileged service running as Android shell or root, and exposes a bounded browser for `Android/data` and `Android/obb`. AF File Manager does not install, start, or configure Shizuku or root on its own.
 
 The phone terminal still runs `/system/bin/sh` as AF File Manager's ordinary Android app user, even when protected-folder access is enabled. It is not a root shell or a packaged Linux distribution. A remote shell is available only for SFTP/SSH profiles because FTP, FTPS, SMB, and WebDAV do not provide a shell protocol.

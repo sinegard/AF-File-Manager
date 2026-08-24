@@ -505,6 +505,39 @@ class MainActivityTest {
     }
 
     @Test
+    fun sizeSortingCalculatesFolderContentsAndShowsRelativeSizeBars() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "folder-size-${System.nanoTime()}").apply { mkdirs() }
+        val smallFolder = File(directory, "small-folder").apply { mkdirs() }
+        File(smallFolder, "small.bin").writeBytes(ByteArray(4))
+        val largeFolder = File(directory, "large-folder").apply { mkdirs() }
+        File(largeFolder, "large.bin").writeBytes(ByteArray(64))
+        val rootFile = File(directory, "root.bin").apply { writeBytes(ByteArray(128)) }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+                viewModel.setSort(PanelId.LEFT, com.affilemanager.app.model.SortMode.SIZE, com.affilemanager.app.model.SortDirection.DESCENDING)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.leftPanel.value
+                !state.loading && state.entries.map(FileEntry::name) == listOf("large-folder", "small-folder", "root.bin")
+            }
+
+            assertEquals(listOf(64L, 4L, 128L), viewModel.leftPanel.value.entries.map(FileEntry::sizeBytes))
+            compose.onNodeWithTag("file_size_bar_${largeFolder.absolutePath.hashCode()}").assertIsDisplayed()
+            compose.onNodeWithTag("file_size_bar_${rootFile.absolutePath.hashCode()}").assertIsDisplayed()
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun localQuickSearchFiltersOnlyTheCurrentFolder() {
         val directory = File(compose.activity.getExternalFilesDir(null), "search-${System.nanoTime()}").apply { mkdirs() }
         File(directory, "alpha.txt").writeText("alpha")

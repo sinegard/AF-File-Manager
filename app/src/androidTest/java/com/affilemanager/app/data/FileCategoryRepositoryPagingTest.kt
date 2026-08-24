@@ -6,7 +6,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.model.FileEntry
 import java.util.Locale
+import java.io.File
+import java.util.zip.ZipFile
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -16,6 +19,69 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class FileCategoryRepositoryPagingTest {
+    @Test
+    fun installedAppBackupIsStagedAndVerifiedBeforeExport() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val repository = FileCategoryRepository(context, LocalFileRepository(context))
+        val temporaryDirectory = File(context.cacheDir, "apk-stage-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            var offset: Int? = 0
+            var ownEntry: FileEntry? = null
+            while (offset != null && ownEntry == null) {
+                val requestedOffset = requireNotNull(offset)
+                val page = repository.loadPage(
+                    category = FileCategory.INSTALLED_APPS,
+                    offset = requestedOffset,
+                    sortMode = SortMode.NAME,
+                    sortDirection = SortDirection.ASCENDING,
+                    forceRefresh = requestedOffset == 0,
+                    showSystemApps = true,
+                )
+                ownEntry = page.entries.firstOrNull { it.packageName == context.packageName }
+                offset = page.nextOffset
+            }
+
+            val backup = repository.stageInstalledApp(requireNotNull(ownEntry), temporaryDirectory)
+            assertTrue(backup.isFile)
+            assertTrue(backup.length() > 0L)
+            assertTrue(backup.canonicalFile.toPath().startsWith(temporaryDirectory.canonicalFile.toPath()))
+            if (backup.extension.equals("apks", ignoreCase = true)) {
+                ZipFile(backup).use { archive -> assertNotNull(archive.getEntry("base.apk")) }
+            } else {
+                assertEquals("apk", backup.extension.lowercase(Locale.ROOT))
+            }
+        } finally {
+            temporaryDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installedAppsHideSystemPackagesUntilExplicitlyRequested() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val repository = FileCategoryRepository(context, LocalFileRepository(context))
+
+        val userApps = repository.loadPage(
+            category = FileCategory.INSTALLED_APPS,
+            offset = 0,
+            sortMode = SortMode.NAME,
+            sortDirection = SortDirection.ASCENDING,
+            forceRefresh = true,
+            showSystemApps = false,
+        ).entries
+        val allApps = repository.loadPage(
+            category = FileCategory.INSTALLED_APPS,
+            offset = 0,
+            sortMode = SortMode.NAME,
+            sortDirection = SortDirection.ASCENDING,
+            forceRefresh = true,
+            showSystemApps = true,
+        ).entries
+
+        assertTrue(userApps.none { it.isSystemApp })
+        assertTrue(allApps.any { it.isSystemApp })
+        assertTrue(allApps.all { !it.packageName.isNullOrBlank() })
+    }
+
     @Test
     fun imagesAreReturnedInBoundedGloballySortedPages() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -59,6 +59,7 @@ class TerminalSessionController private constructor(
     private val sessionJob = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + sessionJob)
     private val pendingInput = Channel<ByteArray>(TerminalLimits.MAX_PENDING_INPUT_CHUNKS)
+    private val outputCapture = TerminalOutputCapture()
 
     companion object {
         fun create(
@@ -97,8 +98,14 @@ class TerminalSessionController private constructor(
         if (closed.get() || data.isEmpty() || data.size > TerminalLimits.MAX_INPUT_CHUNK_BYTES) return false
         val copy = data.copyOf()
         val accepted = pendingInput.trySend(copy).isSuccess
-        if (!accepted) copy.fill(0)
+        if (accepted) outputCapture.recordAcceptedInput(copy) else copy.fill(0)
         return accepted
+    }
+
+    internal fun lastCommandOutput(): CapturedTerminalOutput? {
+        val semanticOutput = emulator.getLastCommandOutput()?.takeIf { it.isNotBlank() }
+        return semanticOutput?.let { CapturedTerminalOutput(it.trimEnd(), truncated = false) }
+            ?: outputCapture.snapshot()
     }
 
     fun paste(text: String): TerminalPasteResult {
@@ -129,7 +136,10 @@ class TerminalSessionController private constructor(
                 while (isActive && !closed.get()) {
                     val count = backend.read(buffer)
                     if (count < 0) break
-                    if (count > 0) emulator.writeInput(buffer, 0, count)
+                    if (count > 0) {
+                        outputCapture.recordOutput(buffer, 0, count)
+                        emulator.writeInput(buffer, 0, count)
+                    }
                 }
                 if (!closed.get()) deliverEnded(null)
             } catch (cancelled: CancellationException) {

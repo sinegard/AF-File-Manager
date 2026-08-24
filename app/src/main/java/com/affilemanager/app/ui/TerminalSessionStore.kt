@@ -190,6 +190,22 @@ class TerminalSessionStore(
 
     fun paste(text: String): TerminalPasteResult = session?.paste(text) ?: TerminalPasteResult.BUSY
 
+    fun copyLastOutput() {
+        val output = session?.lastCommandOutput()
+        when {
+            output == null -> _notices.tryEmit("Nėra terminalo išvesties, kurią būtų galima kopijuoti")
+            output.truncated || output.text.toByteArray(Charsets.UTF_8).size > TerminalLimits.MAX_CLIPBOARD_COPY_BYTES ->
+                _notices.tryEmit("Paskutinė terminalo išvestis viršija 64 KiB kopijavimo ribą")
+            copyTerminalText(output.text) -> _notices.tryEmit("Paskutinė terminalo išvestis nukopijuota")
+        }
+    }
+
+    fun hasCopyableLastOutput(): Boolean = session?.lastCommandOutput()?.let { output ->
+        !output.truncated &&
+            output.text.isNotBlank() &&
+            output.text.toByteArray(Charsets.UTF_8).size <= TerminalLimits.MAX_CLIPBOARD_COPY_BYTES
+    } == true
+
     fun dispatchKey(key: Int) {
         session?.dispatchKey(key)
     }
@@ -237,13 +253,14 @@ class TerminalSessionStore(
         if (shouldStop) TerminalKeepAliveService.stop(application)
     }
 
-    private fun copyTerminalText(text: String) {
-        if (text.isEmpty()) return
+    private fun copyTerminalText(text: String): Boolean {
+        if (text.isEmpty()) return false
         if (text.toByteArray(Charsets.UTF_8).size > TerminalLimits.MAX_CLIPBOARD_COPY_BYTES) {
             _notices.tryEmit("Pažymėtas terminalo tekstas viršija 64 KiB kopijavimo ribą")
-            return
+            return false
         }
         val clipboard = application.getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText("AF File Manager terminal", text))
+        return clipboard != null
     }
 }

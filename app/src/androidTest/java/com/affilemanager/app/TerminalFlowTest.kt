@@ -1,5 +1,6 @@
 package com.affilemanager.app
 
+import android.content.ClipboardManager
 import android.content.Intent
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -129,6 +130,39 @@ class TerminalFlowTest {
             assertTrue(viewModel.terminalState.value.running)
         } finally {
             compose.runOnUiThread { viewModel.confirmTerminalClose() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun terminalOffersTextSelectionAndCopiesTheLastOutput() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val application = compose.activity.application as AFFileManagerApplication
+        val clipboard = compose.activity.getSystemService(ClipboardManager::class.java)
+        val directory = File(compose.activity.getExternalFilesDir(null), "terminal-copy-${System.nanoTime()}").apply { mkdirs() }
+        val marker = "AF_LAST_OUTPUT_${System.nanoTime()}"
+        try {
+            compose.runOnUiThread {
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.openLocalTerminal(PanelId.LEFT)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.terminalState.value.running }
+            compose.onNodeWithTag("terminal-select-text").fetchSemanticsNode()
+            compose.onNodeWithTag("terminal-copy-selection").fetchSemanticsNode()
+            compose.onNodeWithTag("terminal-canvas").fetchSemanticsNode()
+
+            compose.runOnUiThread {
+                clipboard.clearPrimaryClip()
+                viewModel.pasteIntoTerminal("printf '$marker\\n'\r")
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { application.graph.terminalSessions.hasCopyableLastOutput() }
+
+            compose.onNodeWithTag("terminal-copy-last").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                clipboard.primaryClip?.getItemAt(0)?.text?.toString()?.contains(marker) == true
+            }
+        } finally {
+            application.graph.terminalSessions.closeNow()
             directory.deleteRecursively()
         }
     }

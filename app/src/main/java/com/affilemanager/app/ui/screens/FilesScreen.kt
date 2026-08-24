@@ -169,6 +169,8 @@ import com.affilemanager.app.ui.components.DirectoryLayoutButton
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.DirectorySearchButton
+import com.affilemanager.app.ui.components.FileInfoDialog
+import com.affilemanager.app.ui.components.FileSizeBar
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
@@ -1495,6 +1497,15 @@ private fun FilePanel(
                             Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                         }
                     }
+                    IconButton(
+                        enabled = state.selectedPaths.size == 1,
+                        onClick = {
+                            state.entries.firstOrNull { it.absolutePath in state.selectedPaths }?.let(onInfo)
+                        },
+                        modifier = Modifier.testTag("selection_info_local"),
+                    ) {
+                        Icon(Icons.Rounded.Info, contentDescription = uiText("Informacija"))
+                    }
                     IconButton(onClick = { viewModel.copySelection(panelId, move = true) }) {
                         Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
                     }
@@ -1783,6 +1794,12 @@ private fun FileList(
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
     val chooserError = uiText("Programų pasirinkiklio atidaryti nepavyko")
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
+    val largestSizeBytes = remember(state.entries, state.sortMode) {
+        state.entries.takeIf { state.sortMode == SortMode.SIZE }
+            ?.asSequence()
+            ?.filter(FileEntry::metadataComplete)
+            ?.maxOfOrNull(FileEntry::sizeBytes)
+    }
     val initialPosition = remember(scrollKey) { viewModel.fileScrollPosition(scrollKey) }
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
@@ -1849,7 +1866,9 @@ private fun FileList(
         ) {
             items(state.entries, key = FileEntry::absolutePath, contentType = FileEntry::kind) { entry ->
                 val tagRecord = tagsByPath[entry.absolutePath]
-                val metadata = remember(entry) { entryMeta(entry, dateFormat) }
+                val metadata = remember(entry, state.sortMode) {
+                    entryMeta(entry, dateFormat, showDirectorySize = state.sortMode == SortMode.SIZE)
+                }
                 val tagText = remember(entry, tagRecord) { tagSummary(entry, tagRecord) }
                 FileRow(
                     entry = entry,
@@ -1859,6 +1878,7 @@ private fun FileList(
                     showThumbnails = state.showThumbnails,
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
+                    largestSizeBytes = largestSizeBytes,
                     onClick = { handleEntryClick(panel, state, entry, viewModel) },
                     onLongClick = { viewModel.toggleSelection(panel, entry.absolutePath) },
                     onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
@@ -1897,6 +1917,12 @@ private fun FileGrid(
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
     val chooserError = uiText("Programų pasirinkiklio atidaryti nepavyko")
+    val largestSizeBytes = remember(state.entries, state.sortMode) {
+        state.entries.takeIf { state.sortMode == SortMode.SIZE }
+            ?.asSequence()
+            ?.filter(FileEntry::metadataComplete)
+            ?.maxOfOrNull(FileEntry::sizeBytes)
+    }
     val initialPosition = remember(scrollKey) { viewModel.fileScrollPosition(scrollKey) }
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
@@ -1974,6 +2000,7 @@ private fun FileGrid(
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
                     gridStyle = state.gridStyle,
+                    largestSizeBytes = largestSizeBytes,
                     onClick = { handleEntryClick(panel, state, entry, viewModel) },
                     onLongClick = { viewModel.toggleSelection(panel, entry.absolutePath) },
                     onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
@@ -2013,6 +2040,7 @@ private fun FileRow(
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    largestSizeBytes: Long?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPreview: () -> Unit,
@@ -2055,6 +2083,14 @@ private fun FileRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (entry.isDirectory) FontWeight.SemiBold else FontWeight.Normal)
             LText(metadata, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (largestSizeBytes != null && entry.metadataComplete) {
+                FileSizeBar(
+                    sizeBytes = entry.sizeBytes,
+                    largestSizeBytes = largestSizeBytes,
+                    identity = entry.absolutePath,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
             tagText?.let { summary ->
                 Text(summary, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -2078,6 +2114,7 @@ private fun FileTile(
     iconScalePercent: Int,
     spacingScalePercent: Int,
     gridStyle: DirectoryGridStyle,
+    largestSizeBytes: Long?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPreview: () -> Unit,
@@ -2089,7 +2126,7 @@ private fun FileTile(
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
-    val cardHeight = 158.dp + (visualHeight - 76.dp)
+    val cardHeight = 158.dp + (visualHeight - 76.dp) + if (largestSizeBytes != null) 10.dp else 0.dp
     val innerPadding = (9f * spacingScalePercent / 100f).dp
     val itemAlpha = if (entry.isHidden && !selected) 0.64f else 1f
     Card(
@@ -2121,7 +2158,17 @@ private fun FileTile(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                if (!entry.isDirectory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                if (!entry.isDirectory || largestSizeBytes != null && entry.metadataComplete) {
+                    Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
+                }
+                if (largestSizeBytes != null && entry.metadataComplete) {
+                    FileSizeBar(
+                        sizeBytes = entry.sizeBytes,
+                        largestSizeBytes = largestSizeBytes,
+                        identity = entry.absolutePath,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
                 tagText?.let { summary ->
                     Text(summary, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -2281,41 +2328,6 @@ private fun EntryActionsButton(
                 onClick = { expanded = false; onTrash() },
             )
         }
-    }
-}
-
-@Composable
-private fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
-    val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-        title = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                InfoLine("Tipas", if (entry.isDirectory) uiText("Aplankas") else entry.extension.uppercase().ifBlank { entry.kind.name })
-                if (!entry.isDirectory) InfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
-                if (entry.modifiedAtMillis > 0L) InfoLine("Pakeista", dateFormat.format(Date(entry.modifiedAtMillis)))
-                InfoLine(
-                    "Prieiga",
-                    listOfNotNull(
-                        uiText("Skaitoma").takeIf { entry.isReadable },
-                        uiText("Rašoma").takeIf { entry.isWritable },
-                    ).ifEmpty { listOf(uiText("Neprieinama")) }.joinToString(" · "),
-                )
-                LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                Text(entry.absolutePath, style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
-    )
-}
-
-@Composable
-private fun InfoLine(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        LText(label, modifier = Modifier.width(88.dp), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -2490,8 +2502,13 @@ internal fun sortLabel(mode: SortMode): String = when (mode) {
     SortMode.TYPE -> "Pagal tipą"
 }
 
-private fun entryMeta(entry: FileEntry, dateFormat: DateFormat): String {
+private fun entryMeta(entry: FileEntry, dateFormat: DateFormat, showDirectorySize: Boolean = false): String {
     if (!entry.metadataComplete) return if (entry.isDirectory) "Aplankas · kraunami duomenys…" else "Kraunami duomenys…"
     val date = entry.modifiedAtMillis.takeIf { it > 0 }?.let { dateFormat.format(Date(it)) }
-    return listOfNotNull(if (entry.isDirectory) "Aplankas" else FileSystemRules.humanBytes(entry.sizeBytes), date).joinToString(" · ")
+    val size = when {
+        entry.isDirectory && showDirectorySize -> "Aplankas · ${FileSystemRules.humanBytes(entry.sizeBytes)}"
+        entry.isDirectory -> "Aplankas"
+        else -> FileSystemRules.humanBytes(entry.sizeBytes)
+    }
+    return listOfNotNull(size, date).joinToString(" · ")
 }

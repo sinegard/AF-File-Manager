@@ -2,7 +2,7 @@ package com.affilemanager.app.data
 
 import android.content.ContentResolver
 import android.content.Context
-import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,13 +16,22 @@ import com.affilemanager.app.model.FileSearchResult
 import com.affilemanager.app.model.SearchFilters
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.BufferedOutputStream
+import java.io.OutputStream
+import java.nio.file.Files
 import java.util.LinkedHashMap
 import java.util.Locale
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
 
 enum class FileCategory(val kind: EntryKind) {
@@ -47,6 +56,33 @@ data class FileCategoryPage(
     val nextOffset: Int?,
     val truncated: Boolean,
 )
+
+data class InstalledAppExportResult(
+    val exportedApps: Int,
+    val failedApps: Int,
+)
+
+internal object InstalledAppBackupRules {
+    const val MAX_SELECTED_APPS = 50
+    const val MAX_PACKAGE_PARTS = 64
+    const val MAX_APP_BYTES = 5L * 1024L * 1024L * 1024L
+    private const val MAX_STEM_LENGTH = 80
+    private val unsafeNameCharacters = Regex("[\\u0000-\\u001f\\\\/:*?\"<>|]")
+
+    fun fileName(label: String, packageName: String, versionName: String?, split: Boolean): String {
+        val readableLabel = label.trim().ifBlank { packageName }
+        val rawStem = listOfNotNull(readableLabel, versionName?.trim()?.takeIf(String::isNotBlank)).joinToString("-")
+        val safeStem = rawStem.replace(unsafeNameCharacters, "_").trim().trim('.').take(MAX_STEM_LENGTH)
+            .ifBlank { packageName.replace(unsafeNameCharacters, "_").take(MAX_STEM_LENGTH) }
+        return safeStem + if (split) ".apks" else ".apk"
+    }
+
+    fun zipEntryName(source: File, index: Int): String {
+        if (index == 0) return "base.apk"
+        val safe = source.name.replace(unsafeNameCharacters, "_").trim().ifBlank { "split-$index.apk" }
+        return if (safe.endsWith(".apk", ignoreCase = true)) safe else "$safe.apk"
+    }
+}
 
 internal object FileCategoryPagingRules {
     const val FIRST_PAGE_RESULTS = 160
@@ -87,6 +123,7 @@ class FileCategoryRepository(
         val offset: Int,
         val sortMode: SortMode,
         val sortDirection: SortDirection,
+        val showSystemApps: Boolean,
     )
 
     private data class CachedPage(val page: FileCategoryPage, val createdAtNanos: Long)
@@ -137,12 +174,13 @@ class FileCategoryRepository(
         sortMode: SortMode,
         sortDirection: SortDirection,
         forceRefresh: Boolean = false,
+        showSystemApps: Boolean = false,
     ): FileCategoryPage = withContext(Dispatchers.IO) {
         require(offset in 0 until MAX_QUERY_ROWS) { "Invalid category page offset" }
         if (forceRefresh) invalidate(category)
-        val key = PageKey(category, offset, sortMode, sortDirection)
+        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps)
         cached(key)?.let { return@withContext it }
-        val page = queryCategoryPage(category, offset, sortMode, sortDirection)
+        val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps)
         synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
         page
     }
@@ -214,10 +252,11 @@ class FileCategoryRepository(
         offset: Int,
         sortMode: SortMode,
         sortDirection: SortDirection,
+        showSystemApps: Boolean,
     ): FileCategoryPage {
         val resultLimit = FileCategoryPagingRules.resultLimit(offset)
         if (category == FileCategory.INSTALLED_APPS) {
-            val allEntries = FileEntryOrdering.order(queryLaunchableApps(MAX_RESULTS), sortMode, sortDirection)
+            val allEntries = FileEntryOrdering.order(queryInstalledApps(MAX_RESULTS, showSystemApps), sortMode, sortDirection)
             val entries = allEntries.drop(offset).take(resultLimit)
             val nextOffset = (offset + entries.size).takeIf { it < allEntries.size && it < MAX_RESULTS }
             return FileCategoryPage(
@@ -390,24 +429,164 @@ class FileCategoryRepository(
         EntryKind.DIRECTORY, EntryKind.OTHER -> null
     }
 
-    @Suppress("DEPRECATION")
-    private fun queryLaunchableApps(limit: Int): List<FileEntry> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val matches = if (Build.VERSION.SDK_INT >= 33) {
-            applicationContext.packageManager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
-        } else {
-            applicationContext.packageManager.queryIntentActivities(intent, 0)
+    suspend fun exportInstalledApps(
+        entries: List<FileEntry>,
+        destinationUri: String,
+        safFiles: SafFileRepository,
+        operation: OperationContext,
+    ): InstalledAppExportResult = withContext(Dispatchers.IO) {
+        val selected = entries
+            .filter { !it.packageName.isNullOrBlank() }
+            .distinctBy(FileEntry::packageName)
+        require(selected.isNotEmpty()) { "Pasirinkite bent vieną įdiegtą programą" }
+        require(selected.size <= InstalledAppBackupRules.MAX_SELECTED_APPS) {
+            "Vienu metu galima išsaugoti iki ${InstalledAppBackupRules.MAX_SELECTED_APPS} programų"
         }
-        return matches.asSequence()
-            .mapNotNull { info ->
-                val applicationInfo = info.activityInfo?.applicationInfo ?: return@mapNotNull null
+        operation.setTotals(selected.size, bytes = null)
+        val temporaryRoot = Files.createTempDirectory(applicationContext.cacheDir.toPath(), "installed-app-export-").toFile()
+        var exported = 0
+        var failed = 0
+        try {
+            selected.forEach { entry ->
+                operation.checkpoint()
+                val appDirectory = Files.createTempDirectory(temporaryRoot.toPath(), "app-").toFile()
+                try {
+                    val backup = stageInstalledApp(entry, appDirectory)
+                    safFiles.copyFromLocal(backup, destinationUri, operation).getOrThrow()
+                    exported += 1
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    failed += 1
+                } finally {
+                    appDirectory.deleteRecursively()
+                }
+            }
+        } finally {
+            temporaryRoot.deleteRecursively()
+        }
+        if (failed > 0) operation.completeWithErrors(failed, "Išsaugota: $exported · nepavyko: $failed")
+        else operation.note("Išsaugota programų: $exported")
+        InstalledAppExportResult(exportedApps = exported, failedApps = failed)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun queryInstalledApps(limit: Int, showSystemApps: Boolean): List<FileEntry> {
+        val packageManager = applicationContext.packageManager
+        val applications = if (Build.VERSION.SDK_INT >= 33) {
+            packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            packageManager.getInstalledApplications(0)
+        }
+        return applications.asSequence()
+            .filter { info -> showSystemApps || !info.isSystemApplication() }
+            .mapNotNull { applicationInfo ->
                 val file = File(applicationInfo.sourceDir ?: return@mapNotNull null)
                 if (!file.isFile || !file.canRead()) return@mapNotNull null
-                val label = applicationInfo.loadLabel(applicationContext.packageManager).toString().trim()
-                localFiles.toEntry(file).copy(name = label.ifBlank { applicationInfo.packageName })
+                val label = applicationInfo.loadLabel(packageManager).toString().trim()
+                val installedBytes = buildList {
+                    add(file)
+                    applicationInfo.splitSourceDirs.orEmpty().forEach { add(File(it)) }
+                }.fold(0L) { total, source ->
+                    runCatching { Math.addExact(total, source.length().coerceAtLeast(0L)) }.getOrDefault(Long.MAX_VALUE)
+                }
+                val versionName = runCatching {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        packageManager.getPackageInfo(applicationInfo.packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+                    } else {
+                        packageManager.getPackageInfo(applicationInfo.packageName, 0).versionName
+                    }
+                }.getOrNull()
+                localFiles.toEntry(file).copy(
+                    name = label.ifBlank { applicationInfo.packageName },
+                    sizeBytes = installedBytes,
+                    packageName = applicationInfo.packageName,
+                    appVersionName = versionName,
+                    isSystemApp = applicationInfo.isSystemApplication(),
+                )
             }
-            .distinctBy(FileEntry::absolutePath)
+            .distinctBy(FileEntry::packageName)
             .take(limit.coerceIn(0, MAX_RESULTS))
             .toList()
     }
+
+    @Suppress("DEPRECATION")
+    internal suspend fun stageInstalledApp(entry: FileEntry, temporaryDirectory: File): File {
+        val packageName = requireNotNull(entry.packageName) { "Programos paketo nustatyti nepavyko" }
+        val packageManager = applicationContext.packageManager
+        val applicationInfo = if (Build.VERSION.SDK_INT >= 33) {
+            packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            packageManager.getApplicationInfo(packageName, 0)
+        }
+        val sources = buildList {
+            add(File(requireNotNull(applicationInfo.sourceDir) { "Programos APK nepasiekiamas" }))
+            applicationInfo.splitSourceDirs.orEmpty().forEach { add(File(it)) }
+        }
+        require(sources.size <= InstalledAppBackupRules.MAX_PACKAGE_PARTS) { "Programos pakete per daug dalių" }
+        require(sources.all { it.isFile && it.canRead() }) { "Programos APK nepasiekiamas" }
+        val totalBytes = sources.fold(0L) { total, source -> Math.addExact(total, source.length().coerceAtLeast(0L)) }
+        require(totalBytes <= InstalledAppBackupRules.MAX_APP_BYTES) { "Programos atsarginė kopija per didelė" }
+        require(temporaryDirectory.usableSpace > totalBytes + 32L * 1024L * 1024L) { "Laikinai kopijai nepakanka vietos" }
+        val output = File(
+            temporaryDirectory,
+            InstalledAppBackupRules.fileName(entry.name, packageName, entry.appVersionName, split = sources.size > 1),
+        )
+        require(output.canonicalFile.toPath().startsWith(temporaryDirectory.canonicalFile.toPath())) {
+            "Netinkamas programos atsarginės kopijos vardas"
+        }
+        if (sources.size == 1) {
+            output.outputStream().buffered().use { sink -> copyStream(sources.single(), sink) }
+            require(output.length() == sources.single().length()) { "Programos APK kopijos dydis nesutampa" }
+            return output
+        }
+        val expectedEntries = linkedMapOf<String, Long>()
+        ZipOutputStream(BufferedOutputStream(output.outputStream())).use { zip ->
+            zip.setLevel(Deflater.NO_COMPRESSION)
+            val usedNames = mutableSetOf<String>()
+            sources.forEachIndexed { index, source ->
+                coroutineContext.ensureActive()
+                val requested = InstalledAppBackupRules.zipEntryName(source, index)
+                val extensionIndex = requested.lastIndexOf('.').takeIf { it > 0 } ?: requested.length
+                val stem = requested.substring(0, extensionIndex)
+                val extension = requested.substring(extensionIndex)
+                var name = requested
+                var suffix = 2
+                while (!usedNames.add(name)) {
+                    name = "$stem-$suffix$extension"
+                    suffix += 1
+                }
+                expectedEntries[name] = source.length()
+                zip.putNextEntry(ZipEntry(name))
+                copyStream(source, zip)
+                zip.closeEntry()
+            }
+        }
+        ZipFile(output).use { archive ->
+            require(archive.size() == expectedEntries.size) { "Programos atsarginės kopijos patikrinti nepavyko" }
+            expectedEntries.forEach { (name, expectedBytes) ->
+                require(archive.getEntry(name)?.size == expectedBytes) { "Programos atsarginės kopijos patikrinti nepavyko" }
+            }
+        }
+        require(output.isFile && output.length() > 0L) { "Programos atsarginės kopijos sukurti nepavyko" }
+        return output
+    }
+
+    private suspend fun copyStream(source: File, output: OutputStream) {
+        val buffer = ByteArray(256 * 1024)
+        source.inputStream().buffered().use { input ->
+            var copied = 0L
+            while (true) {
+                coroutineContext.ensureActive()
+                val read = input.read(buffer)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+                copied = Math.addExact(copied, read.toLong())
+            }
+            require(copied == source.length()) { "Programos APK kopijos dydis nesutampa" }
+        }
+    }
+
+    private fun ApplicationInfo.isSystemApplication(): Boolean =
+        flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
 }

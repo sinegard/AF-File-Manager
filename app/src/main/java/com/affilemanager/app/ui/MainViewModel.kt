@@ -226,6 +226,7 @@ data class FileCategoryUiState(
     val gridColumns: Int = 3,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
+    val showSystemApps: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val scannedRows: Int = 0,
@@ -1330,7 +1331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             current.copy(
                                 entries = entries,
                                 loading = false,
-                                listingMetadataEntries = entries.size,
+                                listingMetadataEntries = entries.count(FileEntry::metadataComplete),
                                 error = null,
                             )
                         } else current
@@ -1748,6 +1749,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!reset && (snapshot.loading || snapshot.loadingMore)) return
         val sortMode = snapshot.sortMode
         val sortDirection = snapshot.sortDirection
+        val showSystemApps = snapshot.showSystemApps
         fileCategoryJob?.cancel()
         _fileCategory.update { current ->
             if (current.category != category) current else if (reset) {
@@ -1780,6 +1782,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         sortMode = sortMode,
                         sortDirection = sortDirection,
                         forceRefresh = refresh,
+                        showSystemApps = showSystemApps,
                     )
                     refresh = false
                     pageEntries = page.entries
@@ -1791,7 +1794,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val current = _fileCategory.value
                 if (!current.open || current.category != category ||
-                    current.sortMode != sortMode || current.sortDirection != sortDirection
+                    current.sortMode != sortMode || current.sortDirection != sortDirection ||
+                    current.showSystemApps != showSystemApps
                 ) return@launch
                 _fileCategory.update {
                     val merged = (if (reset) pageEntries else it.entries + pageEntries)
@@ -1837,9 +1841,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val application = getApplication<Application>()
         runCatching {
-            val packageName = application.packageManager
-                .getPackageArchiveInfo(entry.absolutePath, 0)
-                ?.packageName
+            val packageName = entry.packageName
+                ?: application.packageManager.getPackageArchiveInfo(entry.absolutePath, 0)?.packageName
                 ?: error("Programos paketo nustatyti nepavyko")
             val intent = application.packageManager.getLaunchIntentForPackage(packageName)
                 ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
@@ -1877,6 +1880,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (state.category == null || (state.sortMode == mode && state.sortDirection == direction)) return
         _fileCategory.update { it.copy(sortMode = mode, sortDirection = direction, selectedPaths = emptySet()) }
         loadFileCategoryPage(reset = true)
+    }
+
+    fun toggleInstalledSystemApps() {
+        val state = _fileCategory.value
+        if (state.category != FileCategory.INSTALLED_APPS) return
+        _fileCategory.update { it.copy(showSystemApps = !it.showSystemApps, selectedPaths = emptySet()) }
+        loadFileCategoryPage(reset = true, forceRefresh = true)
     }
 
     fun closeFileCategory() {
@@ -1938,6 +1948,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val paths = _fileCategory.value.selectedPaths.toList()
         if (paths.isEmpty()) return
         if (setLocalClipboard(paths, move, append)) clearFileCategorySelection()
+    }
+
+    fun trashFileCategorySelection() {
+        val state = _fileCategory.value
+        if (state.category == null || state.category == FileCategory.INSTALLED_APPS) return
+        val paths = state.selectedPaths.toList()
+        if (paths.isEmpty()) return
+        graph.operationManager.submit("Keliama į šiukšlinę") {
+            graph.trash.moveToTrash(paths, this)
+            clearFileCategorySelection()
+            refreshFileCategory()
+        }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
+    }
+
+    fun uninstallSelectedInstalledApp() {
+        val state = _fileCategory.value
+        if (state.category != FileCategory.INSTALLED_APPS) return
+        val selected = state.entries.filter { it.absolutePath in state.selectedPaths }
+        if (selected.size != 1) {
+            message("Pasirinkite vieną programą, kurią norite pašalinti", true)
+            return
+        }
+        val packageName = selected.single().packageName
+        if (packageName.isNullOrBlank()) {
+            message("Programos paketo nustatyti nepavyko", true)
+            return
+        }
+        runCatching {
+            getApplication<Application>().startActivity(
+                Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onSuccess {
+            clearFileCategorySelection()
+        }.onFailure { message(it.message ?: "Programos šalinimo lango atidaryti nepavyko", true) }
+    }
+
+    fun exportSelectedInstalledApps(destinationUri: Uri) {
+        val state = _fileCategory.value
+        if (state.category != FileCategory.INSTALLED_APPS) return
+        val selected = state.entries.filter { it.absolutePath in state.selectedPaths }
+        if (selected.isEmpty()) return
+        runCatching {
+            getApplication<Application>().contentResolver.takePersistableUriPermission(
+                destinationUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        graph.operationManager.submit("Išsaugomos įdiegtos programos") {
+            graph.fileCategories.exportInstalledApps(selected, destinationUri.toString(), graph.safFiles, this)
+            clearFileCategorySelection()
+        }.onFailure { message(it.message ?: "Programų išsaugojimo pradėti nepavyko", true) }
     }
 
     fun paste(
@@ -3909,6 +3971,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             TerminalPasteResult.BUSY ->
                 message("Terminalo įvestis užimta; bandykite įklijuoti dar kartą", true)
         }
+    }
+
+    fun copyLastTerminalOutput() {
+        graph.terminalSessions.copyLastOutput()
     }
 
     fun dispatchTerminalKey(key: Int) {

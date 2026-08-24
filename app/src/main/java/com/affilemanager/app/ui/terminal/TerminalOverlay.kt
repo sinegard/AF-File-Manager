@@ -54,6 +54,7 @@ import com.affilemanager.app.ui.TerminalUiState
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import org.connectbot.terminal.SelectionController
+import org.connectbot.terminal.SelectionMode
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
@@ -64,6 +65,7 @@ fun TerminalOverlay(
     onConfirmClose: () -> Unit,
     onDismissCloseConfirmation: () -> Unit,
     onPaste: (String) -> Unit,
+    onCopyLastOutput: () -> Unit,
     onKey: (Int) -> Unit,
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
@@ -194,7 +196,7 @@ fun TerminalOverlay(
                         else -> {
                             Terminal(
                                 terminalEmulator = emulator,
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.fillMaxSize().testTag("terminal-canvas"),
                                 typeface = Typeface.MONOSPACE,
                                 initialFontSize = 12.sp,
                                 backgroundColor = Color.Black,
@@ -224,6 +226,8 @@ fun TerminalOverlay(
 
                 TerminalKeyBar(
                     state = state,
+                    selectionController = selectionController,
+                    onCopyLastOutput = onCopyLastOutput,
                     onKey = onKey,
                     onToggleCtrl = onToggleCtrl,
                     onToggleAlt = onToggleAlt,
@@ -246,6 +250,8 @@ fun TerminalOverlay(
 @Composable
 private fun TerminalKeyBar(
     state: TerminalUiState,
+    selectionController: SelectionController?,
+    onCopyLastOutput: () -> Unit,
     onKey: (Int) -> Unit,
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
@@ -260,6 +266,15 @@ private fun TerminalKeyBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        TerminalKey("Žymėti tekstą", state.emulator != null, Modifier.testTag("terminal-select-text")) {
+            selectionController?.startSelection(SelectionMode.WORD)
+        }
+        TerminalKey("Kopijuoti pažymėtą", state.emulator != null, Modifier.testTag("terminal-copy-selection")) {
+            selectionController?.copySelection()
+        }
+        TerminalKey("Kopijuoti paskutinę išvestį", state.emulator != null, Modifier.testTag("terminal-copy-last")) {
+            onCopyLastOutput()
+        }
         TerminalKey("Esc", state.running) { onKey(VTermKey.ESCAPE) }
         FilterChip(
             selected = state.modifiers?.ctrlActive == true,
@@ -287,6 +302,11 @@ private fun TerminalKeyBar(
 }
 
 @Composable
-private fun TerminalKey(label: String, enabled: Boolean, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, enabled = enabled) { Text(label) }
+private fun TerminalKey(
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(onClick = onClick, enabled = enabled, modifier = modifier) { LText(label) }
 }

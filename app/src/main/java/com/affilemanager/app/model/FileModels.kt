@@ -23,6 +23,9 @@ data class FileEntry(
     val isReadable: Boolean,
     val isWritable: Boolean,
     val metadataComplete: Boolean = true,
+    val packageName: String? = null,
+    val appVersionName: String? = null,
+    val isSystemApp: Boolean = false,
 ) {
     val isDirectory: Boolean get() = kind == EntryKind.DIRECTORY
     val extension: String get() = name.substringAfterLast('.', "").lowercase()

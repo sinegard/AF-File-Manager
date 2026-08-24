@@ -140,6 +140,11 @@ fun AFFileManagerApp(
         it.status == OperationStatus.RUNNING || it.status == OperationStatus.PAUSED || it.status == OperationStatus.QUEUED
     }
     val activePanelState = if (activePanel == PanelId.LEFT) leftPanel else rightPanel
+    val selectionDockVisible = when (section) {
+        AppSection.FILES -> activePanelState.selectedPaths.isNotEmpty()
+        AppSection.CONNECTIONS -> networkState.selectedPaths.isNotEmpty()
+        else -> false
+    }
     val systemBackAction = BackNavigationRules.decide(
         previewOpen = preview != null,
         section = section,
@@ -223,7 +228,12 @@ fun AFFileManagerApp(
     BoxWithConstraints(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         val wideNavigation = maxWidth >= 900.dp
         Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = {
+                SnackbarHost(
+                    hostState = snackbarHostState,
+                    modifier = Modifier.padding(bottom = if (selectionDockVisible) 72.dp else 0.dp),
+                )
+            },
             bottomBar = {
                 if (!wideNavigation) {
                     NavigationBar {
@@ -369,6 +379,7 @@ fun AFFileManagerApp(
         onConfirmClose = viewModel::confirmTerminalClose,
         onDismissCloseConfirmation = viewModel::dismissTerminalCloseConfirmation,
         onPaste = viewModel::pasteIntoTerminal,
+        onCopyLastOutput = viewModel::copyLastTerminalOutput,
         onKey = viewModel::dispatchTerminalKey,
         onToggleCtrl = viewModel::toggleTerminalCtrl,
         onToggleAlt = viewModel::toggleTerminalAlt,

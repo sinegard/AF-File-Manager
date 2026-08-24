@@ -1,6 +1,8 @@
 package com.affilemanager.app.ui.screens
 
 import android.text.format.DateUtils
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -28,8 +30,13 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SaveAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -62,12 +70,15 @@ import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.FileCategoryUiState
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
+import com.affilemanager.app.ui.components.FileInfoDialog
+import com.affilemanager.app.ui.components.FileSizeBar
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.localization.LText
@@ -98,6 +109,11 @@ fun FileCategoryBrowser(
     var selectedParent by remember(state.category) { mutableStateOf<String?>(null) }
     var menu by remember(state.category) { mutableStateOf(false) }
     var showDisplaySettings by remember(state.category) { mutableStateOf(false) }
+    var infoTarget by remember(state.category) { mutableStateOf<FileEntry?>(null) }
+    var confirmTrash by remember(state.category) { mutableStateOf(false) }
+    val exportAppsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) viewModel.exportSelectedInstalledApps(uri)
+    }
     LaunchedEffect(state.category) {
         searchVisible = false
         query = ""
@@ -126,6 +142,12 @@ fun FileCategoryBrowser(
         transforming = false
     }
     val visible = transformed.entries
+    val largestSizeBytes = remember(visible, state.sortMode) {
+        visible.takeIf { state.sortMode == SortMode.SIZE }
+            ?.asSequence()
+            ?.filter(FileEntry::metadataComplete)
+            ?.maxOfOrNull(FileEntry::sizeBytes)
+    }
     val parentPaths = transformed.parentPaths
     val visiblePaths = remember(visible) { visible.mapTo(linkedSetOf(), FileEntry::absolutePath) }
     val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(state.selectedPaths::contains)
@@ -157,14 +179,50 @@ fun FileCategoryBrowser(
                         onClose = viewModel::clearFileCategorySelection,
                         onToggleSelectAll = { viewModel.toggleAllFileCategoryEntries(visiblePaths) },
                     ) {
-                        IconButton(onClick = { viewModel.copyFileCategorySelection(move = false) }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
-                        }
-                        IconButton(onClick = { viewModel.copyFileCategorySelection(move = false, append = true) }) {
-                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
-                        }
-                        IconButton(onClick = { viewModel.copyFileCategorySelection(move = true) }) {
-                            Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
+                        if (state.category == FileCategory.INSTALLED_APPS) {
+                            IconButton(
+                                enabled = state.selectedPaths.size == 1,
+                                onClick = { infoTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } },
+                                modifier = Modifier.testTag("category_info"),
+                            ) {
+                                Icon(Icons.Rounded.Info, contentDescription = uiText("Informacija"))
+                            }
+                            IconButton(
+                                onClick = { exportAppsLauncher.launch(null) },
+                                modifier = Modifier.testTag("installed_apps_export"),
+                            ) {
+                                Icon(Icons.Rounded.SaveAlt, contentDescription = uiText("Išsaugoti APK"))
+                            }
+                            IconButton(
+                                enabled = state.selectedPaths.size == 1,
+                                onClick = viewModel::uninstallSelectedInstalledApp,
+                                modifier = Modifier.testTag("installed_apps_uninstall"),
+                            ) {
+                                Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Pašalinti programą"), tint = MaterialTheme.colorScheme.error)
+                            }
+                        } else {
+                            IconButton(onClick = { viewModel.copyFileCategorySelection(move = false) }) {
+                                Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+                            }
+                            IconButton(onClick = { viewModel.copyFileCategorySelection(move = false, append = true) }) {
+                                Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
+                            }
+                            IconButton(
+                                enabled = state.selectedPaths.size == 1,
+                                onClick = { infoTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } },
+                                modifier = Modifier.testTag("category_info"),
+                            ) {
+                                Icon(Icons.Rounded.Info, contentDescription = uiText("Informacija"))
+                            }
+                            IconButton(onClick = { viewModel.copyFileCategorySelection(move = true) }) {
+                                Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
+                            }
+                            IconButton(
+                                onClick = { confirmTrash = true },
+                                modifier = Modifier.testTag("category_delete"),
+                            ) {
+                                Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error)
+                            }
                         }
                     }
                 } else {
@@ -195,10 +253,24 @@ fun FileCategoryBrowser(
                         onOpenSettings = { showDisplaySettings = true },
                     ) {
                         Box {
-                            IconButton(onClick = { menu = true }) {
+                            IconButton(onClick = { menu = true }, modifier = Modifier.testTag("category_more")) {
                                 Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
                             }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                if (state.category == FileCategory.INSTALLED_APPS) {
+                                    DropdownMenuItem(
+                                        text = { LText("Rodyti sistemines programas") },
+                                        leadingIcon = {
+                                            Checkbox(
+                                                checked = state.showSystemApps,
+                                                onCheckedChange = null,
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("installed_apps_show_system"),
+                                        onClick = { menu = false; viewModel.toggleInstalledSystemApps() },
+                                    )
+                                    HorizontalDivider()
+                                }
                                 DirectoryDisplayMenuItems(
                                     grid = state.grid,
                                     includeHidden = false,
@@ -305,6 +377,7 @@ fun FileCategoryBrowser(
                                 state.iconScalePercent,
                                 state.spacingScalePercent,
                                 state.gridStyle,
+                                largestSizeBytes,
                                 viewModel,
                             )
                         }
@@ -329,6 +402,7 @@ fun FileCategoryBrowser(
                                 state.showThumbnails,
                                 state.iconScalePercent,
                                 state.spacingScalePercent,
+                                largestSizeBytes,
                                 viewModel,
                             )
                             HorizontalDivider()
@@ -370,6 +444,24 @@ fun FileCategoryBrowser(
             },
         )
     }
+    infoTarget?.let { entry -> FileInfoDialog(entry = entry, onDismiss = { infoTarget = null }) }
+    if (confirmTrash) {
+        AlertDialog(
+            onDismissRequest = { confirmTrash = false },
+            title = { LText("Perkelti į šiukšlinę?") },
+            text = { LText("Pasirinkti failai bus perkelti į AF File Manager šiukšlinę ir juos bus galima atkurti.") },
+            dismissButton = { TextButton(onClick = { confirmTrash = false }) { LText("Atšaukti") } },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmTrash = false
+                        viewModel.trashFileCategorySelection()
+                    },
+                    modifier = Modifier.testTag("category_delete_confirm"),
+                ) { LText("Perkelti") }
+            },
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -381,6 +473,7 @@ private fun CategoryListItem(
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    largestSizeBytes: Long?,
     viewModel: MainViewModel,
 ) {
     val iconSize = (46f * iconScalePercent / 100f).dp
@@ -402,6 +495,14 @@ private fun CategoryListItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (largestSizeBytes != null && entry.metadataComplete) {
+                FileSizeBar(
+                    sizeBytes = entry.sizeBytes,
+                    largestSizeBytes = largestSizeBytes,
+                    identity = entry.absolutePath,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
         if (selectionMode) Checkbox(selected, onCheckedChange = { viewModel.toggleFileCategorySelection(entry.absolutePath) })
     }
@@ -417,6 +518,7 @@ private fun CategoryGridItem(
     iconScalePercent: Int,
     spacingScalePercent: Int,
     gridStyle: DirectoryGridStyle,
+    largestSizeBytes: Long?,
     viewModel: MainViewModel,
 ) {
     val height = (100f * iconScalePercent / 100f).dp
@@ -440,6 +542,14 @@ private fun CategoryGridItem(
             )
         }
         Text(entry.name, modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (largestSizeBytes != null && entry.metadataComplete) {
+            FileSizeBar(
+                sizeBytes = entry.sizeBytes,
+                largestSizeBytes = largestSizeBytes,
+                identity = entry.absolutePath,
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+            )
+        }
     }
 }
 

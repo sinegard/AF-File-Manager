@@ -6,6 +6,15 @@ import org.junit.Test
 
 class ProgressiveListingPolicyTest {
     @Test
+    fun directorySizeProgressRemainsBoundedForVeryLargeListings() {
+        val directories = 100_000
+        val step = DirectorySizePolicy.publishEvery(directories)
+
+        assertTrue(step >= 8)
+        assertTrue((directories + step - 1) / step <= DirectorySizePolicy.MAX_PROGRESS_UPDATES)
+    }
+
+    @Test
     fun firstItemAndEarlyBatchesPublishImmediately() {
         assertTrue(ProgressiveListingPolicy.shouldPublish(1))
         assertTrue(ProgressiveListingPolicy.shouldPublish(256))

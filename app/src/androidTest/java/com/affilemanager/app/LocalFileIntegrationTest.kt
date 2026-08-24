@@ -5,6 +5,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.data.TrashRepository
 import com.affilemanager.app.model.ConflictPolicy
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.operations.LocalFileOperator
 import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.runBlocking
@@ -17,6 +19,34 @@ import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class LocalFileIntegrationTest {
+    @Test
+    fun sizeSortCalculatesNestedDirectorySizesWithoutChangingFolderFirst() = runBlocking {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val base = requireNotNull(application.getExternalFilesDir("instrumentation"))
+        val root = File(base, "size-sort-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val small = File(root, "small-folder").apply { mkdirs() }
+            File(small, "small.bin").writeBytes(ByteArray(4))
+            val large = File(root, "large-folder").apply { mkdirs() }
+            File(large, "nested").apply { mkdirs() }
+            File(large, "nested/large.bin").writeBytes(ByteArray(64))
+            File(root, "root-file.bin").writeBytes(ByteArray(128))
+
+            val entries = LocalFileRepository(application).list(
+                directoryPath = root.absolutePath,
+                includeHidden = false,
+                sortMode = SortMode.SIZE,
+                sortDirection = SortDirection.DESCENDING,
+            ).getOrThrow()
+
+            assertEquals(listOf("large-folder", "small-folder", "root-file.bin"), entries.map { it.name })
+            assertEquals(listOf(64L, 4L, 128L), entries.map { it.sizeBytes })
+            assertTrue(entries.all { it.metadataComplete })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test
     fun createAtomicEditCopyTrashAndRestoreOnAndroidStorage() = runBlocking {
         val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()

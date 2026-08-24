@@ -16,7 +16,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.LinkOption
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
@@ -39,6 +41,24 @@ internal object ProgressiveListingPolicy {
         (count <= LATER_BATCH && count % EARLY_BATCH == 0) ||
         count % LATER_BATCH == 0
 }
+
+internal object DirectorySizePolicy {
+    const val MAX_TOTAL_SCANNED_NODES = 50_000
+    const val MAX_DEPTH = 64
+    const val MAX_PROGRESS_UPDATES = 24
+
+    fun publishEvery(directoryCount: Int): Int = maxOf(
+        8,
+        (directoryCount.coerceAtLeast(1) + MAX_PROGRESS_UPDATES - 1) / MAX_PROGRESS_UPDATES,
+    )
+}
+
+private data class DirectorySizeBudget(var remainingNodes: Int)
+
+private data class DirectorySizeResult(
+    val bytes: Long,
+    val complete: Boolean,
+)
 
 internal object StorageRootClassifier {
     private val usbToken = Regex("(^|[^a-z0-9])(usb|otg)([^a-z0-9]|$)")
@@ -194,7 +214,12 @@ class LocalFileRepository(private val context: Context) {
             val entries = ArrayList<FileEntry>(files.size)
             files.forEachIndexed { index, child ->
                 if (index % 128 == 0) coroutineContext.ensureActive()
-                entries += toEntry(child)
+                val entry = toEntry(child)
+                entries += if (sortMode == SortMode.SIZE && entry.isDirectory) {
+                    entry.copy(sizeBytes = 0L, metadataComplete = false)
+                } else {
+                    entry
+                }
                 val ready = index + 1
                 if (ProgressiveListingPolicy.shouldPublish(ready)) {
                     val combined = ArrayList<FileEntry>(files.size).apply {
@@ -213,12 +238,64 @@ class LocalFileRepository(private val context: Context) {
                 }
             }
 
-            val ordered = orderEntries(entries, sortMode, sortDirection)
+            val finalEntries = if (sortMode == SortMode.SIZE && entries.any(FileEntry::isDirectory)) {
+                val sizeEntries = entries.mapTo(ArrayList(entries.size)) { entry ->
+                    if (entry.isDirectory) entry.copy(sizeBytes = 0L, metadataComplete = false) else entry
+                }
+                onProgress(
+                    DirectoryListingUpdate(
+                        entries = orderedSnapshot(sizeEntries, sortMode, sortDirection),
+                        scannedEntries = scanned,
+                        metadataEntries = sizeEntries.count(FileEntry::metadataComplete),
+                        complete = false,
+                        truncated = truncated,
+                    ),
+                )
+                val budget = DirectorySizeBudget(DirectorySizePolicy.MAX_TOTAL_SCANNED_NODES)
+                val directoryIndexes = sizeEntries.indices.filter { sizeEntries[it].isDirectory }
+                val publishEvery = DirectorySizePolicy.publishEvery(directoryIndexes.size)
+                var processedDirectories = 0
+                for (entryIndex in directoryIndexes) {
+                    if (budget.remainingNodes <= 0) break
+                    coroutineContext.ensureActive()
+                    val result = calculateDirectorySizeBounded(
+                        root = File(sizeEntries[entryIndex].absolutePath).toPath(),
+                        budget = budget,
+                    )
+                    if (result.complete) {
+                        sizeEntries[entryIndex] = sizeEntries[entryIndex].copy(
+                            sizeBytes = result.bytes,
+                            metadataComplete = true,
+                        )
+                    }
+                    processedDirectories += 1
+                    if (
+                        processedDirectories % publishEvery == 0 ||
+                        processedDirectories == directoryIndexes.size ||
+                        budget.remainingNodes <= 0
+                    ) {
+                        onProgress(
+                            DirectoryListingUpdate(
+                                entries = orderedSnapshot(sizeEntries, sortMode, sortDirection),
+                                scannedEntries = scanned,
+                                metadataEntries = sizeEntries.count(FileEntry::metadataComplete),
+                                complete = false,
+                                truncated = truncated,
+                            ),
+                        )
+                    }
+                }
+                sizeEntries
+            } else {
+                entries
+            }
+
+            val ordered = orderEntries(finalEntries, sortMode, sortDirection)
             onProgress(
                 DirectoryListingUpdate(
                     entries = ordered,
                     scannedEntries = scanned,
-                    metadataEntries = ordered.size,
+                    metadataEntries = ordered.count(FileEntry::metadataComplete),
                     complete = true,
                     truncated = truncated,
                 ),
@@ -242,6 +319,47 @@ class LocalFileRepository(private val context: Context) {
         sortMode: SortMode,
         sortDirection: SortDirection,
     ): List<FileEntry> = FileEntryOrdering.order(entries, sortMode, sortDirection)
+
+    private suspend fun calculateDirectorySizeBounded(
+        root: Path,
+        budget: DirectorySizeBudget,
+    ): DirectorySizeResult {
+        if (budget.remainingNodes <= 0) return DirectorySizeResult(0L, complete = false)
+        var bytes = 0L
+        val pending = ArrayDeque<Pair<Path, Int>>()
+        budget.remainingNodes -= 1
+        pending.add(root to 0)
+        while (pending.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            val (current, depth) = pending.removeLast()
+            if (Files.isSymbolicLink(current)) continue
+            try {
+                if (Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+                    if (depth >= DirectorySizePolicy.MAX_DEPTH) {
+                        return DirectorySizeResult(bytes, complete = false)
+                    }
+                    Files.newDirectoryStream(current).use { stream ->
+                        val iterator = stream.iterator()
+                        while (iterator.hasNext()) {
+                            coroutineContext.ensureActive()
+                            if (budget.remainingNodes <= 0) return DirectorySizeResult(bytes, complete = false)
+                            budget.remainingNodes -= 1
+                            pending.add(iterator.next() to depth + 1)
+                        }
+                    }
+                } else if (Files.isRegularFile(current, LinkOption.NOFOLLOW_LINKS)) {
+                    bytes = Math.addExact(bytes, Files.size(current).coerceAtLeast(0L))
+                }
+            } catch (_: SecurityException) {
+                return DirectorySizeResult(bytes, complete = false)
+            } catch (_: java.io.IOException) {
+                return DirectorySizeResult(bytes, complete = false)
+            } catch (_: ArithmeticException) {
+                return DirectorySizeResult(Long.MAX_VALUE, complete = false)
+            }
+        }
+        return DirectorySizeResult(bytes, complete = true)
+    }
 
     suspend fun createDirectory(parentPath: String, requestedName: String): Result<FileEntry> = withContext(Dispatchers.IO) {
         runCatching {
