@@ -1,7 +1,9 @@
 package com.affilemanager.app
 
 import android.content.ClipboardManager
+import android.content.ClipData
 import android.content.Intent
+import android.os.SystemClock
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -164,6 +166,47 @@ class TerminalFlowTest {
             }
             assertEquals(expected, output.readText())
             assertTrue(viewModel.terminalState.value.running)
+        } finally {
+            compose.runOnUiThread { viewModel.confirmTerminalClose() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun multilineClipboardOffersPasteModesAndSingleLineWaitsForEnter() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val clipboard = compose.activity.getSystemService(ClipboardManager::class.java)
+        val directory = File(compose.activity.getExternalFilesDir(null), "terminal-paste-mode-${System.nanoTime()}").apply { mkdirs() }
+        val output = File(directory, "single-line.txt")
+        val expected = "first second\n"
+        try {
+            compose.runOnUiThread {
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.openLocalTerminal(PanelId.LEFT)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.terminalState.value.running }
+
+            compose.runOnUiThread {
+                clipboard.setPrimaryClip(
+                    ClipData.newPlainText(
+                        "terminal multiline test",
+                        "printf 'first ' > '${output.name}'\n&& printf 'second\\n' >> '${output.name}'",
+                    ),
+                )
+            }
+            compose.onNodeWithTag("terminal-paste").performClick()
+            compose.onNodeWithText("Paste multiline text?").fetchSemanticsNode()
+            compose.onNodeWithTag("terminal-paste-lines").fetchSemanticsNode()
+            compose.onNodeWithText("Paste as 1 line").fetchSemanticsNode()
+            compose.onNodeWithTag("terminal-paste-single-line").performClick()
+
+            SystemClock.sleep(500)
+            assertFalse(output.exists())
+            compose.runOnUiThread { viewModel.dispatchTerminalKey(VTermKey.ENTER) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                output.isFile && runCatching { output.readText() == expected }.getOrDefault(false)
+            }
+            assertEquals(expected, output.readText())
         } finally {
             compose.runOnUiThread { viewModel.confirmTerminalClose() }
             directory.deleteRecursively()

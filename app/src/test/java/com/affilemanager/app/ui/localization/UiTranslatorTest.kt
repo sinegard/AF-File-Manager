@@ -13,6 +13,8 @@ class UiTranslatorTest {
         assertEquals("Copy (4)", UiTranslator.translate("Kopijuoti (4)", AppLanguageManager.ENGLISH))
         assertEquals("Paste (2)", UiTranslator.translate("Įklijuoti (2)", AppLanguageManager.ENGLISH))
         assertEquals("Paste from server", UiTranslator.translate("Įklijuoti iš serverio", AppLanguageManager.ENGLISH))
+        assertEquals("Paste as 1 line", UiTranslator.translate("Įklijuoti kaip 1 eilutę", AppLanguageManager.ENGLISH))
+        assertEquals("Paste multiline text?", UiTranslator.translate("Įklijuoti kelių eilučių tekstą?", AppLanguageManager.ENGLISH))
         assertEquals("Choose from phone", UiTranslator.translate("Pasirinkti iš telefono", AppLanguageManager.ENGLISH))
         assertEquals("Delete selected items?", UiTranslator.translate("Ištrinti pasirinktus elementus?", AppLanguageManager.ENGLISH))
         assertEquals(

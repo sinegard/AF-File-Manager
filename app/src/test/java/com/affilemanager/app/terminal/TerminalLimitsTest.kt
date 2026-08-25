@@ -2,8 +2,10 @@ package com.affilemanager.app.terminal
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
@@ -29,6 +31,18 @@ class TerminalLimitsTest {
             "first\rsecond\rthird\rfourth".toByteArray(),
             TerminalPasteRules.encode("first\nsecond\r\nthird\rfourth"),
         )
+    }
+
+    @Test
+    fun convertsEveryClipboardLineBreakStyleToOneSpace() {
+        assertTrue(TerminalPasteRules.hasLineBreak("first\nsecond"))
+        assertTrue(TerminalPasteRules.hasLineBreak("first\rsecond"))
+        assertFalse(TerminalPasteRules.hasLineBreak("first second"))
+        assertEquals(
+            "first second third fourth",
+            TerminalPasteRules.asSingleLine("first\nsecond\r\nthird\rfourth"),
+        )
+        assertEquals("unchanged", TerminalPasteRules.asSingleLine("unchanged"))
     }
 
     @Test

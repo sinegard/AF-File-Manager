@@ -53,6 +53,7 @@ import com.affilemanager.app.ui.TerminalLocation
 import com.affilemanager.app.ui.TerminalUiState
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.terminal.TerminalPasteRules
 import org.connectbot.terminal.SelectionController
 import org.connectbot.terminal.SelectionMode
 import org.connectbot.terminal.Terminal
@@ -73,12 +74,19 @@ fun TerminalOverlay(
     if (!state.visible) return
     var showSoftKeyboard by remember(state.emulator) { mutableStateOf(true) }
     var selectionController by remember(state.emulator) { mutableStateOf<SelectionController?>(null) }
+    var pendingMultilinePaste by remember(state.emulator) { mutableStateOf<String?>(null) }
     val context = LocalContext.current
 
     fun pasteClipboard() {
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         val item = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
-        item?.coerceToText(context)?.toString()?.let(onPaste)
+        item?.coerceToText(context)?.toString()?.let { text ->
+            if (TerminalPasteRules.hasLineBreak(text)) {
+                pendingMultilinePaste = text
+            } else {
+                onPaste(text)
+            }
+        }
     }
 
     BackHandler {
@@ -141,7 +149,11 @@ fun TerminalOverlay(
                     IconButton(onClick = { selectionController?.copySelection() }) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti pažymėtą tekstą"))
                     }
-                    IconButton(onClick = ::pasteClipboard, enabled = state.running) {
+                    IconButton(
+                        onClick = ::pasteClipboard,
+                        enabled = state.running,
+                        modifier = Modifier.testTag("terminal-paste"),
+                    ) {
                         Icon(Icons.Rounded.ContentPaste, contentDescription = uiText("Įklijuoti"))
                     }
                     IconButton(onClick = { showSoftKeyboard = !showSoftKeyboard }, enabled = state.running) {
@@ -243,6 +255,40 @@ fun TerminalOverlay(
             text = { LText("Veikianti komanda bus sustabdyta ir terminalo seansas bus uždarytas.") },
             confirmButton = { Button(onClick = onConfirmClose) { LText("Uždaryti") } },
             dismissButton = { TextButton(onClick = onDismissCloseConfirmation) { LText("Atšaukti") } },
+        )
+    }
+
+    pendingMultilinePaste?.let { text ->
+        AlertDialog(
+            onDismissRequest = { pendingMultilinePaste = null },
+            title = { LText("Įklijuoti kelių eilučių tekstą?") },
+            text = {
+                LText(
+                    "Įklijuojant įprastai eilučių lūžiai veiks kaip Enter. Galite juos pakeisti tarpais ir įklijuoti kaip 1 eilutę.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingMultilinePaste = null
+                        onPaste(TerminalPasteRules.asSingleLine(text))
+                    },
+                    modifier = Modifier.testTag("terminal-paste-single-line"),
+                ) {
+                    LText("Įklijuoti kaip 1 eilutę")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingMultilinePaste = null
+                        onPaste(text)
+                    },
+                    modifier = Modifier.testTag("terminal-paste-lines"),
+                ) {
+                    LText("Įklijuoti")
+                }
+            },
         )
     }
 }

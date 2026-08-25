@@ -510,6 +510,10 @@ object UiTranslator {
         "Kraunami duomenys…" to "Loading data…",
         "Aplankas · kraunami duomenys…" to "Folder · loading data…",
         "Įklijuoti" to "Paste",
+        "Įklijuoti kaip 1 eilutę" to "Paste as 1 line",
+        "Įklijuoti kelių eilučių tekstą?" to "Paste multiline text?",
+        "Įklijuojant įprastai eilučių lūžiai veiks kaip Enter. Galite juos pakeisti tarpais ir įklijuoti kaip 1 eilutę." to
+            "Pasting normally sends line breaks as Enter. You can replace them with spaces and paste as 1 line.",
         "Kopijuoti į kitą skydelį" to "Copy to other pane",
         "Į šiukšlinę" to "Move to trash",
         "Perkelti į šiukšlinę" to "Move to trash",

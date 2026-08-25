@@ -38,6 +38,26 @@ object TerminalPasteRules {
     private const val CARRIAGE_RETURN: Byte = 0x0D
     private const val LINE_FEED: Byte = 0x0A
 
+    fun hasLineBreak(text: CharSequence): Boolean = text.any { it == '\r' || it == '\n' }
+
+    fun asSingleLine(text: String): String {
+        if (!hasLineBreak(text)) return text
+        return buildString(text.length) {
+            var index = 0
+            while (index < text.length) {
+                when (val character = text[index]) {
+                    '\r' -> {
+                        append(' ')
+                        if (index + 1 < text.length && text[index + 1] == '\n') index++
+                    }
+                    '\n' -> append(' ')
+                    else -> append(character)
+                }
+                index++
+            }
+        }
+    }
+
     fun encode(text: String): ByteArray? {
         // UTF-8 never uses fewer bytes than the number of UTF-16 code units.
         // Reject an enormous clipboard before allocating another enormous array.
