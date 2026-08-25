@@ -66,6 +66,9 @@ fun TerminalOverlay(
     onConfirmClose: () -> Unit,
     onDismissCloseConfirmation: () -> Unit,
     onPaste: (String) -> Unit,
+    onMultilinePaste: (String) -> Unit,
+    onResolveMultilinePaste: (Boolean) -> Unit,
+    onDismissMultilinePaste: () -> Unit,
     onCopyLastOutput: () -> Unit,
     onKey: (Int) -> Unit,
     onToggleCtrl: () -> Unit,
@@ -74,7 +77,6 @@ fun TerminalOverlay(
     if (!state.visible) return
     var showSoftKeyboard by remember(state.emulator) { mutableStateOf(true) }
     var selectionController by remember(state.emulator) { mutableStateOf<SelectionController?>(null) }
-    var pendingMultilinePaste by remember(state.emulator) { mutableStateOf<String?>(null) }
     val context = LocalContext.current
 
     fun pasteClipboard() {
@@ -82,7 +84,7 @@ fun TerminalOverlay(
         val item = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
         item?.coerceToText(context)?.toString()?.let { text ->
             if (TerminalPasteRules.hasLineBreak(text)) {
-                pendingMultilinePaste = text
+                onMultilinePaste(text)
             } else {
                 onPaste(text)
             }
@@ -258,9 +260,9 @@ fun TerminalOverlay(
         )
     }
 
-    pendingMultilinePaste?.let { text ->
+    state.pendingMultilinePaste?.let {
         AlertDialog(
-            onDismissRequest = { pendingMultilinePaste = null },
+            onDismissRequest = onDismissMultilinePaste,
             title = { LText("Įklijuoti kelių eilučių tekstą?") },
             text = {
                 LText(
@@ -269,10 +271,7 @@ fun TerminalOverlay(
             },
             confirmButton = {
                 Button(
-                    onClick = {
-                        pendingMultilinePaste = null
-                        onPaste(TerminalPasteRules.asSingleLine(text))
-                    },
+                    onClick = { onResolveMultilinePaste(true) },
                     modifier = Modifier.testTag("terminal-paste-single-line"),
                 ) {
                     LText("Įklijuoti kaip 1 eilutę")
@@ -280,10 +279,7 @@ fun TerminalOverlay(
             },
             dismissButton = {
                 TextButton(
-                    onClick = {
-                        pendingMultilinePaste = null
-                        onPaste(text)
-                    },
+                    onClick = { onResolveMultilinePaste(false) },
                     modifier = Modifier.testTag("terminal-paste-lines"),
                 ) {
                     LText("Įklijuoti")

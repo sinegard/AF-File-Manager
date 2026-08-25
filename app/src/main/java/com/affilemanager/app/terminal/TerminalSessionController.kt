@@ -1,5 +1,6 @@
 package com.affilemanager.app.terminal
 
+import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +54,9 @@ class TerminalSessionController private constructor(
     private val backend: TerminalBackend,
     parentScope: CoroutineScope,
     private val onTransportEnded: (String?) -> Unit,
+    clipboardText: () -> String?,
+    onSystemMultilinePaste: (String) -> Unit,
+    onSystemPasteTooLarge: () -> Unit,
 ) {
     private val closed = AtomicBoolean(false)
     private val endedDelivered = AtomicBoolean(false)
@@ -60,6 +64,14 @@ class TerminalSessionController private constructor(
     private val scope = CoroutineScope(parentScope.coroutineContext + sessionJob)
     private val pendingInput = Channel<ByteArray>(TerminalLimits.MAX_PENDING_INPUT_CHUNKS)
     private val outputCapture = TerminalOutputCapture()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val keyboardPasteGuard = TerminalKeyboardPasteGuard(
+        clipboardText = clipboardText,
+        onMultilinePaste = onSystemMultilinePaste,
+        onTooLarge = onSystemPasteTooLarge,
+        send = { data -> enqueue(data) },
+        scheduleFlush = { flush -> mainHandler.postAtFrontOfQueue(flush) },
+    )
 
     companion object {
         fun create(
@@ -67,6 +79,9 @@ class TerminalSessionController private constructor(
             parentScope: CoroutineScope,
             onClipboardCopy: (String) -> Unit,
             onTransportEnded: (String?) -> Unit,
+            clipboardText: () -> String?,
+            onSystemMultilinePaste: (String) -> Unit,
+            onSystemPasteTooLarge: () -> Unit,
         ): TerminalSessionController {
             val controllerRef = arrayOfNulls<TerminalSessionController>(1)
             val modifiers = TerminalModifierState()
@@ -76,7 +91,7 @@ class TerminalSessionController private constructor(
                 initialCols = TerminalLimits.INITIAL_COLUMNS,
                 defaultForeground = Color.White,
                 defaultBackground = Color.Black,
-                onKeyboardInput = { data -> controllerRef[0]?.enqueue(data) },
+                onKeyboardInput = { data -> controllerRef[0]?.enqueueKeyboardInput(data) },
                 onResize = { dimensions -> controllerRef[0]?.resize(dimensions) },
                 onClipboardCopy = onClipboardCopy,
                 autoDetectUrls = true,
@@ -87,6 +102,9 @@ class TerminalSessionController private constructor(
                 backend = backend,
                 parentScope = parentScope,
                 onTransportEnded = onTransportEnded,
+                clipboardText = clipboardText,
+                onSystemMultilinePaste = onSystemMultilinePaste,
+                onSystemPasteTooLarge = onSystemPasteTooLarge,
             )
             controllerRef[0] = controller
             controller.startTransport()
@@ -100,6 +118,10 @@ class TerminalSessionController private constructor(
         val accepted = pendingInput.trySend(copy).isSuccess
         if (accepted) outputCapture.recordAcceptedInput(copy) else copy.fill(0)
         return accepted
+    }
+
+    private fun enqueueKeyboardInput(data: ByteArray) {
+        keyboardPasteGuard.accept(data)
     }
 
     internal fun lastCommandOutput(): CapturedTerminalOutput? {
@@ -123,6 +145,7 @@ class TerminalSessionController private constructor(
 
     suspend fun close() {
         if (!closed.compareAndSet(false, true)) return
+        keyboardPasteGuard.cancel()
         pendingInput.close()
         while (true) pendingInput.tryReceive().getOrNull()?.fill(0) ?: break
         withContext(Dispatchers.IO) { backend.close() }
@@ -181,6 +204,7 @@ class TerminalSessionController private constructor(
 
     private fun deliverEnded(message: String?) {
         if (!endedDelivered.compareAndSet(false, true)) return
+        keyboardPasteGuard.cancel()
         onTransportEnded(message)
         scope.launch(Dispatchers.IO) {
             if (closed.compareAndSet(false, true)) {

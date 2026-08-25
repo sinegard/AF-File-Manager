@@ -95,6 +95,7 @@ import com.affilemanager.app.sync.SyncSchedule
 import com.affilemanager.app.terminal.LocalPtyBackend
 import com.affilemanager.app.terminal.ShellCommandRules
 import com.affilemanager.app.terminal.SshTerminalBackend
+import com.affilemanager.app.terminal.TerminalPasteRules
 import com.affilemanager.app.terminal.TerminalPasteResult
 import com.affilemanager.app.update.AppRelease
 import com.affilemanager.app.update.AppUpdateState
@@ -3971,6 +3972,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             TerminalPasteResult.BUSY ->
                 message("Terminalo įvestis užimta; bandykite įklijuoti dar kartą", true)
         }
+    }
+
+    fun requestTerminalMultilinePaste(text: String) {
+        graph.terminalSessions.requestMultilinePaste(text)
+    }
+
+    fun resolveTerminalMultilinePaste(asSingleLine: Boolean) {
+        val text = graph.terminalSessions.takePendingMultilinePaste() ?: return
+        pasteIntoTerminal(if (asSingleLine) TerminalPasteRules.asSingleLine(text) else text)
+    }
+
+    fun dismissTerminalMultilinePaste() {
+        graph.terminalSessions.dismissMultilinePaste()
     }
 
     fun copyLastTerminalOutput() {

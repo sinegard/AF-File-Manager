@@ -7,6 +7,7 @@ import com.affilemanager.app.terminal.TerminalBackend
 import com.affilemanager.app.terminal.TerminalKeepAliveService
 import com.affilemanager.app.terminal.TerminalLimits
 import com.affilemanager.app.terminal.TerminalModifierState
+import com.affilemanager.app.terminal.TerminalPasteRules
 import com.affilemanager.app.terminal.TerminalPasteResult
 import com.affilemanager.app.terminal.TerminalSessionController
 import kotlinx.coroutines.CancellationException
@@ -53,6 +54,7 @@ data class TerminalUiState(
     val failure: TerminalFailureUi? = null,
     val endedMessage: String? = null,
     val confirmClose: Boolean = false,
+    val pendingMultilinePaste: String? = null,
 )
 
 /**
@@ -122,6 +124,15 @@ class TerminalSessionStore(
                         transportEnded.set(true)
                         handleTransportEnded(currentRequest, transportError)
                     },
+                    clipboardText = ::readClipboardText,
+                    onSystemMultilinePaste = { text ->
+                        showMultilinePaste(currentRequest, text)
+                    },
+                    onSystemPasteTooLarge = {
+                        if (currentRequest == requestId.get()) {
+                            _notices.tryEmit("Iškarpinės turinys viršija 64 KiB terminalo įklijavimo ribą")
+                        }
+                    },
                 )
                 backend = null
 
@@ -190,6 +201,25 @@ class TerminalSessionStore(
 
     fun paste(text: String): TerminalPasteResult = session?.paste(text) ?: TerminalPasteResult.BUSY
 
+    fun requestMultilinePaste(text: String) {
+        if (!TerminalPasteRules.hasLineBreak(text)) return
+        synchronized(lock) {
+            if (_state.value.visible && _state.value.running) {
+                _state.update { it.copy(pendingMultilinePaste = text) }
+            }
+        }
+    }
+
+    fun takePendingMultilinePaste(): String? = synchronized(lock) {
+        val text = _state.value.pendingMultilinePaste
+        if (text != null) _state.update { it.copy(pendingMultilinePaste = null) }
+        text
+    }
+
+    fun dismissMultilinePaste() {
+        _state.update { it.copy(pendingMultilinePaste = null) }
+    }
+
     fun copyLastOutput() {
         val output = session?.lastCommandOutput()
         when {
@@ -245,6 +275,7 @@ class TerminalSessionStore(
                         starting = false,
                         running = false,
                         endedMessage = transportError,
+                        pendingMultilinePaste = null,
                     )
                 }
                 true
@@ -262,5 +293,22 @@ class TerminalSessionStore(
         val clipboard = application.getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText("AF File Manager terminal", text))
         return clipboard != null
+    }
+
+    private fun readClipboardText(): String? = runCatching {
+        val clipboard = application.getSystemService(ClipboardManager::class.java)
+        clipboard?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(application)
+            ?.toString()
+    }.getOrNull()
+
+    private fun showMultilinePaste(currentRequest: Long, text: String) {
+        synchronized(lock) {
+            if (currentRequest == requestId.get() && _state.value.visible && _state.value.running) {
+                _state.update { it.copy(pendingMultilinePaste = text) }
+            }
+        }
     }
 }
