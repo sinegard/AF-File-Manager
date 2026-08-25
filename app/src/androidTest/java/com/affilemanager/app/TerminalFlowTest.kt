@@ -13,6 +13,8 @@ import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.terminal.TerminalLimits
+import org.connectbot.terminal.VTermKey
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -127,6 +129,40 @@ class TerminalFlowTest {
             compose.runOnUiThread {
                 viewModel.pasteIntoTerminal("y".repeat(TerminalLimits.MAX_PASTE_BYTES + 1))
             }
+            assertTrue(viewModel.terminalState.value.running)
+        } finally {
+            compose.runOnUiThread { viewModel.confirmTerminalClose() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun multilinePastePreservesEveryCommandAndEnterOrder() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val directory = File(compose.activity.getExternalFilesDir(null), "terminal-multiline-${System.nanoTime()}").apply { mkdirs() }
+        val output = File(directory, "pasted-lines.txt")
+        val expected = "first\nsecond\nthird\nfourth\n"
+        try {
+            compose.runOnUiThread {
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.openLocalTerminal(PanelId.LEFT)
+            }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.terminalState.value.running }
+
+            compose.runOnUiThread {
+                viewModel.pasteIntoTerminal(
+                    "printf 'first\\n' > '${output.name}'\n" +
+                        "printf 'second\\n' >> '${output.name}'\r\n" +
+                        "printf 'third\\n' >> '${output.name}'\r" +
+                        "printf 'fourth\\n' >> '${output.name}'",
+                )
+                viewModel.dispatchTerminalKey(VTermKey.ENTER)
+            }
+
+            compose.waitUntil(timeoutMillis = 10_000) {
+                output.isFile && runCatching { output.readText() == expected }.getOrDefault(false)
+            }
+            assertEquals(expected, output.readText())
             assertTrue(viewModel.terminalState.value.running)
         } finally {
             compose.runOnUiThread { viewModel.confirmTerminalClose() }

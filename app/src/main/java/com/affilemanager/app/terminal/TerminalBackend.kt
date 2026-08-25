@@ -35,14 +35,42 @@ enum class TerminalPasteResult {
 }
 
 object TerminalPasteRules {
+    private const val CARRIAGE_RETURN: Byte = 0x0D
+    private const val LINE_FEED: Byte = 0x0A
+
     fun encode(text: String): ByteArray? {
         // UTF-8 never uses fewer bytes than the number of UTF-16 code units.
         // Reject an enormous clipboard before allocating another enormous array.
         if (text.length > TerminalLimits.MAX_PASTE_BYTES) return null
         val bytes = text.toByteArray(Charsets.UTF_8)
-        if (bytes.size <= TerminalLimits.MAX_PASTE_BYTES) return bytes
+        if (bytes.size > TerminalLimits.MAX_PASTE_BYTES) {
+            bytes.fill(0)
+            return null
+        }
+        return normalizeTerminalLineBreaks(bytes)
+    }
+
+    private fun normalizeTerminalLineBreaks(bytes: ByteArray): ByteArray {
+        var readIndex = 0
+        var writeIndex = 0
+        while (readIndex < bytes.size) {
+            when (val value = bytes[readIndex]) {
+                CARRIAGE_RETURN -> {
+                    bytes[writeIndex++] = CARRIAGE_RETURN
+                    if (readIndex + 1 < bytes.size && bytes[readIndex + 1] == LINE_FEED) {
+                        readIndex++
+                    }
+                }
+                LINE_FEED -> bytes[writeIndex++] = CARRIAGE_RETURN
+                else -> bytes[writeIndex++] = value
+            }
+            readIndex++
+        }
+
+        if (writeIndex == bytes.size) return bytes
+        val normalized = bytes.copyOf(writeIndex)
         bytes.fill(0)
-        return null
+        return normalized
     }
 
     fun nextWriteLength(remainingBytes: Int): Int {

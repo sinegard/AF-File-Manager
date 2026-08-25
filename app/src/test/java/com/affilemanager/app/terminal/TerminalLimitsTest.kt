@@ -24,6 +24,14 @@ class TerminalLimitsTest {
     }
 
     @Test
+    fun normalizesClipboardLineBreaksToTerminalEnter() {
+        assertArrayEquals(
+            "first\rsecond\rthird\rfourth".toByteArray(),
+            TerminalPasteRules.encode("first\nsecond\r\nthird\rfourth"),
+        )
+    }
+
+    @Test
     fun splitsAcceptedPasteIntoSmallTransportWrites() {
         assertEquals(0, TerminalPasteRules.nextWriteLength(0))
         assertEquals(1, TerminalPasteRules.nextWriteLength(1))
