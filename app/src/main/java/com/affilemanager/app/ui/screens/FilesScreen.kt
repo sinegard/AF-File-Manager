@@ -163,6 +163,7 @@ import com.affilemanager.app.ui.PanelUiState
 import com.affilemanager.app.ui.PanelComparisonStatus
 import com.affilemanager.app.ui.ProgressiveScrollRules
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
@@ -1923,6 +1924,9 @@ private fun FileGrid(
             ?.filter(FileEntry::metadataComplete)
             ?.maxOfOrNull(FileEntry::sizeBytes)
     }
+    val reserveTagSpace = remember(state.entries, tagsByPath) {
+        state.entries.any { entry -> tagSummary(entry, tagsByPath[entry.absolutePath]) != null }
+    }
     val initialPosition = remember(scrollKey) { viewModel.fileScrollPosition(scrollKey) }
     var restoringPosition by remember(scrollKey) {
         mutableStateOf(initialPosition.firstVisibleItemIndex > 0 || initialPosition.firstVisibleItemScrollOffset > 0)
@@ -2001,6 +2005,7 @@ private fun FileGrid(
                     spacingScalePercent = state.spacingScalePercent,
                     gridStyle = state.gridStyle,
                     largestSizeBytes = largestSizeBytes,
+                    reserveTagSpace = reserveTagSpace,
                     onClick = { handleEntryClick(panel, state, entry, viewModel) },
                     onLongClick = { viewModel.toggleSelection(panel, entry.absolutePath) },
                     onPreview = { viewModel.activatePanel(panel); viewModel.open(entry) },
@@ -2115,6 +2120,7 @@ private fun FileTile(
     spacingScalePercent: Int,
     gridStyle: DirectoryGridStyle,
     largestSizeBytes: Long?,
+    reserveTagSpace: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPreview: () -> Unit,
@@ -2126,8 +2132,15 @@ private fun FileTile(
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
-    val cardHeight = 158.dp + (visualHeight - 76.dp) + if (largestSizeBytes != null) 10.dp else 0.dp
     val innerPadding = (9f * spacingScalePercent / 100f).dp
+    val sizeBarSlotHeight = if (largestSizeBytes != null) 10.dp else 0.dp
+    val tagSlotHeight = if (reserveTagSpace) 18.dp else 0.dp
+    val extraContentHeight = sizeBarSlotHeight + tagSlotHeight
+    val metadata = if (!entry.isDirectory || largestSizeBytes != null && entry.metadataComplete) {
+        FileSystemRules.humanBytes(entry.sizeBytes)
+    } else {
+        null
+    }
     val itemAlpha = if (entry.isHidden && !selected) 0.64f else 1f
     Card(
         modifier = Modifier
@@ -2143,40 +2156,55 @@ private fun FileTile(
             },
         ),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(cardHeight)) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
+        DirectoryGridItemContent(
+            title = entry.name,
+            metadata = metadata,
+            visualHeight = visualHeight,
+            innerPadding = innerPadding,
+            extraContentHeight = extraContentHeight,
+            visual = {
                 LocalFileVisual(
                     entry = entry,
                     targetWidth = (96f * iconScalePercent / 100f).dp,
                     targetHeight = visualHeight,
                     showThumbnails = showThumbnails,
-                    modifier = Modifier.fillMaxWidth().height(visualHeight),
+                    modifier = Modifier.fillMaxSize(),
                 )
-                Spacer(Modifier.height(6.dp))
-                Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                if (!entry.isDirectory || largestSizeBytes != null && entry.metadataComplete) {
-                    Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-                }
-                if (largestSizeBytes != null && entry.metadataComplete) {
-                    FileSizeBar(
-                        sizeBytes = entry.sizeBytes,
-                        largestSizeBytes = largestSizeBytes,
-                        identity = entry.absolutePath,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
-                }
-                tagText?.let { summary ->
-                    Text(summary, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            Box(modifier = Modifier.align(Alignment.TopEnd)) {
+            },
+            actions = {
                 EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash)
-            }
-        }
+            },
+            extraContent = {
+                if (largestSizeBytes != null && entry.metadataComplete) {
+                    Box(modifier = Modifier.fillMaxWidth().height(sizeBarSlotHeight)) {
+                        FileSizeBar(
+                            sizeBytes = entry.sizeBytes,
+                            largestSizeBytes = largestSizeBytes,
+                            identity = entry.absolutePath,
+                            modifier = Modifier.padding(top = 3.dp),
+                        )
+                    }
+                } else if (sizeBarSlotHeight > 0.dp) {
+                    Spacer(Modifier.height(sizeBarSlotHeight))
+                }
+                if (reserveTagSpace) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(tagSlotHeight),
+                        contentAlignment = Alignment.TopStart,
+                    ) {
+                        tagText?.let { summary ->
+                            Text(
+                                summary,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            },
+        )
     }
 }
 

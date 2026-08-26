@@ -22,6 +22,15 @@ import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * termlib already posts each native keyboard-output chunk to this Handler.
+ * The paste check must stay behind those queued chunks so one IME commit is
+ * observed as one batch rather than leaking its Enter keys one by one.
+ */
+internal fun Handler.postAfterQueuedTerminalKeyboardInput(action: () -> Unit) {
+    post(action)
+}
+
 class TerminalModifierState : ModifierManager {
     var ctrlActive by mutableStateOf(false)
         private set
@@ -70,7 +79,7 @@ class TerminalSessionController private constructor(
         onMultilinePaste = onSystemMultilinePaste,
         onTooLarge = onSystemPasteTooLarge,
         send = { data -> enqueue(data) },
-        scheduleFlush = { flush -> mainHandler.postAtFrontOfQueue(flush) },
+        scheduleFlush = mainHandler::postAfterQueuedTerminalKeyboardInput,
     )
 
     companion object {

@@ -84,6 +84,9 @@ class TerminalSessionStore(
     @Volatile
     private var openJob: Job? = null
 
+    @Volatile
+    private var clipboardTextSnapshot: String? = null
+
     fun begin(
         location: TerminalLocation,
         title: String,
@@ -103,6 +106,7 @@ class TerminalSessionStore(
                 )
             }
         }
+        refreshClipboardSnapshot()
 
         runCatching { TerminalKeepAliveService.start(application, location) }
             .onFailure {
@@ -124,7 +128,7 @@ class TerminalSessionStore(
                         transportEnded.set(true)
                         handleTransportEnded(currentRequest, transportError)
                     },
-                    clipboardText = ::readClipboardText,
+                    clipboardText = { clipboardTextSnapshot },
                     onSystemMultilinePaste = { text ->
                         showMultilinePaste(currentRequest, text)
                     },
@@ -220,6 +224,11 @@ class TerminalSessionStore(
         _state.update { it.copy(pendingMultilinePaste = null) }
     }
 
+    fun refreshClipboardSnapshot() {
+        if (!_state.value.visible) return
+        clipboardTextSnapshot = readClipboardText()
+    }
+
     fun copyLastOutput() {
         val output = session?.lastCommandOutput()
         when {
@@ -257,6 +266,7 @@ class TerminalSessionStore(
             jobToCancel = openJob
             session = null
             openJob = null
+            clipboardTextSnapshot = null
             _state.value = TerminalUiState()
         }
         jobToCancel?.cancel()
@@ -270,6 +280,7 @@ class TerminalSessionStore(
                 false
             } else {
                 session = null
+                clipboardTextSnapshot = null
                 _state.update { state ->
                     state.copy(
                         starting = false,
@@ -292,6 +303,7 @@ class TerminalSessionStore(
         }
         val clipboard = application.getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText("AF File Manager terminal", text))
+        if (clipboard != null) clipboardTextSnapshot = text
         return clipboard != null
     }
 

@@ -73,6 +73,7 @@ import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.SafBrowserUiState
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
+import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.SafFileVisual
@@ -384,19 +385,21 @@ private fun SafEntryGridItem(
             containerColor = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Box(modifier = Modifier.fillMaxWidth()) {
+        DirectoryGridItemContent(
+            title = entry.name,
+            metadata = if (entry.directory) null else FileSystemRules.humanBytes(entry.sizeBytes),
+            visualHeight = iconSize,
+            innerPadding = 8.dp,
+            visual = {
                 SafFileVisual(
                     entry = entry,
                     targetWidth = iconSize,
                     targetHeight = iconSize,
                     showThumbnails = showThumbnails,
-                    modifier = Modifier.size(iconSize).align(Alignment.Center),
+                    modifier = Modifier.fillMaxSize(),
                 )
+            },
+            actions = {
                 IconButton(onClick = { menu = true }, modifier = Modifier.align(Alignment.TopEnd)) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai"))
                 }
@@ -411,10 +414,8 @@ private fun SafEntryGridItem(
                         onDownload = onDownload,
                     )
                 }
-            }
-            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (!entry.directory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-        }
+            },
+        )
     }
 }
 

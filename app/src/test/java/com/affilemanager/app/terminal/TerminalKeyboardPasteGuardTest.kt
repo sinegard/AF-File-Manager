@@ -48,18 +48,17 @@ class TerminalKeyboardPasteGuardTest {
     }
 
     @Test
-    fun letsSingleLineClipboardInputPassUnchanged() {
+    fun letsSingleLineClipboardInputPassImmediatelyWithoutScheduling() {
         val input = "echo one line".toByteArray()
         val harness = Harness("echo one line")
 
         harness.guard.accept(input.copyOfRange(0, 4))
         harness.guard.accept(input.copyOfRange(4, input.size))
-        harness.flush()
 
-        assertEquals(1, harness.sent.size)
-        assertArrayEquals(input, harness.sent.single())
+        assertEquals(2, harness.sent.size)
+        assertArrayEquals(input, harness.sent.flattenBytes())
         assertTrue(harness.multilinePastes.isEmpty())
-        assertEquals(0, harness.clipboardReadCount)
+        assertEquals(0, harness.scheduledCount)
     }
 
     @Test
@@ -67,12 +66,12 @@ class TerminalKeyboardPasteGuardTest {
         val harness = Harness("\n")
 
         harness.guard.accept(byteArrayOf('\r'.code.toByte()))
-        harness.flush()
 
         assertEquals(1, harness.sent.size)
         assertArrayEquals(byteArrayOf('\r'.code.toByte()), harness.sent.single())
         assertTrue(harness.multilinePastes.isEmpty())
-        assertEquals(0, harness.clipboardReadCount)
+        assertEquals(1, harness.clipboardReadCount)
+        assertEquals(0, harness.scheduledCount)
     }
 
     @Test
@@ -81,9 +80,24 @@ class TerminalKeyboardPasteGuardTest {
         val harness = Harness("different\nclipboard")
 
         harness.guard.accept(input)
-        harness.flush()
 
         assertEquals(1, harness.sent.size)
+        assertArrayEquals(input, harness.sent.single())
+        assertTrue(harness.multilinePastes.isEmpty())
+        assertEquals(0, harness.scheduledCount)
+    }
+
+    @Test
+    fun releasesAClipboardPrefixWhenTheRestOfTheImeActionDoesNotMatch() {
+        val input = "typo".toByteArray()
+        val harness = Harness("typed clipboard\nnext")
+
+        input.forEach { byte -> harness.guard.accept(byteArrayOf(byte)) }
+
+        assertTrue(harness.sent.isEmpty())
+        assertEquals(1, harness.scheduledCount)
+        harness.flush()
+
         assertArrayEquals(input, harness.sent.single())
         assertTrue(harness.multilinePastes.isEmpty())
     }
@@ -120,6 +134,8 @@ class TerminalKeyboardPasteGuardTest {
         val sent = mutableListOf<ByteArray>()
         var tooLargeCount = 0
         var clipboardReadCount = 0
+        val scheduledCount: Int
+            get() = scheduled.size
 
         val guard = TerminalKeyboardPasteGuard(
             clipboardText = {
@@ -135,5 +151,15 @@ class TerminalKeyboardPasteGuardTest {
         fun flush() {
             scheduled.removeFirst()()
         }
+    }
+
+    private fun List<ByteArray>.flattenBytes(): ByteArray {
+        val result = ByteArray(sumOf(ByteArray::size))
+        var offset = 0
+        forEach { bytes ->
+            bytes.copyInto(result, destinationOffset = offset)
+            offset += bytes.size
+        }
+        return result
     }
 }

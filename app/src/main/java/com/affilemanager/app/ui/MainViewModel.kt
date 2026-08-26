@@ -3987,6 +3987,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         graph.terminalSessions.dismissMultilinePaste()
     }
 
+    fun refreshTerminalClipboard() {
+        graph.terminalSessions.refreshClipboardSnapshot()
+    }
+
     fun copyLastTerminalOutput() {
         graph.terminalSessions.copyLastOutput()
     }

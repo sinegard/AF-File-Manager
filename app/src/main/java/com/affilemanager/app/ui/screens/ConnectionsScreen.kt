@@ -102,6 +102,7 @@ import com.affilemanager.app.network.RemoteErrorInfo
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.RemoteBrowserRules
 import com.affilemanager.app.ui.components.RemoteFileVisual
+import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
@@ -940,7 +941,6 @@ private fun RemoteEntryTile(
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
-    val cardHeight = 158.dp + (visualHeight - 76.dp)
     val innerPadding = (9f * spacingScalePercent / 100f).dp
     Card(
         modifier = Modifier
@@ -960,28 +960,25 @@ private fun RemoteEntryTile(
             },
         ),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(cardHeight)) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
+        DirectoryGridItemContent(
+            title = entry.name,
+            metadata = if (entry.directory) null else FileSystemRules.humanBytes(entry.sizeBytes),
+            visualHeight = visualHeight,
+            innerPadding = innerPadding,
+            visual = {
                 if (opening) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(visualHeight.coerceAtMost(58.dp)).testTag("remote_opening_${entry.path}"),
                         strokeWidth = 4.dp,
                     )
                 } else {
-                    RemoteFileVisual(entry = entry, modifier = Modifier.fillMaxWidth().height(visualHeight))
+                    RemoteFileVisual(entry = entry, modifier = Modifier.fillMaxSize())
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                if (!entry.directory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-            }
-            Box(modifier = Modifier.align(Alignment.TopEnd)) {
+            },
+            actions = {
                 RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
-            }
-        }
+            },
+        )
     }
 }
 

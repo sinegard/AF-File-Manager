@@ -187,6 +187,7 @@ fun AFFileManagerApp(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshTerminalClipboard()
                 val current = hasFullFileAccess(context)
                 if (current != hasAllFilesAccess) {
                     hasAllFilesAccess = current
