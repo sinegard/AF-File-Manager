@@ -10,7 +10,7 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 
 - single- and dual-pane browsing with independent tabs, history, and per-folder list/grid settings for icon size, spacing, one to six columns, real file icons, and optional asynchronous thumbnails;
 - a home screen with bounded recent files, storage usage percentages, and Quick Locations that switch between list and four-to-six-column grid layouts;
-- system, light, and dark themes; Default, Material You, Catppuccin, and Orange palettes; plus an optional AMOLED-black background;
+- system, light, and dark themes; Default, Material You, Material Blue, Catppuccin, and Orange palettes; plus an optional AMOLED-black background;
 - local copy, move, rename, batch rename, recoverable trash, operation queue, pause/resume, retry, and SHA-256 verification;
 - continuous PDF viewing, image zoom, media/text/APK previews, Android `Open with`, and archive browsing;
 - a full built-in text and code editor with line numbers, syntax highlighting, find/replace, undo/redo, go-to-line, configurable wrapping and text size, UTF-8/UTF-16/Windows-1252/ISO-8859-1 support, and LF/CRLF/CR preservation;
@@ -49,7 +49,7 @@ The software is provided **as is**, without warranty. The authors and copyright 
 
 ## Installation and updates
 
-Download the newest APK from [Releases](https://github.com/sinegard/AF-File-Manager/releases/latest). Android must allow installs from the browser or file manager used to open the APK.
+Download the newest APK from [Releases](https://github.com/sinegard/AF-File-Manager/releases/latest) and see the release history in the [changelog](CHANGELOG.md). Android must allow installs from the browser or file manager used to open the APK.
 
 AF File Manager checks the public GitHub repository when the app starts, no more than once every six hours. On an unmetered network, a newer stable APK can be downloaded automatically. Before opening Android's installer, the app verifies all of the following:
 
