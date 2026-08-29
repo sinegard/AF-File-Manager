@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Nyelv</string>
+    <string name="language_description">Az alkalmazás interfész nyelv. Az ablak frissül a változás után.</string>
+    <string name="language_english">Ingol nyelv</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Nyissa meg a “%1$s”</string>
+    <string name="edit_with_chooser_title">“%1$s” szerkesztés</string>
+    <string name="share_file_chooser_title">Célos fájl</string>
+    <string name="open_with_chooser_short">Megnyitás a következővel:</string>
+    <string name="lan_transfer_channel_name">Lokális hálózati fájlátviteli</string>
+    <string name="lan_transfer_channel_description">Csak akkor jelenik meg, ha az LAN fájlátviteli programot futtatja</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_text">- Kezdőszolgáló...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
+    <string name="terminal_channel_name">Aktívan működő terminál</string>
+    <string name="terminal_channel_description">Nyitott telefon vagy szerver terminál fut a háttérben</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">A telefon terminál aktív.</string>
+    <string name="terminal_server_active">A szerverterminál aktív</string>
+    <string name="generated_extracted_name">kivonat</string>
+    <string name="close">Bezárás</string>
+    <string name="stop">Leállítás</string>
+</resources>

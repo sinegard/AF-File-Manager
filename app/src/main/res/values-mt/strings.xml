@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Lingwa</string>
+    <string name="language_description">Il- finestra tiffreska wara bidla.</string>
+    <string name="language_english">Ingliż</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Ftuħ “%1$s” b\'</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” b\'</string>
+    <string name="share_file_chooser_title">Is- sejħa tal- fajl</string>
+    <string name="open_with_chooser_short">Ftuħ b\'</string>
+    <string name="lan_transfer_channel_name">Trasferiment ta \' fajl tan-netwerk lokali</string>
+    <string name="lan_transfer_channel_description">Jidher biss waqt li inti tmexxi LAN trasferiment tal-fajl</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN trasferiment</string>
+    <string name="lan_transfer_starting_text">Server li jibda...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN trasferiment qed isir</string>
+    <string name="terminal_channel_name">Terminal attiv</string>
+    <string name="terminal_channel_description">Żomm telefon miftuħ jew terminali tas-server qed jaħdem fl-isfond</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">It-terminal tat-telefon huwa attiv</string>
+    <string name="terminal_server_active">Il-terminal tas-server huwa attiv</string>
+    <string name="generated_extracted_name">estratti</string>
+    <string name="close">Qari</string>
+    <string name="stop">Niftakru</string>
+</resources>

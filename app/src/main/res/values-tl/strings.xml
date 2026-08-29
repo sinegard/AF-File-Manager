@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">wika</string>
+    <string name="language_description">Ang wikang interface ng app. Ang bintana ay nagpapasikat pagkatapos ng isang pagbabago.</string>
+    <string name="language_english">Ingles</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Buksan ang “%1$s” sa</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” sa pamamagitan ng</string>
+    <string name="share_file_chooser_title">Ibahagi ang file</string>
+    <string name="open_with_chooser_short">Buksan sa</string>
+    <string name="lan_transfer_channel_name">Paglipat ng file sa lokal na network</string>
+    <string name="lan_transfer_channel_description">Ipinakita lamang habang tumatakbo ka ng file transfer LAN</string>
+    <string name="lan_transfer_starting_title">Paglipat ng AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Nagsimula server...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfer ay nagpapatakbo</string>
+    <string name="terminal_channel_name">Active terminal</string>
+    <string name="terminal_channel_description">Panatilihin ang isang bukas na telepono o terminal server na tumatakbo sa background</string>
+    <string name="terminal_notification_title">terminal ng AF File Manager</string>
+    <string name="terminal_phone_active">Ang terminal ng telepono ay aktibo</string>
+    <string name="terminal_server_active">Ang terminal ng server ay aktibo</string>
+    <string name="generated_extracted_name">na nakuha</string>
+    <string name="close">Malapit</string>
+    <string name="stop">Tigil na</string>
+</resources>

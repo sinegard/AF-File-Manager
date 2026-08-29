@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">ভাষা</string>
+    <string name="language_description">অ্যাপ ইন্টারফেস ভাষা. উইন্ডো পরিবর্তন পরে আপডেট।</string>
+    <string name="language_english">ইংরেজি</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">“%1$s” দিয়ে খুলুন</string>
+    <string name="edit_with_chooser_title">সম্পাদনা করুন “%1$s”</string>
+    <string name="share_file_chooser_title">ফাইল শেয়ার করুন</string>
+    <string name="open_with_chooser_short">এর মাধ্যমে খুলুন</string>
+    <string name="lan_transfer_channel_name">স্থানীয় নেটওয়ার্ক ফাইল স্থানান্তর</string>
+    <string name="lan_transfer_channel_description">শুধুমাত্র যখন আপনি LAN ফাইল স্থানান্তর চালান প্রদর্শিত</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN স্থানান্তর</string>
+    <string name="lan_transfer_starting_text">সার্ভার শুরু হচ্ছে...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN স্থানান্তর চলছে</string>
+    <string name="terminal_channel_name">সক্রিয় টার্মিনাল</string>
+    <string name="terminal_channel_description">পটভূমিতে একটি খোলা ফোন বা সার্ভার টার্মিনাল চালানো রাখে</string>
+    <string name="terminal_notification_title">AF File Manager টার্মিনাল</string>
+    <string name="terminal_phone_active">ফোন টার্মিনাল সক্রিয়</string>
+    <string name="terminal_server_active">সার্ভার টার্মিনাল সক্রিয়</string>
+    <string name="generated_extracted_name">নিষ্কাশন</string>
+    <string name="close">বন্ধ করুন</string>
+    <string name="stop">থামান</string>
+</resources>

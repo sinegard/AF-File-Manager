@@ -155,6 +155,8 @@ class UiTranslatorTest {
     @Test
     fun lithuanianKeepsOriginalInterfaceCopy() {
         assertEquals("Failai", UiTranslator.translate("Failai", AppLanguageManager.LITHUANIAN))
+        assertEquals("Aplanko turinys", UiTranslator.translate("Aplanko turinys", AppLanguageManager.LITHUANIAN))
+        assertEquals("Material mėlyna", UiTranslator.translate("Material mėlyna", AppLanguageManager.LITHUANIAN))
         assertEquals("Pasirinkta: 12", UiTranslator.translate("Pasirinkta: 12", AppLanguageManager.LITHUANIAN))
         assertEquals("Paprastas tekstas", UiTranslator.translate("Plain text", AppLanguageManager.LITHUANIAN))
         assertEquals(
@@ -193,6 +195,10 @@ class UiTranslatorTest {
         assertEquals("Writable", UiTranslator.translate("Įrašomas", AppLanguageManager.ENGLISH))
         assertEquals("Protected Android files", UiTranslator.translate("Apsaugoti Android failai", AppLanguageManager.ENGLISH))
         assertEquals("Safe cleanup review", UiTranslator.translate("Saugaus valymo peržiūra", AppLanguageManager.ENGLISH))
+        assertEquals("Folder contents", UiTranslator.translate("Aplanko turinys", AppLanguageManager.ENGLISH))
+        assertEquals("Calculating folder sizes…", UiTranslator.translate("Skaičiuojami aplankų dydžiai…", AppLanguageManager.ENGLISH))
+        assertEquals("Material blue", UiTranslator.translate("Material mėlyna", AppLanguageManager.ENGLISH))
+        assertEquals("At least 4 files", UiTranslator.translate("Bent 4 failų", AppLanguageManager.ENGLISH))
         assertEquals("Similar-photo group 4", UiTranslator.translate("Panašių nuotraukų grupė 4", AppLanguageManager.ENGLISH))
         assertEquals("Connected · UID 2000", UiTranslator.translate("Prisijungta · UID 2000", AppLanguageManager.ENGLISH))
     }

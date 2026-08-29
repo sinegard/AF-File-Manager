@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Raksts</string>
+    <string name="language_description">Aplikācijas saskarnes valoda.</string>
+    <string name="language_english">angļu valodas</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Atvērt “%1$s” ar</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” ar</string>
+    <string name="share_file_chooser_title">Pievieno datoru</string>
+    <string name="open_with_chooser_short">Atvērt, izmantojot</string>
+    <string name="lan_transfer_channel_name">Lokālās tīkla datoru pārvietošana</string>
+    <string name="lan_transfer_channel_description">Izskatās tikai, kad veic LAN datu pārskaitījumu</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN pārdevēšana</string>
+    <string name="lan_transfer_starting_text">Servera startēšana...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN pārveides darbība</string>
+    <string name="terminal_channel_name">Aktiviskais termināls</string>
+    <string name="terminal_channel_description">Pārbauda atvērtu tālruņu vai servera terminālu, kas darbojas fonā</string>
+    <string name="terminal_notification_title">AF File Manager termīls</string>
+    <string name="terminal_phone_active">Telefonu termināls aktivizēts</string>
+    <string name="terminal_server_active">Servera terminala aktivizēta</string>
+    <string name="generated_extracted_name">ekstrakts</string>
+    <string name="close">Aizvērt</string>
+    <string name="stop">Apturēt</string>
+</resources>

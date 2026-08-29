@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Јазичка</string>
+    <string name="language_description">Јазикот на интерфејс на апликацијата. Прозорот се обновува по промена.</string>
+    <string name="language_english">Англиски</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Отворете “%1$s” со</string>
+    <string name="edit_with_chooser_title">Редактирање “%1$s” со</string>
+    <string name="share_file_chooser_title">Споделете ги документите</string>
+    <string name="open_with_chooser_short">Отвори со</string>
+    <string name="lan_transfer_channel_name">Преместување на локални мрежи</string>
+    <string name="lan_transfer_channel_description">Покажа се само додека го извршувате префрлувањето на файло LAN</string>
+    <string name="lan_transfer_starting_title">Преместување на AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Стартирајќи сервер...</string>
+    <string name="lan_transfer_running_title">Предавањето AF File Manager LAN се работи</string>
+    <string name="terminal_channel_name">Активен терминал</string>
+    <string name="terminal_channel_description">Држи отворен телефон или терминал на серверот во позадина</string>
+    <string name="terminal_notification_title">Терминал AF File Manager</string>
+    <string name="terminal_phone_active">Телефонскиот терминал е активен.</string>
+    <string name="terminal_server_active">Терминал на серверот е активен</string>
+    <string name="generated_extracted_name">екстрагирани</string>
+    <string name="close">Затвори</string>
+    <string name="stop">Запри</string>
+</resources>

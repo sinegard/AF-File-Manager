@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Jezik</string>
+    <string name="language_description">Programska jezikovna vmesnica. Okno se osveži po spremembi.</string>
+    <string name="language_english">angleščina</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Odprite “%1$s” z</string>
+    <string name="edit_with_chooser_title">Izberite “%1$s” z</string>
+    <string name="share_file_chooser_title">Delovanje datoteke</string>
+    <string name="open_with_chooser_short">Odpiranje z aplikacijo</string>
+    <string name="lan_transfer_channel_name">Prenos datotek v lokalnem omrežju</string>
+    <string name="lan_transfer_channel_description">Pokazano je samo med izvajanjem prenosa datoteke LAN</string>
+    <string name="lan_transfer_starting_title">prenos AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Začetni strežnik...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN prenos poteka</string>
+    <string name="terminal_channel_name">Aktivni terminal</string>
+    <string name="terminal_channel_description">Na ozadju vodi odprt telefon ali terminal strežnika</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">Telefonski terminal je aktiven.</string>
+    <string name="terminal_server_active">Server terminal je aktiven</string>
+    <string name="generated_extracted_name">iztrgan</string>
+    <string name="close">Zapri</string>
+    <string name="stop">Ustavi</string>
+</resources>

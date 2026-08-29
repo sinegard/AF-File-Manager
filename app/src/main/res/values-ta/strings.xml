@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">மொழி</string>
+    <string name="language_description">பயன்பாட்டு இடைமுக மொழி. மாற்றம் செய்யப்பட்ட பிறகு ஜன்னல் புதுப்பிக்கப்படும்.</string>
+    <string name="language_english">ஆங்கிலம்</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">“%1$s” உடன் திறக்கவும்</string>
+    <string name="edit_with_chooser_title">“%1$s” உடன் திருத்தவும்</string>
+    <string name="share_file_chooser_title">பகிர்தல் கோப்பு</string>
+    <string name="open_with_chooser_short">இதன்மூலம் திற</string>
+    <string name="lan_transfer_channel_name">உள்ளூர் நெட்வொர்க் கோப்பு பரிமாற்றம்</string>
+    <string name="lan_transfer_channel_description">நீங்கள் LAN கோப்பு பரிமாற்றத்தை இயக்கும் போது மட்டுமே காட்டப்படும்</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN பரிமாற்றம்</string>
+    <string name="lan_transfer_starting_text">தொடக்க சேவையகம்...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN பரிமாற்றம் இயங்குகிறது</string>
+    <string name="terminal_channel_name">செயலில் உள்ள முனையம்</string>
+    <string name="terminal_channel_description">பின்னணியில் ஒரு திறந்த தொலைபேசி அல்லது சர்வர் முனையம் இயங்கும் வைத்து</string>
+    <string name="terminal_notification_title">AF File Manager முனையம்</string>
+    <string name="terminal_phone_active">தொலைபேசி முனையம் செயலில் உள்ளது</string>
+    <string name="terminal_server_active">சேவையக முனையம் செயலில் உள்ளது</string>
+    <string name="generated_extracted_name">அகற்றப்பட்ட</string>
+    <string name="close">மூடு</string>
+    <string name="stop">நிறுத்து</string>
+</resources>

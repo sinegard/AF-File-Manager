@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Språk</string>
+    <string name="language_description">Appens gränssnittspråk. Fönstret uppdateras efter en ändring.</string>
+    <string name="language_english">Engelska</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Öppna “%1$s” med</string>
+    <string name="edit_with_chooser_title">Redigera “%1$s” med</string>
+    <string name="share_file_chooser_title">Dela fil</string>
+    <string name="open_with_chooser_short">Öppna med</string>
+    <string name="lan_transfer_channel_name">Lokal nätverksfilöverföring</string>
+    <string name="lan_transfer_channel_description">Visa endast när du kör filöverföring LAN</string>
+    <string name="lan_transfer_starting_title">Förflyttning av AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Starterande server...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN överföring körs</string>
+    <string name="terminal_channel_name">Aktiva terminaler</string>
+    <string name="terminal_channel_description">Håller en öppen telefon eller serverterminal som körs i bakgrunden</string>
+    <string name="terminal_notification_title">AF File Manager terminalen</string>
+    <string name="terminal_phone_active">Telefonterminalen är aktiv.</string>
+    <string name="terminal_server_active">Serverterminal aktiverat</string>
+    <string name="generated_extracted_name">utvunnad</string>
+    <string name="close">Stäng</string>
+    <string name="stop">Avbryt</string>
+</resources>

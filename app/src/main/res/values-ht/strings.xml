@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Lang</string>
+    <string name="language_description">Lang koòdone app. fennèt la refresh apre yon chanjman.</string>
+    <string name="language_english">Anglè</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Louvri “%1$s” ak</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” ak</string>
+    <string name="share_file_chooser_title">Pataje dosye</string>
+    <string name="open_with_chooser_short">Louvri ak</string>
+    <string name="lan_transfer_channel_name">Transfè dosye rezo lokal</string>
+    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_starting_title">transfè AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Kòmanse sèvè...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfè ap kouri</string>
+    <string name="terminal_channel_name">Terminal aktif</string>
+    <string name="terminal_channel_description">Kenbe yon telefòn louvri oswa tèminal sèvè kouri nan background</string>
+    <string name="terminal_notification_title">AF File Manager tèminal</string>
+    <string name="terminal_phone_active">Telefòn tèminal aktif</string>
+    <string name="terminal_server_active">Sèvè tèminal aktif</string>
+    <string name="generated_extracted_name">ekstrè</string>
+    <string name="close">Fèmen</string>
+    <string name="stop">Sispann</string>
+</resources>

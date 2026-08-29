@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,8 +27,10 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Sync
@@ -58,14 +62,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.BuildConfig
-import com.affilemanager.app.R
 import com.affilemanager.app.advanced.AdvancedAccessMode
 import com.affilemanager.app.advanced.CapabilityState
 import com.affilemanager.app.core.FileSystemRules
@@ -73,6 +75,7 @@ import com.affilemanager.app.operations.OperationSnapshot
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.localization.AppLanguageOption
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.theme.AppColorPalette
@@ -82,6 +85,7 @@ import com.affilemanager.app.ui.theme.AppearanceSettings
 import com.affilemanager.app.ui.theme.palettePreviewColors
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
+import java.util.Locale
 
 @Composable
 fun ToolsScreen(
@@ -103,9 +107,17 @@ fun ToolsScreen(
     val active = viewModel.activePanelState()
     val selectedEntry = active.entries.singleOrNull { it.absolutePath in active.selectedPaths }
     val context = LocalContext.current
-    val interfaceLanguage = LocalConfiguration.current.locales[0].language
+    val configuration = LocalConfiguration.current
+    val displayLocale = configuration.locales[0]
+    val interfaceLanguage = AppLanguageManager.normalizeLanguageTag(displayLocale.language)
+    val languageOptions = remember(displayLocale) { AppLanguageManager.languageOptions(displayLocale) }
+    val currentLanguage = remember(interfaceLanguage, languageOptions) {
+        languageOptions.firstOrNull { it.tag == interfaceLanguage }
+            ?: languageOptions.first { it.tag == AppLanguageManager.ENGLISH }
+    }
     var encryptTarget by remember { mutableStateOf(selectedEntry) }
     var showEncrypt by remember { mutableStateOf(false) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
     var removeSaf by remember { mutableStateOf<com.affilemanager.app.data.SafLocation?>(null) }
 
     LazyColumn(
@@ -127,20 +139,26 @@ fun ToolsScreen(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(stringResource(R.string.language_title), fontWeight = FontWeight.SemiBold)
-                    Text(stringResource(R.string.language_description), style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = interfaceLanguage == AppLanguageManager.ENGLISH,
-                            onClick = { AppLanguageManager.setLanguage(context, AppLanguageManager.ENGLISH) },
-                            label = { Text(stringResource(R.string.language_english)) },
-                        )
-                        FilterChip(
-                            selected = interfaceLanguage == AppLanguageManager.LITHUANIAN,
-                            onClick = { AppLanguageManager.setLanguage(context, AppLanguageManager.LITHUANIAN) },
-                            label = { Text(stringResource(R.string.language_lithuanian)) },
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Language, contentDescription = null)
+                        Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                            LText("Kalba", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = currentLanguage.nativeName,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = { showLanguagePicker = true },
+                            modifier = Modifier.testTag("change_language"),
+                        ) { LText("Keisti kalbą") }
                     }
+                    LText(
+                        "Visi 59 kalbų paketai įtraukti į programą ir veikia neprisijungus.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }
@@ -393,6 +411,18 @@ fun ToolsScreen(
         }
     }
 
+    if (showLanguagePicker) {
+        LanguagePickerDialog(
+            selectedLanguage = interfaceLanguage,
+            languages = languageOptions,
+            onSelect = { language ->
+                showLanguagePicker = false
+                AppLanguageManager.setLanguage(context, language.tag)
+            },
+            onDismiss = { showLanguagePicker = false },
+        )
+    }
+
     removeSaf?.let { location ->
         AlertDialog(
             onDismissRequest = { removeSaf = null },
@@ -427,6 +457,88 @@ fun ToolsScreen(
         )
     }
 
+}
+
+@Composable
+private fun LanguagePickerDialog(
+    selectedLanguage: String,
+    languages: List<AppLanguageOption>,
+    onSelect: (AppLanguageOption) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val filteredLanguages = remember(query, languages) {
+        val needle = query.trim().lowercase(Locale.ROOT)
+        if (needle.isEmpty()) {
+            languages
+        } else {
+            languages.filter { language ->
+                language.tag.contains(needle, ignoreCase = true) ||
+                    language.nativeName.lowercase(Locale.ROOT).contains(needle) ||
+                    language.displayName.lowercase(Locale.ROOT).contains(needle) ||
+                    language.englishName.lowercase(Locale.ROOT).contains(needle)
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("language_picker"),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                LText("Pasirinkti kalbą")
+                LText("59 kalbos", style = MaterialTheme.typography.labelMedium)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().testTag("language_search"),
+                    singleLine = true,
+                    label = { LText("Kalbos paieška") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(filteredLanguages, key = AppLanguageOption::tag) { language ->
+                        FilledTonalButton(
+                            onClick = { onSelect(language) },
+                            modifier = Modifier.fillMaxWidth().testTag("language_option_${language.tag}"),
+                        ) {
+                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                                Text(language.nativeName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (!language.nativeName.equals(language.displayName, ignoreCase = true)) {
+                                    Text(
+                                        language.displayName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            if (language.tag == selectedLanguage) {
+                                Icon(Icons.Rounded.CheckCircle, contentDescription = null)
+                            }
+                        }
+                    }
+                }
+                if (filteredLanguages.isEmpty()) {
+                    LText("Kalbų nerasta", modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+                LText(
+                    "Anglų ir lietuvių vertimai peržiūrėti. Kitų kalbų pataisymai laukiami.",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+        },
+    )
 }
 
 private fun advancedModeLabel(mode: AdvancedAccessMode): String = when (mode) {
@@ -522,6 +634,7 @@ private fun AppearanceSettingsCard(
                                         AppColorPalette.DYNAMIC -> "Dinaminė"
                                         AppColorPalette.CATPPUCCIN -> "Catppuccin"
                                         AppColorPalette.ORANGE -> "Oranžinė"
+                                        AppColorPalette.MATERIAL_BLUE -> "Material mėlyna"
                                     },
                                     style = MaterialTheme.typography.labelLarge,
                                 )
@@ -531,6 +644,7 @@ private fun AppearanceSettingsCard(
                             }
                         }
                     }
+                    if (paletteRow.size == 1) Spacer(modifier = Modifier.weight(1f))
                 }
             }
 

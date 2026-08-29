@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Lingvo</string>
+    <string name="language_description">La interfaca lingvo de la programo. La fenestro refreŝiĝas post ŝanĝo.</string>
+    <string name="language_english">La angla</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Malfermu “%1$s” kun</string>
+    <string name="edit_with_chooser_title">Redakti “%1$s” kun</string>
+    <string name="share_file_chooser_title">Dividi dosieron</string>
+    <string name="open_with_chooser_short">Malfermu kun</string>
+    <string name="lan_transfer_channel_name">Loka reto dosiertransdono</string>
+    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_starting_title">translokigo de AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Komenciĝanta servilo...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN translokigo estas funkcianta</string>
+    <string name="terminal_channel_name">Aktiva terminalo</string>
+    <string name="terminal_channel_description">Konservas malferma telefono aŭ servilo terminalo kuranta en la fono</string>
+    <string name="terminal_notification_title">AF File Manager terminalo</string>
+    <string name="terminal_phone_active">La telefonterminalo estas aktivigita</string>
+    <string name="terminal_server_active">Servilterminalo aktivigita</string>
+    <string name="generated_extracted_name">eltirita</string>
+    <string name="close">Proksima</string>
+    <string name="stop">Ĉesu!</string>
+</resources>

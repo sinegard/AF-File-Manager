@@ -8,6 +8,15 @@ object UiTranslator {
         "Ryšiai" to "Network",
         "Bendrinti" to "Share",
         "Daugiau" to "More",
+        "Kalba" to "Language",
+        "Programos sąsajos kalba" to "App interface language",
+        "Visi 59 kalbų paketai įtraukti į programą ir veikia neprisijungus." to "All 59 language packs are included in the app and work offline.",
+        "Anglų ir lietuvių vertimai peržiūrėti. Kitų kalbų pataisymai laukiami." to "English and Lithuanian translations are reviewed. Corrections for other languages are welcome.",
+        "Keisti kalbą" to "Change language",
+        "Pasirinkti kalbą" to "Choose language",
+        "Kalbos paieška" to "Search languages",
+        "Kalbų nerasta" to "No languages found",
+        "59 kalbos" to "59 languages",
         "Bendrinti su kompiuteriu" to "Share with a computer",
         "Laikinai atverkite pasirinktą aplanką tame pačiame privačiame Wi-Fi arba Ethernet tinkle." to "Temporarily share the selected folder on the same private Wi-Fi or Ethernet network.",
         "Bendrinamas aplankas" to "Shared folder",
@@ -280,6 +289,11 @@ object UiTranslator {
         "Peržiūros kopija neužbaigta" to "The preview copy is incomplete",
         "Saugaus valymo peržiūra" to "Safe cleanup review",
         "Nieko nepasirenkama ir netrinama automatiškai" to "Nothing is selected or deleted automatically",
+        "Aplanko turinys" to "Folder contents",
+        "Skaičiuojami aplankų dydžiai…" to "Calculating folder sizes…",
+        "Aplanko turinio įkelti nepavyko" to "Could not load the folder contents",
+        "Rodomas dalinis turinys arba daliniai aplankų dydžiai, nes pasiekta saugi skenavimo riba." to "Some contents or folder sizes are partial because the safe scan limit was reached.",
+        "Aplankas yra už analizuojamos vietos ribų" to "The folder is outside the analyzed location",
         "Atidaryti saugaus valymo peržiūrą" to "Open safe cleanup review",
         "Pasirinkti elementai bus perkelti į atkuriamą AF File Manager šiukšlinę." to "Selected items will be moved to AF File Manager's recoverable trash.",
         "Lyginamos nuotraukos…" to "Comparing photos…",
@@ -1013,6 +1027,7 @@ object UiTranslator {
         "Numatytoji" to "Default",
         "Dinaminė" to "Dynamic",
         "Oranžinė" to "Orange",
+        "Material mėlyna" to "Material blue",
         "Reikia Android 12+" to "Requires Android 12+",
         "AMOLED juodas režimas" to "AMOLED black mode",
         "Tamsioje temoje fonas tampa visiškai juodas." to "Uses a pure-black background in dark mode.",
@@ -1156,7 +1171,15 @@ object UiTranslator {
 
     fun translate(text: String, language: String): String {
         if (text.isBlank()) return text
-        if (language == AppLanguageManager.LITHUANIAN) {
+        val normalizedLanguage = AppLanguageManager.normalizeLanguageTag(language)
+        if (
+            normalizedLanguage != AppLanguageManager.ENGLISH &&
+            normalizedLanguage != AppLanguageManager.LITHUANIAN
+        ) {
+            val canonicalEnglish = translate(text, AppLanguageManager.ENGLISH)
+            return UiTranslationCatalog.translate(canonicalEnglish, normalizedLanguage)
+        }
+        if (normalizedLanguage == AppLanguageManager.LITHUANIAN) {
             RuntimeMessageTranslations.lithuanian[text]?.let { return it }
             lithuanianPatterns.firstNotNullOfOrNull { (pattern, transform) ->
                 pattern.matchEntire(text)?.let(transform)
@@ -1365,6 +1388,7 @@ object UiTranslator {
             Regex("^Nuskaityta (\\d+) failų ir (\\d+) aplankų$") to { match: MatchResult ->
                 "Scanned ${match.groupValues[1]} files and ${match.groupValues[2]} folders"
             },
+            Regex("^Bent (\\d+) failų$") to { match: MatchResult -> "At least ${match.groupValues[1]} files" },
             Regex("^(\\d+) failų$") to { match: MatchResult -> "${match.groupValues[1]} files" },
             Regex("^(\\d+) elementų$") to { match: MatchResult -> "${match.groupValues[1]} items" },
             Regex("^Vienu metu galima išsaugoti iki (\\d+) programų$") to { match: MatchResult -> "You can save up to ${match.groupValues[1]} apps at a time" },

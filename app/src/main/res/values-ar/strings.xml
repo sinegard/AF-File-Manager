@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">اللغة</string>
+    <string name="language_description">لغة واجهة التطبيق، تتم تجديد النافذة بعد تغيير.</string>
+    <string name="language_english">الإنجليزية</string>
+    <string name="language_lithuanian">ليتوفيون</string>
+    <string name="open_with_chooser_title">افتح “%1$s” مع</string>
+    <string name="edit_with_chooser_title">تحرير “%1$s” مع</string>
+    <string name="share_file_chooser_title">مشاركة الملف</string>
+    <string name="open_with_chooser_short">فتح باستخدام</string>
+    <string name="lan_transfer_channel_name">نقل ملفات الشبكة المحلية</string>
+    <string name="lan_transfer_channel_description">يظهر فقط أثناء تشغيل نقل الملف LAN</string>
+    <string name="lan_transfer_starting_title">نقل AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">أبدأ الخادم</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN نقل يجري</string>
+    <string name="terminal_channel_name">المحطة النشطة</string>
+    <string name="terminal_channel_description">يبقي الهاتف المفتوح أو محطة الخادم تعمل في الخلفية</string>
+    <string name="terminal_notification_title">محطة AF File Manager</string>
+    <string name="terminal_phone_active">محطة الهاتف تعمل</string>
+    <string name="terminal_server_active">محطة الخادم تعمل</string>
+    <string name="generated_extracted_name">المستخرج</string>
+    <string name="close">إغلاق</string>
+    <string name="stop">إيقاف</string>
+</resources>

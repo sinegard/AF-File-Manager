@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">زبان</string>
+    <string name="language_description">زبان رابط اپلیکیشن. پنجره بعد از تغییر تازه می شود.</string>
+    <string name="language_english">انگلیسی</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">“%1$s” با</string>
+    <string name="edit_with_chooser_title">ویرایش “%1$s” با</string>
+    <string name="share_file_chooser_title">اشتراک گذاری فایل</string>
+    <string name="open_with_chooser_short">باز کردن با</string>
+    <string name="lan_transfer_channel_name">انتقال فایل های شبکه محلی</string>
+    <string name="lan_transfer_channel_description">فقط در حالی که شما انجام LAN انتقال فایل نشان داده می شود</string>
+    <string name="lan_transfer_starting_title">انتقال AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">شروع کردن سرور...</string>
+    <string name="lan_transfer_running_title">انتقال AF File Manager LAN در حال اجرا است</string>
+    <string name="terminal_channel_name">ترمینال فعال</string>
+    <string name="terminal_channel_description">یک تلفن یا ترمینال سرور را در پس زمینه باز نگه می دارد</string>
+    <string name="terminal_notification_title">ترمینال AF File Manager</string>
+    <string name="terminal_phone_active">ترمینال تلفن فعاله</string>
+    <string name="terminal_server_active">ترمینال سرور فعال است</string>
+    <string name="generated_extracted_name">استخراج شده</string>
+    <string name="close">بستن</string>
+    <string name="stop">متوقف کردن</string>
+</resources>

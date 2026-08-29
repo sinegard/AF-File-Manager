@@ -34,4 +34,13 @@ ConnectBot Terminal embeds libvterm for terminal emulation.
 - Copyright John Wu and contributors
 - License: Apache License 2.0 — https://github.com/topjohnwu/libsu/blob/master/LICENSE
 
+## Offline interface translation assets
+
+The generated language packs were prepared during development with Meta's NLLB-200 distilled 600M model. The model and translation runtime are not included in the Android app. Standard Android action labels are taken from the Android Open Source Project translations where an exact match exists.
+
+- NLLB-200 model: https://huggingface.co/facebook/nllb-200-distilled-600M
+- NLLB-200 license: Creative Commons Attribution-NonCommercial 4.0
+- Android Open Source Project: https://source.android.com/
+- AOSP license: Apache License 2.0
+
 The notices above do not change AF File Manager's [PolyForm Noncommercial License 1.0.0](LICENSE). Each third-party component remains governed by its own license.

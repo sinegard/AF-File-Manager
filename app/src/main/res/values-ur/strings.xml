@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">زبان</string>
+    <string name="language_description">ایپ انٹرفیس زبان۔ تبدیلی کے بعد ونڈو تازہ ہوجاتی ہے۔</string>
+    <string name="language_english">انگریزی</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">“%1$s” کے ساتھ کھولیں</string>
+    <string name="edit_with_chooser_title">“%1$s” کے ساتھ ترمیم کریں</string>
+    <string name="share_file_chooser_title">فائل شیئر کریں</string>
+    <string name="open_with_chooser_short">اس کے ساتھ کھولیں</string>
+    <string name="lan_transfer_channel_name">مقامی نیٹ ورک فائل ٹرانسفر</string>
+    <string name="lan_transfer_channel_description">صرف فائل کی منتقلی LAN چلانے کے دوران دکھایا</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN منتقلی</string>
+    <string name="lan_transfer_starting_text">شروع کرنے کے سرور...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN منتقلی چل رہا ہے</string>
+    <string name="terminal_channel_name">فعال ٹرمینل</string>
+    <string name="terminal_channel_description">پس منظر میں ایک کھلا فون یا سرور ٹرمینل چل رہا ہے</string>
+    <string name="terminal_notification_title">AF File Manager ٹرمینل</string>
+    <string name="terminal_phone_active">فون ٹرمینل فعال ہے</string>
+    <string name="terminal_server_active">سرور ٹرمینل فعال ہے</string>
+    <string name="generated_extracted_name">نکالنے والا</string>
+    <string name="close">بند کریں</string>
+    <string name="stop">روکیں</string>
+</resources>

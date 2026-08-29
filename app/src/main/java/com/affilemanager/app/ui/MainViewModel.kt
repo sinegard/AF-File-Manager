@@ -60,6 +60,7 @@ import com.affilemanager.app.model.ContentFileEntry
 import com.affilemanager.app.model.ClipboardState
 import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.DuplicateGroup
+import com.affilemanager.app.model.DirectoryContentsUsage
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SearchFilters
 import com.affilemanager.app.model.SimilarImageGroup
@@ -3363,6 +3364,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Throwable) {
                 _analysisState.value = AnalysisUiState(rootPath = path, running = false, error = error.message)
             }
+        }
+    }
+
+    suspend fun loadCleanupFolder(path: String): Result<DirectoryContentsUsage> {
+        val rootPath = _analysisState.value.rootPath
+            ?: return Result.failure(IllegalStateException("Analizės vieta nebepasiekiama"))
+        return try {
+            Result.success(graph.search.directoryContentsWithUsage(rootPath, path))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Result.failure(error)
         }
     }
 

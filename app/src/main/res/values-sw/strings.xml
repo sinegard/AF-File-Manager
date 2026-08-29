@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Lugha</string>
+    <string name="language_description">Kiingereza interface programu. dirisha refreshes baada ya mabadiliko.</string>
+    <string name="language_english">Kiingereza</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Fungua “%1$s” na</string>
+    <string name="edit_with_chooser_title">Hariri “%1$s” na</string>
+    <string name="share_file_chooser_title">Kushiriki faili</string>
+    <string name="open_with_chooser_short">Fungua ukitumia</string>
+    <string name="lan_transfer_channel_name">Uhamisho wa faili za mtandao wa ndani</string>
+    <string name="lan_transfer_channel_description">Kuonyeshwa tu wakati wewe kukimbia LAN faili ya uhamisho</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN uhamisho</string>
+    <string name="lan_transfer_starting_text">Kuanza server...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN uhamisho unaendelea</string>
+    <string name="terminal_channel_name">Kituo cha terminal cha kazi</string>
+    <string name="terminal_channel_description">Anaweka simu wazi au terminal server kazi katika background</string>
+    <string name="terminal_notification_title">terminal AF File Manager</string>
+    <string name="terminal_phone_active">Simu terminal ni kazi</string>
+    <string name="terminal_server_active">Terminal ya seva imeamilishwa</string>
+    <string name="generated_extracted_name">kuchukuliwa</string>
+    <string name="close">Funga</string>
+    <string name="stop">Simamisha</string>
+</resources>

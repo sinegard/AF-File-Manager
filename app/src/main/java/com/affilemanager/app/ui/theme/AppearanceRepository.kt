@@ -17,6 +17,7 @@ enum class AppColorPalette {
     DYNAMIC,
     CATPPUCCIN,
     ORANGE,
+    MATERIAL_BLUE,
 }
 
 data class AppearanceSettings(

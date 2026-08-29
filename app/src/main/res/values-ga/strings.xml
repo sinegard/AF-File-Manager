@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Teanga</string>
+    <string name="language_description">An fhuinneog athnuachan tar éis athrú.</string>
+    <string name="language_english">Béarla</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Oscail “%1$s” le</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” le</string>
+    <string name="share_file_chooser_title">Comparáid comhad</string>
+    <string name="open_with_chooser_short">Osclaíonn sé le</string>
+    <string name="lan_transfer_channel_name">Cuairteoirí</string>
+    <string name="lan_transfer_channel_description">Ní thaispeántar ach nuair a dhéanann tú a chur ar aghaidh LAN aistriú comhaid</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN a aistriú</string>
+    <string name="lan_transfer_starting_text">Seirbhís tosaithe...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN aistriú ag rith</string>
+    <string name="terminal_channel_name">Stair gníomhach</string>
+    <string name="terminal_channel_description">Coinníonn sé fóin oscailte nó críochnú serváir ag rith i gcúlra</string>
+    <string name="terminal_notification_title">Stairéal AF File Manager</string>
+    <string name="terminal_phone_active">Tá an terminal teileafóin gníomhach</string>
+    <string name="terminal_server_active">Tá críochfort an fhostóir gníomhach</string>
+    <string name="generated_extracted_name">a tharraingt siar</string>
+    <string name="close">Dlúth</string>
+    <string name="stop">Stop</string>
+</resources>

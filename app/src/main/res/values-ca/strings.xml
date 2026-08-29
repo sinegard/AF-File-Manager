@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Llengua</string>
+    <string name="language_description">L\'interfície de l\'aplicació. La finestra es refresca després d\'un canvi.</string>
+    <string name="language_english">Anglès</string>
+    <string name="language_lithuanian">Lituanià</string>
+    <string name="open_with_chooser_title">Obre “%1$s” amb</string>
+    <string name="edit_with_chooser_title">Modificar “%1$s” amb</string>
+    <string name="share_file_chooser_title">Compartir fitxer</string>
+    <string name="open_with_chooser_short">Obre amb</string>
+    <string name="lan_transfer_channel_name">Transferència de fitxers de xarxa local</string>
+    <string name="lan_transfer_channel_description">Només es mostra mentre executes la transferència de fitxer LAN</string>
+    <string name="lan_transfer_starting_title">Transferència de AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Servidor de arrancament...</string>
+    <string name="lan_transfer_running_title">La transferència AF File Manager LAN està funcionant</string>
+    <string name="terminal_channel_name">Terminal actiu</string>
+    <string name="terminal_channel_description">Manté un telèfon obert o terminal del servidor funcionant en el fons</string>
+    <string name="terminal_notification_title">Terminal AF File Manager</string>
+    <string name="terminal_phone_active">El terminal de telèfon està activat</string>
+    <string name="terminal_server_active">Terminal del servidor està activat</string>
+    <string name="generated_extracted_name">extractes</string>
+    <string name="close">Tanca</string>
+    <string name="stop">Atura</string>
+</resources>

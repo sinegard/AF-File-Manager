@@ -4,6 +4,8 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.DuplicateAnalysisResult
+import com.affilemanager.app.model.DirectoryContentUsage
+import com.affilemanager.app.model.DirectoryContentsUsage
 import com.affilemanager.app.model.DirectoryUsage
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
@@ -16,7 +18,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
 import java.security.MessageDigest
+import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 class FileSearchEngine(
@@ -24,6 +30,8 @@ class FileSearchEngine(
     private val maxScannedEntries: Int = MAX_SCANNED_ENTRIES,
     private val maxResults: Int = MAX_RESULTS,
     private val maxDuplicateCandidates: Int = MAX_DUPLICATE_CANDIDATES,
+    private val maxDirectoryChildren: Int = MAX_CLEANUP_FOLDER_CHILDREN,
+    private val maxDirectoryUsageEntries: Int = MAX_CLEANUP_FOLDER_SCANNED_ENTRIES,
 ) {
     companion object {
         const val MAX_SCANNED_ENTRIES = 200_000
@@ -31,7 +39,10 @@ class FileSearchEngine(
         const val MAX_DUPLICATE_CANDIDATES = 20_000
         const val MAX_CLEANUP_PACKAGES = 2_000
         const val MAX_SIMILAR_IMAGE_CANDIDATES = 1_000
+        const val MAX_CLEANUP_FOLDER_CHILDREN = 10_000
+        const val MAX_CLEANUP_FOLDER_SCANNED_ENTRIES = 50_000
         private const val HASH_BUFFER = 256 * 1_024
+        private const val MAX_DIRECTORY_DEPTH = 64
     }
 
     constructor(localFiles: LocalFileRepository) : this(localFiles::toEntry)
@@ -180,6 +191,135 @@ class FileSearchEngine(
             similarImageCandidates = similarImageCandidates.toList().sortedByDescending(FileEntry::sizeBytes),
         )
     }
+
+    suspend fun directoryContentsWithUsage(
+        analysisRootPath: String,
+        directoryPath: String,
+    ): DirectoryContentsUsage = withContext(Dispatchers.IO) {
+        val analysisRoot = File(analysisRootPath).canonicalFile
+        val directory = File(directoryPath).canonicalFile
+        require(analysisRoot.isDirectory) { "Analizės vieta nebepasiekiama" }
+        require(directory.isDirectory) { "Tai nėra aplankas" }
+        require(FileSystemRules.isContained(analysisRoot, directory)) {
+            "Aplankas yra už analizuojamos vietos ribų"
+        }
+
+        val children = ArrayList<File>(minOf(maxDirectoryChildren, 256))
+        var listingTruncated = false
+        Files.newDirectoryStream(directory.toPath()).use { stream ->
+            val iterator = stream.iterator()
+            while (iterator.hasNext()) {
+                coroutineContext.ensureActive()
+                val childPath = iterator.next()
+                if (Files.isSymbolicLink(childPath)) {
+                    listingTruncated = true
+                    continue
+                }
+                val child = childPath.toFile().canonicalFile
+                if (!FileSystemRules.isContained(directory, child)) {
+                    listingTruncated = true
+                    continue
+                }
+                if (children.size >= maxDirectoryChildren) {
+                    listingTruncated = true
+                    break
+                }
+                children += child
+            }
+        }
+
+        val budget = DirectoryUsageBudget(maxDirectoryUsageEntries)
+        val usageEntries = children.map { child ->
+            coroutineContext.ensureActive()
+            if (child.isDirectory) {
+                val usage = calculateDirectoryUsage(child.toPath(), budget)
+                DirectoryContentUsage(
+                    entry = toEntry(child).copy(
+                        sizeBytes = usage.bytes,
+                        metadataComplete = usage.complete,
+                    ),
+                    fileCount = usage.fileCount,
+                )
+            } else {
+                DirectoryContentUsage(entry = toEntry(child), fileCount = 1)
+            }
+        }.sortedWith { left, right ->
+            when {
+                left.entry.isDirectory != right.entry.isDirectory -> if (left.entry.isDirectory) -1 else 1
+                left.entry.metadataComplete != right.entry.metadataComplete -> if (left.entry.metadataComplete) -1 else 1
+                left.entry.sizeBytes != right.entry.sizeBytes -> right.entry.sizeBytes.compareTo(left.entry.sizeBytes)
+                else -> left.entry.name.lowercase(Locale.ROOT).compareTo(right.entry.name.lowercase(Locale.ROOT))
+            }
+        }
+        val totalBytes = usageEntries.fold(0L) { total, usage -> saturatedAdd(total, usage.entry.sizeBytes) }
+        DirectoryContentsUsage(
+            directoryPath = directory.absolutePath,
+            entries = usageEntries,
+            totalBytes = totalBytes,
+            scannedEntries = maxDirectoryUsageEntries - budget.remainingEntries,
+            truncated = listingTruncated || usageEntries.any { it.entry.isDirectory && !it.entry.metadataComplete },
+        )
+    }
+
+    private suspend fun calculateDirectoryUsage(
+        root: Path,
+        budget: DirectoryUsageBudget,
+    ): DirectoryUsageResult {
+        if (!budget.tryConsume()) return DirectoryUsageResult(0L, 0, complete = false)
+        var bytes = 0L
+        var fileCount = 0
+        var complete = true
+        val pending = ArrayDeque<Pair<Path, Int>>()
+        pending.add(root to 0)
+        while (pending.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            val (current, depth) = pending.removeLast()
+            if (Files.isSymbolicLink(current)) {
+                complete = false
+                continue
+            }
+            try {
+                if (Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+                    if (depth >= MAX_DIRECTORY_DEPTH) {
+                        complete = false
+                        continue
+                    }
+                    Files.newDirectoryStream(current).use { stream ->
+                        val iterator = stream.iterator()
+                        while (iterator.hasNext()) {
+                            coroutineContext.ensureActive()
+                            if (!budget.tryConsume()) {
+                                return DirectoryUsageResult(bytes, fileCount, complete = false)
+                            }
+                            pending.add(iterator.next() to depth + 1)
+                        }
+                    }
+                } else if (Files.isRegularFile(current, LinkOption.NOFOLLOW_LINKS)) {
+                    bytes = saturatedAdd(bytes, Files.size(current).coerceAtLeast(0L))
+                    fileCount += 1
+                }
+            } catch (_: SecurityException) {
+                complete = false
+            } catch (_: java.io.IOException) {
+                complete = false
+            }
+        }
+        return DirectoryUsageResult(bytes, fileCount, complete)
+    }
+
+    private data class DirectoryUsageBudget(var remainingEntries: Int) {
+        fun tryConsume(): Boolean {
+            if (remainingEntries <= 0) return false
+            remainingEntries -= 1
+            return true
+        }
+    }
+
+    private data class DirectoryUsageResult(
+        val bytes: Long,
+        val fileCount: Int,
+        val complete: Boolean,
+    )
 
     private fun saturatedAdd(left: Long, right: Long): Long =
         if (right > 0 && left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right

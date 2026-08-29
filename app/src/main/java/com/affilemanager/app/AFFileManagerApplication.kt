@@ -40,6 +40,7 @@ import com.affilemanager.app.workflow.AfStorageSessionFactory
 import com.affilemanager.app.workflow.AfTimelineRepository
 import com.affilemanager.app.workflow.AfWorkflowCoordinator
 import com.affilemanager.app.ui.TerminalSessionStore
+import com.affilemanager.app.ui.localization.UiTranslationCatalog
 import com.affilemanager.app.ui.theme.AppearanceRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +53,7 @@ class AFFileManagerApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        UiTranslationCatalog.initialize(this)
         graph = AppGraph(this)
         graph.applicationScope.launch {
             graph.syncSchedules.restoreWork()

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">ಭಾಷೆ</string>
+    <string name="language_description">ಅಪ್ಲಿಕೇಶನ್ ಇಂಟರ್ಫೇಸ್ ಭಾಷೆ. ಬದಲಾವಣೆ ನಂತರ ವಿಂಡೋ ರಿಫ್ರೆಶ್.</string>
+    <string name="language_english">ಇಂಗ್ಲಿಷ್</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">“%1$s” ಜೊತೆ ತೆರೆಯಿರಿ</string>
+    <string name="edit_with_chooser_title">“%1$s” ಅನ್ನು ಸಂಪಾದಿಸಿ</string>
+    <string name="share_file_chooser_title">ಫೈಲ್ ಹಂಚಿಕೆ</string>
+    <string name="open_with_chooser_short">ಇದರ ಮೂಲಕ ತೆರೆಯಿರಿ</string>
+    <string name="lan_transfer_channel_name">ಸ್ಥಳೀಯ ನೆಟ್ವರ್ಕ್ ಫೈಲ್ ವರ್ಗಾವಣೆ</string>
+    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN ವರ್ಗಾವಣೆ</string>
+    <string name="lan_transfer_starting_text">ಆರಂಭಿಕ ಸರ್ವರ್...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN ವರ್ಗಾವಣೆ ಚಾಲನೆಯಲ್ಲಿರುತ್ತದೆ</string>
+    <string name="terminal_channel_name">ಸಕ್ರಿಯ ಟರ್ಮಿನಲ್</string>
+    <string name="terminal_channel_description">ತೆರೆದ ಫೋನ್ ಅಥವಾ ಸರ್ವರ್ ಟರ್ಮಿನಲ್ ಅನ್ನು ಹಿನ್ನೆಲೆಯಲ್ಲಿ ಚಾಲನೆ ಮಾಡುತ್ತದೆ</string>
+    <string name="terminal_notification_title">AF File Manager ಟರ್ಮಿನಲ್</string>
+    <string name="terminal_phone_active">ಫೋನ್ ಟರ್ಮಿನಲ್ ಸಕ್ರಿಯವಾಗಿದೆ</string>
+    <string name="terminal_server_active">ಸರ್ವರ್ ಟರ್ಮಿನಲ್ ಸಕ್ರಿಯವಾಗಿದೆ</string>
+    <string name="generated_extracted_name">ಹೊರತೆಗೆಯುವಿಕೆ</string>
+    <string name="close">ಮುಚ್ಚಿ</string>
+    <string name="stop">ನಿಲ್ಲಿಸಿ</string>
+</resources>

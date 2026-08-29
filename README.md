@@ -35,7 +35,7 @@ AF File Manager is built with Kotlin and Jetpack Compose for Android phones and 
 - temporary local Web, FTP, and WebDAV sharing with a browsable folder picker, optional custom port and credentials, read-only mode, and automatic expiry; WebDAV sharing currently uses HTTP and says so in the app;
 - self-update from signed [GitHub Releases](https://github.com/sinegard/AF-File-Manager/releases).
 
-The interface starts in English and can be switched to Lithuanian in **More → Language**. Labels, metadata, dates, runtime messages, and the local transfer page follow that choice. File names, folder names, paths, server names, and user-entered text are never translated.
+The interface starts in English and includes 59 offline language packs under **More → Language**, including Arabic and other right-to-left languages. English and Lithuanian are reviewed directly; corrections to the other generated translations are welcome. Labels, metadata, dates, runtime messages, notifications, and the local transfer page follow the selected language. File names, folder names, paths, server names, and user-entered text are never translated.
 
 ## Free for non-commercial use
 

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Gjuha</string>
+    <string name="language_description">Gjuha e ndërfaqes së aplikacionit.</string>
+    <string name="language_english">Anglisht</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Hapni “%1$s” me</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” me</string>
+    <string name="share_file_chooser_title">Ndarja e skedarëve</string>
+    <string name="open_with_chooser_short">Hap me</string>
+    <string name="lan_transfer_channel_name">Transferimi i skedarëve të rrjetit lokal</string>
+    <string name="lan_transfer_channel_description">Shfaqet vetëm kur ju drejtoheni LAN transferimin e skedarëve</string>
+    <string name="lan_transfer_starting_title">transferimi AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Serveri i nisur...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transferimi po funksionon</string>
+    <string name="terminal_channel_name">Terminal aktiv</string>
+    <string name="terminal_channel_description">Mbani një telefon të hapur ose terminal server duke funksionuar në sfond</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">Terminal telefoni është aktiv.</string>
+    <string name="terminal_server_active">Terminal i serverit është aktiv</string>
+    <string name="generated_extracted_name">të nxjerrë</string>
+    <string name="close">Mbyll</string>
+    <string name="stop">Ndalo</string>
+</resources>

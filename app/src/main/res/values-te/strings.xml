@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">భాష</string>
+    <string name="language_description">అనువర్తన ఇంటర్ఫేస్ భాష. మార్పు తర్వాత విండో రిఫ్రెష్ అవుతుంది.</string>
+    <string name="language_english">ఇంగ్లీష్</string>
+    <string name="language_lithuanian">లిటివియన్</string>
+    <string name="open_with_chooser_title">“%1$s” తో తెరవండి</string>
+    <string name="edit_with_chooser_title">“%1$s” తో సవరించు</string>
+    <string name="share_file_chooser_title">ఫైల్ను భాగస్వామ్యం చేయండి</string>
+    <string name="open_with_chooser_short">దీనితో తెరువు</string>
+    <string name="lan_transfer_channel_name">స్థానిక నెట్వర్క్ ఫైల్ బదిలీ</string>
+    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN బదిలీ</string>
+    <string name="lan_transfer_starting_text">ప్రారంభ సర్వర్...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN బదిలీ నడుస్తోంది</string>
+    <string name="terminal_channel_name">యాక్టివ్ టెర్మినల్</string>
+    <string name="terminal_channel_description">తెరచిన ఫోన్ లేదా సర్వర్ టెర్మినల్ను నేపథ్యంలో నడుపుతుంది</string>
+    <string name="terminal_notification_title">AF File Manager టెర్మినల్</string>
+    <string name="terminal_phone_active">టెలిఫోన్ టెర్మినల్ సక్రియం</string>
+    <string name="terminal_server_active">సర్వర్ టెర్మినల్ యాక్టివ్</string>
+    <string name="generated_extracted_name">సేకరించిన</string>
+    <string name="close">మూసివేయండి</string>
+    <string name="stop">ఆపివేయి</string>
+</resources>

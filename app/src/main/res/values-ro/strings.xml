@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Limba</string>
+    <string name="language_description">Limbajul interfeței aplicației. fereastra se reînnoieste după o schimbare.</string>
+    <string name="language_english">Cuvântul englez</string>
+    <string name="language_lithuanian">Lituanieni</string>
+    <string name="open_with_chooser_title">Deschide “%1$s” cu</string>
+    <string name="edit_with_chooser_title">Editarea “%1$s” cu</string>
+    <string name="share_file_chooser_title">Partajează fişiere</string>
+    <string name="open_with_chooser_short">Deschide cu</string>
+    <string name="lan_transfer_channel_name">Transfer de fișiere de rețea locală</string>
+    <string name="lan_transfer_channel_description">Se afișează doar în timp ce rulați transferul de fișiere LAN</string>
+    <string name="lan_transfer_starting_title">transferul de AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Încep serverul...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transferul este în curs de desfășurare</string>
+    <string name="terminal_channel_name">Terminal activ</string>
+    <string name="terminal_channel_description">Păstrează un telefon deschis sau un terminal de server în fundal</string>
+    <string name="terminal_notification_title">Terminalul AF File Manager</string>
+    <string name="terminal_phone_active">Terminalul telefonic este activat</string>
+    <string name="terminal_server_active">Terminalul serverului este activat</string>
+    <string name="generated_extracted_name">extractate</string>
+    <string name="close">Închide</string>
+    <string name="stop">Oprește</string>
+</resources>

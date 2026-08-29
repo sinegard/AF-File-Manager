@@ -77,11 +77,58 @@ private val OrangeLightColors = lightColorScheme(
     surfaceVariant = Color(0xFFF2DFD1),
 )
 
+private val MaterialBlueDarkColors = darkColorScheme(
+    primary = Color(0xFFAEC6FF),
+    onPrimary = Color(0xFF002E69),
+    primaryContainer = Color(0xFF234777),
+    onPrimaryContainer = Color(0xFFD8E2FF),
+    secondary = Color(0xFFBBC6DC),
+    onSecondary = Color(0xFF253140),
+    secondaryContainer = Color(0xFF3B4858),
+    onSecondaryContainer = Color(0xFFD7E2F9),
+    tertiary = Color(0xFFD9BDE4),
+    onTertiary = Color(0xFF3C2948),
+    tertiaryContainer = Color(0xFF543F60),
+    onTertiaryContainer = Color(0xFFF6D9FF),
+    background = Color(0xFF111318),
+    onBackground = Color(0xFFE2E2E9),
+    surface = Color(0xFF111318),
+    onSurface = Color(0xFFE2E2E9),
+    surfaceVariant = Color(0xFF44464F),
+    onSurfaceVariant = Color(0xFFC5C6D0),
+    outline = Color(0xFF8F9099),
+    outlineVariant = Color(0xFF44464F),
+)
+
+private val MaterialBlueLightColors = lightColorScheme(
+    primary = Color(0xFF415F91),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD7E3FF),
+    onPrimaryContainer = Color(0xFF001B3E),
+    secondary = Color(0xFF565F71),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFDAE2F9),
+    onSecondaryContainer = Color(0xFF131C2B),
+    tertiary = Color(0xFF705575),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFFAD8FD),
+    onTertiaryContainer = Color(0xFF28132E),
+    background = Color(0xFFF9F9FF),
+    onBackground = Color(0xFF191C20),
+    surface = Color(0xFFF9F9FF),
+    onSurface = Color(0xFF191C20),
+    surfaceVariant = Color(0xFFE0E2EC),
+    onSurfaceVariant = Color(0xFF44474F),
+    outline = Color(0xFF74777F),
+    outlineVariant = Color(0xFFC4C6D0),
+)
+
 fun palettePreviewColors(palette: AppColorPalette): List<Color> = when (palette) {
     AppColorPalette.DEFAULT -> listOf(Color(0xFF006B5D), Color(0xFF5DD6C0), Color(0xFF9DC9FF))
     AppColorPalette.DYNAMIC -> listOf(Color(0xFF4866A8), Color(0xFFA9C7FF), Color(0xFFD6B9FF))
     AppColorPalette.CATPPUCCIN -> listOf(Color(0xFFCBA6F7), Color(0xFF89B4FA), Color(0xFFFAB387))
     AppColorPalette.ORANGE -> listOf(Color(0xFF9A4600), Color(0xFFFFB86B), Color(0xFFFFDDB8))
+    AppColorPalette.MATERIAL_BLUE -> listOf(Color(0xFF415F91), Color(0xFFAEC6FF), Color(0xFFD9BDE4))
 }
 
 @Composable
@@ -100,6 +147,7 @@ fun AFFileManagerTheme(
         }
         AppColorPalette.CATPPUCCIN -> if (darkTheme) CatppuccinDarkColors else CatppuccinLightColors
         AppColorPalette.ORANGE -> if (darkTheme) OrangeDarkColors else OrangeLightColors
+        AppColorPalette.MATERIAL_BLUE -> if (darkTheme) MaterialBlueDarkColors else MaterialBlueLightColors
         AppColorPalette.DEFAULT -> if (darkTheme) DefaultDarkColors else DefaultLightColors
     }
     val colors = if (settings.amoledBlack && darkTheme) baseColors.withAmoledBackground() else baseColors

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">언어</string>
+    <string name="language_description">앱 인터페이스 언어. 변경 후 창이 새로워집니다.</string>
+    <string name="language_english">영어</string>
+    <string name="language_lithuanian">리투베르</string>
+    <string name="open_with_chooser_title">“%1$s”를 열고</string>
+    <string name="edit_with_chooser_title">편집 “%1$s”</string>
+    <string name="share_file_chooser_title">공유 파일</string>
+    <string name="open_with_chooser_short">연결 프로그램</string>
+    <string name="lan_transfer_channel_name">로컬 네트워크 파일 전송</string>
+    <string name="lan_transfer_channel_description">파일 전송 LAN를 실행하는 동안만 표시됩니다</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN 전송</string>
+    <string name="lan_transfer_starting_text">서버 시작...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN 전송이 실행중</string>
+    <string name="terminal_channel_name">활성 터미널</string>
+    <string name="terminal_channel_description">전화 또는 서버 터미널이 배경에서 실행되는 것을 유지합니다</string>
+    <string name="terminal_notification_title">AF File Manager 터미널</string>
+    <string name="terminal_phone_active">전화 터미널이 활성화</string>
+    <string name="terminal_server_active">서버 터미널이 활성화</string>
+    <string name="generated_extracted_name">추출</string>
+    <string name="close">닫기</string>
+    <string name="stop">중지</string>
+</resources>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Мова</string>
+    <string name="language_description">Мова інтэрфейсу прыкладання. акно абнаўляецца пасля змены.</string>
+    <string name="language_english">Англійская</string>
+    <string name="language_lithuanian">Літоўскі</string>
+    <string name="open_with_chooser_title">Адкрыць “%1$s” з</string>
+    <string name="edit_with_chooser_title">Выдаваць “%1$s” з</string>
+    <string name="share_file_chooser_title">Падзяліцца файлам</string>
+    <string name="open_with_chooser_short">Адкрыць з дапамогай</string>
+    <string name="lan_transfer_channel_name">Перадача файлаў у мясцовай сетцы</string>
+    <string name="lan_transfer_channel_description">Паказаны толькі падчас запуску перадачы файла LAN</string>
+    <string name="lan_transfer_starting_title">перадача AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Пачатак сервера...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN перадача працуе</string>
+    <string name="terminal_channel_name">Актыўны тэрмінал</string>
+    <string name="terminal_channel_description">Падтрымлівае адкрыты тэлефон або сервер тэрмінал працуе ў фоне</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">Тэлефонны тэрмінал актыўна</string>
+    <string name="terminal_server_active">Серверны тэрмінал актыўна</string>
+    <string name="generated_extracted_name">выцягнуты</string>
+    <string name="close">Закрыць</string>
+    <string name="stop">Спыніць</string>
+</resources>

@@ -1,16 +1,28 @@
 package com.affilemanager.app.ui.screens
 
+import android.graphics.Bitmap
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ApplicationProvider
+import com.affilemanager.app.AFFileManagerApplication
+import com.affilemanager.app.model.DirectoryContentUsage
+import com.affilemanager.app.model.DirectoryContentsUsage
+import com.affilemanager.app.model.DirectoryUsage
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.StorageAnalysis
 import java.util.concurrent.atomic.AtomicInteger
+import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -52,7 +64,8 @@ class CleanupReviewDialogTest {
                     analysisRootPath = "/storage/emulated/0",
                     onAnalyzeSimilarImages = {},
                     onMoveToTrash = {},
-                    onOpenLocation = { _, _ -> opened.incrementAndGet() },
+                    onLoadFolder = { Result.failure(IllegalStateException("not used")) },
+                    onOpenLocation = { opened.incrementAndGet() },
                     onDismiss = {},
                 )
             }
@@ -63,5 +76,99 @@ class CleanupReviewDialogTest {
 
         compose.onNodeWithTag("cleanup_candidate_card").performClick()
         assertEquals(1, opened.get())
+    }
+
+    @Test
+    fun folderOpensInsideTheCleanupScreenAndBackReturnsToTheCategory() {
+        val dismissed = AtomicInteger()
+        val externallyOpened = AtomicInteger()
+        val root = "/storage/emulated/0"
+        val folder = "$root/Download"
+        val child = FileEntry(
+            absolutePath = "$folder/report.pdf",
+            name = "report.pdf",
+            kind = EntryKind.DOCUMENT,
+            sizeBytes = 4_096,
+            modifiedAtMillis = 1,
+            isHidden = false,
+            isReadable = true,
+            isWritable = true,
+        )
+        val nestedFolder = FileEntry(
+            absolutePath = "$folder/Documents",
+            name = "Documents",
+            kind = EntryKind.DIRECTORY,
+            sizeBytes = 4_096,
+            modifiedAtMillis = 1,
+            isHidden = false,
+            isReadable = true,
+            isWritable = true,
+        )
+        compose.setContent {
+            MaterialTheme {
+                CleanupReviewDialog(
+                    analysis = StorageAnalysis(
+                        scannedFiles = 1,
+                        scannedDirectories = 1,
+                        totalBytes = child.sizeBytes,
+                        largestFiles = listOf(child),
+                        oldestFiles = listOf(child),
+                        emptyDirectories = emptyList(),
+                        truncated = false,
+                        largestDirectories = listOf(DirectoryUsage(folder, child.sizeBytes, 1)),
+                    ),
+                    duplicates = emptyList(),
+                    similarImages = emptyList(),
+                    similarImagesRunning = false,
+                    similarImagesAnalyzed = false,
+                    similarImagesError = null,
+                    initialCategory = CleanupCategory.LARGEST_FOLDERS,
+                    analysisRootPath = root,
+                    onAnalyzeSimilarImages = {},
+                    onMoveToTrash = {},
+                    onLoadFolder = {
+                        Result.success(
+                            DirectoryContentsUsage(
+                                directoryPath = folder,
+                                entries = listOf(
+                                    DirectoryContentUsage(nestedFolder, fileCount = 1),
+                                    DirectoryContentUsage(child, fileCount = 1),
+                                ),
+                                totalBytes = nestedFolder.sizeBytes + child.sizeBytes,
+                                scannedEntries = 2,
+                                truncated = false,
+                            ),
+                        )
+                    },
+                    onOpenLocation = { externallyOpened.incrementAndGet() },
+                    onDismiss = { dismissed.incrementAndGet() },
+                )
+            }
+        }
+
+        compose.onNodeWithTag("cleanup_candidate_card").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithTag("cleanup_folder_browser").assertIsDisplayed()
+        assertEquals(0, externallyOpened.get())
+        assertEquals(0, dismissed.get())
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val artifact = File(requireNotNull(application.getExternalFilesDir("validation")), "cleanup-folder-browser.png")
+        artifact.outputStream().use { output ->
+            assertTrue(
+                compose.onNodeWithTag("cleanup_review_dialog", useUnmergedTree = true)
+                    .captureToImage()
+                    .asAndroidBitmap()
+                    .compress(Bitmap.CompressFormat.PNG, 100, output),
+            )
+        }
+        assertTrue(artifact.isFile && artifact.length() > 0)
+
+        compose.onNodeWithTag("cleanup_back").performClick()
+        assertTrue(compose.onAllNodesWithTag("cleanup_folder_browser").fetchSemanticsNodes().isEmpty())
+        assertEquals(0, dismissed.get())
+
+        compose.onNodeWithTag("cleanup_back").performClick()
+        assertEquals(1, dismissed.get())
     }
 }

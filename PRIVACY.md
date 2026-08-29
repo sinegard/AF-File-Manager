@@ -2,6 +2,8 @@
 
 AF File Manager has no advertising, analytics, telemetry, tracking SDK, or mandatory account.
 
+All interface language packs are static files included in the APK. Changing language does not send interface text, file names, paths, or any other data to a translation service.
+
 ## Data processed on the device
 
 Thumbnails and file icons are generated on the device. File content is not sent over the network for preview generation, and the thumbnail cache is not written to disk.

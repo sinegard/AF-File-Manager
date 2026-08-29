@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">语言</string>
+    <string name="language_description">应用程序界面语言. 窗口在改变后会更新.</string>
+    <string name="language_english">英语</string>
+    <string name="language_lithuanian">利塔维亚</string>
+    <string name="open_with_chooser_title">“%1$s” 开放</string>
+    <string name="edit_with_chooser_title">编辑 “%1$s”</string>
+    <string name="share_file_chooser_title">分享文件</string>
+    <string name="open_with_chooser_short">打开方式</string>
+    <string name="lan_transfer_channel_name">局部网络文件传输</string>
+    <string name="lan_transfer_channel_description">只显示在运行 LAN文件转移时</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_text">启动服务器...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
+    <string name="terminal_channel_name">活动终端</string>
+    <string name="terminal_channel_description">保持开放的电话或服务器终端在背景中运行</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">电话终端已启动</string>
+    <string name="terminal_server_active">服务器终端已启动</string>
+    <string name="generated_extracted_name">提取</string>
+    <string name="close">关闭</string>
+    <string name="stop">停止</string>
+</resources>

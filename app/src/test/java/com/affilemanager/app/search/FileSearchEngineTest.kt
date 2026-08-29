@@ -155,6 +155,56 @@ class FileSearchEngineTest {
     }
 
     @Test
+    fun cleanupFolderBrowserReturnsDirectChildrenWithFolderSizes() = runBlocking {
+        val root = temporary.newFolder("cleanup-browser")
+        val folder = File(root, "Download").apply { mkdir() }
+        val nested = File(folder, "documents").apply { mkdir() }
+        File(nested, "report.pdf").writeBytes(ByteArray(150))
+        File(folder, "notes.txt").writeBytes(ByteArray(30))
+
+        val listing = engine().directoryContentsWithUsage(root.absolutePath, folder.absolutePath)
+
+        assertEquals(listOf("documents", "notes.txt"), listing.entries.map { it.entry.name })
+        val nestedUsage = listing.entries.first { it.entry.name == "documents" }
+        assertEquals(150, nestedUsage.entry.sizeBytes)
+        assertEquals(1, nestedUsage.fileCount)
+        assertTrue(nestedUsage.entry.metadataComplete)
+        assertEquals(180, listing.totalBytes)
+        assertFalse(listing.truncated)
+    }
+
+    @Test
+    fun cleanupFolderBrowserRejectsPathsOutsideTheAnalysisRoot() = runBlocking {
+        val root = temporary.newFolder("cleanup-contained")
+        val outside = temporary.newFolder("cleanup-outside")
+
+        val result = runCatching {
+            engine().directoryContentsWithUsage(root.absolutePath, outside.absolutePath)
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals("Aplankas yra už analizuojamos vietos ribų", result.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun cleanupFolderBrowserReportsPartialSizesWhenItsScanBudgetIsReached() = runBlocking {
+        val root = temporary.newFolder("cleanup-budget")
+        val folder = File(root, "folder").apply { mkdir() }
+        val nested = File(folder, "nested").apply { mkdir() }
+        repeat(3) { index -> File(nested, "file-$index.bin").writeBytes(ByteArray(10)) }
+        val engine = FileSearchEngine(
+            ::entry,
+            maxDirectoryUsageEntries = 2,
+        )
+
+        val listing = engine.directoryContentsWithUsage(root.absolutePath, folder.absolutePath)
+
+        assertTrue(listing.truncated)
+        assertFalse(listing.entries.single().entry.metadataComplete)
+        assertTrue(listing.scannedEntries <= 2)
+    }
+
+    @Test
     fun duplicateCandidateLimitReturnsPartialResultsInsteadOfFailingAnalysis() = runBlocking {
         val root = temporary.newFolder("duplicate-limited")
         repeat(8) { index -> File(root, "file-$index.bin").writeBytes(byteArrayOf(index.toByte())) }

@@ -15,11 +15,11 @@ class AppearanceRepositoryTest {
         val repository = AppearanceRepository(application)
         try {
             repository.setThemeMode(AppThemeMode.DARK)
-            repository.setColorPalette(AppColorPalette.CATPPUCCIN)
+            repository.setColorPalette(AppColorPalette.MATERIAL_BLUE)
             repository.setAmoledBlack(true)
 
             assertEquals(
-                AppearanceSettings(AppThemeMode.DARK, AppColorPalette.CATPPUCCIN, amoledBlack = true),
+                AppearanceSettings(AppThemeMode.DARK, AppColorPalette.MATERIAL_BLUE, amoledBlack = true),
                 AppearanceRepository(application).settings.value,
             )
         } finally {

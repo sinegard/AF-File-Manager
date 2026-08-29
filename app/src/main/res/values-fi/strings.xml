@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Kielenkäyttö</string>
+    <string name="language_description">Käyttöön sovelluksen kieli. Ikkuno virkistyy muutoksen jälkeen.</string>
+    <string name="language_english">Englanti</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Avaa “%1$s”</string>
+    <string name="edit_with_chooser_title">Muokkaa “%1$s”</string>
+    <string name="share_file_chooser_title">Jaa tiedosto</string>
+    <string name="open_with_chooser_short">Avaa sovelluksessa</string>
+    <string name="lan_transfer_channel_name">Paikallisverkko-tiedostojen siirto</string>
+    <string name="lan_transfer_channel_description">Näytetään vain, kun suoritetaan tiedostojen siirto LAN</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN siirto</string>
+    <string name="lan_transfer_starting_text">Alkava palvelim...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN siirto käynnistyy</string>
+    <string name="terminal_channel_name">Aktiivinen terminaali</string>
+    <string name="terminal_channel_description">Pidä avoin puhelin tai palvelimen pääosasto käynnissä taustalla</string>
+    <string name="terminal_notification_title">AF File Manager terminaali</string>
+    <string name="terminal_phone_active">Puhelin terminaali on aktivoitu</string>
+    <string name="terminal_server_active">Palvelin terminaali on aktivoitu</string>
+    <string name="generated_extracted_name">valmistaa</string>
+    <string name="close">Sulje</string>
+    <string name="stop">Seis</string>
+</resources>

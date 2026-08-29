@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">שפה</string>
+    <string name="language_description">שפת האינטרפייס של האפליקציה. החלון מתחדש לאחר שינוי.</string>
+    <string name="language_english">אנגלית</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">פתח “%1$s” עם</string>
+    <string name="edit_with_chooser_title">עורך “%1$s” עם</string>
+    <string name="share_file_chooser_title">שיתוף קבצים</string>
+    <string name="open_with_chooser_short">פתיחה באמצעות</string>
+    <string name="lan_transfer_channel_name">העברת קבצים ברשת מקומית</string>
+    <string name="lan_transfer_channel_description">מראה רק בזמן שאתה פועל להעברה קבצים LAN</string>
+    <string name="lan_transfer_starting_title">העברה של AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">שרת התחלה...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN העברה פועלת</string>
+    <string name="terminal_channel_name">טערמינל פעיל</string>
+    <string name="terminal_channel_description">שומר טלפון פתוח או סרוויר סמל פועל בעקבות</string>
+    <string name="terminal_notification_title">טערמינל AF File Manager</string>
+    <string name="terminal_phone_active">טערמינל הטלפון פעיל</string>
+    <string name="terminal_server_active">טערמינל השרת פעיל</string>
+    <string name="generated_extracted_name">מוציא</string>
+    <string name="close">סגירה</string>
+    <string name="stop">הפסקה</string>
+</resources>

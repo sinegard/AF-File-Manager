@@ -1,6 +1,8 @@
 package com.affilemanager.app
 
+import android.graphics.Bitmap
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
@@ -8,7 +10,9 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertIsDisplayed
@@ -326,7 +330,11 @@ class MainActivityTest {
         try {
             compose.onNodeWithText("More").performClick()
             compose.onNodeWithText("Language").fetchSemanticsNode()
-            compose.onNodeWithText("Lietuvių").performClick()
+            compose.onNodeWithTag("change_language").performClick()
+            compose.onNodeWithTag("language_search").performTextInput("Arabic")
+            compose.onNodeWithTag("language_option_ar").assertIsDisplayed()
+            compose.onNodeWithTag("language_search").performTextReplacement("Lithuanian")
+            compose.onNodeWithTag("language_option_lt").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 compose.onAllNodesWithText("Daugiau").fetchSemanticsNodes().isNotEmpty()
@@ -334,7 +342,9 @@ class MainActivityTest {
             compose.onNodeWithText("Daugiau").performClick()
             compose.onNodeWithText("Kalba").fetchSemanticsNode()
             compose.onNodeWithText("Įrankiai ir saugumas").fetchSemanticsNode()
-            compose.onNodeWithText("English").performClick()
+            compose.onNodeWithTag("change_language").performClick()
+            compose.onNodeWithTag("language_search").performTextInput("English")
+            compose.onNodeWithTag("language_option_en").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 compose.onAllNodesWithText("More").fetchSemanticsNodes().isNotEmpty()
@@ -353,15 +363,37 @@ class MainActivityTest {
             compose.onNodeWithText("More").performClick()
             compose.onNodeWithTag("appearance_settings").performScrollTo()
             compose.onNodeWithTag("theme_mode_dark").performClick()
-            compose.onNodeWithTag("palette_catppuccin").performClick()
+            compose.onNodeWithTag("palette_material_blue").performScrollTo().performClick()
             compose.onNodeWithTag("amoled_black").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 val settings = viewModel.appearanceSettings.value
                 settings.themeMode == AppThemeMode.DARK &&
-                    settings.colorPalette == AppColorPalette.CATPPUCCIN &&
+                    settings.colorPalette == AppColorPalette.MATERIAL_BLUE &&
                     settings.amoledBlack
             }
+            compose.mainClock.advanceTimeBy(1_000)
+            compose.waitForIdle()
+            val artifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "material-blue-palette.png")
+            artifact.outputStream().use { output ->
+                assertTrue(
+                    compose.onNodeWithTag("palette_material_blue", useUnmergedTree = true)
+                        .captureToImage()
+                        .asAndroidBitmap()
+                        .compress(Bitmap.CompressFormat.PNG, 100, output),
+                )
+            }
+            assertTrue(artifact.isFile && artifact.length() > 0)
+            val screenArtifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "material-blue-navigation.png")
+            screenArtifact.outputStream().use { output ->
+                assertTrue(
+                    compose.onRoot(useUnmergedTree = true)
+                        .captureToImage()
+                        .asAndroidBitmap()
+                        .compress(Bitmap.CompressFormat.PNG, 100, output),
+                )
+            }
+            assertTrue(screenArtifact.isFile && screenArtifact.length() > 0)
         } finally {
             compose.runOnUiThread {
                 viewModel.setThemeMode(AppThemeMode.SYSTEM)

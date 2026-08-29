@@ -138,6 +138,19 @@ data class DirectoryUsage(
     val fileCount: Int,
 )
 
+data class DirectoryContentUsage(
+    val entry: FileEntry,
+    val fileCount: Int,
+)
+
+data class DirectoryContentsUsage(
+    val directoryPath: String,
+    val entries: List<DirectoryContentUsage>,
+    val totalBytes: Long,
+    val scannedEntries: Int,
+    val truncated: Boolean,
+)
+
 data class FileTypeUsage(
     val kind: EntryKind,
     val sizeBytes: Long,

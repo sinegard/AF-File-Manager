@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Jazyk</string>
+    <string name="language_description">Jazyk rozhrania aplikácie. Okno sa obnovuje po zmene.</string>
+    <string name="language_english">Angličtina</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Otvor “%1$s” s</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” s</string>
+    <string name="share_file_chooser_title">Podieľanie súboru</string>
+    <string name="open_with_chooser_short">Otvoriť v aplikácii</string>
+    <string name="lan_transfer_channel_name">Prenos súborov lokálnej siete</string>
+    <string name="lan_transfer_channel_description">Ukázané len pri presunovaní súboru LAN</string>
+    <string name="lan_transfer_starting_title">Prenos AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Začínajúci server...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN prevod je v prevádzke</string>
+    <string name="terminal_channel_name">Aktívny terminál</string>
+    <string name="terminal_channel_description">Udržuje otvorený telefón alebo serverový terminál v pozadí</string>
+    <string name="terminal_notification_title">terminál AF File Manager</string>
+    <string name="terminal_phone_active">Telefonický terminál je aktívny</string>
+    <string name="terminal_server_active">Serverový terminál je aktivný</string>
+    <string name="generated_extracted_name">vyťažené</string>
+    <string name="close">Zavrieť</string>
+    <string name="stop">Zastaviť</string>
+</resources>

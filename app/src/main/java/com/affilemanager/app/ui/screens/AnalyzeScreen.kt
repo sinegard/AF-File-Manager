@@ -822,9 +822,10 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 analysisRootPath = analysisState.rootPath,
                 onAnalyzeSimilarImages = viewModel::analyzeSimilarImages,
                 onMoveToTrash = viewModel::trashAnalysisSelection,
-                onOpenLocation = { path, directory ->
+                onLoadFolder = viewModel::loadCleanupFolder,
+                onOpenLocation = { path ->
                     showCleanupReview = false
-                    val target = if (directory) path else File(path).parentFile?.absolutePath ?: path
+                    val target = File(path).parentFile?.absolutePath ?: path
                     viewModel.openQuickPath(target)
                 },
                 onDismiss = { showCleanupReview = false },

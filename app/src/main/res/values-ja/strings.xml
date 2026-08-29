@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">言語</string>
+    <string name="language_description">アプリインターフェース言語.変更後,ウィンドウが更新されます.</string>
+    <string name="language_english">英語</string>
+    <string name="language_lithuanian">リトビョ</string>
+    <string name="open_with_chooser_title">“%1$s” を開く</string>
+    <string name="edit_with_chooser_title">編集 “%1$s”</string>
+    <string name="share_file_chooser_title">共有ファイル</string>
+    <string name="open_with_chooser_short">アプリで開く</string>
+    <string name="lan_transfer_channel_name">ローカルネットワークファイル転送</string>
+    <string name="lan_transfer_channel_description">LAN ファイル転送を実行するときにのみ表示される</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_text">サーバーを起動する</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN 転送が実行中</string>
+    <string name="terminal_channel_name">アクティブターミナル</string>
+    <string name="terminal_channel_description">幕後に開いている電話またはサーバー端末を保持します</string>
+    <string name="terminal_notification_title">端末は AF File Manager</string>
+    <string name="terminal_phone_active">電話端末が起動</string>
+    <string name="terminal_server_active">サーバー端末が起動</string>
+    <string name="generated_extracted_name">抽出された</string>
+    <string name="close">閉じる</string>
+    <string name="stop">停止</string>
+</resources>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Dil</string>
+    <string name="language_description">Uygulama arayüzü dili. Pencere bir değişiklikten sonra yenilenir.</string>
+    <string name="language_english">İngilizce</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Aç “%1$s” ile</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” ile</string>
+    <string name="share_file_chooser_title">Dosya paylaşım</string>
+    <string name="open_with_chooser_short">Şununla aç:</string>
+    <string name="lan_transfer_channel_name">Yerel ağ dosya aktarımı</string>
+    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN aktarımı</string>
+    <string name="lan_transfer_starting_text">Başlatma sunucu...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN aktarımı çalışıyor</string>
+    <string name="terminal_channel_name">Etkin terminal</string>
+    <string name="terminal_channel_description">Arka planda açık bir telefon veya sunucu terminalini çalışır</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">Telefon terminalı aktif .</string>
+    <string name="terminal_server_active">Sunucu terminal aktif</string>
+    <string name="generated_extracted_name">Çıkartılmış</string>
+    <string name="close">Kapat</string>
+    <string name="stop">Durdur</string>
+</resources>

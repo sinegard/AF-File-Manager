@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Γλώσσα</string>
+    <string name="language_description">Η γλώσσα της διεπαφής εφαρμογής. Το παράθυρο ανανεώνεται μετά από αλλαγή.</string>
+    <string name="language_english">Αγγλικά</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Ανοίξτε “%1$s” με</string>
+    <string name="edit_with_chooser_title">Ελέγχοντας “%1$s” με</string>
+    <string name="share_file_chooser_title">Συμμετοχή αρχείου</string>
+    <string name="open_with_chooser_short">Άνοιγμα με</string>
+    <string name="lan_transfer_channel_name">Μεταφορά αρχείων τοπικού δικτύου</string>
+    <string name="lan_transfer_channel_description">Δείχνει μόνο ενώ εκτελείτε μεταφορά αρχείων LAN</string>
+    <string name="lan_transfer_starting_title">μεταφορά AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Αρχική διακομιστής...</string>
+    <string name="lan_transfer_running_title">Η μεταφορά AF File Manager LAN εκτελείται</string>
+    <string name="terminal_channel_name">Ενεργό τερματικό</string>
+    <string name="terminal_channel_description">Κρατά ανοιχτό τηλέφωνο ή τερματικό διακομιστή που τρέχει στο φόντο</string>
+    <string name="terminal_notification_title">Τερματικό AF File Manager</string>
+    <string name="terminal_phone_active">Το τερματικό τηλεφώνου ενεργοποιείται</string>
+    <string name="terminal_server_active">Το τερματικό του διακομιστή ενεργοποιείται</string>
+    <string name="generated_extracted_name">εκχυλίσματα</string>
+    <string name="close">Κλείσιμο</string>
+    <string name="stop">Διακοπή</string>
+</resources>

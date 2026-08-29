@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">ენის გამოყენება</string>
+    <string name="language_description">აპლიკაციის ინტერფეისის ენა. ფანჯარა განახლება ცვლილების შემდეგ.</string>
+    <string name="language_english">ინგლისური</string>
+    <string name="language_lithuanian">ლიტვინი</string>
+    <string name="open_with_chooser_title">ღია “%1$s”</string>
+    <string name="edit_with_chooser_title">“%1$s”</string>
+    <string name="share_file_chooser_title">ფაილი გაზიარება</string>
+    <string name="open_with_chooser_short">გახსნა აპით</string>
+    <string name="lan_transfer_channel_name">ადგილობრივი ქსელის ფაილების გადაცემა</string>
+    <string name="lan_transfer_channel_description">მხოლოდ მაშინ, როდესაც თქვენ აწარმოებთ ფაილების გადაცემას LAN</string>
+    <string name="lan_transfer_starting_title">გადაცემა AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">ჟრყპ ჟა ჟსვ...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
+    <string name="terminal_channel_name">აქტიური ტერმინალი</string>
+    <string name="terminal_channel_description">ფონზე მუშაობს ღია ტელეფონი ან სერვერის ტერმინალი</string>
+    <string name="terminal_notification_title">ტერმინალი AF File Manager</string>
+    <string name="terminal_phone_active">ტელეფონის ტერმინალი აქტიურია</string>
+    <string name="terminal_server_active">სერვერის ტერმინალი აქტიურია</string>
+    <string name="generated_extracted_name">გამოტანილი</string>
+    <string name="close">დახურვა</string>
+    <string name="stop">შეწყვეტა</string>
+</resources>

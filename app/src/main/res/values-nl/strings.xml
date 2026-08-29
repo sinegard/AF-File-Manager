@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Taal</string>
+    <string name="language_description">Het venster verschaft zich na een verandering.</string>
+    <string name="language_english">Engels</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Open “%1$s” met</string>
+    <string name="edit_with_chooser_title">Bewerk “%1$s” met</string>
+    <string name="share_file_chooser_title">Deel bestand</string>
+    <string name="open_with_chooser_short">Openen met</string>
+    <string name="lan_transfer_channel_name">Locaal netwerkbestandsoverdracht</string>
+    <string name="lan_transfer_channel_description">Alleen getoond tijdens het uitvoeren van LAN bestandsoverdracht</string>
+    <string name="lan_transfer_starting_title">Overdracht van AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Startserver...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN overdracht loopt</string>
+    <string name="terminal_channel_name">Actief terminal</string>
+    <string name="terminal_channel_description">Houdt een open telefoon of server terminal in de achtergrond</string>
+    <string name="terminal_notification_title">AF File Manager terminale</string>
+    <string name="terminal_phone_active">Telefoonterminal actief</string>
+    <string name="terminal_server_active">Serverterminal is actief</string>
+    <string name="generated_extracted_name">geproduceerd</string>
+    <string name="close">Sluiten</string>
+    <string name="stop">Stoppen</string>
+</resources>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Y Gymraeg</string>
+    <string name="language_description">Gweis rhyngwyneb app. Mae\'r ffenestr yn adnewyddu ar ôl newid.</string>
+    <string name="language_english">Saesneg</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Agor “%1$s” gyda</string>
+    <string name="edit_with_chooser_title">Edyt “%1$s” gyda</string>
+    <string name="share_file_chooser_title">Cyd- rhannu ffeil</string>
+    <string name="open_with_chooser_short">Agor â</string>
+    <string name="lan_transfer_channel_name">Trosi ffeil rhwydwaith lleol</string>
+    <string name="lan_transfer_channel_description">Yn dangos dim ond pan fyddwch yn rhedeg trosglwyddo ffeil LAN</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_text">Mae gweinydd cychwyn...</string>
+    <string name="lan_transfer_running_title">Mae\'r trosglwyddo AF File Manager LAN yn rhedeg</string>
+    <string name="terminal_channel_name">Terfynol gweithredol</string>
+    <string name="terminal_channel_description">Mae\'n cadw ffôn agored neu terminale gweinydd yn rhedeg yn y cefndir</string>
+    <string name="terminal_notification_title">Y terminale AF File Manager</string>
+    <string name="terminal_phone_active">Terminal ffôn yn weithredol</string>
+    <string name="terminal_server_active">Mae terminale gweinydd yn weithredol</string>
+    <string name="generated_extracted_name">adennill</string>
+    <string name="close">Yng nghyfwng</string>
+    <string name="stop">Stop</string>
+</resources>

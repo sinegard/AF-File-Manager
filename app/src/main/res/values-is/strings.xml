@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Tölur</string>
+    <string name="language_description">Vinduð endurnýjar sig eftir breytingu.</string>
+    <string name="language_english">Íslenska</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Opnaðu “%1$s” með</string>
+    <string name="edit_with_chooser_title">Ritsetja “%1$s” með</string>
+    <string name="share_file_chooser_title">Deildu skrá</string>
+    <string name="open_with_chooser_short">Opna með</string>
+    <string name="lan_transfer_channel_name">Umsending á staðbundnum netum</string>
+    <string name="lan_transfer_channel_description">Sýnt aðeins meðan þú keyrir LAN skrá flutning</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN flutningur</string>
+    <string name="lan_transfer_starting_text">Byrjađ þjónn...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN flutning er í gangi</string>
+    <string name="terminal_channel_name">Virkjarstöð</string>
+    <string name="terminal_channel_description">Heldur opið síma eða netþjónnartímal í bakgrunni</string>
+    <string name="terminal_notification_title">AF File Manager stöð</string>
+    <string name="terminal_phone_active">Símaútvarpið er virkt.</string>
+    <string name="terminal_server_active">Þjónustur-held er virkt</string>
+    <string name="generated_extracted_name">útvinnslu</string>
+    <string name="close">Loka</string>
+    <string name="stop">Stöðva</string>
+</resources>

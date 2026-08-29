@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Ngôn ngữ</string>
+    <string name="language_description">Ngôn ngữ giao diện ứng dụng. cửa sổ làm mới sau khi thay đổi.</string>
+    <string name="language_english">Tiếng Anh</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Mở “%1$s” với</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” với</string>
+    <string name="share_file_chooser_title">Chia sẻ file</string>
+    <string name="open_with_chooser_short">Mở bằng</string>
+    <string name="lan_transfer_channel_name">Chuyển tập tin mạng địa phương</string>
+    <string name="lan_transfer_channel_description">Chỉ hiển thị khi bạn chạy chuyển tải tập tin LAN</string>
+    <string name="lan_transfer_starting_title">Chuyển AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Bắt đầu máy chủ...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN chuyển đổi đang chạy</string>
+    <string name="terminal_channel_name">Điểm kết thúc hoạt động</string>
+    <string name="terminal_channel_description">Giữ một điện thoại hoặc máy chủ mở chạy trong nền</string>
+    <string name="terminal_notification_title">AF File Manager đầu cuối</string>
+    <string name="terminal_phone_active">Điện thoại điện thoại hoạt động</string>
+    <string name="terminal_server_active">Terminal máy chủ hoạt động</string>
+    <string name="generated_extracted_name">được chiết xuất</string>
+    <string name="close">Đóng</string>
+    <string name="stop">Ngừng</string>
+</resources>

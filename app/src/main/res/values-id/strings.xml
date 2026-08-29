@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Bahasa</string>
+    <string name="language_description">Bahasa antarmuka aplikasi. Jendela menyegarkan setelah perubahan.</string>
+    <string name="language_english">Bahasa Inggris</string>
+    <string name="language_lithuanian">Lietuvių</string>
+    <string name="open_with_chooser_title">Buka “%1$s” dengan</string>
+    <string name="edit_with_chooser_title">Edit “%1$s” dengan</string>
+    <string name="share_file_chooser_title">Bagikan file</string>
+    <string name="open_with_chooser_short">Buka dengan</string>
+    <string name="lan_transfer_channel_name">Transfer file jaringan lokal</string>
+    <string name="lan_transfer_channel_description">Tampilkan hanya saat Anda menjalankan transfer file LAN</string>
+    <string name="lan_transfer_starting_title">Transfer AF File Manager LAN</string>
+    <string name="lan_transfer_starting_text">Mulai server...</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN transfer sedang berjalan</string>
+    <string name="terminal_channel_name">Terminal aktif</string>
+    <string name="terminal_channel_description">Menjaga telepon terbuka atau terminal server berjalan di latar belakang</string>
+    <string name="terminal_notification_title">Terminal AF File Manager</string>
+    <string name="terminal_phone_active">Terminal telepon aktif</string>
+    <string name="terminal_server_active">Terminal server aktif</string>
+    <string name="generated_extracted_name">ekstraksi</string>
+    <string name="close">Tutup</string>
+    <string name="stop">Berhenti</string>
+</resources>

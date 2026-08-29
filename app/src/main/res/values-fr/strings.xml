@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AF File Manager</string>
+    <string name="language_title">Langue</string>
+    <string name="language_description">Le langage de l\'interface de l\'application. La fenêtre se rafraîchit après un changement.</string>
+    <string name="language_english">Anglais</string>
+    <string name="language_lithuanian">Lituanien</string>
+    <string name="open_with_chooser_title">ouvrir “%1$s” avec</string>
+    <string name="edit_with_chooser_title">Modifier “%1$s” avec</string>
+    <string name="share_file_chooser_title">Partager le fichier</string>
+    <string name="open_with_chooser_short">Ouvrir avec</string>
+    <string name="lan_transfer_channel_name">Transfert de fichiers réseau local</string>
+    <string name="lan_transfer_channel_description">Affiché uniquement pendant l\'exécution du transfert de fichier LAN</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_text">Le serveur est en marche...</string>
+    <string name="lan_transfer_running_title">Le transfert AF File Manager LAN est en cours</string>
+    <string name="terminal_channel_name">Terminal actif</string>
+    <string name="terminal_channel_description">Garde un téléphone ou un serveur ouvert en arrière-plan</string>
+    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_phone_active">Le terminal téléphonique est activé</string>
+    <string name="terminal_server_active">Le terminal du serveur est actif</string>
+    <string name="generated_extracted_name">extrait</string>
+    <string name="close">Fermer</string>
+    <string name="stop">Arrêter</string>
+</resources>
