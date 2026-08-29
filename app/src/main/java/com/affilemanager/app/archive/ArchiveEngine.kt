@@ -27,6 +27,7 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Date
+import java.util.zip.ZipOutputStream
 
 class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
     companion object {
@@ -161,22 +162,23 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         password: CharArray? = null,
         operation: OperationContext? = null,
     ) = withContext(Dispatchers.IO) {
-        require(sources.isNotEmpty()) { "Nepasirinkta failų" }
         require(sources.all(File::exists)) { "Kai kurie šaltiniai nebeegzistuoja" }
         require(format != ArchiveFormat.RAR && format != ArchiveFormat.GZIP) { "Šį formatą galima tik išpakuoti" }
         require(password == null || format == ArchiveFormat.ZIP) { "Šifravimas palaikomas kuriant ZIP" }
+        require(sources.isNotEmpty() || password == null) { "Tuščias archyvas negali būti užšifruotas" }
+        require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
         outputFile.parentFile?.mkdirs()
         val partial = File(outputFile.parentFile, ".${outputFile.name}.partial")
         try {
             when (format) {
-                ArchiveFormat.ZIP -> createZip(partial, sources, password, operation)
+                ArchiveFormat.ZIP -> if (sources.isEmpty()) createEmptyZip(partial) else createZip(partial, sources, password, operation)
                 ArchiveFormat.SEVEN_Z -> createSevenZ(partial, sources, operation)
                 ArchiveFormat.TAR -> createTar(partial, sources, gzip = false, operation)
                 ArchiveFormat.TAR_GZ -> createTar(partial, sources, gzip = true, operation)
                 ArchiveFormat.RAR, ArchiveFormat.GZIP -> error("Nepalaikomas kūrimo formatas")
             }
             require(partial.isFile && partial.length() > 0) { "Archyvas nesukurtas" }
-            if (outputFile.exists()) require(outputFile.delete()) { "Esamo archyvo pakeisti nepavyko" }
+            require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
             require(partial.renameTo(outputFile)) { "Archyvo užbaigti nepavyko" }
         } finally {
             password?.fill('\u0000')
@@ -389,6 +391,12 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             operation?.checkpoint()
             if (source.isDirectory) zip.addFolder(source, parameters) else zip.addFile(source, parameters)
             operation?.progress(itemDelta = 1, byteDelta = source.length(), currentName = source.name)
+        }
+    }
+
+    private fun createEmptyZip(file: File) {
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(file))).use { output ->
+            output.finish()
         }
     }
 

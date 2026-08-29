@@ -192,6 +192,8 @@ fun AFFileManagerApp(
                 if (current != hasAllFilesAccess) {
                     hasAllFilesAccess = current
                     viewModel.refreshPermissionDependentState()
+                } else {
+                    viewModel.refreshStorageRoots()
                 }
                 if (appStopped && appLockEnabled) unlocked = false
                 appStopped = false

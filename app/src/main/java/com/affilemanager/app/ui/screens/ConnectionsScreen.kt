@@ -4,6 +4,7 @@ import android.view.View
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -21,9 +22,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -85,6 +88,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
@@ -112,6 +117,7 @@ import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
+import com.affilemanager.app.ui.components.longPressDragSelect
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
@@ -228,6 +234,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onDisconnect = viewModel::disconnectNetwork,
                     onOpenTerminal = viewModel::openRemoteTerminal,
                     onSelectPaths = viewModel::selectRemotePaths,
+                    onSetSelection = viewModel::setRemoteSelection,
                 )
             }
         }
@@ -422,6 +429,7 @@ internal fun RemoteBrowser(
     onOpenTerminal: () -> Unit = {},
     onInfo: (RemoteEntry) -> Unit = {},
     onSelectPaths: (List<String>) -> Unit = { onSelectAll() },
+    onSetSelection: (List<String>, Boolean) -> Unit = { _, _ -> },
 ) {
     var searchVisible by remember(state.connectedProfile?.id) { mutableStateOf(false) }
     var searchQuery by remember(state.connectedProfile?.id) { mutableStateOf("") }
@@ -525,6 +533,7 @@ internal fun RemoteBrowser(
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
+                    onSetSelection = onSetSelection,
                     onRename = onRename,
                     onInfo = onInfo,
                     onDelete = { onDelete(listOf(it)) },
@@ -540,6 +549,7 @@ internal fun RemoteBrowser(
                     onOpen = onOpen,
                     onDownload = onDownload,
                     onToggleSelection = onToggleSelection,
+                    onSetSelection = onSetSelection,
                     onRename = onRename,
                     onInfo = onInfo,
                     onDelete = { onDelete(listOf(it)) },
@@ -781,14 +791,27 @@ private fun RemoteEntryList(
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onSetSelection: (List<String>, Boolean) -> Unit,
     onRename: (RemoteEntry) -> Unit,
     onInfo: (RemoteEntry) -> Unit,
     onDelete: (RemoteEntry) -> Unit,
 ) {
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
+    val listState = rememberLazyListState()
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().testTag("remote_list"),
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .longPressDragSelect(
+                    state = listState,
+                    itemCount = entries.size,
+                    isSelected = { index -> entries.getOrNull(index)?.path in selectedPaths },
+                    onSelectionChange = { indices, selected ->
+                        onSetSelection(indices.mapNotNull { index -> entries.getOrNull(index)?.path }, selected)
+                    },
+                )
+                .testTag("remote_list"),
             contentPadding = PaddingValues(bottom = 88.dp),
         ) {
             items(entries, key = RemoteEntry::path) { entry ->
@@ -827,14 +850,27 @@ private fun RemoteEntryGrid(
     onOpen: (RemoteEntry) -> Unit,
     onDownload: (RemoteEntry) -> Unit,
     onToggleSelection: (String) -> Unit,
+    onSetSelection: (List<String>, Boolean) -> Unit,
     onRename: (RemoteEntry) -> Unit,
     onInfo: (RemoteEntry) -> Unit,
     onDelete: (RemoteEntry) -> Unit,
 ) {
+    val gridState = rememberLazyGridState()
     Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(gridColumns.coerceIn(1, 6)),
-            modifier = Modifier.fillMaxSize().testTag("remote_grid"),
+            state = gridState,
+            modifier = Modifier
+                .fillMaxSize()
+                .longPressDragSelect(
+                    state = gridState,
+                    itemCount = entries.size,
+                    isSelected = { index -> entries.getOrNull(index)?.path in selectedPaths },
+                    onSelectionChange = { indices, selected ->
+                        onSetSelection(indices.mapNotNull { index -> entries.getOrNull(index)?.path }, selected)
+                    },
+                )
+                .testTag("remote_grid"),
             contentPadding = PaddingValues(8.dp, 6.dp, 8.dp, 88.dp),
             horizontalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
             verticalArrangement = Arrangement.spacedBy((5f * spacingScalePercent / 100f).dp),
@@ -894,10 +930,10 @@ private fun RemoteEntryRow(
                     Modifier.background(MaterialTheme.colorScheme.surface)
                 },
             )
-            .combinedClickable(
+            .semantics { onLongClick { onToggleSelection(); true } }
+            .clickable(
                 enabled = !opening,
                 onClick = { if (selectionActive) onToggleSelection() else onOpen() },
-                onLongClick = onToggleSelection,
             )
             .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -946,10 +982,10 @@ private fun RemoteEntryTile(
         modifier = Modifier
             .testTag("remote_entry_${entry.path}")
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
-            .combinedClickable(
+            .semantics { onLongClick { onToggleSelection(); true } }
+            .clickable(
                 enabled = !opening,
                 onClick = { if (selectionActive) onToggleSelection() else onOpen() },
-                onLongClick = onToggleSelection,
             ),
         shape = if (gridStyle == DirectoryGridStyle.CLASSIC) RoundedCornerShape(4.dp) else selectionShape,
         colors = CardDefaults.cardColors(

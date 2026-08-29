@@ -7,6 +7,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.horizontalScroll
@@ -88,7 +89,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -129,6 +129,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -138,6 +140,7 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.model.StorageRoot
 import com.affilemanager.app.model.StorageRootKind
@@ -172,6 +175,7 @@ import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.FileInfoDialog
 import com.affilemanager.app.ui.components.FileSizeBar
+import com.affilemanager.app.ui.components.longPressDragSelect
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
@@ -186,6 +190,34 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
+
+private data class ArchiveRequest(
+    val panel: PanelId,
+    val sourcePaths: List<String>,
+    val initialName: String,
+) {
+    companion object {
+        fun fromSelection(panel: PanelId, paths: Collection<String>): ArchiveRequest? {
+            val sources = paths.distinct()
+            if (sources.isEmpty()) return null
+            return ArchiveRequest(panel, sources, defaultArchiveName(sources))
+        }
+
+        fun fromEntry(panel: PanelId, entry: FileEntry): ArchiveRequest =
+            ArchiveRequest(panel, listOf(entry.absolutePath), defaultArchiveName(listOf(entry.absolutePath)))
+    }
+}
+
+private fun defaultArchiveName(paths: List<String>): String {
+    if (paths.size != 1) return "archyvas"
+    val fileName = File(paths.single()).name.ifBlank { return "archyvas" }
+    val withoutArchiveSuffix = if (fileName.endsWith(".tar.gz", ignoreCase = true)) {
+        fileName.dropLast(7)
+    } else {
+        fileName.substringBeforeLast('.', fileName)
+    }
+    return withoutArchiveSuffix.ifBlank { "archyvas" }
+}
 
 @Composable
 fun FilesScreen(
@@ -218,14 +250,13 @@ fun FilesScreen(
     var createFor by remember { mutableStateOf<PanelId?>(null) }
     var renameTarget by remember { mutableStateOf<Pair<PanelId, FileEntry>?>(null) }
     var trashPanel by remember { mutableStateOf<PanelId?>(null) }
-    var archivePanel by remember { mutableStateOf<PanelId?>(null) }
+    var archiveRequest by remember { mutableStateOf<ArchiveRequest?>(null) }
     var pastePanel by remember { mutableStateOf<PanelId?>(null) }
     var tagPanel by remember { mutableStateOf<PanelId?>(null) }
     var displayPanel by remember { mutableStateOf<PanelId?>(null) }
     var showHomeDisplaySettings by remember { mutableStateOf(false) }
     var showHomeCustomization by remember { mutableStateOf(false) }
-    var showRootAccessInfo by remember { mutableStateOf(false) }
-    var infoTarget by remember { mutableStateOf<FileEntry?>(null) }
+    var infoTargets by remember { mutableStateOf<List<FileEntry>?>(null) }
     val clipboardAvailable = clipboard != null || remoteClipboard != null || afClipboard != null
 
     LaunchedEffect(clipboardAvailable) {
@@ -342,17 +373,7 @@ fun FilesScreen(
                     ),
                     onOpen = { location -> viewModel.openHomeShortcut(location.id, location.path, activePanel) },
                     onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
-                    onOpenRoot = {
-                        if (advancedAccess.activeBackend in setOf(
-                                AdvancedAccessBackend.ROOT,
-                                AdvancedAccessBackend.SHIZUKU_ROOT,
-                            )
-                        ) {
-                            viewModel.openRootFromHome()
-                        } else {
-                            showRootAccessInfo = true
-                        }
-                    },
+                    onOpenRoot = { viewModel.openRootFromHome(activePanel) },
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
                     onOpenFavorite = { path -> viewModel.openQuickPath(path, activePanel) },
                     onOpenTrash = viewModel::openTrashFromHome,
@@ -378,8 +399,11 @@ fun FilesScreen(
                         onRename = { renameTarget = PanelId.LEFT to it },
                         onTrash = { trashPanel = PanelId.LEFT },
                         onTrashEntry = { entry -> viewModel.selectOnly(PanelId.LEFT, entry.absolutePath); trashPanel = PanelId.LEFT },
-                        onInfo = { infoTarget = it },
-                        onArchive = { archivePanel = PanelId.LEFT },
+                        onInfo = { infoTargets = it },
+                        onArchive = {
+                            archiveRequest = ArchiveRequest.fromSelection(PanelId.LEFT, left.selectedPaths)
+                        },
+                        onArchiveEntry = { entry -> archiveRequest = ArchiveRequest.fromEntry(PanelId.LEFT, entry) },
                         onTag = { tagPanel = PanelId.LEFT },
                         onCopyToOther = { viewModel.copySelection(PanelId.LEFT, move = false); pastePanel = PanelId.RIGHT },
                         onPaste = { pastePanel = PanelId.LEFT },
@@ -400,8 +424,11 @@ fun FilesScreen(
                         onRename = { renameTarget = PanelId.RIGHT to it },
                         onTrash = { trashPanel = PanelId.RIGHT },
                         onTrashEntry = { entry -> viewModel.selectOnly(PanelId.RIGHT, entry.absolutePath); trashPanel = PanelId.RIGHT },
-                        onInfo = { infoTarget = it },
-                        onArchive = { archivePanel = PanelId.RIGHT },
+                        onInfo = { infoTargets = it },
+                        onArchive = {
+                            archiveRequest = ArchiveRequest.fromSelection(PanelId.RIGHT, right.selectedPaths)
+                        },
+                        onArchiveEntry = { entry -> archiveRequest = ArchiveRequest.fromEntry(PanelId.RIGHT, entry) },
                         onTag = { tagPanel = PanelId.RIGHT },
                         onCopyToOther = { viewModel.copySelection(PanelId.RIGHT, move = false); pastePanel = PanelId.LEFT },
                         onPaste = { pastePanel = PanelId.RIGHT },
@@ -424,8 +451,11 @@ fun FilesScreen(
                     onRename = { renameTarget = activePanel to it },
                     onTrash = { trashPanel = activePanel },
                     onTrashEntry = { entry -> viewModel.selectOnly(activePanel, entry.absolutePath); trashPanel = activePanel },
-                    onInfo = { infoTarget = it },
-                    onArchive = { archivePanel = activePanel },
+                    onInfo = { infoTargets = it },
+                    onArchive = {
+                        archiveRequest = ArchiveRequest.fromSelection(activePanel, panelState.selectedPaths)
+                    },
+                    onArchiveEntry = { entry -> archiveRequest = ArchiveRequest.fromEntry(activePanel, entry) },
                     onTag = { tagPanel = activePanel },
                     onCopyToOther = {
                         viewModel.copySelection(activePanel, move = false)
@@ -439,52 +469,15 @@ fun FilesScreen(
         }
     }
 
-    if (showRootAccessInfo) {
-        val shizukuShellConnected = advancedAccess.activeBackend == AdvancedAccessBackend.SHIZUKU_SHELL
-        AlertDialog(
-            onDismissRequest = { showRootAccessInfo = false },
-            title = { LText("Root prieiga neaktyvi") },
-            text = {
-                LText(
-                    if (shizukuShellConnected) {
-                        "Įprasta Shizuku prieiga veikia kaip Android shell ir negali atverti sistemos šaknies /. Root saugyklai reikia rootinto įrenginio arba Shizuku tarnybos, veikiančios su root teisėmis."
-                    } else {
-                        "Sistemos šaknis / atveriama tik su Root arba Shizuku root prieiga. Tai nėra įprastas Android leidimas ir AF File Manager jo neapeina."
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRootAccessInfo = false
-                        viewModel.setSection(AppSection.TOOLS)
-                    },
-                    modifier = Modifier.testTag("root_access_settings"),
-                ) { LText("Išplėstiniai nustatymai") }
-            },
-            dismissButton = {
-                Row {
-                    if (shizukuShellConnected) {
-                        TextButton(
-                            onClick = {
-                                showRootAccessInfo = false
-                                viewModel.openAdvancedBrowser()
-                            },
-                            modifier = Modifier.testTag("root_open_protected_android"),
-                        ) { LText("Apsaugoti Android failai") }
-                    }
-                    TextButton(onClick = { showRootAccessInfo = false }) { LText("Atšaukti") }
-                }
-            },
-            modifier = Modifier.testTag("root_access_explanation"),
-        )
-    }
-
     createFor?.let { panel ->
         CreateItemDialog(
             onDismiss = { createFor = null },
             onCreateFolder = { name -> viewModel.createDirectory(panel, name); createFor = null },
             onCreateFile = { name -> viewModel.createFile(panel, name); createFor = null },
+            onCreateArchive = { name, format ->
+                viewModel.createArchive(panel, name, format, sourcePaths = emptyList())
+                createFor = null
+            },
         )
     }
     renameTarget?.let { (panel, entry) ->
@@ -508,12 +501,13 @@ fun FilesScreen(
             dismissButton = { TextButton(onClick = { trashPanel = null }) { LText("Atšaukti") } },
         )
     }
-    archivePanel?.let { panel ->
+    archiveRequest?.let { request ->
         ArchiveDialog(
-            onDismiss = { archivePanel = null },
+            initialName = request.initialName,
+            onDismiss = { archiveRequest = null },
             onCreate = { name, format, password ->
-                viewModel.createArchive(panel, name, format, password)
-                archivePanel = null
+                viewModel.createArchive(request.panel, name, format, password, request.sourcePaths)
+                archiveRequest = null
             },
         )
     }
@@ -612,8 +606,12 @@ fun FilesScreen(
             },
         )
     }
-    infoTarget?.let { entry ->
-        FileInfoDialog(entry = entry, onDismiss = { infoTarget = null })
+    infoTargets?.let { entries ->
+        FileInfoDialog(
+            entries = entries,
+            loadSummary = viewModel::loadFileSelectionInfo,
+            onDismiss = { infoTargets = null },
+        )
     }
     if (showHomeCustomization) {
         val currentPath = if (activePanel == PanelId.LEFT) left.path else right.path
@@ -909,22 +907,18 @@ private fun StorageHomeSection(
             onClick = { onOpen(root) },
         )
     }
-    val rootSpace = remember(rootStorageAvailable) {
-        if (rootStorageAvailable) {
-            File("/").let { root -> root.totalSpace.coerceAtLeast(0L) to root.usableSpace.coerceAtLeast(0L) }
-        } else 0L to 0L
+    val rootSpace = remember {
+        File("/").let { root -> root.totalSpace.coerceAtLeast(0L) to root.usableSpace.coerceAtLeast(0L) }
     }
-    val rootUsageFraction = rootSpace.first.takeIf { rootStorageAvailable && it > 0L }?.let { total ->
+    val rootUsageFraction = rootSpace.first.takeIf { it > 0L }?.let { total ->
         (total - rootSpace.second).coerceIn(0L, total).toFloat() / total.toFloat()
     }
     StorageLocationCard(
         title = "Root",
-        description = if (!rootStorageAvailable) {
-            "Įjunkite Root arba Shizuku root prieigą skiltyje Daugiau"
-        } else rootSpace.first.takeIf { it > 0L }?.let { total ->
+        description = rootSpace.first.takeIf { it > 0L }?.let { total ->
             "${FileSystemRules.humanBytes(rootSpace.second)} laisva iš ${FileSystemRules.humanBytes(total)}"
         } ?: "Sistemos failai · privilegijuota prieiga",
-        icon = if (rootStorageAvailable) Icons.Rounded.LockOpen else Icons.Rounded.Lock,
+        icon = if (rootStorageAvailable) Icons.Rounded.LockOpen else Icons.Rounded.Folder,
         usageFraction = rootUsageFraction,
         onClick = onOpenRoot,
         modifier = Modifier.testTag("root_storage_location"),
@@ -1365,8 +1359,9 @@ private fun FilePanel(
     onRename: (FileEntry) -> Unit,
     onTrash: () -> Unit,
     onTrashEntry: (FileEntry) -> Unit,
-    onInfo: (FileEntry) -> Unit,
+    onInfo: (List<FileEntry>) -> Unit,
     onArchive: () -> Unit,
+    onArchiveEntry: (FileEntry) -> Unit,
     onTag: () -> Unit,
     onCopyToOther: () -> Unit,
     onPaste: () -> Unit,
@@ -1482,8 +1477,8 @@ private fun FilePanel(
                 state.loading && state.entries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 state.entries.isEmpty() -> EmptyPanel("Aplankas tuščias", "Čia dar nėra failų")
                 displayedEntries.isEmpty() -> EmptyPanel("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
-                state.grid -> FileGrid(panelId, displayedState, tagsByPath, scrollKey, viewModel, onRename, onInfo, onTrashEntry)
-                else -> FileList(panelId, displayedState, tagsByPath, scrollKey, viewModel, onRename, onInfo, onTrashEntry)
+                state.grid -> FileGrid(panelId, displayedState, tagsByPath, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry)
+                else -> FileList(panelId, displayedState, tagsByPath, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry)
             }
             if (state.selectedPaths.isNotEmpty()) {
                 SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
@@ -1499,9 +1494,8 @@ private fun FilePanel(
                         }
                     }
                     IconButton(
-                        enabled = state.selectedPaths.size == 1,
                         onClick = {
-                            state.entries.firstOrNull { it.absolutePath in state.selectedPaths }?.let(onInfo)
+                            onInfo(state.entries.filter { it.absolutePath in state.selectedPaths })
                         },
                         modifier = Modifier.testTag("selection_info_local"),
                     ) {
@@ -1524,6 +1518,14 @@ private fun FilePanel(
                         )
                     }
                     IconButton(onClick = onArchive) { Icon(Icons.Rounded.Archive, contentDescription = uiText("Archyvuoti")) }
+                    val selectedEntries = state.entries.filter { it.absolutePath in state.selectedPaths }
+                    IconButton(
+                        onClick = { viewModel.analyzeEntries(selectedEntries.map(FileEntry::absolutePath)) },
+                        enabled = selectedEntries.isNotEmpty(),
+                        modifier = Modifier.testTag("analyze_selection_local"),
+                    ) {
+                        Icon(Icons.Rounded.Analytics, contentDescription = uiText("Analizuoti pasirinktus"))
+                    }
                     IconButton(onClick = onTag) { Icon(Icons.AutoMirrored.Rounded.Label, contentDescription = uiText("Žymos ir įvertinimas")) }
                     IconButton(onClick = onTrash) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error)
@@ -1532,7 +1534,7 @@ private fun FilePanel(
             } else {
                 FloatingActionButton(
                     onClick = { viewModel.activatePanel(panelId); onCreate() },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).testTag("create_local_item"),
                 ) {
                     Icon(Icons.Rounded.CreateNewFolder, contentDescription = uiText("Sukurti"))
                 }
@@ -1790,6 +1792,7 @@ private fun FileList(
     onRename: (FileEntry) -> Unit,
     onInfo: (FileEntry) -> Unit,
     onTrash: (FileEntry) -> Unit,
+    onArchive: (FileEntry) -> Unit,
 ) {
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
@@ -1862,7 +1865,21 @@ private fun FileList(
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().testTag("file_list_$panel"),
+            modifier = Modifier
+                .fillMaxSize()
+                .longPressDragSelect(
+                    state = listState,
+                    itemCount = state.entries.size,
+                    isSelected = { index -> state.entries.getOrNull(index)?.absolutePath in state.selectedPaths },
+                    onSelectionChange = { indices, selected ->
+                        viewModel.setSelection(
+                            panel,
+                            indices.mapNotNull { index -> state.entries.getOrNull(index)?.absolutePath },
+                            selected,
+                        )
+                    },
+                )
+                .testTag("file_list_$panel"),
             contentPadding = PaddingValues(bottom = 88.dp),
         ) {
             items(state.entries, key = FileEntry::absolutePath, contentType = FileEntry::kind) { entry ->
@@ -1897,6 +1914,8 @@ private fun FileList(
                     onRename = { onRename(entry) },
                     onInfo = { onInfo(entry) },
                     onTrash = { onTrash(entry) },
+                    onArchive = { onArchive(entry) },
+                    onAnalyze = { viewModel.analyzeEntries(listOf(entry.absolutePath)) },
                 )
             }
         }
@@ -1914,6 +1933,7 @@ private fun FileGrid(
     onRename: (FileEntry) -> Unit,
     onInfo: (FileEntry) -> Unit,
     onTrash: (FileEntry) -> Unit,
+    onArchive: (FileEntry) -> Unit,
 ) {
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
@@ -1988,7 +2008,21 @@ private fun FileGrid(
         LazyVerticalGrid(
             columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
             state = gridState,
-            modifier = Modifier.fillMaxSize().testTag("file_grid_$panel"),
+            modifier = Modifier
+                .fillMaxSize()
+                .longPressDragSelect(
+                    state = gridState,
+                    itemCount = state.entries.size,
+                    isSelected = { index -> state.entries.getOrNull(index)?.absolutePath in state.selectedPaths },
+                    onSelectionChange = { indices, selected ->
+                        viewModel.setSelection(
+                            panel,
+                            indices.mapNotNull { index -> state.entries.getOrNull(index)?.absolutePath },
+                            selected,
+                        )
+                    },
+                )
+                .testTag("file_grid_$panel"),
             contentPadding = PaddingValues(8.dp, 6.dp, 8.dp, 88.dp),
             horizontalArrangement = Arrangement.spacedBy((5f * state.spacingScalePercent / 100f).dp),
             verticalArrangement = Arrangement.spacedBy((5f * state.spacingScalePercent / 100f).dp),
@@ -2023,6 +2057,8 @@ private fun FileGrid(
                     onRename = { onRename(entry) },
                     onInfo = { onInfo(entry) },
                     onTrash = { onTrash(entry) },
+                    onArchive = { onArchive(entry) },
+                    onAnalyze = { viewModel.analyzeEntries(listOf(entry.absolutePath)) },
                 )
             }
         }
@@ -2054,6 +2090,8 @@ private fun FileRow(
     onRename: () -> Unit,
     onInfo: () -> Unit,
     onTrash: () -> Unit,
+    onArchive: () -> Unit,
+    onAnalyze: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(8.dp)
     val iconSize = (42f * iconScalePercent / 100f).dp
@@ -2063,6 +2101,7 @@ private fun FileRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("local_entry_${entry.absolutePath}")
             .then(
                 if (selected) {
                     Modifier
@@ -2073,7 +2112,8 @@ private fun FileRow(
                 },
             )
             .alpha(itemAlpha)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .semantics { onLongClick { onLongClick(); true } }
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(itemSpacing),
@@ -2101,7 +2141,7 @@ private fun FileRow(
             }
         }
         if (!entry.isReadable) LText("Neprieinama", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash)
+        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze)
     }
     HorizontalDivider(
         modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
@@ -2129,6 +2169,8 @@ private fun FileTile(
     onRename: () -> Unit,
     onInfo: () -> Unit,
     onTrash: () -> Unit,
+    onArchive: () -> Unit,
+    onAnalyze: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
@@ -2144,9 +2186,11 @@ private fun FileTile(
     val itemAlpha = if (entry.isHidden && !selected) 0.64f else 1f
     Card(
         modifier = Modifier
+            .testTag("local_entry_${entry.absolutePath}")
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
             .alpha(itemAlpha)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .semantics { onLongClick { onLongClick(); true } }
+            .clickable(onClick = onClick),
         shape = if (gridStyle == DirectoryGridStyle.CLASSIC) RoundedCornerShape(4.dp) else selectionShape,
         colors = CardDefaults.cardColors(
             containerColor = when {
@@ -2172,7 +2216,7 @@ private fun FileTile(
                 )
             },
             actions = {
-                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash)
+                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze)
             },
             extraContent = {
                 if (largestSizeBytes != null && entry.metadataComplete) {
@@ -2313,6 +2357,8 @@ private fun EntryActionsButton(
     onRename: () -> Unit,
     onInfo: () -> Unit,
     onTrash: () -> Unit,
+    onArchive: () -> Unit,
+    onAnalyze: () -> Unit,
 ) {
     var expanded by remember(entry.absolutePath) { mutableStateOf(false) }
     Box {
@@ -2321,8 +2367,25 @@ private fun EntryActionsButton(
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
-                text = { LText(if (entry.isDirectory) "Atidaryti aplanką" else "Peržiūrėti čia") },
-                leadingIcon = { Icon(if (entry.isDirectory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
+                text = {
+                    LText(
+                        when {
+                            entry.isDirectory -> "Atidaryti aplanką"
+                            entry.kind == EntryKind.ARCHIVE -> "Atidaryti archyvą"
+                            else -> "Peržiūrėti čia"
+                        },
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        when {
+                            entry.isDirectory -> Icons.Rounded.Folder
+                            entry.kind == EntryKind.ARCHIVE -> Icons.Rounded.Archive
+                            else -> Icons.Rounded.Visibility
+                        },
+                        contentDescription = null,
+                    )
+                },
                 onClick = { expanded = false; onPreview() },
                 enabled = entry.isReadable,
             )
@@ -2339,6 +2402,22 @@ private fun EntryActionsButton(
                 leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) },
                 onClick = { expanded = false; onSelect() },
             )
+            DropdownMenuItem(
+                text = { LText("Archyvuoti") },
+                leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
+                onClick = { expanded = false; onArchive() },
+                enabled = entry.isReadable,
+                modifier = Modifier.testTag("archive_entry_action"),
+            )
+            if (entry.isDirectory) {
+                DropdownMenuItem(
+                    text = { LText("Analizuoti dabartinį aplanką") },
+                    leadingIcon = { Icon(Icons.Rounded.Analytics, contentDescription = null) },
+                    onClick = { expanded = false; onAnalyze() },
+                    enabled = entry.isReadable,
+                    modifier = Modifier.testTag("analyze_entry_action"),
+                )
+            }
             HorizontalDivider()
             DropdownMenuItem(
                 text = { LText("Pervadinti") },
@@ -2373,25 +2452,88 @@ private fun EmptyPanel(title: String, description: String) {
     }
 }
 
+private enum class CreateItemType { FOLDER, FILE, ARCHIVE }
+
 @Composable
-private fun CreateItemDialog(onDismiss: () -> Unit, onCreateFolder: (String) -> Unit, onCreateFile: (String) -> Unit) {
+private fun CreateItemDialog(
+    onDismiss: () -> Unit,
+    onCreateFolder: (String) -> Unit,
+    onCreateFile: (String) -> Unit,
+    onCreateArchive: (String, ArchiveFormat) -> Unit,
+) {
     var name by remember { mutableStateOf("") }
-    var folder by remember { mutableStateOf(true) }
+    var itemType by remember { mutableStateOf(CreateItemType.FOLDER) }
+    var archiveFormat by remember { mutableStateOf(ArchiveFormat.ZIP) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { LText(if (folder) "Naujas aplankas" else "Naujas failas") },
+        title = {
+            LText(
+                when (itemType) {
+                    CreateItemType.FOLDER -> "Naujas aplankas"
+                    CreateItemType.FILE -> "Naujas failas"
+                    CreateItemType.ARCHIVE -> "Naujas archyvas"
+                },
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { folder = true }) { LText("Aplankas") }
-                    OutlinedButton(onClick = { folder = false }) { LText("Failas") }
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = itemType == CreateItemType.FOLDER,
+                        onClick = { itemType = CreateItemType.FOLDER },
+                        label = { LText("Aplankas") },
+                        modifier = Modifier.testTag("create_type_folder"),
+                    )
+                    FilterChip(
+                        selected = itemType == CreateItemType.FILE,
+                        onClick = { itemType = CreateItemType.FILE },
+                        label = { LText("Failas") },
+                        modifier = Modifier.testTag("create_type_file"),
+                    )
+                    FilterChip(
+                        selected = itemType == CreateItemType.ARCHIVE,
+                        onClick = { itemType = CreateItemType.ARCHIVE },
+                        label = { LText("Archyvas") },
+                        modifier = Modifier.testTag("create_type_archive"),
+                    )
                 }
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true)
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { LText("Pavadinimas") },
+                    singleLine = true,
+                    modifier = Modifier.testTag("create_item_name"),
+                )
+                if (itemType == CreateItemType.ARCHIVE) {
+                    LText("Formatas", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        listOf(ArchiveFormat.ZIP, ArchiveFormat.SEVEN_Z, ArchiveFormat.TAR, ArchiveFormat.TAR_GZ).forEach { candidate ->
+                            FilterChip(
+                                selected = archiveFormat == candidate,
+                                onClick = { archiveFormat = candidate },
+                                label = { Text(candidate.name) },
+                                modifier = Modifier.testTag("create_archive_format_${candidate.name}"),
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (folder) onCreateFolder(name) else onCreateFile(name) },
+                onClick = {
+                    when (itemType) {
+                        CreateItemType.FOLDER -> onCreateFolder(name)
+                        CreateItemType.FILE -> onCreateFile(name)
+                        CreateItemType.ARCHIVE -> onCreateArchive(name, archiveFormat)
+                    }
+                },
                 enabled = name.isNotBlank(),
             ) { LText("Sukurti") }
         },
@@ -2418,8 +2560,8 @@ private fun TextInputDialog(
 }
 
 @Composable
-private fun ArchiveDialog(onDismiss: () -> Unit, onCreate: (String, ArchiveFormat, CharArray?) -> Unit) {
-    var name by remember { mutableStateOf("archyvas") }
+private fun ArchiveDialog(initialName: String, onDismiss: () -> Unit, onCreate: (String, ArchiveFormat, CharArray?) -> Unit) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
     var format by remember { mutableStateOf(ArchiveFormat.ZIP) }
     var password by remember { mutableStateOf("") }
     AlertDialog(
@@ -2427,11 +2569,22 @@ private fun ArchiveDialog(onDismiss: () -> Unit, onCreate: (String, ArchiveForma
         title = { LText("Sukurti archyvą") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true)
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { LText("Pavadinimas") },
+                    singleLine = true,
+                    modifier = Modifier.testTag("archive_name"),
+                )
                 LText("Formatas", style = MaterialTheme.typography.labelLarge)
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(ArchiveFormat.ZIP, ArchiveFormat.SEVEN_Z, ArchiveFormat.TAR, ArchiveFormat.TAR_GZ).forEach { candidate ->
-                        AssistChip(onClick = { format = candidate }, label = { Text(candidate.name) })
+                        FilterChip(
+                            selected = format == candidate,
+                            onClick = { format = candidate },
+                            label = { Text(candidate.name) },
+                            modifier = Modifier.testTag("archive_format_${candidate.name}"),
+                        )
                     }
                 }
                 if (format == ArchiveFormat.ZIP) {
@@ -2451,6 +2604,7 @@ private fun ArchiveDialog(onDismiss: () -> Unit, onCreate: (String, ArchiveForma
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
+        modifier = Modifier.testTag("archive_dialog"),
     )
 }
 

@@ -201,7 +201,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         useRegex = regex,
         tags = tags,
     )
-    val overviewPath = analysisState.rootPath ?: activePath
+    val overviewPath = analysisState.rootPaths.firstOrNull() ?: analysisState.rootPath ?: activePath
     val overviewRoot = storageRoots
         .filter { root -> overviewPath == root.path || overviewPath.startsWith(root.path.trimEnd('/') + "/") }
         .maxByOrNull { it.path.length }
@@ -243,10 +243,12 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     root = overviewRoot,
                     roots = storageRoots,
                     analysis = analysisState.analysis,
-                    analysisRootPath = analysisState.rootPath,
+                    analysisRootPaths = analysisState.rootPaths.ifEmpty { listOfNotNull(analysisState.rootPath) },
+                    analysisAllStorage = analysisState.allStorage,
                     running = analysisState.running,
                     onAnalyzeRoot = viewModel::analyze,
                     onAnalyzeFolder = { viewModel.analyze(activePath) },
+                    onAnalyzeAllStorage = viewModel::analyzeAllStorage,
                     onCleanup = { cleanupCategory = CleanupCategory.LARGE; showCleanupReview = true },
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -536,7 +538,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 
         analysisState.analysis?.let { analysis ->
             val largestFolders = analysis.largestDirectories.filterNot { usage ->
-                sameAnalysisPath(usage.path, analysisState.rootPath)
+                analysisState.rootPaths.any { root -> sameAnalysisPath(usage.path, root) } ||
+                    sameAnalysisPath(usage.path, analysisState.rootPath)
             }
             item {
                 Card(
@@ -799,7 +802,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.trashDuplicateCopies(selectedPaths.toList(), activePath)
+                        viewModel.trashDuplicateCopies(selectedPaths.toList())
                         duplicateGroup = null
                     },
                     enabled = selectedPaths.isNotEmpty() && selectedPaths.size < group.paths.size,
@@ -819,15 +822,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 similarImagesAnalyzed = analysisState.similarImagesAnalyzed,
                 similarImagesError = analysisState.similarImagesError,
                 initialCategory = cleanupCategory,
-                analysisRootPath = analysisState.rootPath,
+                analysisRootPaths = analysisState.rootPaths.ifEmpty { listOfNotNull(analysisState.rootPath) },
                 onAnalyzeSimilarImages = viewModel::analyzeSimilarImages,
                 onMoveToTrash = viewModel::trashAnalysisSelection,
                 onLoadFolder = viewModel::loadCleanupFolder,
-                onOpenLocation = { path ->
-                    showCleanupReview = false
-                    val target = File(path).parentFile?.absolutePath ?: path
-                    viewModel.openQuickPath(target)
-                },
+                onOpenFile = viewModel::open,
                 onDismiss = { showCleanupReview = false },
             )
         }
@@ -854,7 +853,7 @@ private fun AnalysisOverviewCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag(testTag),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -881,10 +880,12 @@ private fun StorageOverviewCard(
     root: StorageRoot,
     roots: List<StorageRoot>,
     analysis: StorageAnalysis?,
-    analysisRootPath: String?,
+    analysisRootPaths: List<String>,
+    analysisAllStorage: Boolean,
     running: Boolean,
     onAnalyzeRoot: (String) -> Unit,
     onAnalyzeFolder: () -> Unit,
+    onAnalyzeAllStorage: () -> Unit,
     onCleanup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -935,21 +936,9 @@ private fun StorageOverviewCard(
                         "Nuskaityti: ${storageRootLabel(target)}",
                         modifier = Modifier.weight(1f).padding(start = 8.dp),
                     )
-                    if (running && analysisRootPath == target.path) {
+                    if (running && !analysisAllStorage && analysisRootPaths.singleOrNull()?.let { sameAnalysisPath(it, target.path) } == true) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
-                }
-            }
-            if (roots.none { it.kind == StorageRootKind.SD_CARD || it.kind == StorageRootKind.REMOVABLE }) {
-                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().testTag("analyze_storage_sd_absent")) {
-                    Icon(Icons.Rounded.SdStorage, contentDescription = null)
-                    LText("SD kortelė neprijungta", modifier = Modifier.weight(1f).padding(start = 8.dp))
-                }
-            }
-            if (roots.none { it.kind == StorageRootKind.USB_STORAGE }) {
-                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().testTag("analyze_storage_usb_absent")) {
-                    Icon(Icons.Rounded.Usb, contentDescription = null)
-                    LText("USB saugykla neprijungta", modifier = Modifier.weight(1f).padding(start = 8.dp))
                 }
             }
             OutlinedButton(
@@ -959,6 +948,20 @@ private fun StorageOverviewCard(
             ) {
                 Icon(Icons.Rounded.FolderOpen, contentDescription = null)
                 LText("Analizuoti dabartinį aplanką", modifier = Modifier.padding(start = 8.dp))
+            }
+            OutlinedButton(
+                onClick = onAnalyzeAllStorage,
+                enabled = !running && roots.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth().testTag("analyze_all_storage"),
+            ) {
+                Icon(Icons.Rounded.Storage, contentDescription = null)
+                Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                    LText("Analizuoti saugyklą")
+                    LText("Visose saugyklose", style = MaterialTheme.typography.labelSmall)
+                }
+                if (running && analysisAllStorage) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
             }
             if (analysis != null) {
                 Button(onClick = onCleanup, enabled = !running, modifier = Modifier.fillMaxWidth()) {

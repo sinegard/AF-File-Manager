@@ -24,6 +24,24 @@ internal object RemoteSelectionRules {
         limitReached = availablePaths.size > maximum,
     )
 
+    fun set(
+        current: Set<String>,
+        availablePaths: Collection<String>,
+        paths: Collection<String>,
+        selected: Boolean,
+        maximum: Int,
+    ): Result {
+        val available = availablePaths.toHashSet()
+        val requested = paths.filterTo(linkedSetOf(), available::contains)
+        if (!selected) return Result(current - requested)
+        val capacity = (maximum - current.size).coerceAtLeast(0)
+        val additions = requested.filterNot(current::contains)
+        return Result(
+            selectedPaths = current + additions.take(capacity),
+            limitReached = additions.size > capacity,
+        )
+    }
+
     fun retainAvailable(current: Set<String>, availablePaths: Collection<String>): Set<String> =
         current.filterTo(linkedSetOf(), availablePaths::contains)
 }

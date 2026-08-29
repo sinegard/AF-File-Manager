@@ -83,12 +83,19 @@ internal object StorageRootClassifier {
     }
 }
 
+internal object StorageVolumeMountPolicy {
+    fun isVisible(state: String, directoryExists: Boolean): Boolean = directoryExists &&
+        state in setOf(Environment.MEDIA_MOUNTED, Environment.MEDIA_MOUNTED_READ_ONLY)
+}
+
 class LocalFileRepository(private val context: Context) {
     suspend fun roots(): List<StorageRoot> = withContext(Dispatchers.IO) {
         val storageManager = context.getSystemService(StorageManager::class.java)
         val mountedVolumes = storageManager.storageVolumes.mapNotNull { volume ->
             val directory = if (android.os.Build.VERSION.SDK_INT >= 30) volume.directory else null
-            directory?.takeIf(File::exists)?.let { root -> volume to root }
+            directory
+                ?.takeIf { root -> StorageVolumeMountPolicy.isVisible(volume.state, root.exists()) }
+                ?.let { root -> volume to root }
         }
         val removableVolumeCount = mountedVolumes.count { (volume, _) -> volume.isRemovable && !volume.isPrimary }
         val usbMassStorageConnected = runCatching { hasUsbMassStorageDevice() }.getOrDefault(false)

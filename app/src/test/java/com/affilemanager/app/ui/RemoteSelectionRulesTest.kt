@@ -41,4 +41,28 @@ class RemoteSelectionRulesTest {
         assertTrue(result.limitReached)
         assertEquals(setOf("/two"), RemoteSelectionRules.retainAvailable(result.selectedPaths, listOf("/two", "/four")))
     }
+
+    @Test
+    fun rangeSetAddsAndRemovesOnlyAvailablePathsWithoutCrossingTheLimit() {
+        val selected = RemoteSelectionRules.set(
+            current = setOf("/one"),
+            availablePaths = listOf("/one", "/two", "/three"),
+            paths = listOf("/two", "/missing", "/three"),
+            selected = true,
+            maximum = 2,
+        )
+
+        assertEquals(setOf("/one", "/two"), selected.selectedPaths)
+        assertTrue(selected.limitReached)
+
+        val deselected = RemoteSelectionRules.set(
+            current = selected.selectedPaths,
+            availablePaths = listOf("/one", "/two", "/three"),
+            paths = listOf("/one", "/missing"),
+            selected = false,
+            maximum = 2,
+        )
+        assertEquals(setOf("/two"), deselected.selectedPaths)
+        assertFalse(deselected.limitReached)
+    }
 }

@@ -68,6 +68,8 @@ import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.model.StorageAnalysis
 import com.affilemanager.app.model.StorageRoot
+import com.affilemanager.app.model.StorageRootKind
+import com.affilemanager.app.data.FileSelectionSummary
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
 import com.affilemanager.app.network.NetworkProtocol
@@ -210,6 +212,8 @@ data class AnalysisUiState(
     val duplicateScanTruncated: Boolean = false,
     val similarImages: List<SimilarImageGroup> = emptyList(),
     val rootPath: String? = null,
+    val rootPaths: List<String> = emptyList(),
+    val allStorage: Boolean = false,
     val running: Boolean = false,
     val similarImagesRunning: Boolean = false,
     val similarImagesAnalyzed: Boolean = false,
@@ -238,6 +242,16 @@ data class FileCategoryUiState(
     val loadingMore: Boolean = false,
     val error: String? = null,
 )
+
+internal object AnalysisSelectionRules {
+    fun canModify(roots: Collection<File>, candidate: File): Boolean = roots.any { root ->
+        when {
+            root.isFile -> candidate == root
+            root.isDirectory -> candidate != root && FileSystemRules.isContained(root, candidate)
+            else -> false
+        }
+    }
+}
 
 data class AdvancedBrowserUiState(
     val open: Boolean = false,
@@ -706,7 +720,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshAdvancedAccess() = graph.advancedAccess.refreshCapabilities()
 
-    fun openRootFromHome() {
+    fun openRootFromHome(panel: PanelId = _activePanel.value) {
         val rootBackend = graph.advancedAccess.state.value.activeBackend in setOf(
             AdvancedAccessBackend.ROOT,
             AdvancedAccessBackend.SHIZUKU_ROOT,
@@ -714,8 +728,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (rootBackend) {
             openAdvancedBrowser("/")
         } else {
-            setSection(AppSection.TOOLS)
-            message("Įjunkite Root arba Shizuku root prieigą skiltyje Daugiau", true)
+            _section.value = AppSection.FILES
+            navigate(panel, "/")
         }
     }
 
@@ -1201,6 +1215,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshStorageRoots() {
+        viewModelScope.launch {
+            val previous = _roots.value
+            val refreshed = graph.localFiles.roots()
+            _roots.value = refreshed
+            val removedRoots = previous.filter { old ->
+                old.kind != StorageRootKind.INTERNAL && refreshed.none { current -> sameStoragePath(old.path, current.path) }
+            }
+            if (removedRoots.isEmpty()) return@launch
+            val fallback = refreshed.firstOrNull { it.kind == StorageRootKind.INTERNAL } ?: refreshed.firstOrNull()
+            if (fallback == null) return@launch
+            listOf(PanelId.LEFT, PanelId.RIGHT).forEach { panel ->
+                val panelPath = panelFlow(panel).value.path
+                if (removedRoots.any { removed -> storagePathContains(removed.path, panelPath) }) {
+                    navigate(panel, fallback.path, rememberHistory = false)
+                }
+            }
+        }
+    }
+
+    private fun sameStoragePath(first: String, second: String): Boolean =
+        normalizedStoragePath(first) == normalizedStoragePath(second)
+
+    private fun storagePathContains(root: String, candidate: String): Boolean {
+        val normalizedRoot = normalizedStoragePath(root)
+        val normalizedCandidate = normalizedStoragePath(candidate)
+        return normalizedCandidate == normalizedRoot || normalizedCandidate.startsWith("$normalizedRoot/")
+    }
+
+    private fun normalizedStoragePath(value: String): String {
+        val normalized = value.replace('\\', '/').trimEnd('/')
+        return normalized.ifEmpty { "/" }
+    }
+
     fun navigate(panel: PanelId, path: String, rememberHistory: Boolean = true) {
         val target = runCatching { File(path).canonicalPath }.getOrElse {
             message(it.message ?: "Kelias nepasiekiamas", true)
@@ -1594,6 +1642,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         panelFlow(panel).update { state ->
             val available = state.entries.mapTo(hashSetOf(), FileEntry::absolutePath)
             state.copy(selectedPaths = paths.filterTo(linkedSetOf(), available::contains))
+        }
+    }
+
+    fun setSelection(panel: PanelId, paths: Collection<String>, selected: Boolean) {
+        if (paths.isEmpty()) return
+        activatePanel(panel)
+        panelFlow(panel).update { state ->
+            val updated = state.selectedPaths.toMutableSet()
+            if (selected) updated.addAll(paths) else updated.removeAll(paths.toSet())
+            state.copy(selectedPaths = updated)
         }
     }
 
@@ -3207,10 +3265,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { message(it.message ?: "Išpakavimo pradėti nepavyko", true) }
     }
 
-    fun createArchive(panel: PanelId, name: String, format: ArchiveFormat, password: CharArray? = null) {
+    fun createArchive(
+        panel: PanelId,
+        name: String,
+        format: ArchiveFormat,
+        password: CharArray? = null,
+        sourcePaths: Collection<String>? = null,
+    ) {
         val state = panelFlow(panel).value
-        val sources = state.selectedPaths.map(::File)
-        if (sources.isEmpty()) return
+        val createEmpty = sourcePaths != null && sourcePaths.isEmpty()
+        val requestedPaths = (sourcePaths ?: state.selectedPaths).distinct()
+        if (requestedPaths.isEmpty() && !createEmpty) {
+            password?.fill('\u0000')
+            message("Nepasirinkta failų", true)
+            return
+        }
+        if (createEmpty && password != null) {
+            password.fill('\u0000')
+            message("Tuščias archyvas negali būti užšifruotas", true)
+            return
+        }
+        val availableByPath = state.entries.associateBy(FileEntry::absolutePath)
+        val selectedEntries = requestedPaths.mapNotNull(availableByPath::get)
+        if (selectedEntries.size != requestedPaths.size || selectedEntries.any { !it.isReadable || !it.file.exists() }) {
+            password?.fill('\u0000')
+            message("Kai kurie pasirinkti failai nebepasiekiami", true)
+            return
+        }
+        val validatedName = FileSystemRules.validateFileName(name).getOrElse { error ->
+            password?.fill('\u0000')
+            message(error.message ?: "Netinkamas archyvo pavadinimas", true)
+            return
+        }
         val suffix = when (format) {
             ArchiveFormat.ZIP -> ".zip"
             ArchiveFormat.SEVEN_Z -> ".7z"
@@ -3218,11 +3304,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ArchiveFormat.TAR_GZ -> ".tar.gz"
             else -> ""
         }
-        val output = File(state.path, if (name.lowercase().endsWith(suffix)) name else name + suffix)
+        val fileName = if (validatedName.lowercase().endsWith(suffix)) validatedName else validatedName + suffix
+        FileSystemRules.validateFileName(fileName).getOrElse { error ->
+            password?.fill('\u0000')
+            message(error.message ?: "Netinkamas archyvo pavadinimas", true)
+            return
+        }
+        val directory = runCatching { File(state.path).canonicalFile }.getOrElse { error ->
+            password?.fill('\u0000')
+            message(error.message ?: "Aplankas nepasiekiamas", true)
+            return
+        }
+        val requestedOutput = runCatching { File(directory, fileName).canonicalFile }.getOrElse { error ->
+            password?.fill('\u0000')
+            message(error.message ?: "Netinkamas archyvo pavadinimas", true)
+            return
+        }
+        if (requestedOutput.parentFile != directory || !FileSystemRules.isContained(directory, requestedOutput)) {
+            password?.fill('\u0000')
+            message("Netinkamas archyvo pavadinimas", true)
+            return
+        }
+        val output = FileSystemRules.keepBothTarget(requestedOutput)
+        val sources = selectedEntries.map(FileEntry::file)
         graph.operationManager.submit("Kuriamas ${output.name}") {
             graph.archives.create(format, output, sources, password, this)
         }.onSuccess { clearSelection(panel) }
-            .onFailure { message(it.message ?: "Archyvo kūrimo pradėti nepavyko", true) }
+            .onFailure {
+                password?.fill('\u0000')
+                message(it.message ?: "Archyvo kūrimo pradėti nepavyko", true)
+            }
+    }
+
+    suspend fun loadFileSelectionInfo(paths: Collection<String>): Result<FileSelectionSummary> = runCatching {
+        graph.fileSelectionInfo.scan(paths)
     }
 
     fun encryptFile(file: FileEntry, passphrase: CharArray) {
@@ -3318,16 +3433,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
     }
 
-    fun trashDuplicateCopies(paths: List<String>, analysisRoot: String) {
+    fun trashDuplicateCopies(paths: List<String>) {
         val selected = paths.distinct()
         if (selected.isEmpty()) return
         if (selected.size > 10_000) {
             message("Vienu metu galima tvarkyti iki 10 000 dublikatų", true)
             return
         }
+        val analysisSnapshot = _analysisState.value
         graph.operationManager.submit("Dublikatų kopijos keliamos į šiukšlinę") {
             graph.trash.moveToTrash(selected, this)
-            viewModelScope.launch { analyze(analysisRoot) }
+            viewModelScope.launch { reanalyze(analysisSnapshot) }
         }.onFailure { message(it.message ?: "Dublikatų tvarkymo pradėti nepavyko", true) }
     }
 
@@ -3344,34 +3460,103 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun analyze(path: String = activePanelState().path) {
+        startAnalysis(listOf(path), allStorage = false)
+    }
+
+    fun analyzeEntries(paths: Collection<String>) {
+        val limit = com.affilemanager.app.search.FileSearchEngine.MAX_ANALYSIS_ROOTS
+        val requested = paths.asSequence()
+            .mapNotNull { path -> runCatching { File(path).canonicalFile }.getOrNull() }
+            .filter(File::exists)
+            .distinctBy(File::getAbsolutePath)
+            .sortedBy { it.absolutePath.length }
+            .toList()
+        val compact = requested.filter { candidate ->
+            requested.none { parent ->
+                parent != candidate && FileSystemRules.isContained(parent, candidate)
+            }
+        }
+        if (compact.isEmpty()) {
+            message("Nepasirinkta paieškos vieta", true)
+            return
+        }
+        if (compact.size > limit) {
+            message("Vienu metu galima analizuoti iki $limit vietų", true)
+        }
+        _cleanupRequested.value = false
+        _section.value = AppSection.ANALYZE
+        startAnalysis(compact.take(limit).map(File::getAbsolutePath), allStorage = false)
+    }
+
+    fun analyzeAllStorage() {
+        val paths = _roots.value.map(StorageRoot::path)
+        if (paths.isEmpty()) {
+            message("Nepasirinkta paieškos vieta", true)
+            return
+        }
+        startAnalysis(paths, allStorage = true)
+    }
+
+    private fun startAnalysis(paths: List<String>, allStorage: Boolean) {
+        val normalizedPaths = paths.asSequence()
+            .mapNotNull { path -> runCatching { File(path).canonicalPath }.getOrNull() }
+            .distinct()
+            .take(com.affilemanager.app.search.FileSearchEngine.MAX_ANALYSIS_ROOTS)
+            .toList()
+        if (normalizedPaths.isEmpty()) {
+            message("Analizės vieta nebepasiekiama", true)
+            return
+        }
         analysisJob?.cancel()
         similarImagesJob?.cancel()
-        _analysisState.value = AnalysisUiState(rootPath = path, running = true)
+        val singleRoot = normalizedPaths.singleOrNull().takeUnless { allStorage }
+        _analysisState.value = AnalysisUiState(
+            rootPath = singleRoot,
+            rootPaths = normalizedPaths,
+            allStorage = allStorage,
+            running = true,
+        )
         analysisJob = viewModelScope.launch {
             try {
-                val analysis = graph.search.analyze(listOf(path))
-                val duplicateAnalysis = graph.search.duplicates(listOf(path))
+                val analysis = graph.search.analyze(normalizedPaths)
+                val duplicateAnalysis = graph.search.duplicates(normalizedPaths)
                 _analysisState.value = AnalysisUiState(
                     analysis = analysis,
                     duplicates = duplicateAnalysis.groups,
                     duplicateCandidatesScanned = duplicateAnalysis.scannedCandidates,
                     duplicateScanTruncated = duplicateAnalysis.truncated,
-                    rootPath = path,
+                    rootPath = singleRoot,
+                    rootPaths = normalizedPaths,
+                    allStorage = allStorage,
                     running = false,
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                _analysisState.value = AnalysisUiState(rootPath = path, running = false, error = error.message)
+                _analysisState.value = AnalysisUiState(
+                    rootPath = singleRoot,
+                    rootPaths = normalizedPaths,
+                    allStorage = allStorage,
+                    running = false,
+                    error = error.message,
+                )
             }
         }
     }
 
+    private fun reanalyze(state: AnalysisUiState) {
+        val current = _analysisState.value
+        if (current.rootPaths != state.rootPaths || current.allStorage != state.allStorage) return
+        val paths = state.rootPaths.ifEmpty { listOfNotNull(state.rootPath) }
+        if (paths.isNotEmpty()) startAnalysis(paths, state.allStorage)
+    }
+
     suspend fun loadCleanupFolder(path: String): Result<DirectoryContentsUsage> {
-        val rootPath = _analysisState.value.rootPath
-            ?: return Result.failure(IllegalStateException("Analizės vieta nebepasiekiama"))
+        val state = _analysisState.value
+        val rootPaths = state.rootPaths.ifEmpty { listOfNotNull(state.rootPath) }
+        if (rootPaths.isEmpty()) return Result.failure(IllegalStateException("Analizės vieta nebepasiekiama"))
         return try {
-            Result.success(graph.search.directoryContentsWithUsage(rootPath, path))
+            Result.success(graph.search.directoryContentsWithUsage(rootPaths, path))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -3413,11 +3598,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun trashAnalysisSelection(paths: Collection<String>) {
         val state = _analysisState.value
-        val rootPath = state.rootPath ?: return
-        val root = runCatching { File(rootPath).canonicalFile }.getOrElse {
+        val rootPaths = state.rootPaths.ifEmpty { listOfNotNull(state.rootPath) }
+        val roots = runCatching { rootPaths.map { File(it).canonicalFile }.distinctBy(File::getAbsolutePath) }.getOrElse {
             message("Analizės vieta nebepasiekiama", true)
             return
         }
+        if (roots.isEmpty()) return
         val selected = runCatching {
             val requested = paths.distinct()
             require(requested.size <= 10_000) { "Vienu metu galima tvarkyti iki 10 000 elementų" }
@@ -3426,7 +3612,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .map { it.canonicalFile }
                 .filter(File::exists)
                 .onEach { candidate ->
-                    require(candidate != root && FileSystemRules.isContained(root, candidate)) {
+                    require(AnalysisSelectionRules.canModify(roots, candidate)) {
                         "Pasirinktas failas yra už analizuojamo aplanko ribų"
                     }
                 }
@@ -3457,7 +3643,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         graph.operationManager.submit("Pasirinkti failai keliami į šiukšlinę") {
             graph.trash.moveToTrash(selected.map(File::getAbsolutePath), this)
-            viewModelScope.launch { analyze(rootPath) }
+            viewModelScope.launch { reanalyze(state) }
         }.onFailure { message(it.message ?: "Valymo pradėti nepavyko", true) }
     }
 
@@ -4387,6 +4573,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(selectedPaths = result.selectedPaths)
         }
         if (limitReached) message("Pasirinkti pirmi ${RemoteCopyEngine.MAX_SELECTED_ROOTS} elementų", true)
+    }
+
+    fun setRemoteSelection(paths: List<String>, selected: Boolean) {
+        if (paths.isEmpty()) return
+        var limitReached = false
+        _networkState.update { state ->
+            val result = RemoteSelectionRules.set(
+                current = state.selectedPaths,
+                availablePaths = visibleRemoteEntries(state).map(RemoteEntry::path),
+                paths = paths,
+                selected = selected,
+                maximum = RemoteCopyEngine.MAX_SELECTED_ROOTS,
+            )
+            limitReached = result.limitReached
+            state.copy(selectedPaths = result.selectedPaths)
+        }
+        if (limitReached) message("Vienu metu galima pasirinkti iki ${RemoteCopyEngine.MAX_SELECTED_ROOTS} failų ar aplankų", true)
     }
 
     fun clearRemoteSelection() {

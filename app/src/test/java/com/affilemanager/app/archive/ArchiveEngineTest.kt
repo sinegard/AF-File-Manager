@@ -63,4 +63,35 @@ class ArchiveEngineTest {
         assertEquals("selected", output.readText())
         assertEquals(listOf("result.txt"), requireNotNull(output.parentFile).list()?.toList())
     }
+
+    @Test
+    fun createNeverOverwritesAnExistingArchive() = runBlocking {
+        val source = temporary.newFile("new.txt").apply { writeText("new content") }
+        val archive = temporary.newFile("existing.zip").apply { writeText("original content") }
+
+        val result = runCatching {
+            ArchiveEngine().create(ArchiveFormat.ZIP, archive, listOf(source))
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals("original content", archive.readText())
+    }
+
+    @Test
+    fun emptyArchivesAreValidForEveryWritableFormat() = runBlocking {
+        val engine = ArchiveEngine()
+        val formats = listOf(
+            ArchiveFormat.ZIP to "empty.zip",
+            ArchiveFormat.SEVEN_Z to "empty.7z",
+            ArchiveFormat.TAR to "empty.tar",
+            ArchiveFormat.TAR_GZ to "empty.tar.gz",
+        )
+
+        formats.forEach { (format, name) ->
+            val archive = File(temporary.root, name)
+            engine.create(format, archive, emptyList())
+            assertTrue(archive.isFile && archive.length() > 0L)
+            assertTrue(engine.list(archive).isEmpty())
+        }
+    }
 }

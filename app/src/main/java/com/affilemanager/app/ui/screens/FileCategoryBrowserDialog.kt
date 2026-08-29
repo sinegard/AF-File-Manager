@@ -93,6 +93,7 @@ import kotlinx.coroutines.withContext
 private const val CATEGORY_PREFETCH_DISTANCE = 24
 
 private data class CategoryTransform(
+    val sourceEntryCount: Int = 0,
     val entries: List<FileEntry> = emptyList(),
     val parentPaths: List<String> = emptyList(),
 )
@@ -127,6 +128,7 @@ fun FileCategoryBrowser(
         transforming = true
         transformed = withContext(Dispatchers.Default) {
             CategoryTransform(
+                sourceEntryCount = entries.size,
                 entries = entries.filter { entry ->
                     (requestedQuery.isBlank() || entry.name.contains(requestedQuery, ignoreCase = true)) &&
                         (requestedParent == null || File(entry.absolutePath).parent == requestedParent)
@@ -155,7 +157,9 @@ fun FileCategoryBrowser(
     val gridState = rememberLazyGridState()
 
     LaunchedEffect(state.category, state.grid, state.nextOffset, state.loadingMore, visible.size) {
-        if (state.nextOffset == null || state.loading || state.loadingMore || visible.isEmpty()) return@LaunchedEffect
+        if (transformed.sourceEntryCount != state.entries.size ||
+            state.nextOffset == null || state.loading || state.loadingMore || visible.isEmpty()
+        ) return@LaunchedEffect
         snapshotFlow {
             if (state.grid) gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
             else listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1

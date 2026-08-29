@@ -13,6 +13,7 @@ import com.affilemanager.app.data.TrashRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.data.FileTagRepository
 import com.affilemanager.app.data.FileCategoryRepository
+import com.affilemanager.app.data.FileSelectionInfoScanner
 import com.affilemanager.app.editing.EditSessionStore
 import com.affilemanager.app.editing.RemoteEditSaver
 import com.affilemanager.app.editing.ThreeWayTextMerge
@@ -72,6 +73,7 @@ class AppGraph(application: Application) {
     val localFiles = LocalFileRepository(application)
     val recentFiles = RecentFileRepository(application, localFiles)
     val fileCategories = FileCategoryRepository(application, localFiles)
+    val fileSelectionInfo = FileSelectionInfoScanner()
     val contentFiles = ContentFileRepository(application)
     val navigation = NavigationRepository(application)
     val appearance = AppearanceRepository(application)

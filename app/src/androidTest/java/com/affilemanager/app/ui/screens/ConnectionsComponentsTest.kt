@@ -23,6 +23,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.geometry.Offset
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.network.NetworkProfile
@@ -192,6 +193,14 @@ class ConnectionsComponentsTest {
                             )
                             observedSelection = state.selectedPaths
                         },
+                        onSetSelection = { paths, selected ->
+                            state = state.copy(
+                                selectedPaths = state.selectedPaths.toMutableSet().apply {
+                                    if (selected) addAll(paths) else removeAll(paths.toSet())
+                                },
+                            )
+                            observedSelection = state.selectedPaths
+                        },
                         onClearSelection = {
                             state = state.copy(selectedPaths = emptySet())
                             observedSelection = state.selectedPaths
@@ -247,6 +256,79 @@ class ConnectionsComponentsTest {
             assertEquals(emptySet<String>(), observedSelection)
         }
         compose.onAllNodesWithText("Selected:", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun remoteLongPressDragSelectsEveryCrossedEntry() {
+        val entries = (0..4).map { index ->
+            RemoteEntry("file-$index.txt", "/remote/file-$index.txt", false, index.toLong(), null)
+        }
+        var observedSelection = emptySet<String>()
+        compose.setContent {
+            MaterialTheme {
+                var state by remember {
+                    mutableStateOf(
+                        NetworkUiState(
+                            connectedProfile = profile(),
+                            path = "/remote",
+                            entries = entries,
+                        ),
+                    )
+                }
+                RemoteBrowser(
+                    state = state,
+                    localDirectory = "/local/target",
+                    onBack = {},
+                    onForward = {},
+                    onUp = {},
+                    onRefresh = {},
+                    onOpen = {},
+                    onDownload = {},
+                    onToggleSelection = {},
+                    onSetSelection = { paths, selected ->
+                        state = state.copy(
+                            selectedPaths = state.selectedPaths.toMutableSet().apply {
+                                if (selected) addAll(paths) else removeAll(paths.toSet())
+                            },
+                        )
+                        observedSelection = state.selectedPaths
+                    },
+                    onClearSelection = {},
+                    onSelectAll = {},
+                    onDownloadSelected = {},
+                    onCopySelected = {},
+                    localClipboardCount = 0,
+                    onPasteLocalClipboard = {},
+                    onChooseUpload = {},
+                    onCreateFolder = {},
+                    onRename = {},
+                    onDelete = {},
+                    onSync = {},
+                    onToggleHidden = {},
+                    onToggleGrid = {},
+                    onSort = {},
+                    onDisconnect = {},
+                )
+            }
+        }
+
+        val listBounds = compose.onNodeWithTag("remote_list").fetchSemanticsNode().boundsInRoot
+        val firstBounds = compose.onNodeWithTag("remote_entry_${entries[0].path}").fetchSemanticsNode().boundsInRoot
+        val thirdBounds = compose.onNodeWithTag("remote_entry_${entries[2].path}").fetchSemanticsNode().boundsInRoot
+        val start = Offset(firstBounds.center.x - listBounds.left, firstBounds.center.y - listBounds.top)
+        val end = Offset(thirdBounds.center.x - listBounds.left, thirdBounds.center.y - listBounds.top)
+
+        compose.onNodeWithTag("remote_list").performTouchInput {
+            down(start)
+            advanceEventTime(650)
+            moveTo(end)
+            advanceEventTime(100)
+            up()
+        }
+
+        compose.waitUntil(timeoutMillis = 5_000) {
+            observedSelection == entries.take(3).map(RemoteEntry::path).toSet()
+        }
     }
 
     @Test

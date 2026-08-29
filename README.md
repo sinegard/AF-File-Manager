@@ -83,9 +83,12 @@ $env:ANDROID_HOME = 'path-to-android-sdk'
 .\gradlew.bat connectedDebugAndroidTest
 powershell -File .\scripts\generate-baseline-profile.ps1 -EmulatorSerial emulator-5554
 powershell -File .\scripts\run-performance-gate.ps1 -EmulatorSerial emulator-5554
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\capture-ui-hierarchy.ps1 -DeviceSerial <adb-serial>
 ```
 
 The performance suite uses a separate non-obfuscated `profile` variant to generate stable Baseline/Startup Profile rules and the minified `benchmark` variant to measure cold start, first useful content, 10,000-item scrolling, thumbnails, remote listing, frame times, and memory. Emulator budgets are regression guards rather than claims about physical-device speed.
+
+Device UI diagnostics must use `capture-ui-hierarchy.ps1`. It writes the temporary hierarchy only under `/data/local/tmp`, pulls it into the ignored local `build/reports/device-ui` directory, and removes the device copy even when capture fails. Do not write UI hierarchy dumps to shared phone storage.
 
 Unsigned release builds can be created locally with `assembleRelease`. A distributable release must use the same private signing key for every version. The key is never stored in this repository. The release workflow expects these GitHub Actions secrets:
 

@@ -1,14 +1,19 @@
 package com.affilemanager.app
 
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.affilemanager.app.ui.AFFileManagerApp
@@ -17,6 +22,7 @@ import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.theme.AFFileManagerTheme
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.components.LocalStorageRoots
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -25,27 +31,38 @@ data class IncomingViewRequest(val uri: Uri, val mimeType: String?)
 class MainActivity : AppCompatActivity() {
     private val pendingViewRequest = mutableStateOf<IncomingViewRequest?>(null)
     private val pendingBenchmarkRequest = mutableStateOf<BenchmarkRequest?>(null)
-    private val pendingUsbRefresh = mutableStateOf(false)
+    private val pendingStorageRefresh = mutableStateOf(false)
+    private var storageReceiversRegistered = false
+    private val usbStorageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            pendingStorageRefresh.value = true
+        }
+    }
+    private val mediaStorageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            pendingStorageRefresh.value = true
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppLanguageManager.ensureEnglishDefault(this)
         super.onCreate(savedInstanceState)
         pendingViewRequest.value = intent.toIncomingViewRequest()
         pendingBenchmarkRequest.value = intent.toBenchmarkRequest()
-        pendingUsbRefresh.value = intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED
+        pendingStorageRefresh.value = intent.action in storageChangeActions
         enableEdgeToEdge()
         setContent {
             val mainViewModel: MainViewModel = viewModel()
             val appearance = mainViewModel.appearanceSettings.collectAsStateWithLifecycle()
             val leftPanel = mainViewModel.leftPanel.collectAsStateWithLifecycle()
             val network = mainViewModel.networkState.collectAsStateWithLifecycle()
-            LaunchedEffect(pendingUsbRefresh.value) {
-                if (pendingUsbRefresh.value) {
-                    mainViewModel.showFilesHome()
-                    mainViewModel.refreshPermissionDependentState()
+            val storageRoots = mainViewModel.roots.collectAsStateWithLifecycle()
+            LaunchedEffect(pendingStorageRefresh.value) {
+                if (pendingStorageRefresh.value) {
+                    mainViewModel.refreshStorageRoots()
                     delay(750)
-                    mainViewModel.refreshPermissionDependentState()
-                    pendingUsbRefresh.value = false
+                    mainViewModel.refreshStorageRoots()
+                    pendingStorageRefresh.value = false
                 }
             }
             LaunchedEffect(pendingBenchmarkRequest.value) {
@@ -72,11 +89,13 @@ class MainActivity : AppCompatActivity() {
                 if (localReady || remoteReady) reportFullyDrawn()
             }
             AFFileManagerTheme(settings = appearance.value) {
-                AFFileManagerApp(
-                    viewModel = mainViewModel,
-                    incomingViewRequest = pendingViewRequest.value,
-                    onIncomingViewRequestConsumed = { pendingViewRequest.value = null },
-                )
+                CompositionLocalProvider(LocalStorageRoots provides storageRoots.value) {
+                    AFFileManagerApp(
+                        viewModel = mainViewModel,
+                        incomingViewRequest = pendingViewRequest.value,
+                        onIncomingViewRequestConsumed = { pendingViewRequest.value = null },
+                    )
+                }
             }
         }
     }
@@ -85,7 +104,44 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         pendingViewRequest.value = intent.toIncomingViewRequest()
         pendingBenchmarkRequest.value = intent.toBenchmarkRequest()
-        pendingUsbRefresh.value = intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED
+        pendingStorageRefresh.value = intent.action in storageChangeActions
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (storageReceiversRegistered) return
+        ContextCompat.registerReceiver(
+            this,
+            usbStorageReceiver,
+            IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        ContextCompat.registerReceiver(
+            this,
+            mediaStorageReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_MEDIA_MOUNTED)
+                addAction(Intent.ACTION_MEDIA_UNMOUNTED)
+                addAction(Intent.ACTION_MEDIA_REMOVED)
+                addAction(Intent.ACTION_MEDIA_EJECT)
+                addAction(Intent.ACTION_MEDIA_BAD_REMOVAL)
+                addDataScheme("file")
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        storageReceiversRegistered = true
+    }
+
+    override fun onStop() {
+        if (storageReceiversRegistered) {
+            unregisterReceiver(usbStorageReceiver)
+            unregisterReceiver(mediaStorageReceiver)
+            storageReceiversRegistered = false
+        }
+        super.onStop()
     }
 
     private fun Intent.toIncomingViewRequest(): IncomingViewRequest? {
@@ -116,5 +172,14 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_BENCHMARK_REMOTE_PROFILE = "af_benchmark_remote_profile"
         private val BENCHMARK_BUILD_TYPES = setOf("benchmark", "profile")
         private val BENCHMARK_DATASETS = setOf("large", "thumbnails")
+        private val storageChangeActions = setOf(
+            UsbManager.ACTION_USB_DEVICE_ATTACHED,
+            UsbManager.ACTION_USB_DEVICE_DETACHED,
+            Intent.ACTION_MEDIA_MOUNTED,
+            Intent.ACTION_MEDIA_UNMOUNTED,
+            Intent.ACTION_MEDIA_REMOVED,
+            Intent.ACTION_MEDIA_EJECT,
+            Intent.ACTION_MEDIA_BAD_REMOVAL,
+        )
     }
 }

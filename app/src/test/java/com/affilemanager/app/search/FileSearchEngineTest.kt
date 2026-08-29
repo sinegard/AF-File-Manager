@@ -155,6 +155,34 @@ class FileSearchEngineTest {
     }
 
     @Test
+    fun analysisAggregatesMultipleStorageRoots() = runBlocking {
+        val firstRoot = temporary.newFolder("analysis-first")
+        val secondRoot = temporary.newFolder("analysis-second")
+        File(firstRoot, "photo.jpg").writeBytes(ByteArray(70))
+        File(secondRoot, "notes.txt").writeBytes(ByteArray(30))
+
+        val analysis = engine().analyze(listOf(firstRoot.absolutePath, secondRoot.absolutePath))
+
+        assertEquals(100, analysis.totalBytes)
+        assertEquals(2, analysis.scannedFiles)
+        assertTrue(analysis.largestDirectories.any { it.path == firstRoot.absolutePath && it.sizeBytes == 70L })
+        assertTrue(analysis.largestDirectories.any { it.path == secondRoot.absolutePath && it.sizeBytes == 30L })
+    }
+
+    @Test
+    fun analysisAcceptsASelectedFileWithoutAttributingItToParentFolders() = runBlocking {
+        val parent = temporary.newFolder("selected-file")
+        val selected = File(parent, "report.pdf").apply { writeBytes(ByteArray(42)) }
+
+        val analysis = engine().analyze(listOf(selected.absolutePath))
+
+        assertEquals(1, analysis.scannedFiles)
+        assertEquals(42, analysis.totalBytes)
+        assertEquals(listOf(selected.absolutePath), analysis.largestFiles.map(FileEntry::absolutePath))
+        assertTrue(analysis.largestDirectories.isEmpty())
+    }
+
+    @Test
     fun cleanupFolderBrowserReturnsDirectChildrenWithFolderSizes() = runBlocking {
         val root = temporary.newFolder("cleanup-browser")
         val folder = File(root, "Download").apply { mkdir() }
@@ -184,6 +212,21 @@ class FileSearchEngineTest {
 
         assertTrue(result.isFailure)
         assertEquals("Aplankas yra už analizuojamos vietos ribų", result.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun cleanupFolderBrowserAcceptsAnySelectedAnalysisRoot() = runBlocking {
+        val firstRoot = temporary.newFolder("cleanup-first")
+        val secondRoot = temporary.newFolder("cleanup-second")
+        val folder = File(secondRoot, "Download").apply { mkdir() }
+        File(folder, "notes.txt").writeText("notes")
+
+        val listing = engine().directoryContentsWithUsage(
+            listOf(firstRoot.absolutePath, secondRoot.absolutePath),
+            folder.absolutePath,
+        )
+
+        assertEquals(listOf("notes.txt"), listing.entries.map { it.entry.name })
     }
 
     @Test

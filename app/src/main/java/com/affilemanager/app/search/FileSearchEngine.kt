@@ -41,6 +41,7 @@ class FileSearchEngine(
         const val MAX_SIMILAR_IMAGE_CANDIDATES = 1_000
         const val MAX_CLEANUP_FOLDER_CHILDREN = 10_000
         const val MAX_CLEANUP_FOLDER_SCANNED_ENTRIES = 50_000
+        const val MAX_ANALYSIS_ROOTS = 16
         private const val HASH_BUFFER = 256 * 1_024
         private const val MAX_DIRECTORY_DEPTH = 64
     }
@@ -143,6 +144,8 @@ class FileSearchEngine(
                 typeBytes[entry.kind] = saturatedAdd(typeBytes[entry.kind] ?: 0L, fileBytes)
                 typeFiles[entry.kind] = (typeFiles[entry.kind] ?: 0) + 1
                 val containingRoot = normalizedRoots
+                    .asSequence()
+                    .filter(File::isDirectory)
                     .filter { root -> file.toPath().normalize().startsWith(root.toPath().normalize()) }
                     .maxByOrNull { it.absolutePath.length }
                 var parent = file.parentFile
@@ -195,12 +198,21 @@ class FileSearchEngine(
     suspend fun directoryContentsWithUsage(
         analysisRootPath: String,
         directoryPath: String,
+    ): DirectoryContentsUsage = directoryContentsWithUsage(listOf(analysisRootPath), directoryPath)
+
+    suspend fun directoryContentsWithUsage(
+        analysisRootPaths: List<String>,
+        directoryPath: String,
     ): DirectoryContentsUsage = withContext(Dispatchers.IO) {
-        val analysisRoot = File(analysisRootPath).canonicalFile
+        val analysisRoots = analysisRootPaths
+            .take(MAX_ANALYSIS_ROOTS)
+            .map { File(it).canonicalFile }
+            .filter(File::isDirectory)
+            .distinctBy(File::getAbsolutePath)
         val directory = File(directoryPath).canonicalFile
-        require(analysisRoot.isDirectory) { "Analizės vieta nebepasiekiama" }
+        require(analysisRoots.isNotEmpty()) { "Analizės vieta nebepasiekiama" }
         require(directory.isDirectory) { "Tai nėra aplankas" }
-        require(FileSystemRules.isContained(analysisRoot, directory)) {
+        require(analysisRoots.any { root -> FileSystemRules.isContained(root, directory) }) {
             "Aplankas yra už analizuojamos vietos ribų"
         }
 

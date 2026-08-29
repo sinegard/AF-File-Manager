@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -65,6 +66,7 @@ import com.affilemanager.app.model.SimilarImageGroup
 import com.affilemanager.app.model.StorageAnalysis
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.components.LocalFileVisual
 import java.io.File
 import java.text.NumberFormat
 
@@ -87,6 +89,7 @@ private data class CleanupCandidate(
     val sizeBytes: Long,
     val directory: Boolean = false,
     val groupLabel: String? = null,
+    val entry: FileEntry,
 )
 
 @Composable
@@ -98,11 +101,11 @@ internal fun CleanupReviewDialog(
     similarImagesAnalyzed: Boolean,
     similarImagesError: String?,
     initialCategory: CleanupCategory,
-    analysisRootPath: String?,
+    analysisRootPaths: List<String>,
     onAnalyzeSimilarImages: () -> Unit,
     onMoveToTrash: (Set<String>) -> Unit,
     onLoadFolder: suspend (String) -> Result<DirectoryContentsUsage>,
-    onOpenLocation: (String) -> Unit,
+    onOpenFile: (FileEntry) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var category by remember(initialCategory) { mutableStateOf(initialCategory) }
@@ -115,11 +118,11 @@ internal fun CleanupReviewDialog(
     var folderRetry by remember(analysis) { mutableIntStateOf(0) }
     var folderListingCache by remember(analysis) { mutableStateOf(emptyMap<String, DirectoryContentsUsage>()) }
     val currentFolderPath = folderStack.lastOrNull()
-    val categoryCandidates = remember(category, analysis, duplicates, similarImages, analysisRootPath) {
-        cleanupCandidates(category, analysis, duplicates, similarImages, analysisRootPath)
+    val categoryCandidates = remember(category, analysis, duplicates, similarImages, analysisRootPaths) {
+        cleanupCandidates(category, analysis, duplicates, similarImages, analysisRootPaths)
     }
-    val initialKnownCandidates = remember(analysis, duplicates, similarImages, analysisRootPath) {
-        allCleanupCandidates(analysis, duplicates, similarImages, analysisRootPath)
+    val initialKnownCandidates = remember(analysis, duplicates, similarImages, analysisRootPaths) {
+        allCleanupCandidates(analysis, duplicates, similarImages, analysisRootPaths)
             .associateBy(CleanupCandidate::path)
     }
     var knownCandidates by remember(initialKnownCandidates) { mutableStateOf(initialKnownCandidates) }
@@ -306,7 +309,7 @@ internal fun CleanupReviewDialog(
                                     },
                                     onOpen = { candidate ->
                                         if (candidate.directory) folderStack = folderStack + candidate.path
-                                        else onOpenLocation(candidate.path)
+                                        else onOpenFile(candidate.entry)
                                     },
                                     modifier = Modifier.weight(1f),
                                     testTag = "cleanup_folder_browser",
@@ -362,7 +365,7 @@ internal fun CleanupReviewDialog(
                         },
                         onOpen = { candidate ->
                             if (candidate.directory) folderStack = folderStack + candidate.path
-                            else onOpenLocation(candidate.path)
+                            else onOpenFile(candidate.entry)
                         },
                         modifier = Modifier.weight(1f),
                         testTag = "cleanup_candidates",
@@ -447,7 +450,7 @@ private fun CleanupCandidateRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp).testTag("cleanup_candidate_card"),
         colors = CardDefaults.cardColors(
             containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
-            else MaterialTheme.colorScheme.surfaceContainerLow,
+            else MaterialTheme.colorScheme.surfaceContainerHighest,
         ),
     ) {
         Row(
@@ -460,11 +463,12 @@ private fun CleanupCandidateRow(
                 onCheckedChange = { onToggle() },
                 modifier = Modifier.testTag("cleanup_candidate_checkbox"),
             )
-            Icon(
-                if (candidate.directory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
-                contentDescription = null,
-                modifier = Modifier.size(34.dp),
-                tint = MaterialTheme.colorScheme.primary,
+            LocalFileVisual(
+                entry = candidate.entry,
+                targetWidth = 42.dp,
+                targetHeight = 42.dp,
+                showThumbnails = true,
+                modifier = Modifier.size(42.dp).testTag("cleanup_candidate_visual"),
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(candidate.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
@@ -483,8 +487,8 @@ private fun CleanupCandidateRow(
             }
             IconButton(onClick = onOpen) {
                 Icon(
-                    Icons.Rounded.FolderOpen,
-                    contentDescription = uiText(if (candidate.directory) "Atidaryti aplanką" else "Rodyti aplanke"),
+                    if (candidate.directory) Icons.Rounded.FolderOpen else Icons.Rounded.Visibility,
+                    contentDescription = uiText(if (candidate.directory) "Atidaryti aplanką" else "Peržiūrėti čia"),
                 )
             }
         }
@@ -496,11 +500,11 @@ private fun cleanupCandidates(
     analysis: StorageAnalysis,
     duplicates: List<DuplicateGroup>,
     similarImages: List<SimilarImageGroup>,
-    analysisRootPath: String?,
+    analysisRootPaths: List<String>,
 ): List<CleanupCandidate> = when (category) {
     CleanupCategory.TYPE_USAGE -> emptyList()
     CleanupCategory.LARGEST_FOLDERS -> analysis.largestDirectories
-        .filterNot { usage -> cleanupPathKey(usage.path) == analysisRootPath?.let(::cleanupPathKey) }
+        .filterNot { usage -> analysisRootPaths.any { root -> cleanupPathKey(usage.path) == cleanupPathKey(root) } }
         .map { usage ->
             CleanupCandidate(
                 path = usage.path,
@@ -508,6 +512,7 @@ private fun cleanupCandidates(
                 sizeBytes = usage.sizeBytes,
                 directory = true,
                 groupLabel = "${usage.fileCount} failų",
+                entry = cleanupEntry(usage.path, usage.sizeBytes, directory = true),
             )
         }
     CleanupCategory.LARGE -> analysis.largestFiles.map(FileEntry::toCleanupCandidate)
@@ -515,11 +520,23 @@ private fun cleanupCandidates(
     CleanupCategory.PACKAGES -> analysis.installerAndArchiveFiles.map(FileEntry::toCleanupCandidate)
     CleanupCategory.DUPLICATES -> duplicates.flatMapIndexed { index, group ->
         group.paths.map { path ->
-            CleanupCandidate(path, File(path).name, group.sizeBytes, groupLabel = "Vienodų failų grupė ${index + 1}")
+            CleanupCandidate(
+                path = path,
+                name = File(path).name,
+                sizeBytes = group.sizeBytes,
+                groupLabel = "Vienodų failų grupė ${index + 1}",
+                entry = cleanupEntry(path, group.sizeBytes),
+            )
         }
     }
     CleanupCategory.EMPTY_FOLDERS -> analysis.emptyDirectories.map { path ->
-        CleanupCandidate(path, File(path).name.ifBlank { path }, 0L, directory = true)
+        CleanupCandidate(
+            path = path,
+            name = File(path).name.ifBlank { path },
+            sizeBytes = 0L,
+            directory = true,
+            entry = cleanupEntry(path, 0L, directory = true),
+        )
     }
     CleanupCategory.SIMILAR_IMAGES -> similarImages.flatMapIndexed { index, group ->
         group.files.map { it.toCleanupCandidate(groupLabel = "Panašių nuotraukų grupė ${index + 1}") }
@@ -530,9 +547,9 @@ private fun allCleanupCandidates(
     analysis: StorageAnalysis,
     duplicates: List<DuplicateGroup>,
     similarImages: List<SimilarImageGroup>,
-    analysisRootPath: String?,
+    analysisRootPaths: List<String>,
 ): List<CleanupCandidate> = CleanupCategory.entries.flatMap {
-    cleanupCandidates(it, analysis, duplicates, similarImages, analysisRootPath)
+    cleanupCandidates(it, analysis, duplicates, similarImages, analysisRootPaths)
 }
 
 private fun cleanupPathKey(value: String): String {
@@ -546,6 +563,7 @@ private fun FileEntry.toCleanupCandidate(groupLabel: String? = null) = CleanupCa
     sizeBytes = sizeBytes,
     directory = isDirectory,
     groupLabel = groupLabel,
+    entry = this,
 )
 
 private fun DirectoryContentUsage.toCleanupCandidate() = CleanupCandidate(
@@ -558,7 +576,23 @@ private fun DirectoryContentUsage.toCleanupCandidate() = CleanupCandidate(
     } else {
         null
     },
+    entry = entry,
 )
+
+private fun cleanupEntry(path: String, sizeBytes: Long, directory: Boolean = false): FileEntry {
+    val name = File(path).name.ifBlank { path }
+    return FileEntry(
+        absolutePath = path,
+        name = name,
+        kind = FileSystemRules.detectKind(name, mimeType = null, isDirectory = directory),
+        sizeBytes = sizeBytes,
+        modifiedAtMillis = 0L,
+        isHidden = name.startsWith('.'),
+        isReadable = true,
+        isWritable = false,
+        metadataComplete = false,
+    )
+}
 
 private fun toggleCleanupSelection(
     selected: Set<String>,

@@ -18,6 +18,9 @@ enum class AppColorPalette {
     CATPPUCCIN,
     ORANGE,
     MATERIAL_BLUE,
+    AURA,
+    TOKYO,
+    YIN_YANG,
 }
 
 data class AppearanceSettings(

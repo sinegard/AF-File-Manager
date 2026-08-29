@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
@@ -35,13 +36,17 @@ import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.Slideshow
+import androidx.compose.material.icons.rounded.SdStorage
+import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material.icons.rounded.VideoFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -63,6 +68,8 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.model.StorageRoot
+import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.network.RemoteEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
@@ -75,6 +82,30 @@ private const val MAX_THUMBNAIL_DIMENSION = 512
 private const val MAX_MEMORY_CACHE_BYTES = 24 * 1_024 * 1_024
 private const val MIN_MEMORY_CACHE_BYTES = 4 * 1_024 * 1_024
 private const val MAX_MISSING_CACHE_ENTRIES = 256
+
+internal val LocalStorageRoots = compositionLocalOf<List<StorageRoot>> { emptyList() }
+
+internal object StorageLocationBadgeRules {
+    fun kindForPath(absolutePath: String, roots: List<StorageRoot>): StorageRootKind? {
+        val candidate = normalizedPath(absolutePath)
+        var bestKind: StorageRootKind? = null
+        var bestLength = -1
+        roots.forEach { root ->
+            if (root.kind == StorageRootKind.INTERNAL) return@forEach
+            val rootPath = normalizedPath(root.path)
+            if ((candidate == rootPath || candidate.startsWith("$rootPath/")) && rootPath.length > bestLength) {
+                bestKind = root.kind
+                bestLength = rootPath.length
+            }
+        }
+        return bestKind
+    }
+
+    private fun normalizedPath(value: String): String {
+        val normalized = value.replace('\\', '/')
+        return if (normalized == "/") normalized else normalized.trimEnd('/')
+    }
+}
 
 internal object FileVisualRules {
     fun boundedDimension(value: Int): Int = value.coerceIn(32, MAX_THUMBNAIL_DIMENSION)
@@ -102,6 +133,8 @@ internal object FileVisualRules {
     }
 
     fun extensionBadge(extension: String): String = extension.trim().trimStart('.').uppercase().take(4)
+
+    fun showAccessLock(isReadable: Boolean): Boolean = !isReadable
 
     fun iconFamily(kind: EntryKind, extension: String): FileIconFamily {
         val ext = extension.trim().trimStart('.').lowercase()
@@ -192,12 +225,17 @@ fun LocalFileVisual(
     showThumbnails: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val storageKind = if (entry.isDirectory) null else {
+        StorageLocationBadgeRules.kindForPath(entry.absolutePath, LocalStorageRoots.current)
+    }
     if (entry.isDirectory || !entry.isReadable) {
         FileVisualFrame(
             name = entry.name,
             kind = entry.kind,
             extension = entry.extension,
             visual = null,
+            storageKind = storageKind,
+            accessLocked = FileVisualRules.showAccessLock(entry.isReadable),
             modifier = modifier,
         )
         return
@@ -225,6 +263,8 @@ fun LocalFileVisual(
         kind = entry.kind,
         extension = entry.extension,
         visual = visual,
+        storageKind = storageKind,
+        accessLocked = FileVisualRules.showAccessLock(entry.isReadable),
         modifier = modifier,
     )
 }
@@ -237,6 +277,9 @@ fun PrivilegedFileVisual(
     targetHeight: Dp,
     modifier: Modifier = Modifier,
 ) {
+    val storageKind = if (entry.isDirectory) null else {
+        StorageLocationBadgeRules.kindForPath(entry.absolutePath, LocalStorageRoots.current)
+    }
     val packageName = PrivilegedAppDirectoryRules.packageName(parentPath, entry)
     if (packageName == null) {
         LocalFileVisual(entry, targetWidth, targetHeight, showThumbnails = false, modifier = modifier)
@@ -261,6 +304,8 @@ fun PrivilegedFileVisual(
         kind = entry.kind,
         extension = entry.extension,
         visual = visual,
+        storageKind = storageKind,
+        accessLocked = FileVisualRules.showAccessLock(entry.isReadable),
         modifier = modifier,
     )
 }
@@ -333,6 +378,8 @@ private fun FileVisualFrame(
     kind: EntryKind,
     extension: String,
     visual: LoadedFileVisual?,
+    storageKind: StorageRootKind? = null,
+    accessLocked: Boolean = false,
     modifier: Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -373,6 +420,40 @@ private fun FileVisualFrame(
                         .padding(horizontal = 2.dp, vertical = 1.dp),
                 )
             }
+        }
+        if (storageKind != null) {
+            val (icon, label) = when (storageKind) {
+                StorageRootKind.SD_CARD -> Icons.Rounded.SdStorage to "SD kortelė"
+                StorageRootKind.USB_STORAGE -> Icons.Rounded.Usb to "USB saugykla"
+                StorageRootKind.REMOVABLE -> Icons.Rounded.SdStorage to "Išimama saugykla"
+                StorageRootKind.INTERNAL -> null to ""
+            }
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = uiText(label),
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(3.dp)
+                        .background(MaterialTheme.colorScheme.tertiaryContainer, RoundedCornerShape(4.dp))
+                        .padding(2.dp)
+                        .size(14.dp),
+                )
+            }
+        }
+        if (accessLocked) {
+            Icon(
+                imageVector = Icons.Rounded.Lock,
+                contentDescription = uiText("Neprieinama"),
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(3.dp)
+                    .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(4.dp))
+                    .padding(2.dp)
+                    .size(14.dp),
+            )
         }
     }
 }

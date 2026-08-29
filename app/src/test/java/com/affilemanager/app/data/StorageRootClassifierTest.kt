@@ -1,10 +1,19 @@
 package com.affilemanager.app.data
 
+import android.os.Environment
 import com.affilemanager.app.model.StorageRootKind
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class StorageRootClassifierTest {
+    @Test
+    fun onlyMountedVolumesWithAnExistingDirectoryAreVisible() {
+        assertEquals(true, StorageVolumeMountPolicy.isVisible(Environment.MEDIA_MOUNTED, directoryExists = true))
+        assertEquals(true, StorageVolumeMountPolicy.isVisible(Environment.MEDIA_MOUNTED_READ_ONLY, directoryExists = true))
+        assertEquals(false, StorageVolumeMountPolicy.isVisible(Environment.MEDIA_UNMOUNTED, directoryExists = true))
+        assertEquals(false, StorageVolumeMountPolicy.isVisible(Environment.MEDIA_MOUNTED, directoryExists = false))
+    }
+
     @Test
     fun primaryVolumeIsAlwaysInternal() {
         assertEquals(

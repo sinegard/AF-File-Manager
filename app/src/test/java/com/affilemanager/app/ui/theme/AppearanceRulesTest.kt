@@ -20,6 +20,9 @@ class AppearanceRulesTest {
         assertTrue(AppearanceRules.paletteSupported(AppColorPalette.DYNAMIC, sdkInt = 31))
         assertTrue(AppearanceRules.paletteSupported(AppColorPalette.CATPPUCCIN, sdkInt = 26))
         assertTrue(AppearanceRules.paletteSupported(AppColorPalette.MATERIAL_BLUE, sdkInt = 26))
+        assertTrue(AppearanceRules.paletteSupported(AppColorPalette.AURA, sdkInt = 26))
+        assertTrue(AppearanceRules.paletteSupported(AppColorPalette.TOKYO, sdkInt = 26))
+        assertTrue(AppearanceRules.paletteSupported(AppColorPalette.YIN_YANG, sdkInt = 26))
     }
 
     @Test

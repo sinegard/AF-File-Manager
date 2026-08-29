@@ -61,17 +61,18 @@ class CleanupReviewDialogTest {
                     similarImagesAnalyzed = false,
                     similarImagesError = null,
                     initialCategory = CleanupCategory.LARGE,
-                    analysisRootPath = "/storage/emulated/0",
+                    analysisRootPaths = listOf("/storage/emulated/0"),
                     onAnalyzeSimilarImages = {},
                     onMoveToTrash = {},
                     onLoadFolder = { Result.failure(IllegalStateException("not used")) },
-                    onOpenLocation = { opened.incrementAndGet() },
+                    onOpenFile = { opened.incrementAndGet() },
                     onDismiss = {},
                 )
             }
         }
 
         compose.onNodeWithTag("cleanup_candidate_checkbox").assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithTag("cleanup_candidate_visual", useUnmergedTree = true).assertIsDisplayed()
         assertEquals(0, opened.get())
 
         compose.onNodeWithTag("cleanup_candidate_card").performClick()
@@ -123,7 +124,7 @@ class CleanupReviewDialogTest {
                     similarImagesAnalyzed = false,
                     similarImagesError = null,
                     initialCategory = CleanupCategory.LARGEST_FOLDERS,
-                    analysisRootPath = root,
+                    analysisRootPaths = listOf(root),
                     onAnalyzeSimilarImages = {},
                     onMoveToTrash = {},
                     onLoadFolder = {
@@ -140,7 +141,7 @@ class CleanupReviewDialogTest {
                             ),
                         )
                     },
-                    onOpenLocation = { externallyOpened.incrementAndGet() },
+                    onOpenFile = { externallyOpened.incrementAndGet() },
                     onDismiss = { dismissed.incrementAndGet() },
                 )
             }

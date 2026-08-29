@@ -635,6 +635,9 @@ private fun AppearanceSettingsCard(
                                         AppColorPalette.CATPPUCCIN -> "Catppuccin"
                                         AppColorPalette.ORANGE -> "Oranžinė"
                                         AppColorPalette.MATERIAL_BLUE -> "Material mėlyna"
+                                        AppColorPalette.AURA -> "Aura"
+                                        AppColorPalette.TOKYO -> "Tokyo"
+                                        AppColorPalette.YIN_YANG -> "Yin Yang"
                                     },
                                     style = MaterialTheme.typography.labelLarge,
                                 )

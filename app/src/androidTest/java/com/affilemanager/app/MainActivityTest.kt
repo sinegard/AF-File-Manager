@@ -3,7 +3,9 @@ package com.affilemanager.app
 import android.graphics.Bitmap
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -16,12 +18,18 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.ui.graphics.toArgb
 import android.os.Build
 import android.os.Environment
+import androidx.core.view.WindowCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.ViewModelProvider
 import com.affilemanager.app.ui.MainViewModel
@@ -42,8 +50,11 @@ import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 @RunWith(AndroidJUnit4::class)
 class MainActivityTest {
@@ -134,7 +145,7 @@ class MainActivityTest {
     }
 
     @Test
-    fun rootStorageRemainsVisibleWhenPrivilegedAccessIsOff() {
+    fun rootStorageUsesTheNormalBrowserWhenPrivilegedAccessIsOff() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         compose.runOnUiThread {
             viewModel.setAdvancedAccessMode(com.affilemanager.app.advanced.AdvancedAccessMode.OFF)
@@ -143,12 +154,12 @@ class MainActivityTest {
         }
         compose.onNodeWithTag("root_storage_location").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("root_storage_location").performClick()
-        compose.onNodeWithTag("root_access_explanation").assertIsDisplayed()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            !viewModel.filesHomeVisible.value && viewModel.leftPanel.value.path == File("/").canonicalPath
+        }
+        assertTrue(compose.onAllNodesWithTag("root_access_explanation").fetchSemanticsNodes().isEmpty())
         assertEquals(AppSection.FILES, viewModel.section.value)
-        compose.onNodeWithTag("root_access_settings").performClick()
-        compose.waitUntil(timeoutMillis = 5_000) { viewModel.section.value == AppSection.TOOLS }
-        compose.onNodeWithTag("tools_list").performScrollToNode(hasTestTag("advanced_mode_off"))
-        compose.onNodeWithTag("advanced_mode_off").assertIsDisplayed()
+        compose.onNodeWithTag("directory_toolbar_local_LEFT").assertIsDisplayed()
     }
 
     @Test
@@ -172,13 +183,13 @@ class MainActivityTest {
     }
 
     @Test
-    fun analysisOffersMountedStorageSelectionAndExplicitSdUsbStates() {
+    fun analysisOffersMountedStorageSelectionWithoutDisconnectedPlaceholders() {
         compose.onNodeWithText("Analyze").performClick()
 
-        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_storage_sd_absent"))
-        compose.onNodeWithTag("analyze_storage_sd_absent").assertIsDisplayed()
-        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_storage_usb_absent"))
-        compose.onNodeWithTag("analyze_storage_usb_absent").assertIsDisplayed()
+        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_all_storage"))
+        compose.onNodeWithTag("analyze_all_storage").assertIsDisplayed()
+        assertTrue(compose.onAllNodesWithTag("analyze_storage_sd_absent").fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodesWithTag("analyze_storage_usb_absent").fetchSemanticsNodes().isEmpty())
         compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("search_scope_selected"))
         compose.onNodeWithTag("search_scope_selected").performClick()
         compose.onNodeWithTag("search_storage_primary").assertIsDisplayed()
@@ -590,6 +601,301 @@ class MainActivityTest {
             compose.onNodeWithText("alpha.txt").fetchSemanticsNode()
             assertTrue(compose.onAllNodesWithText("beta.txt").fetchSemanticsNodes().isEmpty())
         } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun createDialogShowsOneRealSelectionAndCreatesAnEmptyArchive() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "create-${System.nanoTime()}").apply { mkdirs() }
+        val archiveBaseName = "empty-${System.nanoTime()}"
+        val archive = File(directory, "$archiveBaseName.zip")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.path == directory.canonicalPath && !viewModel.leftPanel.value.loading
+            }
+
+            compose.onNodeWithTag("create_local_item").performClick()
+            compose.onNodeWithTag("create_type_folder").assertIsSelected()
+            compose.onNodeWithTag("create_type_file").assertIsNotSelected().performClick().assertIsSelected()
+            compose.onNodeWithTag("create_type_folder").assertIsNotSelected()
+            compose.onNodeWithTag("create_type_archive").assertIsNotSelected().performClick().assertIsSelected()
+            compose.onNodeWithTag("create_type_file").assertIsNotSelected()
+            compose.onNodeWithTag("create_archive_format_ZIP").assertIsSelected()
+            compose.onNodeWithTag("create_item_name").performTextInput(archiveBaseName)
+            compose.onNodeWithText("Create").performClick()
+
+            compose.waitUntil(timeoutMillis = 10_000) { archive.isFile }
+            ZipFile(archive).use { zip -> assertFalse(zip.entries().hasMoreElements()) }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveEntryMenuNamesAndOpensTheArchiveActionExplicitly() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "archive-menu-${System.nanoTime()}").apply { mkdirs() }
+        val archive = File(directory, "sample.zip")
+        ZipOutputStream(archive.outputStream()).use { }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.any { it.absolutePath == archive.absolutePath }
+            }
+
+            compose.onNodeWithContentDescription("File actions: sample.zip").performClick()
+            compose.onNodeWithText("Open archive").assertIsDisplayed().performClick()
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.preview.value != null }
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun selectedFilesAndFoldersExposeAggregateInformation() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "info-${System.nanoTime()}").apply { mkdirs() }
+        val folder = File(directory, "folder").apply { mkdirs() }
+        File(folder, "nested.txt").writeText("nested")
+        val file = File(directory, "direct.txt").apply { writeText("direct") }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+            }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.entries.size == 2 }
+            compose.runOnUiThread {
+                viewModel.selectPaths(PanelId.LEFT, listOf(folder.absolutePath, file.absolutePath))
+            }
+
+            compose.onNodeWithTag("selection_info_local").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("file_info_loading").fetchSemanticsNodes().isEmpty()
+            }
+            compose.onNodeWithTag("file_info_files").assertIsDisplayed()
+            compose.onNodeWithTag("file_info_folders").assertIsDisplayed()
+            compose.onNodeWithTag("file_info_size").assertIsDisplayed()
+            compose.onNodeWithText("Selected").assertIsDisplayed()
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun analyzeSelectedIncludesFilesAndDoesNotRequireAFolder() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "analyze-selected-${System.nanoTime()}").apply { mkdirs() }
+        val file = File(directory, "only.pdf").apply { writeBytes(ByteArray(73)) }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.any { it.absolutePath == file.absolutePath }
+            }
+            compose.runOnUiThread { viewModel.selectPaths(PanelId.LEFT, listOf(file.absolutePath)) }
+
+            compose.onNodeWithTag("analyze_selection_local").performClick()
+            compose.waitUntil(timeoutMillis = 15_000) {
+                viewModel.section.value == AppSection.ANALYZE && !viewModel.analysisState.value.running
+            }
+            val analysis = requireNotNull(viewModel.analysisState.value.analysis)
+            assertEquals(1, analysis.scannedFiles)
+            assertEquals(73L, analysis.totalBytes)
+            assertEquals(listOf(file.canonicalPath), viewModel.analysisState.value.rootPaths)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun folderMenuAnalyzesThatFolderDirectly() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "analyze-menu-${System.nanoTime()}").apply { mkdirs() }
+        val folder = File(directory, "target-folder").apply { mkdirs() }
+        File(folder, "inside.txt").writeText("inside")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.any { it.absolutePath == folder.absolutePath }
+            }
+
+            compose.onNodeWithContentDescription("File actions: target-folder").performClick()
+            compose.onNodeWithTag("analyze_entry_action").performClick()
+            compose.waitUntil(timeoutMillis = 15_000) {
+                viewModel.section.value == AppSection.ANALYZE && !viewModel.analysisState.value.running
+            }
+            assertEquals(listOf(folder.canonicalPath), viewModel.analysisState.value.rootPaths)
+            assertEquals(1, requireNotNull(viewModel.analysisState.value.analysis).scannedFiles)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun addedPalettesAreSelectableRatherThanForced() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.onNodeWithText("More").performClick()
+            listOf(
+                "palette_aura" to AppColorPalette.AURA,
+                "palette_tokyo" to AppColorPalette.TOKYO,
+                "palette_yin_yang" to AppColorPalette.YIN_YANG,
+            ).forEach { (tag, palette) ->
+                compose.onNodeWithTag(tag).performScrollTo().performClick()
+                compose.waitUntil(timeoutMillis = 5_000) { viewModel.appearanceSettings.value.colorPalette == palette }
+            }
+        } finally {
+            compose.runOnUiThread { viewModel.setColorPalette(AppColorPalette.DEFAULT) }
+        }
+    }
+
+    @Test
+    fun dynamicPaletteUpdatesNavigationBarColorAndIconContrast() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setThemeMode(AppThemeMode.LIGHT)
+                viewModel.setColorPalette(AppColorPalette.DYNAMIC)
+            }
+            val expectedLight = dynamicLightColorScheme(compose.activity).surfaceContainer.toArgb()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                val settings = viewModel.appearanceSettings.value
+                settings.themeMode == AppThemeMode.LIGHT && settings.colorPalette == AppColorPalette.DYNAMIC
+            }
+            compose.waitForIdle()
+            compose.onRoot(useUnmergedTree = true).captureToImage().asAndroidBitmap().let { bitmap ->
+                assertEquals(expectedLight, bitmap.getPixel(bitmap.width / 2, bitmap.height - 2))
+            }
+            assertTrue(
+                WindowCompat.getInsetsController(
+                    compose.activity.window,
+                    compose.activity.window.decorView,
+                ).isAppearanceLightNavigationBars,
+            )
+
+            compose.runOnUiThread { viewModel.setThemeMode(AppThemeMode.DARK) }
+            val expectedDark = dynamicDarkColorScheme(compose.activity).surfaceContainer.toArgb()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.appearanceSettings.value.themeMode == AppThemeMode.DARK
+            }
+            compose.waitForIdle()
+            compose.onRoot(useUnmergedTree = true).captureToImage().asAndroidBitmap().let { bitmap ->
+                assertEquals(expectedDark, bitmap.getPixel(bitmap.width / 2, bitmap.height - 2))
+            }
+            assertFalse(
+                WindowCompat.getInsetsController(
+                    compose.activity.window,
+                    compose.activity.window.decorView,
+                ).isAppearanceLightNavigationBars,
+            )
+        } finally {
+            compose.runOnUiThread {
+                viewModel.setThemeMode(AppThemeMode.SYSTEM)
+                viewModel.setColorPalette(AppColorPalette.DEFAULT)
+            }
+        }
+    }
+
+    @Test
+    fun localLongPressDragSelectsEveryCrossedEntry() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "drag-select-${System.nanoTime()}").apply { mkdirs() }
+        val files = (0..4).map { index -> File(directory, "file-$index.txt").apply { writeText(index.toString()) } }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+                viewModel.setDirectoryDisplaySettings(
+                    PanelId.LEFT,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.map(FileEntry::absolutePath) == files.map(File::getAbsolutePath)
+            }
+
+            val listBounds = compose.onNodeWithTag("file_list_LEFT").fetchSemanticsNode().boundsInRoot
+            val firstBounds = compose.onNodeWithTag("local_entry_${files[0].absolutePath}").fetchSemanticsNode().boundsInRoot
+            val thirdBounds = compose.onNodeWithTag("local_entry_${files[2].absolutePath}").fetchSemanticsNode().boundsInRoot
+            val start = Offset(firstBounds.center.x - listBounds.left, firstBounds.center.y - listBounds.top)
+            val end = Offset(thirdBounds.center.x - listBounds.left, thirdBounds.center.y - listBounds.top)
+
+            compose.onNodeWithTag("file_list_LEFT").performTouchInput {
+                down(start)
+                advanceEventTime(650)
+                moveTo(end)
+                advanceEventTime(100)
+                up()
+            }
+
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.selectedPaths == files.take(3).map(File::getAbsolutePath).toSet()
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cleanupFilePreviewReturnsToTheStillOpenCleanupManager() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "cleanup-preview-${System.nanoTime()}").apply { mkdirs() }
+        File(directory, "notes.txt").writeText("preview me")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.analyze(directory.absolutePath)
+                viewModel.setSection(AppSection.ANALYZE)
+            }
+            compose.waitUntil(timeoutMillis = 15_000) {
+                viewModel.analysisState.value.analysis != null && !viewModel.analysisState.value.running
+            }
+            compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("open_cleanup_review"))
+            compose.onNodeWithTag("open_cleanup_review").performClick()
+            compose.onNodeWithTag("cleanup_review_dialog").assertIsDisplayed()
+
+            compose.onNodeWithTag("cleanup_candidate_card").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.preview.value != null }
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithTag("cleanup_review_dialog").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("cleanup_review_dialog").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
             directory.deleteRecursively()
         }
     }
