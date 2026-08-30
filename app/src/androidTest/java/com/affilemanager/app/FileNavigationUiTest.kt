@@ -337,6 +337,53 @@ class FileNavigationUiTest {
     }
 
     @Test
+    fun directlyOpenedPrivilegedSubfolderBackMovesToItsParentFirst() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("afRoot") == "true")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val parent = requireNotNull(compose.activity.getExternalFilesDir(null)).canonicalFile
+        val child = File(parent, "advanced-back-${System.nanoTime()}").apply { mkdirs() }.canonicalFile
+
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.ROOT)
+                viewModel.requestRootAccess()
+            }
+            compose.waitUntil(timeoutMillis = 20_000) {
+                val state = viewModel.advancedAccess.value
+                state.activeBackend == AdvancedAccessBackend.ROOT || (!state.connecting && state.error != null)
+            }
+            assertEquals(
+                "Root backend did not connect: ${viewModel.advancedAccess.value}",
+                AdvancedAccessBackend.ROOT,
+                viewModel.advancedAccess.value.activeBackend,
+            )
+
+            compose.runOnUiThread { viewModel.openAdvancedBrowser(child.absolutePath) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.advancedBrowser.value
+                state.open && !state.loading && state.path == child.absolutePath && state.error == null
+            }
+
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.advancedBrowser.value
+                state.open && !state.loading && state.path == parent.absolutePath && state.error == null
+            }
+            assertTrue(viewModel.advancedBrowser.value.open)
+            assertEquals(parent.absolutePath, viewModel.advancedBrowser.value.path)
+        } finally {
+            compose.runOnUiThread {
+                viewModel.closeAdvancedBrowser()
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.OFF)
+                viewModel.setSection(AppSection.FILES)
+            }
+            compose.waitForIdle()
+            child.deleteRecursively()
+        }
+    }
+
+    @Test
     fun shizukuRootOpensProtectedStorageAndBackReturnsToFiles() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("afShizukuRoot") == "true")
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]

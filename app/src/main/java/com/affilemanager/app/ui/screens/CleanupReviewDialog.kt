@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -71,6 +72,7 @@ import java.io.File
 import java.text.NumberFormat
 
 private const val MAX_CLEANUP_FOLDER_CACHE = 8
+private const val MAX_SMART_DUPLICATE_SELECTION = 10_000
 
 internal enum class CleanupCategory {
     TYPE_USAGE,
@@ -91,6 +93,32 @@ private data class CleanupCandidate(
     val groupLabel: String? = null,
     val entry: FileEntry,
 )
+
+internal object DuplicateCleanupSelectionRules {
+    fun selectCopies(currentSelection: Set<String>, groups: List<DuplicateGroup>): Set<String> {
+        val duplicatePaths = groups.asSequence()
+            .flatMap { it.paths.asSequence() }
+            .filter(String::isNotBlank)
+            .distinctBy(::cleanupPathKey)
+            .toSet()
+        return (currentSelection - duplicatePaths) + copiesToSelect(groups)
+    }
+
+    fun copiesToSelect(groups: List<DuplicateGroup>): Set<String> {
+        val selected = LinkedHashSet<String>()
+        groups.forEach { group ->
+            val distinctPaths = group.paths
+                .filter(String::isNotBlank)
+                .distinctBy(::cleanupPathKey)
+                .sortedBy(::cleanupPathKey)
+            distinctPaths.drop(1).forEach { path ->
+                if (selected.size >= MAX_SMART_DUPLICATE_SELECTION) return selected
+                selected += path
+            }
+        }
+        return selected
+    }
+}
 
 @Composable
 internal fun CleanupReviewDialog(
@@ -131,6 +159,7 @@ internal fun CleanupReviewDialog(
     }
     val candidates = if (currentFolderPath == null) categoryCandidates else folderCandidates
     val candidateTotalBytes = if (currentFolderPath == null) analysis.totalBytes else folderListing?.totalBytes ?: 0L
+    val duplicateCopies = remember(duplicates) { DuplicateCleanupSelectionRules.copiesToSelect(duplicates) }
     val selectedBytes = remember(selected, knownCandidates) {
         selected.sumOf { path -> knownCandidates[path]?.sizeBytes ?: 0L }
     }
@@ -217,6 +246,20 @@ internal fun CleanupReviewDialog(
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                     )
+                    if (currentFolderPath == null && category == CleanupCategory.DUPLICATES) {
+                        IconButton(
+                            onClick = {
+                                selected = DuplicateCleanupSelectionRules.selectCopies(selected, duplicates)
+                            },
+                            enabled = duplicateCopies.isNotEmpty(),
+                            modifier = Modifier.testTag("cleanup_select_duplicate_copies"),
+                        ) {
+                            Icon(
+                                Icons.Rounded.SelectAll,
+                                contentDescription = uiText("Pasirinkti dublikatų kopijas"),
+                            )
+                        }
+                    }
                 }
                 if (currentFolderPath == null) {
                     Row(
@@ -379,7 +422,11 @@ internal fun CleanupReviewDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TextButton(onClick = { selected = emptySet() }, enabled = selected.isNotEmpty()) { LText("Atžymėti visus") }
-                        Button(onClick = { confirmTrash = true }, enabled = selected.isNotEmpty()) {
+                        Button(
+                            onClick = { confirmTrash = true },
+                            enabled = selected.isNotEmpty(),
+                            modifier = Modifier.testTag("cleanup_move_selected"),
+                        ) {
                             LText("Perkelti į šiukšlinę (${selected.size})")
                         }
                     }
@@ -394,11 +441,14 @@ internal fun CleanupReviewDialog(
             title = { LText("Perkelti pasirinktus elementus į šiukšlinę?") },
             text = { LText("Pasirinkta: ${selected.size}. Elementus vėliau bus galima atkurti arba ištrinti visam laikui.") },
             confirmButton = {
-                Button(onClick = {
-                    confirmTrash = false
-                    onMoveToTrash(selected)
-                    selected = emptySet()
-                }) { LText("Perkelti") }
+                Button(
+                    onClick = {
+                        confirmTrash = false
+                        onMoveToTrash(selected)
+                        selected = emptySet()
+                    },
+                    modifier = Modifier.testTag("cleanup_confirm_move"),
+                ) { LText("Perkelti") }
             },
             dismissButton = { TextButton(onClick = { confirmTrash = false }) { LText("Atšaukti") } },
         )

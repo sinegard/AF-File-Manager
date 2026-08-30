@@ -798,18 +798,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun navigateAdvancedBack(): Boolean {
         val state = _advancedBrowser.value
-        val previous = state.backHistory.lastOrNull()
-        if (previous == null) {
+        val decision = AdvancedBrowserBackRules.decide(
+            currentPath = state.path,
+            backHistory = state.backHistory,
+            allowedRoots = graph.privilegedFiles.roots.map { it.path },
+        )
+        val target = decision.targetPath
+        if (target == null) {
             closeAdvancedBrowser()
             return false
         }
         advancedBrowserJob?.cancel()
         advancedBrowserJob = viewModelScope.launch {
-            _advancedBrowser.update { it.copy(backHistory = it.backHistory.dropLast(1), loading = true, selectedPaths = emptySet(), error = null) }
-            runCatching { loadAdvancedDirectory(previous, pushHistory = false, resetScroll = false) }
+            _advancedBrowser.update {
+                it.copy(
+                    backHistory = if (decision.consumeHistory) it.backHistory.dropLast(1) else it.backHistory,
+                    loading = true,
+                    selectedPaths = emptySet(),
+                    error = null,
+                )
+            }
+            runCatching { loadAdvancedDirectory(target, pushHistory = false, resetScroll = false) }
                 .onFailure { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atidaryti nepavyko") } }
             advancedBrowserJob = null
         }
+        return true
+    }
+
+    fun canNavigateAdvancedUp(): Boolean = graph.privilegedFiles.roots
+        .map { it.path }
+        .let { roots -> runCatching { PrivilegedPathRules.parent(_advancedBrowser.value.path, roots) }.getOrNull() != null }
+
+    fun navigateAdvancedUp(): Boolean {
+        val roots = graph.privilegedFiles.roots.map { it.path }
+        val parent = runCatching { PrivilegedPathRules.parent(_advancedBrowser.value.path, roots) }.getOrNull()
+            ?: return false
+        navigateAdvanced(parent)
         return true
     }
 
@@ -2203,6 +2227,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (entry.isDirectory) {
             if (shouldOpenWithAdvancedAccess(entry.absolutePath)) {
                 openAdvancedBrowser(entry.absolutePath)
+                return
+            }
+            if (!entry.isReadable) {
+                message("Įjunkite Root arba Shizuku root prieigą skiltyje Daugiau", true)
                 return
             }
             _section.value = AppSection.FILES

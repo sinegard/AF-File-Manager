@@ -126,13 +126,13 @@ fun AdvancedStorageBrowserDialog(
                     path = state.path.ifBlank { uiText("Jungiama") },
                     backEnabled = true,
                     forwardEnabled = false,
-                    upEnabled = state.path.isNotBlank() && state.path != "/",
+                    upEnabled = viewModel.canNavigateAdvancedUp(),
                     searchActive = searchVisible,
                     grid = state.grid,
                     testTagPrefix = "advanced",
                     onBack = { viewModel.navigateAdvancedBack() },
                     onForward = {},
-                    onUp = { java.io.File(state.path).parentFile?.absolutePath?.let(viewModel::navigateAdvanced) },
+                    onUp = { viewModel.navigateAdvancedUp() },
                     onToggleSearch = {
                         searchVisible = !searchVisible
                         if (!searchVisible) searchQuery = ""

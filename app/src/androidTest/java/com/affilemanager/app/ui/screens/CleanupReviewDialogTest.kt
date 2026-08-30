@@ -16,10 +16,12 @@ import com.affilemanager.app.AFFileManagerApplication
 import com.affilemanager.app.model.DirectoryContentUsage
 import com.affilemanager.app.model.DirectoryContentsUsage
 import com.affilemanager.app.model.DirectoryUsage
+import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.StorageAnalysis
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -171,5 +173,54 @@ class CleanupReviewDialogTest {
 
         compose.onNodeWithTag("cleanup_back").performClick()
         assertEquals(1, dismissed.get())
+    }
+
+    @Test
+    fun smartDuplicateSelectionKeepsOneCopyAndDoesNotDeleteBeforeConfirmation() {
+        val moved = AtomicReference<Set<String>>(emptySet())
+        val group = DuplicateGroup(
+            sha256 = "verified",
+            sizeBytes = 4_096,
+            paths = listOf(
+                "/storage/emulated/0/Download/a.txt",
+                "/storage/emulated/0/Download/b.txt",
+                "/storage/emulated/0/Download/c.txt",
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                CleanupReviewDialog(
+                    analysis = StorageAnalysis(
+                        scannedFiles = 3,
+                        scannedDirectories = 0,
+                        totalBytes = 12_288,
+                        largestFiles = emptyList(),
+                        oldestFiles = emptyList(),
+                        emptyDirectories = emptyList(),
+                        truncated = false,
+                    ),
+                    duplicates = listOf(group),
+                    similarImages = emptyList(),
+                    similarImagesRunning = false,
+                    similarImagesAnalyzed = false,
+                    similarImagesError = null,
+                    initialCategory = CleanupCategory.DUPLICATES,
+                    analysisRootPaths = listOf("/storage/emulated/0"),
+                    onAnalyzeSimilarImages = {},
+                    onMoveToTrash = moved::set,
+                    onLoadFolder = { Result.failure(IllegalStateException("not used")) },
+                    onOpenFile = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag("cleanup_select_duplicate_copies").assertIsDisplayed().performClick()
+        assertEquals(emptySet<String>(), moved.get())
+
+        compose.onNodeWithTag("cleanup_move_selected").performClick()
+        compose.onNodeWithTag("cleanup_confirm_move").performClick()
+
+        assertEquals(setOf(group.paths[1], group.paths[2]), moved.get())
     }
 }

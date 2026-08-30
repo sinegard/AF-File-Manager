@@ -4,6 +4,22 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-30
+
+### Added
+
+- Safe Cleanup can select duplicate copies in one action while always leaving one file from every verified duplicate group unselected.
+
+### Changed
+
+- When Android blocks direct enumeration of the system root, the normal browser now shows a bounded list of root entries that the device confirms exist and marks unreadable entries with a lock.
+- The README is shorter and clearer about the project's personal origins, non-commercial license, and user responsibility.
+
+### Fixed
+
+- Back navigation from a directly opened protected `Android/data` subfolder now moves to its allowed parent before closing the protected-files browser.
+- The protected-files Up action no longer attempts to navigate outside the active Root or Shizuku access boundary.
+
 ## [0.27.0] - 2026-08-29
 
 ### Added
@@ -50,5 +66,6 @@ This file records the user-visible changes in AF File Manager releases.
 
 English and Lithuanian are maintained directly. The other bundled translations were generated offline and may still need corrections from native speakers.
 
+[0.28.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.25.4...v0.26.0

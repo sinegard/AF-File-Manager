@@ -16,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.nio.file.LinkOption
 import java.nio.file.Files
 import java.nio.file.Path
@@ -174,35 +175,61 @@ class LocalFileRepository(private val context: Context) {
             val basicEntries = ArrayList<FileEntry>()
             var scanned = 0
             var truncated = false
+            var rootEnumerationError: Throwable? = null
 
-            Files.newDirectoryStream(directory.toPath()).use { stream ->
-                val iterator = stream.iterator()
-                while (iterator.hasNext()) {
-                    if (scanned % 128 == 0) coroutineContext.ensureActive()
-                    val child = iterator.next().toFile()
-                    scanned = Math.addExact(scanned, 1)
-                    if (scanned > ProgressiveListingPolicy.MAX_SCANNED_ENTRIES) {
-                        truncated = true
-                        break
+            try {
+                Files.newDirectoryStream(directory.toPath()).use { stream ->
+                    val iterator = stream.iterator()
+                    while (iterator.hasNext()) {
+                        if (scanned % 128 == 0) coroutineContext.ensureActive()
+                        val child = iterator.next().toFile()
+                        scanned = Math.addExact(scanned, 1)
+                        if (scanned > ProgressiveListingPolicy.MAX_SCANNED_ENTRIES) {
+                            truncated = true
+                            break
+                        }
+                        if (!includeHidden && child.isHidden) continue
+                        if (files.size >= ProgressiveListingPolicy.MAX_VISIBLE_ENTRIES) {
+                            truncated = true
+                            break
+                        }
+                        files += child
+                        basicEntries += toBasicEntry(child)
+                        if (ProgressiveListingPolicy.shouldPublish(basicEntries.size)) {
+                            onProgress(
+                                DirectoryListingUpdate(
+                                    entries = orderedSnapshot(basicEntries, sortMode, sortDirection),
+                                    scannedEntries = scanned,
+                                    metadataEntries = 0,
+                                    complete = false,
+                                    truncated = false,
+                                ),
+                            )
+                        }
                     }
-                    if (!includeHidden && child.isHidden) continue
-                    if (files.size >= ProgressiveListingPolicy.MAX_VISIBLE_ENTRIES) {
-                        truncated = true
-                        break
-                    }
-                    files += child
-                    basicEntries += toBasicEntry(child)
-                    if (ProgressiveListingPolicy.shouldPublish(basicEntries.size)) {
-                        onProgress(
-                            DirectoryListingUpdate(
-                                entries = orderedSnapshot(basicEntries, sortMode, sortDirection),
-                                scannedEntries = scanned,
-                                metadataEntries = 0,
-                                complete = false,
-                                truncated = false,
-                            ),
-                        )
-                    }
+                }
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                val eligibleRootFailure = directory.absolutePath == File.separator &&
+                    (error is IOException || error is SecurityException)
+                if (!eligibleRootFailure) throw error
+
+                rootEnumerationError = error
+            }
+
+            if (directory.absolutePath == File.separator && basicEntries.isEmpty()) {
+                val detected = RootDirectoryFallback.existingChildren(directory)
+                    .filter { includeHidden || !it.isHidden }
+                if (detected.isEmpty()) {
+                    rootEnumerationError?.let { throw it }
+                } else {
+                    files.clear()
+                    basicEntries.clear()
+                    files.addAll(detected)
+                    basicEntries.addAll(detected.map(::toBasicEntry))
+                    scanned = detected.size
+                    // The fallback is intentionally bounded and cannot claim to enumerate vendor-specific names.
+                    truncated = true
                 }
             }
 

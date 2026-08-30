@@ -157,8 +157,11 @@ class MainActivityTest {
         compose.waitUntil(timeoutMillis = 5_000) {
             !viewModel.filesHomeVisible.value && viewModel.leftPanel.value.path == File("/").canonicalPath
         }
+        compose.waitUntil(timeoutMillis = 10_000) { !viewModel.leftPanel.value.loading }
         assertTrue(compose.onAllNodesWithTag("root_access_explanation").fetchSemanticsNodes().isEmpty())
         assertEquals(AppSection.FILES, viewModel.section.value)
+        assertEquals(null, viewModel.leftPanel.value.error)
+        assertTrue("Root listing is empty", viewModel.leftPanel.value.entries.isNotEmpty())
         compose.onNodeWithTag("directory_toolbar_local_LEFT").assertIsDisplayed()
     }
 
