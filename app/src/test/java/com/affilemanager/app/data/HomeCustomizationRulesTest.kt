@@ -30,6 +30,14 @@ class HomeCustomizationRulesTest {
     }
 
     @Test
+    fun toolsAreOneHomeSectionInsteadOfSeparateProductSpecificPages() {
+        val normalized = HomeCustomizationRules.normalize(HomeCustomization(), defaults)
+
+        assertEquals(1, normalized.sectionOrder.count { it == HomeSection.TOOLS })
+        assertTrue(HomeSection.TOOLS in normalized.sectionOrder)
+    }
+
+    @Test
     fun sectionsAndShortcutsCanBeReorderedWithoutLosingData() {
         val start = HomeCustomizationRules.normalize(HomeCustomization(), defaults)
         val sectionsMoved = HomeCustomizationRules.moveSection(start, HomeSection.QUICK_LOCATIONS, -2)

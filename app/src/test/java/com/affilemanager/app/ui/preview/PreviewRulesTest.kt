@@ -27,4 +27,14 @@ class PreviewRulesTest {
         assertTrue(extreme.first.toLong() * extreme.second <= PdfRenderRules.MAX_PIXELS)
         assertEquals(595.0 / 842.0, extreme.first.toDouble() / extreme.second, 0.002)
     }
+
+    @Test
+    fun mediaSeekAndLabelsStayInsideTheKnownDuration() {
+        assertEquals(0L, MediaPlaybackRules.skippedPosition(2_000L, 30_000L, -10_000L))
+        assertEquals(30_000L, MediaPlaybackRules.skippedPosition(28_000L, 30_000L, 10_000L))
+        assertEquals(15_000L, MediaPlaybackRules.positionForProgress(0.5f, 30_000L))
+        assertEquals(0.5f, MediaPlaybackRules.progress(15_000L, 30_000L))
+        assertEquals("1:05", MediaPlaybackRules.timeLabel(65_000L))
+        assertEquals("1:01:05", MediaPlaybackRules.timeLabel(3_665_000L))
+    }
 }

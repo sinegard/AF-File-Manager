@@ -11,6 +11,18 @@ class BackNavigationRulesTest {
             BackNavigationRules.decide(true, AppSection.ANALYZE, false, 1, true, true),
         )
         assertEquals(
+            SystemBackAction.CLOSE_HOME_TOOL_PAGE,
+            BackNavigationRules.decide(
+                previewOpen = false,
+                section = AppSection.FILES,
+                filesHomeVisible = true,
+                homeToolPageOpen = true,
+                selectedCount = 0,
+                hasBackHistory = false,
+                hasParent = false,
+            ),
+        )
+        assertEquals(
             SystemBackAction.CLEAR_REMOTE_SELECTION,
             BackNavigationRules.decide(false, AppSection.CONNECTIONS, false, 1, true, true, remoteSelectedCount = 2),
         )

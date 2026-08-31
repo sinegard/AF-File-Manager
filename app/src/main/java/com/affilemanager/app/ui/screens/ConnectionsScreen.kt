@@ -40,7 +40,6 @@ import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -107,6 +106,7 @@ import com.affilemanager.app.network.RemoteErrorInfo
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.RemoteBrowserRules
 import com.affilemanager.app.ui.components.RemoteFileVisual
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
@@ -576,7 +576,7 @@ internal fun RemoteBrowser(
                         onClick = { selectedEntries.singleOrNull()?.let(onRename) },
                         enabled = !state.loading && selectedEntries.size == 1,
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = uiText("Pervadinti"))
+                        Icon(Icons.Rounded.Edit, contentDescription = uiText("Pervadinti"))
                     }
                     IconButton(
                         onClick = { onDelete(selectedEntries) },
@@ -1532,13 +1532,44 @@ internal fun NetworkProfileDialog(
         (protocol != NetworkProtocol.SMB || share.isNotBlank()) &&
         (protocol != NetworkProtocol.SFTP || trustFirstUse || fingerprint.startsWith("SHA256:"))
 
-    AlertDialog(
+    AfModalDialog(
+        title = if (existingProfile == null) "Nauja jungtis" else "Redaguoti jungtį",
+        icon = Icons.Rounded.Link,
         onDismissRequest = onDismiss,
-        title = { LText(if (existingProfile == null) "Nauja jungtis" else "Redaguoti jungtį") },
-        text = {
-            Box {
+        modifier = Modifier.testTag("network_profile_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(
+                onClick = {
+                    val profile = NetworkProfileRules.normalize(NetworkProfile(
+                        id = existingProfile?.id.orEmpty(),
+                        name = name,
+                        protocol = protocol,
+                        host = host,
+                        port = port.toIntOrNull() ?: defaultPort(protocol, webDavUseTls),
+                        username = username,
+                        basePath = basePath.ifBlank { "/" },
+                        domain = domain,
+                        smbShare = share,
+                        expectedHostKeySha256 = fingerprint.ifBlank { null },
+                        allowFirstUseTrust = protocol == NetworkProtocol.SFTP && trustFirstUse,
+                        webDavUseTls = webDavUseTls,
+                    ))
+                    onSave(
+                        profile,
+                        password.takeIf(String::isNotEmpty)?.toCharArray(),
+                        privateKeyPem.takeIf { usePrivateKey && it.isNotBlank() }?.toCharArray(),
+                    )
+                    password = ""
+                    privateKeyPem = ""
+                },
+                enabled = profileFieldsValid && (existingProfile != null || hasNewSecret),
+            ) { LText("Išsaugoti") }
+        },
+    ) {
+        Box(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                 ExcludeDialogFromAutofill(onAutofillViewReady)
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         NetworkProtocol.entries.forEach { candidate ->
@@ -1712,38 +1743,8 @@ internal fun NetworkProfileDialog(
                     }
                 }
                 }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val profile = NetworkProfileRules.normalize(NetworkProfile(
-                        id = existingProfile?.id.orEmpty(),
-                        name = name,
-                        protocol = protocol,
-                        host = host,
-                        port = port.toIntOrNull() ?: defaultPort(protocol, webDavUseTls),
-                        username = username,
-                        basePath = basePath.ifBlank { "/" },
-                        domain = domain,
-                        smbShare = share,
-                        expectedHostKeySha256 = fingerprint.ifBlank { null },
-                        allowFirstUseTrust = protocol == NetworkProtocol.SFTP && trustFirstUse,
-                        webDavUseTls = webDavUseTls,
-                    ))
-                    onSave(
-                        profile,
-                        password.takeIf(String::isNotEmpty)?.toCharArray(),
-                        privateKeyPem.takeIf { usePrivateKey && it.isNotBlank() }?.toCharArray(),
-                    )
-                    password = ""
-                    privateKeyPem = ""
-                },
-                enabled = profileFieldsValid && (existingProfile != null || hasNewSecret),
-            ) { LText("Išsaugoti") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+        }
+    }
 }
 
 @Composable

@@ -41,7 +41,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.automirrored.rounded.CompareArrows
 import androidx.compose.material.icons.automirrored.rounded.Label
@@ -70,6 +69,8 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Storage
@@ -80,6 +81,7 @@ import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Android
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -160,12 +162,14 @@ import com.affilemanager.app.data.HomeShortcutNavigationRules
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.AppSection
+import com.affilemanager.app.ui.HomeToolPage
 import com.affilemanager.app.ui.FileScrollKey
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.PanelUiState
 import com.affilemanager.app.ui.PanelComparisonStatus
 import com.affilemanager.app.ui.ProgressiveScrollRules
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
@@ -235,6 +239,7 @@ fun FilesScreen(
     val filesHomeDisplaySettings by viewModel.filesHomeDisplaySettings.collectAsStateWithLifecycle()
     val homeCustomization by viewModel.homeCustomization.collectAsStateWithLifecycle()
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
+    val homeToolPage by viewModel.homeToolPage.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val remoteClipboard by viewModel.remoteClipboard.collectAsStateWithLifecycle()
@@ -344,7 +349,19 @@ fun FilesScreen(
             if (!hasAllFilesAccess) {
                 PermissionBanner(onRequestAllFilesAccess)
             }
-            if (fileCategory.open) {
+            if (homeToolPage != null) {
+                HomeToolsBrowser(
+                    page = requireNotNull(homeToolPage),
+                    favorites = favorites,
+                    tagSnapshot = tagSnapshot,
+                    displaySettings = filesHomeDisplaySettings,
+                    onBack = viewModel::closeHomeToolPage,
+                    onOpenFavorite = { path -> viewModel.openQuickPathFromHome(path, activePanel) },
+                    onOpenTag = { tag -> viewModel.closeHomeToolPage(); viewModel.openTagFromHome(tag) },
+                    onToggleLayout = viewModel::toggleFilesHomeLayout,
+                    onOpenDisplaySettings = { showHomeDisplaySettings = true },
+                )
+            } else if (fileCategory.open) {
                 PanelTabsBar(
                     panel = activePanel,
                     workspace = if (activePanel == PanelId.LEFT) leftTabs else rightTabs,
@@ -375,9 +392,10 @@ fun FilesScreen(
                     onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
                     onOpenRoot = { viewModel.openRootFromHome(activePanel) },
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
-                    onOpenFavorite = { path -> viewModel.openQuickPath(path, activePanel) },
                     onOpenTrash = viewModel::openTrashFromHome,
-                    onOpenTag = viewModel::openTagFromHome,
+                    onOpenFavoritesPage = { viewModel.openHomeToolPage(HomeToolPage.FAVORITES) },
+                    onOpenTagsPage = { viewModel.openHomeToolPage(HomeToolPage.TAGS) },
+                    onOpenPlans = { viewModel.openAfWorkflowCenter() },
                     onOpenCleanup = viewModel::openCleanupFromHome,
                     onRefreshRecent = viewModel::refreshRecentFiles,
                     onToggleLayout = viewModel::toggleFilesHomeLayout,
@@ -405,6 +423,10 @@ fun FilesScreen(
                         },
                         onArchiveEntry = { entry -> archiveRequest = ArchiveRequest.fromEntry(PanelId.LEFT, entry) },
                         onTag = { tagPanel = PanelId.LEFT },
+                        onTagEntry = { entry ->
+                            viewModel.selectOnly(PanelId.LEFT, entry.absolutePath)
+                            tagPanel = PanelId.LEFT
+                        },
                         onCopyToOther = { viewModel.copySelection(PanelId.LEFT, move = false); pastePanel = PanelId.RIGHT },
                         onPaste = { pastePanel = PanelId.LEFT },
                         onUndoBatchRename = viewModel::undoBatchRename,
@@ -430,6 +452,10 @@ fun FilesScreen(
                         },
                         onArchiveEntry = { entry -> archiveRequest = ArchiveRequest.fromEntry(PanelId.RIGHT, entry) },
                         onTag = { tagPanel = PanelId.RIGHT },
+                        onTagEntry = { entry ->
+                            viewModel.selectOnly(PanelId.RIGHT, entry.absolutePath)
+                            tagPanel = PanelId.RIGHT
+                        },
                         onCopyToOther = { viewModel.copySelection(PanelId.RIGHT, move = false); pastePanel = PanelId.LEFT },
                         onPaste = { pastePanel = PanelId.RIGHT },
                         onUndoBatchRename = viewModel::undoBatchRename,
@@ -457,6 +483,10 @@ fun FilesScreen(
                     },
                     onArchiveEntry = { entry -> archiveRequest = ArchiveRequest.fromEntry(activePanel, entry) },
                     onTag = { tagPanel = activePanel },
+                    onTagEntry = { entry ->
+                        viewModel.selectOnly(activePanel, entry.absolutePath)
+                        tagPanel = activePanel
+                    },
                     onCopyToOther = {
                         viewModel.copySelection(activePanel, move = false)
                         pastePanel = if (activePanel == PanelId.LEFT) PanelId.RIGHT else PanelId.LEFT
@@ -598,7 +628,7 @@ fun FilesScreen(
         DirectoryDisplaySettingsDialog(
             initialSettings = filesHomeDisplaySettings,
             thumbnailsAvailable = false,
-            gridColumnRange = 4..6,
+            gridColumnRange = 1..3,
             onDismiss = { showHomeDisplaySettings = false },
             onApply = { settings ->
                 viewModel.setFilesHomeDisplaySettings(settings)
@@ -695,646 +725,7 @@ private fun PermissionBanner(onRequest: () -> Unit) {
     }
 }
 
-@Composable
-private fun FilesHome(
-    roots: List<StorageRoot>,
-    recentFiles: List<RecentFileItem>,
-    recentFilesLoading: Boolean,
-    recentFilesError: String?,
-    displaySettings: DirectoryDisplaySettings,
-    customization: HomeCustomization,
-    favorites: List<String>,
-    tagSnapshot: FileTagSnapshot,
-    trashCount: Int,
-    rootStorageAvailable: Boolean,
-    onOpen: (QuickLocation) -> Unit,
-    onOpenStorage: (StorageRoot) -> Unit,
-    onOpenRoot: () -> Unit,
-    onOpenRecent: (FileEntry) -> Unit,
-    onOpenFavorite: (String) -> Unit,
-    onOpenTrash: () -> Unit,
-    onOpenTag: (String) -> Unit,
-    onOpenCleanup: () -> Unit,
-    onRefreshRecent: () -> Unit,
-    onToggleLayout: () -> Unit,
-    onConfigureLayout: () -> Unit,
-    onConfigureHome: () -> Unit,
-) {
-    val quickLocations = customization.shortcuts.filter(HomeShortcut::visible).map { shortcut ->
-        QuickLocation(
-            id = shortcut.id,
-            title = shortcut.title,
-            path = shortcut.path,
-            icon = homeShortcutIcon(shortcut),
-            virtual = HomeShortcutNavigationRules.isVirtualCategory(shortcut.id),
-        )
-    }
-    var showAllRecent by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        LText(
-                            "Failų vietos",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = onConfigureHome, modifier = Modifier.testTag("home_customize")) {
-                            Icon(Icons.Rounded.Edit, contentDescription = uiText("Tvarkyti pradžios ekraną"))
-                        }
-                    }
-                    LText(
-                        "Pasirinkite saugyklą, kategoriją arba dažną vietą.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            customization.sectionOrder.forEach { section ->
-                when (section) {
-                    HomeSection.RECENT_FILES -> RecentFilesHomeSection(
-                        recentFiles = recentFiles,
-                        loading = recentFilesLoading,
-                        error = recentFilesError,
-                        onShowAll = { showAllRecent = true },
-                        onRefresh = onRefreshRecent,
-                        onOpen = onOpenRecent,
-                    )
-                    HomeSection.STORAGE -> StorageHomeSection(
-                        roots = roots,
-                        rootStorageAvailable = rootStorageAvailable,
-                        onOpen = onOpenStorage,
-                        onOpenRoot = onOpenRoot,
-                        onOpenCleanup = onOpenCleanup,
-                    )
-                    HomeSection.QUICK_LOCATIONS -> QuickLocationsHomeSection(
-                        locations = quickLocations,
-                        displaySettings = displaySettings,
-                        onOpen = onOpen,
-                        onToggleLayout = onToggleLayout,
-                        onConfigureLayout = onConfigureLayout,
-                    )
-                    HomeSection.TRASH -> HomeToolCardSection(
-                        title = "Šiukšlinė",
-                        description = if (trashCount == 1) "1 elementas" else "$trashCount elementų",
-                        icon = Icons.Rounded.Delete,
-                        onClick = onOpenTrash,
-                    )
-                    HomeSection.FAVORITES -> FavoritesHomeSection(favorites, onOpenFavorite)
-                    HomeSection.TAGS -> TagsHomeSection(tagSnapshot, onOpenTag)
-                }
-            }
-            Spacer(Modifier.height(76.dp))
-        }
-    }
-
-    if (showAllRecent) {
-        AlertDialog(
-            onDismissRequest = { showAllRecent = false },
-            title = { LText("Naujausi failai") },
-            text = {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp).testTag("recent_files_all"),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    items(recentFiles, key = { it.entry.absolutePath }) { item ->
-                        RecentFileListItem(
-                            item = item,
-                            onOpen = {
-                                showAllRecent = false
-                                onOpenRecent(item.entry)
-                            },
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showAllRecent = false }) { LText("Uždaryti") } },
-        )
-    }
-}
-
-@Composable
-private fun RecentFilesHomeSection(
-    recentFiles: List<RecentFileItem>,
-    loading: Boolean,
-    error: String?,
-    onShowAll: () -> Unit,
-    onRefresh: () -> Unit,
-    onOpen: (FileEntry) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LText("Naujausi failai", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        if (recentFiles.isNotEmpty()) TextButton(onClick = onShowAll) { LText("Rodyti visus") }
-        IconButton(onClick = onRefresh, enabled = !loading) {
-            Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti naujausius failus"))
-        }
-    }
-    when {
-        loading && recentFiles.isEmpty() -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        error != null -> LText(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        recentFiles.isEmpty() -> LText(
-            "Naujausių failų dar nėra",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        else -> LazyRow(
-            modifier = Modifier.fillMaxWidth().testTag("recent_files_row"),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(vertical = 2.dp),
-        ) {
-            items(recentFiles.take(8), key = { it.entry.absolutePath }) { item ->
-                RecentFileCard(item = item, onOpen = { onOpen(item.entry) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun StorageHomeSection(
-    roots: List<StorageRoot>,
-    rootStorageAvailable: Boolean,
-    onOpen: (StorageRoot) -> Unit,
-    onOpenRoot: () -> Unit,
-    onOpenCleanup: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        TextButton(
-            onClick = onOpenCleanup,
-            modifier = Modifier.testTag("analyze_storage_button"),
-        ) {
-            Icon(Icons.Rounded.Analytics, contentDescription = null)
-            Spacer(modifier = Modifier.width(6.dp))
-            LText("Analizuoti saugyklą")
-        }
-    }
-    roots.forEach { root ->
-        val usageFraction = root.totalBytes.takeIf { it > 0L }?.let { total ->
-            (total - root.freeBytes).coerceIn(0L, total).toFloat() / total.toFloat()
-        }
-        StorageLocationCard(
-            title = when (root.kind) {
-                StorageRootKind.INTERNAL -> "Vidinė atmintis"
-                StorageRootKind.SD_CARD -> root.title.ifBlank { "SD kortelė" }
-                StorageRootKind.USB_STORAGE -> root.title.ifBlank { "USB saugykla" }
-                StorageRootKind.REMOVABLE -> root.title.ifBlank { "Išimama saugykla" }
-            },
-            description = "${FileSystemRules.humanBytes(root.freeBytes)} laisva iš ${FileSystemRules.humanBytes(root.totalBytes)}",
-            icon = when (root.kind) {
-                StorageRootKind.INTERNAL -> Icons.Rounded.Storage
-                StorageRootKind.USB_STORAGE -> Icons.Rounded.Usb
-                StorageRootKind.SD_CARD, StorageRootKind.REMOVABLE -> Icons.Rounded.SdStorage
-            },
-            usageFraction = usageFraction,
-            onClick = { onOpen(root) },
-        )
-    }
-    val rootSpace = remember {
-        File("/").let { root -> root.totalSpace.coerceAtLeast(0L) to root.usableSpace.coerceAtLeast(0L) }
-    }
-    val rootUsageFraction = rootSpace.first.takeIf { it > 0L }?.let { total ->
-        (total - rootSpace.second).coerceIn(0L, total).toFloat() / total.toFloat()
-    }
-    StorageLocationCard(
-        title = "Root",
-        description = rootSpace.first.takeIf { it > 0L }?.let { total ->
-            "${FileSystemRules.humanBytes(rootSpace.second)} laisva iš ${FileSystemRules.humanBytes(total)}"
-        } ?: "Sistemos failai · privilegijuota prieiga",
-        icon = if (rootStorageAvailable) Icons.Rounded.LockOpen else Icons.Rounded.Folder,
-        usageFraction = rootUsageFraction,
-        onClick = onOpenRoot,
-        modifier = Modifier.testTag("root_storage_location"),
-    )
-}
-
-@Composable
-private fun QuickLocationsHomeSection(
-    locations: List<QuickLocation>,
-    displaySettings: DirectoryDisplaySettings,
-    onOpen: (QuickLocation) -> Unit,
-    onToggleLayout: () -> Unit,
-    onConfigureLayout: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LText("Greitos vietos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        DirectoryLayoutButton(
-            grid = displaySettings.layoutMode == DirectoryLayoutMode.GRID,
-            testTag = "home_layout_toggle",
-            onToggleLayout = onToggleLayout,
-            onOpenSettings = onConfigureLayout,
-        )
-    }
-    if (locations.isEmpty()) {
-        LText(
-            "Greitųjų vietų nerodoma",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    } else if (displaySettings.layoutMode == DirectoryLayoutMode.GRID) {
-        val columns = displaySettings.gridColumns.coerceIn(4, 6)
-        val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
-        locations.chunked(columns).forEach { rowLocations ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
-                rowLocations.forEach { location ->
-                    QuickLocationTile(
-                        location = location,
-                        iconScalePercent = displaySettings.iconScalePercent,
-                        modifier = Modifier.weight(1f).testTag("quick_location_${location.id}"),
-                        onClick = { onOpen(location) },
-                    )
-                }
-                repeat(columns - rowLocations.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
-    } else {
-        locations.forEach { location ->
-            StorageLocationCard(
-                title = location.title,
-                description = if (location.virtual) "Visa saugykla" else location.path,
-                icon = location.icon,
-                modifier = Modifier.testTag("quick_location_${location.id}"),
-                onClick = { onOpen(location) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun HomeToolCardSection(title: String, description: String, icon: ImageVector, onClick: () -> Unit) {
-    LText(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-    StorageLocationCard(title = title, description = description, icon = icon, onClick = onClick)
-}
-
-@Composable
-private fun FavoritesHomeSection(favorites: List<String>, onOpen: (String) -> Unit) {
-    LText("Mėgstami", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-    val existing = remember(favorites) { favorites.map(::File).filter(File::exists).take(8) }
-    if (existing.isEmpty()) {
-        LText("Mėgstamų vietų dar nėra", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    } else {
-        existing.forEach { file ->
-            StorageLocationCard(
-                title = file.name.ifBlank { file.absolutePath },
-                description = file.absolutePath,
-                icon = if (file.isDirectory) Icons.Rounded.Folder else Icons.Rounded.Description,
-                onClick = { onOpen(file.absolutePath) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun TagsHomeSection(snapshot: FileTagSnapshot, onOpen: (String) -> Unit) {
-    LText("Žymos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-    if (snapshot.definitions.isEmpty()) {
-        LText("Žymų dar nėra", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    } else {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(vertical = 2.dp),
-        ) {
-            items(snapshot.definitions, key = FileTagDefinition::name) { tag ->
-                AssistChip(onClick = { onOpen(tag.name) }, label = { Text(tag.name) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeCustomizationDialog(
-    customization: HomeCustomization,
-    currentPath: String,
-    onDismiss: () -> Unit,
-    onMoveSection: (HomeSection, Int) -> Unit,
-    onMoveShortcut: (String, Int) -> Unit,
-    onSetShortcutVisible: (String, Boolean) -> Unit,
-    onRemoveShortcut: (String) -> Unit,
-    onAddShortcut: (String, String) -> Boolean,
-) {
-    var showAdd by remember { mutableStateOf(false) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { LText("Tvarkyti pradžios ekraną") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { showAdd = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    LText("Pridėti failo ar aplanko nuorodą")
-                }
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                item { LText("Sekcijų tvarka", style = MaterialTheme.typography.titleSmall) }
-                items(customization.sectionOrder, key = HomeSection::name) { section ->
-                    val index = customization.sectionOrder.indexOf(section)
-                    HomeOrderRow(
-                        title = homeSectionTitle(section),
-                        canMoveUp = index > 0,
-                        canMoveDown = index < customization.sectionOrder.lastIndex,
-                        onMoveUp = { onMoveSection(section, -1) },
-                        onMoveDown = { onMoveSection(section, 1) },
-                    )
-                }
-                item {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                    LText("Greitos vietos", style = MaterialTheme.typography.titleSmall)
-                }
-                items(customization.shortcuts, key = HomeShortcut::id) { shortcut ->
-                    val index = customization.shortcuts.indexOfFirst { it.id == shortcut.id }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Switch(
-                            checked = shortcut.visible,
-                            onCheckedChange = { onSetShortcutVisible(shortcut.id, it) },
-                        )
-                        Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                            if (shortcut.builtIn) LText(shortcut.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            else Text(shortcut.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                shortcut.path,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        IconButton(onClick = { onMoveShortcut(shortcut.id, -1) }, enabled = index > 0) {
-                            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Perkelti aukštyn"))
-                        }
-                        IconButton(
-                            onClick = { onMoveShortcut(shortcut.id, 1) },
-                            enabled = index < customization.shortcuts.lastIndex,
-                        ) {
-                            Icon(Icons.Rounded.ArrowDownward, contentDescription = uiText("Perkelti žemyn"))
-                        }
-                        if (!shortcut.builtIn) {
-                            IconButton(onClick = { onRemoveShortcut(shortcut.id) }) {
-                                Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti greitą vietą"))
-                            }
-                        }
-                    }
-                }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { LText("Baigti") } },
-    )
-
-    if (showAdd) {
-        var title by remember { mutableStateOf("") }
-        var path by remember(currentPath) { mutableStateOf(currentPath) }
-        AlertDialog(
-            onDismissRequest = { showAdd = false },
-            title = { LText("Pridėti greitą vietą") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        label = { LText("Pavadinimas (nebūtina)") },
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = path,
-                        onValueChange = { path = it },
-                        label = { LText("Failo arba aplanko kelias") },
-                        singleLine = true,
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { if (onAddShortcut(title, path)) showAdd = false },
-                    enabled = path.isNotBlank(),
-                ) { LText("Pridėti") }
-            },
-            dismissButton = { TextButton(onClick = { showAdd = false }) { LText("Atšaukti") } },
-        )
-    }
-}
-
-@Composable
-private fun HomeOrderRow(
-    title: String,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        LText(title, modifier = Modifier.weight(1f))
-        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Perkelti aukštyn"))
-        }
-        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-            Icon(Icons.Rounded.ArrowDownward, contentDescription = uiText("Perkelti žemyn"))
-        }
-    }
-}
-
-private fun homeSectionTitle(section: HomeSection): String = when (section) {
-    HomeSection.RECENT_FILES -> "Naujausi failai"
-    HomeSection.STORAGE -> "Saugyklos"
-    HomeSection.QUICK_LOCATIONS -> "Greitos vietos"
-    HomeSection.TRASH -> "Šiukšlinė"
-    HomeSection.FAVORITES -> "Mėgstami"
-    HomeSection.TAGS -> "Žymos"
-}
-
-private fun homeShortcutIcon(shortcut: HomeShortcut): ImageVector = when (shortcut.id) {
-    "builtin.downloads" -> Icons.Rounded.Download
-    "builtin.documents" -> Icons.Rounded.Description
-    "builtin.pictures" -> Icons.Rounded.PhotoLibrary
-    "builtin.videos" -> Icons.Rounded.VideoLibrary
-    "builtin.music" -> Icons.Rounded.MusicNote
-    "builtin.archives" -> Icons.Rounded.Archive
-    "builtin.apps" -> Icons.Rounded.Android
-    "builtin.installed_apps" -> Icons.Rounded.Android
-    else -> if (File(shortcut.path).isDirectory) Icons.Rounded.Folder else Icons.Rounded.Description
-}
-
-@Composable
-private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
-    val context = LocalContext.current
-    ElevatedCard(
-        onClick = onOpen,
-        modifier = Modifier.width(188.dp).height(172.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            LocalFileVisual(
-                entry = item.entry,
-                targetWidth = 72.dp,
-                targetHeight = 68.dp,
-                showThumbnails = true,
-                modifier = Modifier.fillMaxWidth().height(68.dp),
-            )
-            Text(item.entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(FileSystemRules.humanBytes(item.entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-                Spacer(Modifier.weight(1f))
-                Text(recentTimeLabel(context, item.recentAtMillis), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
-    val context = LocalContext.current
-    ElevatedCard(
-        onClick = onOpen,
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            LocalFileVisual(
-                entry = item.entry,
-                targetWidth = 44.dp,
-                targetHeight = 44.dp,
-                showThumbnails = true,
-                modifier = Modifier.size(44.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(item.entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${FileSystemRules.humanBytes(item.entry.sizeBytes)} · ${recentTimeLabel(context, item.recentAtMillis)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-private fun recentTimeLabel(context: android.content.Context, timestampMillis: Long): String =
-    DateUtils.getRelativeTimeSpanString(context, timestampMillis, false).toString()
-
-private data class QuickLocation(
-    val id: String,
-    val title: String,
-    val path: String,
-    val icon: ImageVector,
-    val virtual: Boolean = false,
-)
-
-@Composable
-private fun QuickLocationTile(
-    location: QuickLocation,
-    iconScalePercent: Int,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val iconSize = (32f * iconScalePercent / 100f).dp
-    ElevatedCard(
-        onClick = onClick,
-        modifier = modifier.height(92.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 9.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Icon(location.icon, contentDescription = null, modifier = Modifier.size(iconSize), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(5.dp))
-            LText(
-                location.title,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun StorageLocationCard(
-    title: String,
-    description: String,
-    icon: ImageVector,
-    usageFraction: Float? = null,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val animatedUsage by animateFloatAsState(
-        targetValue = usageFraction?.coerceIn(0f, 1f) ?: 0f,
-        animationSpec = spring(),
-        label = "storage usage",
-    )
-    ElevatedCard(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                LText(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                LText(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                usageFraction?.let {
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        LinearProgressIndicator(
-                            progress = { animatedUsage },
-                            modifier = Modifier.weight(1f).height(10.dp).padding(top = 3.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        )
-                        LText(
-                            "${(it.coerceIn(0f, 1f) * 100f).roundToInt()}% užimta",
-                            modifier = Modifier.padding(start = 9.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
+private fun itemCountLabel(count: Int): String = if (count == 1) "1 elementas" else "$count elementų"
 
 private fun PanelUiState.toDirectoryDisplaySettings(): DirectoryDisplaySettings = DirectoryDisplaySettings(
     layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST,
@@ -1363,6 +754,7 @@ private fun FilePanel(
     onArchive: () -> Unit,
     onArchiveEntry: (FileEntry) -> Unit,
     onTag: () -> Unit,
+    onTagEntry: (FileEntry) -> Unit,
     onCopyToOther: () -> Unit,
     onPaste: () -> Unit,
     onUndoBatchRename: () -> Unit,
@@ -1370,9 +762,11 @@ private fun FilePanel(
 ) {
     var compactMenu by remember { mutableStateOf(false) }
     var showViewingHistory by remember { mutableStateOf(false) }
+    var showFavoriteLocations by remember { mutableStateOf(false) }
     var searchVisible by remember(panelId) { mutableStateOf(false) }
     var searchQuery by remember(panelId) { mutableStateOf("") }
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
+    val favoritePaths = remember(favorites) { favorites.toSet() }
     val recents by viewModel.recents.collectAsStateWithLifecycle()
     val localClipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
@@ -1438,6 +832,7 @@ private fun FilePanel(
                     onPaste = onPaste,
                     onUndoBatchRename = onUndoBatchRename,
                     onDisplaySettings = onDisplaySettings,
+                    onShowFavorites = { showFavoriteLocations = true },
                     onShowViewingHistory = { showViewingHistory = true },
                 )
             }
@@ -1485,8 +880,8 @@ private fun FilePanel(
                 state.loading && state.entries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 state.entries.isEmpty() -> EmptyPanel("Aplankas tuščias", "Čia dar nėra failų")
                 displayedEntries.isEmpty() -> EmptyPanel("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
-                state.grid -> FileGrid(panelId, displayedState, tagsByPath, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry)
-                else -> FileList(panelId, displayedState, tagsByPath, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry)
+                state.grid -> FileGrid(panelId, displayedState, tagsByPath, favoritePaths, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry, onTagEntry)
+                else -> FileList(panelId, displayedState, tagsByPath, favoritePaths, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry, onTagEntry)
             }
             if (state.selectedPaths.isNotEmpty()) {
                 SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
@@ -1500,6 +895,12 @@ private fun FilePanel(
                         ) {
                             Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                         }
+                    }
+                    IconButton(
+                        onClick = { viewModel.addSelectionToFavorites(panelId) },
+                        modifier = Modifier.testTag("selection_favorite_local"),
+                    ) {
+                        Icon(Icons.Rounded.Star, contentDescription = uiText("Pridėti prie mėgstamų"))
                     }
                     IconButton(
                         onClick = {
@@ -1521,7 +922,7 @@ private fun FilePanel(
                         else viewModel.beginBatchRename(selectedEntries.map(FileEntry::absolutePath))
                     }) {
                         Icon(
-                            Icons.AutoMirrored.Rounded.DriveFileMove,
+                            Icons.Rounded.Edit,
                             contentDescription = uiText(if (state.selectedPaths.size == 1) "Pervadinti" else "Masinis pervadinimas"),
                         )
                     }
@@ -1560,6 +961,16 @@ private fun FilePanel(
             onClear = viewModel::clearRecents,
         )
     }
+    if (showFavoriteLocations) {
+        FavoriteLocationsDialog(
+            favorites = favorites,
+            onDismiss = { showFavoriteLocations = false },
+            onOpen = { path ->
+                showFavoriteLocations = false
+                viewModel.openQuickPath(path, panelId)
+            },
+        )
+    }
 }
 
 @Composable
@@ -1575,6 +986,7 @@ private fun CompactPanelActions(
     onPaste: () -> Unit,
     onUndoBatchRename: () -> Unit,
     onDisplaySettings: () -> Unit,
+    onShowFavorites: () -> Unit,
     onShowViewingHistory: () -> Unit,
 ) {
     Box {
@@ -1612,17 +1024,21 @@ private fun CompactPanelActions(
                 },
                 onClick = { viewModel.toggleFavorite(state.path); onExpandedChange(false) },
             )
-            favorites.take(4).forEach { path ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            LText("★ ${File(path).name.ifBlank { path }}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    },
-                    onClick = { viewModel.openQuickPath(path, panelId); onExpandedChange(false) },
-                )
-            }
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        LText("Mėgstami")
+                        LText(
+                            itemCountLabel(favorites.count { File(it).exists() }),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                leadingIcon = { Icon(Icons.Rounded.Star, contentDescription = null) },
+                modifier = Modifier.testTag("open_favorites_$panelId"),
+                onClick = { onExpandedChange(false); onShowFavorites() },
+            )
             DropdownMenuItem(
                 text = { LText("Peržiūrų istorija") },
                 leadingIcon = { Icon(Icons.Rounded.History, contentDescription = null) },
@@ -1667,36 +1083,39 @@ private fun ViewingHistoryDialog(
     onClear: () -> Unit,
 ) {
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
-    AlertDialog(
+    AfModalDialog(
+        title = "Peržiūrų istorija",
+        icon = Icons.Rounded.History,
         onDismissRequest = onDismiss,
-        title = { LText("Peržiūrų istorija") },
-        text = {
-            if (recents.isEmpty()) {
-                LText("Peržiūrėtų failų istorija tuščia")
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
-                    items(recents, key = { "history:${it.path}" }) { recent ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(recent) }).padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                                Text(File(recent.path).name.ifBlank { recent.path }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(recent.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(dateFormat.format(Date(recent.openedAtMillis)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        HorizontalDivider()
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
-        dismissButton = {
+        modifier = Modifier.testTag("viewing_history_dialog"),
+        showFooter = recents.isNotEmpty(),
+        actions = {
             if (recents.isNotEmpty()) TextButton(onClick = onClear) { LText("Išvalyti istoriją") }
         },
-    )
+    ) {
+        if (recents.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                LText("Peržiūrėtų failų istorija tuščia")
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                items(recents, key = { "history:${it.path}" }) { recent ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(recent) }).padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(File(recent.path).name.ifBlank { recent.path }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(recent.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(dateFormat.format(Date(recent.openedAtMillis)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1736,6 +1155,7 @@ private fun PanelTabsBar(
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
                     text = { LText("Dubliuoti kortelę") },
+                    leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
                     onClick = { onBeforeTabAction(); viewModel.duplicateTab(panel); menu = false },
                 )
                 DropdownMenuItem(
@@ -1747,11 +1167,13 @@ private fun PanelTabsBar(
                 )
                 DropdownMenuItem(
                     text = { LText("Uždaryti kortelę") },
+                    leadingIcon = { Icon(Icons.Rounded.Close, contentDescription = null) },
                     enabled = workspace.tabs.size > 1 && !workspace.activeTab.locked,
                     onClick = { onBeforeTabAction(); viewModel.closeActiveTab(panel); menu = false },
                 )
                 DropdownMenuItem(
                     text = { LText("Atkurti uždarytą kortelę") },
+                    leadingIcon = { Icon(Icons.Rounded.Restore, contentDescription = null) },
                     enabled = workspace.closedTabs.isNotEmpty(),
                     onClick = { onBeforeTabAction(); viewModel.restoreClosedTab(panel); menu = false },
                 )
@@ -1795,12 +1217,14 @@ private fun FileList(
     panel: PanelId,
     state: PanelUiState,
     tagsByPath: Map<String, TaggedFileRecord>,
+    favoritePaths: Set<String>,
     scrollKey: FileScrollKey,
     viewModel: MainViewModel,
     onRename: (FileEntry) -> Unit,
     onInfo: (FileEntry) -> Unit,
     onTrash: (FileEntry) -> Unit,
     onArchive: (FileEntry) -> Unit,
+    onTag: (FileEntry) -> Unit,
 ) {
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
@@ -1924,6 +1348,11 @@ private fun FileList(
                     onTrash = { onTrash(entry) },
                     onArchive = { onArchive(entry) },
                     onAnalyze = { viewModel.analyzeEntries(listOf(entry.absolutePath)) },
+                    onTag = { onTag(entry) },
+                    favorite = entry.absolutePath in favoritePaths,
+                    onCopy = { viewModel.copyEntry(panel, entry.absolutePath, move = false) },
+                    onMove = { viewModel.copyEntry(panel, entry.absolutePath, move = true) },
+                    onToggleFavorite = { viewModel.toggleFavorite(entry.absolutePath) },
                 )
             }
         }
@@ -1936,12 +1365,14 @@ private fun FileGrid(
     panel: PanelId,
     state: PanelUiState,
     tagsByPath: Map<String, TaggedFileRecord>,
+    favoritePaths: Set<String>,
     scrollKey: FileScrollKey,
     viewModel: MainViewModel,
     onRename: (FileEntry) -> Unit,
     onInfo: (FileEntry) -> Unit,
     onTrash: (FileEntry) -> Unit,
     onArchive: (FileEntry) -> Unit,
+    onTag: (FileEntry) -> Unit,
 ) {
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
@@ -2067,6 +1498,11 @@ private fun FileGrid(
                     onTrash = { onTrash(entry) },
                     onArchive = { onArchive(entry) },
                     onAnalyze = { viewModel.analyzeEntries(listOf(entry.absolutePath)) },
+                    onTag = { onTag(entry) },
+                    favorite = entry.absolutePath in favoritePaths,
+                    onCopy = { viewModel.copyEntry(panel, entry.absolutePath, move = false) },
+                    onMove = { viewModel.copyEntry(panel, entry.absolutePath, move = true) },
+                    onToggleFavorite = { viewModel.toggleFavorite(entry.absolutePath) },
                 )
             }
         }
@@ -2100,6 +1536,11 @@ private fun FileRow(
     onTrash: () -> Unit,
     onArchive: () -> Unit,
     onAnalyze: () -> Unit,
+    onTag: () -> Unit,
+    favorite: Boolean,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(8.dp)
     val iconSize = (42f * iconScalePercent / 100f).dp
@@ -2149,7 +1590,7 @@ private fun FileRow(
             }
         }
         if (!entry.isReadable) LText("Neprieinama", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze)
+        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite)
     }
     HorizontalDivider(
         modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
@@ -2179,6 +1620,11 @@ private fun FileTile(
     onTrash: () -> Unit,
     onArchive: () -> Unit,
     onAnalyze: () -> Unit,
+    onTag: () -> Unit,
+    favorite: Boolean,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
@@ -2224,7 +1670,7 @@ private fun FileTile(
                 )
             },
             actions = {
-                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze)
+                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite)
             },
             extraContent = {
                 if (largestSizeBytes != null && entry.metadataComplete) {
@@ -2292,11 +1738,22 @@ private fun TagDialog(
     val parsedTags = remember(typedTags, selectedTags) {
         selectedTags + typedTags.split(',', '\n').map(String::trim).filter(String::isNotEmpty)
     }
-    AlertDialog(
+    AfModalDialog(
+        title = "Žymos ir įvertinimas",
+        icon = Icons.AutoMirrored.Rounded.Label,
+        modifier = Modifier.testTag("tag_dialog"),
         onDismissRequest = onDismiss,
-        title = { LText("Žymos ir įvertinimas") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(onClick = { onApply(parsedTags, rating, selectedColor) }, enabled = parsedTags.isNotEmpty() || rating != null) {
+                LText("Taikyti")
+            }
+        },
+    ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 LText("Pasirinkta: ${paths.size}. Naujos žymos pridedamos prie esamų; viską pašalina atskiras mygtukas.", style = MaterialTheme.typography.bodySmall)
                 if (currentTags.isNotEmpty()) {
                     LText("Dabartinės: ${currentTags.joinToString(" · ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
@@ -2348,12 +1805,7 @@ private fun TagDialog(
                     onImport?.let { importAction -> OutlinedButton(onClick = importAction) { LText("Importuoti JSON") } }
                 }
             }
-        },
-        confirmButton = {
-            Button(onClick = { onApply(parsedTags, rating, selectedColor) }, enabled = parsedTags.isNotEmpty() || rating != null) { LText("Taikyti") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+    }
 }
 
 @Composable
@@ -2367,6 +1819,11 @@ private fun EntryActionsButton(
     onTrash: () -> Unit,
     onArchive: () -> Unit,
     onAnalyze: () -> Unit,
+    onTag: () -> Unit,
+    favorite: Boolean,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     var expanded by remember(entry.absolutePath) { mutableStateOf(false) }
     Box {
@@ -2411,6 +1868,20 @@ private fun EntryActionsButton(
                 onClick = { expanded = false; onSelect() },
             )
             DropdownMenuItem(
+                text = { LText("Kopijuoti") },
+                leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                onClick = { expanded = false; onCopy() },
+                enabled = entry.isReadable,
+                modifier = Modifier.testTag("copy_entry_action"),
+            )
+            DropdownMenuItem(
+                text = { LText("Perkelti") },
+                leadingIcon = { Icon(Icons.Rounded.ContentCut, contentDescription = null) },
+                onClick = { expanded = false; onMove() },
+                enabled = entry.isReadable,
+                modifier = Modifier.testTag("move_entry_action"),
+            )
+            DropdownMenuItem(
                 text = { LText("Archyvuoti") },
                 leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
                 onClick = { expanded = false; onArchive() },
@@ -2436,6 +1907,20 @@ private fun EntryActionsButton(
                 text = { LText("Informacija") },
                 leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
                 onClick = { expanded = false; onInfo() },
+            )
+            DropdownMenuItem(
+                text = { LText("Žymos ir įvertinimas") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Label, contentDescription = null) },
+                onClick = { expanded = false; onTag() },
+                modifier = Modifier.testTag("tag_entry_action"),
+            )
+            DropdownMenuItem(
+                text = { LText(if (favorite) "Pašalinti iš mėgstamų" else "Pridėti prie mėgstamų") },
+                leadingIcon = {
+                    Icon(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, contentDescription = null)
+                },
+                onClick = { expanded = false; onToggleFavorite() },
+                modifier = Modifier.testTag("favorite_entry_action"),
             )
             DropdownMenuItem(
                 text = { LText("Į šiukšlinę") },
@@ -2472,19 +1957,39 @@ private fun CreateItemDialog(
     var name by remember { mutableStateOf("") }
     var itemType by remember { mutableStateOf(CreateItemType.FOLDER) }
     var archiveFormat by remember { mutableStateOf(ArchiveFormat.ZIP) }
-    AlertDialog(
+    val title = when (itemType) {
+        CreateItemType.FOLDER -> "Naujas aplankas"
+        CreateItemType.FILE -> "Naujas failas"
+        CreateItemType.ARCHIVE -> "Naujas archyvas"
+    }
+    val icon = when (itemType) {
+        CreateItemType.FOLDER -> Icons.Rounded.CreateNewFolder
+        CreateItemType.FILE -> Icons.Rounded.Description
+        CreateItemType.ARCHIVE -> Icons.Rounded.Archive
+    }
+    AfModalDialog(
+        title = title,
+        icon = icon,
         onDismissRequest = onDismiss,
-        title = {
-            LText(
-                when (itemType) {
-                    CreateItemType.FOLDER -> "Naujas aplankas"
-                    CreateItemType.FILE -> "Naujas failas"
-                    CreateItemType.ARCHIVE -> "Naujas archyvas"
+        modifier = Modifier.testTag("create_item_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(
+                onClick = {
+                    when (itemType) {
+                        CreateItemType.FOLDER -> onCreateFolder(name)
+                        CreateItemType.FILE -> onCreateFile(name)
+                        CreateItemType.ARCHIVE -> onCreateArchive(name, archiveFormat)
+                    }
                 },
-            )
+                enabled = name.isNotBlank(),
+            ) { LText("Sukurti") }
         },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2532,21 +2037,7 @@ private fun CreateItemDialog(
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    when (itemType) {
-                        CreateItemType.FOLDER -> onCreateFolder(name)
-                        CreateItemType.FILE -> onCreateFile(name)
-                        CreateItemType.ARCHIVE -> onCreateArchive(name, archiveFormat)
-                    }
-                },
-                enabled = name.isNotBlank(),
-            ) { LText("Sukurti") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+    }
 }
 
 @Composable
@@ -2558,13 +2049,25 @@ private fun TextInputDialog(
     onConfirm: (String) -> Unit,
 ) {
     var value by remember(initial) { mutableStateOf(initial) }
-    AlertDialog(
+    AfModalDialog(
+        title = title,
+        icon = Icons.Rounded.Edit,
         onDismissRequest = onDismiss,
-        title = { LText(title) },
-        text = { OutlinedTextField(value = value, onValueChange = { value = it }, singleLine = true) },
-        confirmButton = { Button(onClick = { onConfirm(value) }, enabled = value.isNotBlank()) { LText(confirmLabel) } },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+        modifier = Modifier.testTag("text_input_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(onClick = { onConfirm(value) }, enabled = value.isNotBlank()) { LText(confirmLabel) }
+        },
+    ) {
+        Column(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
 }
 
 @Composable
@@ -2631,11 +2134,28 @@ private fun TransferOptionsDialog(
         ConflictPolicy.SKIP to "Praleisti sutampančius",
         ConflictPolicy.MERGE to "Sujungti aplankus",
     )
-    AlertDialog(
+    AfModalDialog(
+        title = if (moving) "Patikimai perkelti" else "Patikimai kopijuoti",
+        icon = if (moving) Icons.Rounded.ContentCut else Icons.Rounded.ContentCopy,
         onDismissRequest = onDismiss,
-        title = { LText(if (moving) "Patikimai perkelti" else "Patikimai kopijuoti") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        modifier = Modifier.testTag("transfer_options_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(
+                onClick = {
+                    onConfirm(
+                        policy,
+                        if (verifySha256) TransferVerification.SHA256 else TransferVerification.SIZE,
+                        if (!moving && skipErrors) TransferFailurePolicy.SKIP_AND_CONTINUE else TransferFailurePolicy.STOP,
+                    )
+                },
+            ) { LText("Išsaugoti planą ir pradėti") }
+        },
+    ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 LText("Planas bus išsaugotas prieš vykdymą. Ši taisyklė bus taikoma visiems sutampantiems vardams.")
                 choices.forEach { (candidate, label) ->
                     Row(
@@ -2669,20 +2189,7 @@ private fun TransferOptionsDialog(
                     LText("Perkėlimas klaidos atveju visada sustoja; nepatikrintas šaltinis nešalinamas.", style = MaterialTheme.typography.bodySmall)
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onConfirm(
-                        policy,
-                        if (verifySha256) TransferVerification.SHA256 else TransferVerification.SIZE,
-                        if (!moving && skipErrors) TransferFailurePolicy.SKIP_AND_CONTINUE else TransferFailurePolicy.STOP,
-                    )
-                },
-            ) { LText("Išsaugoti planą ir pradėti") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+    }
 }
 
 internal fun sortLabel(mode: SortMode): String = when (mode) {

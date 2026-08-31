@@ -449,6 +449,11 @@ data class UiMessage(
     val action: UiMessageAction? = null,
 )
 
+enum class HomeToolPage {
+    FAVORITES,
+    TAGS,
+}
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as AFFileManagerApplication).graph
     private val filesHomeDisplayIdentity = "virtual:files-home"
@@ -517,9 +522,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _filesHomeVisible = MutableStateFlow(true)
     val filesHomeVisible: StateFlow<Boolean> = _filesHomeVisible.asStateFlow()
 
+    private val _homeToolPage = MutableStateFlow<HomeToolPage?>(null)
+    val homeToolPage: StateFlow<HomeToolPage?> = _homeToolPage.asStateFlow()
+
     private val _filesHomeDisplaySettings = MutableStateFlow(
         runCatching { graph.navigation.directoryDisplaySettings(filesHomeDisplayIdentity) }.getOrNull()
-            ?: DirectoryDisplaySettings(gridColumns = 4),
+            ?.let { it.copy(gridColumns = it.gridColumns.coerceIn(1, 3)) }
+            ?: DirectoryDisplaySettings(gridColumns = 2),
     )
     val filesHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _filesHomeDisplaySettings.asStateFlow()
 
@@ -698,8 +707,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (filesDestinationReselected && _fileCategory.value.open) closeFileCategory()
         _section.value = section
         if (section == AppSection.FILES) {
-            if (filesDestinationReselected) _filesHomeVisible.value = true
+            if (filesDestinationReselected) {
+                _homeToolPage.value = null
+                _filesHomeVisible.value = true
+            }
             refreshRecentFiles()
+        } else {
+            _homeToolPage.value = null
         }
         if (section == AppSection.TOOLS) {
             graph.advancedAccess.refreshCapabilities()
@@ -728,16 +742,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (rootBackend) {
             openAdvancedBrowser("/")
         } else {
-            _section.value = AppSection.FILES
-            navigate(panel, "/")
+            openLocalDirectoryFromHome(panel, "/")
         }
     }
 
     fun showFilesHome() {
         if (_fileCategory.value.open) closeFileCategory()
         _section.value = AppSection.FILES
+        _homeToolPage.value = null
         _filesHomeVisible.value = true
         refreshRecentFiles()
+    }
+
+    fun openHomeToolPage(page: HomeToolPage) {
+        if (_fileCategory.value.open) closeFileCategory()
+        _section.value = AppSection.FILES
+        _filesHomeVisible.value = true
+        _homeToolPage.value = page
+    }
+
+    fun closeHomeToolPage() {
+        _homeToolPage.value = null
     }
 
     fun openAdvancedBrowser(preferredPath: String? = null) {
@@ -1111,7 +1136,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setFilesHomeDisplaySettings(settings: DirectoryDisplaySettings) {
-        val homeSettings = settings.copy(showThumbnails = false)
+        val homeSettings = settings.copy(showThumbnails = false, gridColumns = settings.gridColumns.coerceIn(1, 3))
         runCatching { graph.navigation.setDirectoryDisplaySettings(filesHomeDisplayIdentity, homeSettings) }
             .onSuccess { _filesHomeDisplaySettings.value = homeSettings }
             .onFailure { message(it.message ?: "Pradžios rodinio nustatymo išsaugoti nepavyko", true) }
@@ -1140,7 +1165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 DirectoryDisplayDefaults(normalized, sortMode, sortDirection),
             )
         }.onSuccess {
-            _filesHomeDisplaySettings.value = normalized.copy(showThumbnails = false)
+            _filesHomeDisplaySettings.value = normalized.copy(showThumbnails = false, gridColumns = normalized.gridColumns.coerceIn(1, 3))
             _leftPanel.update { it.withDirectoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection) }
             _rightPanel.update { it.withDirectoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection) }
             _fileCategory.update {
@@ -1741,6 +1766,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val selected = panelFlow(panel).value.selectedPaths.toList()
         if (selected.isEmpty()) return
         if (setLocalClipboard(selected, move = move, append = false)) clearSelection(panel)
+    }
+
+    fun copyEntry(panel: PanelId, path: String, move: Boolean) {
+        activatePanel(panel)
+        setLocalClipboard(listOf(path), move = move, append = false)
     }
 
     fun addSelectionToClipboard(panel: PanelId) {
@@ -3845,6 +3875,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { message(it.message ?: "Žymos pakeisti nepavyko", true) }
     }
 
+    fun addSelectionToFavorites(panel: PanelId) {
+        val selected = panelFlow(panel).value.selectedPaths
+        if (selected.isEmpty()) return
+        runCatching { graph.navigation.addFavorites(selected) }
+            .onSuccess { updated ->
+                _favorites.value = updated
+                clearSelection(panel)
+                message("Pridėta ${selected.size} · iš viso ${updated.size}")
+            }
+            .onFailure { message(it.message ?: "Vietos įrašyti nepavyko", true) }
+    }
+
     fun openQuickPath(path: String, panel: PanelId = _activePanel.value) {
         val file = File(path)
         if (file.isDirectory) navigate(panel, path)
@@ -3852,9 +3894,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else message("Vieta nebeegzistuoja", true)
     }
 
+    fun openQuickPathFromHome(path: String, panel: PanelId = _activePanel.value) {
+        val file = File(path)
+        when {
+            file.isDirectory -> openLocalDirectoryFromHome(panel, path)
+            file.isFile -> {
+                _homeToolPage.value = null
+                open(graph.localFiles.toEntry(file))
+            }
+            else -> message("Vieta nebeegzistuoja", true)
+        }
+    }
+
     fun openHomeShortcut(shortcutId: String, path: String, panel: PanelId = _activePanel.value) {
         val category = HomeShortcutNavigationRules.categoryFor(shortcutId)
-        if (category != null) openFileCategory(category) else openQuickPath(path, panel)
+        _homeToolPage.value = null
+        if (category != null) openFileCategory(category) else openQuickPathFromHome(path, panel)
     }
 
     fun openStorageRoot(root: StorageRoot, panel: PanelId = _activePanel.value) {
@@ -3870,6 +3925,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        openLocalDirectoryFromHome(panel, target)
+    }
+
+    private fun openLocalDirectoryFromHome(panel: PanelId, targetPath: String) {
+        val target = runCatching { File(targetPath).canonicalPath }.getOrElse {
+            message(it.message ?: "Kelias nepasiekiamas", true)
+            return
+        }
+        if (!File(target).isDirectory) {
+            message("Vieta nebeegzistuoja", true)
+            return
+        }
+
+        _section.value = AppSection.FILES
+        _homeToolPage.value = null
         _filesHomeVisible.value = false
         val displaySettings = savedDirectoryDisplaySettings(target)
         fileScrollPositions.reset(tabsFlow(panel).value.activeTabId, target)

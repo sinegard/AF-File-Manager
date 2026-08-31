@@ -1,5 +1,6 @@
 package com.affilemanager.app.ui.preview
 
+import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -37,5 +38,32 @@ internal object PdfRenderRules {
         val scale = minOf(MAX_UPSCALE.toDouble(), requestedScale, widthScale, pixelScale)
         return (sourceWidth * scale).toInt().coerceAtLeast(1) to
             (sourceHeight * scale).toInt().coerceAtLeast(1)
+    }
+}
+
+internal object MediaPlaybackRules {
+    const val SKIP_MILLIS = 10_000L
+
+    fun boundedPosition(positionMillis: Long, durationMillis: Long): Long =
+        positionMillis.coerceIn(0L, durationMillis.coerceAtLeast(0L))
+
+    fun skippedPosition(positionMillis: Long, durationMillis: Long, deltaMillis: Long): Long =
+        boundedPosition(positionMillis + deltaMillis, durationMillis)
+
+    fun positionForProgress(progress: Float, durationMillis: Long): Long {
+        if (!progress.isFinite() || durationMillis <= 0L) return 0L
+        return (progress.coerceIn(0f, 1f) * durationMillis).toLong().coerceIn(0L, durationMillis)
+    }
+
+    fun progress(positionMillis: Long, durationMillis: Long): Float =
+        if (durationMillis <= 0L) 0f else boundedPosition(positionMillis, durationMillis).toFloat() / durationMillis
+
+    fun timeLabel(positionMillis: Long): String {
+        val totalSeconds = positionMillis.coerceAtLeast(0L) / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, seconds)
+        else String.format(Locale.ROOT, "%d:%02d", minutes, seconds)
     }
 }

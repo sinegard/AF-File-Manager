@@ -3,12 +3,15 @@ package com.affilemanager.app.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,32 +40,36 @@ import java.util.Date
 @Composable
 fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
-    AlertDialog(
+    AfModalDialog(
+        title = entry.name,
+        translateTitle = false,
+        icon = Icons.Rounded.Info,
         modifier = Modifier.testTag("file_info_dialog"),
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-        title = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                InfoLine("Tipas", if (entry.isDirectory) uiText("Aplankas") else entry.extension.uppercase().ifBlank { entry.kind.name })
-                if (!entry.isDirectory || entry.sizeBytes > 0L) InfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
-                if (entry.modifiedAtMillis > 0L) InfoLine("Pakeista", dateFormat.format(Date(entry.modifiedAtMillis)))
-                entry.packageName?.let { InfoLine("Paketas", it) }
-                entry.appVersionName?.takeIf(String::isNotBlank)?.let { InfoLine("Versija", it) }
-                if (entry.packageName != null) InfoLine("Programos tipas", uiText(if (entry.isSystemApp) "Sisteminė" else "Naudotojo"))
-                InfoLine(
-                    "Prieiga",
-                    listOfNotNull(
-                        uiText("Skaitoma").takeIf { entry.isReadable },
-                        uiText("Rašoma").takeIf { entry.isWritable },
-                    ).ifEmpty { listOf(uiText("Neprieinama")) }.joinToString(" · "),
-                )
-                LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                Text(entry.absolutePath, style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
-    )
+        showFooter = false,
+        actions = {},
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            InfoLine("Tipas", if (entry.isDirectory) uiText("Aplankas") else entry.extension.uppercase().ifBlank { entry.kind.name })
+            if (!entry.isDirectory || entry.sizeBytes > 0L) InfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
+            if (entry.modifiedAtMillis > 0L) InfoLine("Pakeista", dateFormat.format(Date(entry.modifiedAtMillis)))
+            entry.packageName?.let { InfoLine("Paketas", it) }
+            entry.appVersionName?.takeIf(String::isNotBlank)?.let { InfoLine("Versija", it) }
+            if (entry.packageName != null) InfoLine("Programos tipas", uiText(if (entry.isSystemApp) "Sisteminė" else "Naudotojo"))
+            InfoLine(
+                "Prieiga",
+                listOfNotNull(
+                    uiText("Skaitoma").takeIf { entry.isReadable },
+                    uiText("Rašoma").takeIf { entry.isWritable },
+                ).ifEmpty { listOf(uiText("Neprieinama")) }.joinToString(" · "),
+            )
+            LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Text(entry.absolutePath, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
 
 @Composable
@@ -90,16 +97,19 @@ fun FileInfoDialog(
         loading = false
     }
 
-    AlertDialog(
+    AfModalDialog(
+        title = single?.name ?: "Informacija",
+        translateTitle = single == null,
+        icon = Icons.Rounded.Info,
         modifier = Modifier.testTag("file_info_dialog"),
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-        title = {
-            if (single != null) Text(single.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            else LText("Informacija")
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        showFooter = false,
+        actions = {},
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
                 if (single == null) InfoLine("Pasirinkta", stableEntries.size.toString())
                 single?.let { entry ->
                     InfoLine("Tipas", if (entry.isDirectory) uiText("Aplankas") else entry.extension.uppercase().ifBlank { entry.kind.name })
@@ -146,10 +156,8 @@ fun FileInfoDialog(
                     LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                     Text(single.absolutePath, style = MaterialTheme.typography.bodySmall)
                 }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
-    )
+        }
+    }
 }
 
 @Composable

@@ -24,7 +24,6 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +60,7 @@ import com.affilemanager.app.transfer.LanTransferProtocol
 import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import java.io.File
@@ -285,13 +285,24 @@ private fun SharedFolderPickerDialog(
     }
 
     BackHandler(onBack = ::dismissOrBack)
-    AlertDialog(
+    AfModalDialog(
+        title = "Pasirinkti bendrinamą aplanką",
+        icon = Icons.Rounded.Folder,
         onDismissRequest = ::dismissOrBack,
-        icon = { Icon(Icons.Rounded.Folder, contentDescription = null) },
-        title = { LText("Pasirinkti bendrinamą aplanką") },
-        text = {
+        modifier = Modifier.testTag("share_folder_picker_dialog"),
+        actions = {
+            TextButton(onClick = ::dismissOrBack) { LText(if (navigation.canNavigateBack) "Grįžti" else "Atšaukti") }
+            Button(
+                onClick = { onSelect(currentPath) },
+                enabled = !loading && error == null,
+                modifier = Modifier.testTag("share_folder_select"),
+            ) {
+                LText("Bendrinti šį aplanką")
+            }
+        },
+    ) {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).testTag("share_folder_picker"),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp).testTag("share_folder_picker"),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 item {
@@ -330,14 +341,7 @@ private fun SharedFolderPickerDialog(
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(onClick = { onSelect(currentPath) }, enabled = !loading && error == null, modifier = Modifier.testTag("share_folder_select")) {
-                LText("Bendrinti šį aplanką")
-            }
-        },
-        dismissButton = { TextButton(onClick = ::dismissOrBack) { LText(if (navigation.canNavigateBack) "Grįžti" else "Atšaukti") } },
-    )
+    }
 }
 
 @Composable

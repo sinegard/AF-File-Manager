@@ -74,6 +74,7 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationSnapshot
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.localization.AppLanguageOption
 import com.affilemanager.app.ui.localization.LText
@@ -481,17 +482,20 @@ private fun LanguagePickerDialog(
         }
     }
 
-    AlertDialog(
+    AfModalDialog(
+        title = "Pasirinkti kalbą",
+        subtitle = "59 kalbos",
+        icon = Icons.Rounded.Language,
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("language_picker"),
-        title = {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                LText("Pasirinkti kalbą")
-                LText("59 kalbos", style = MaterialTheme.typography.labelMedium)
-            }
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
         },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -501,7 +505,7 @@ private fun LanguagePickerDialog(
                     leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                 )
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     items(filteredLanguages, key = AppLanguageOption::tag) { language ->
@@ -533,12 +537,8 @@ private fun LanguagePickerDialog(
                     "Anglų ir lietuvių vertimai peržiūrėti. Kitų kalbų pataisymai laukiami.",
                     style = MaterialTheme.typography.labelSmall,
                 )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { LText("Atšaukti") }
-        },
-    )
+        }
+    }
 }
 
 private fun advancedModeLabel(mode: AdvancedAccessMode): String = when (mode) {

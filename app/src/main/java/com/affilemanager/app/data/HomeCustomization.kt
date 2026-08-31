@@ -1,12 +1,10 @@
 package com.affilemanager.app.data
 
 enum class HomeSection {
-    RECENT_FILES,
     STORAGE,
+    TOOLS,
     QUICK_LOCATIONS,
-    TRASH,
-    FAVORITES,
-    TAGS,
+    RECENT_FILES,
 }
 
 data class HomeShortcut(

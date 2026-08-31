@@ -114,6 +114,7 @@ fun AFFileManagerApp(
     val lifecycleOwner = LocalLifecycleOwner.current
     val section by viewModel.section.collectAsStateWithLifecycle()
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
+    val homeToolPage by viewModel.homeToolPage.collectAsStateWithLifecycle()
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     val fileEditState by viewModel.fileEditState.collectAsStateWithLifecycle()
@@ -149,6 +150,7 @@ fun AFFileManagerApp(
         previewOpen = preview != null,
         section = section,
         filesHomeVisible = filesHomeVisible,
+        homeToolPageOpen = homeToolPage != null,
         selectedCount = activePanelState.selectedPaths.size,
         hasBackHistory = activePanelState.backHistory.isNotEmpty(),
         hasParent = File(activePanelState.path).parentFile != null &&
@@ -165,6 +167,7 @@ fun AFFileManagerApp(
     ) {
         when (systemBackAction) {
             SystemBackAction.CLOSE_PREVIEW -> viewModel.closePreview()
+            SystemBackAction.CLOSE_HOME_TOOL_PAGE -> viewModel.closeHomeToolPage()
             SystemBackAction.SHOW_FILES -> viewModel.setSection(AppSection.FILES)
             SystemBackAction.CLEAR_REMOTE_SELECTION -> viewModel.clearRemoteSelection()
             SystemBackAction.NAVIGATE_REMOTE_BACK -> viewModel.navigateRemoteBack()

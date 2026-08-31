@@ -5,7 +5,7 @@ import com.affilemanager.app.ui.localization.LText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,7 +20,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,8 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.operations.BatchRenamePreviewItem
 import com.affilemanager.app.operations.RenameCaseMode
@@ -54,31 +51,25 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
             numberPaddingText.toIntOrNull()?.let { it in 1..9 } == true
     )
 
-    Dialog(
+    AfModalDialog(
+        title = "Masinis pervadinimas",
+        subtitle = "Pakeitimai bus vykdomi tik patvirtinus planą",
+        icon = Icons.Rounded.DriveFileRenameOutline,
         onDismissRequest = viewModel::closeBatchRename,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.testTag("batch_rename_dialog"),
+        actions = {
+            TextButton(onClick = viewModel::closeBatchRename) { LText("Atšaukti") }
+            Button(
+                onClick = viewModel::executeBatchRename,
+                enabled = numberInputsValid && !state.running && state.preview?.canExecute == true,
+                modifier = Modifier.testTag("batch_rename_execute"),
+            ) {
+                LText("Pervadinti ${state.preview?.changedCount ?: 0}")
+            }
+        },
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.92f).testTag("batch_rename_dialog"),
-            shape = MaterialTheme.shapes.extraLarge,
-            tonalElevation = 6.dp,
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(Icons.Rounded.DriveFileRenameOutline, contentDescription = null)
-                    Column(modifier = Modifier.weight(1f)) {
-                        LText("Masinis pervadinimas", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        LText("Pakeitimai bus vykdomi tik patvirtinus planą", style = MaterialTheme.typography.bodySmall)
-                    }
-                    TextButton(onClick = viewModel::closeBatchRename) { LText("Uždaryti") }
-                }
-                HorizontalDivider()
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("batch_rename_list"),
+        LazyColumn(
+                    modifier = Modifier.fillMaxSize().testTag("batch_rename_list"),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     item {
@@ -213,23 +204,6 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                             RenamePreviewRow(item)
                         }
                     }
-                }
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = viewModel::closeBatchRename) { LText("Atšaukti") }
-                    Button(
-                        onClick = viewModel::executeBatchRename,
-                        enabled = numberInputsValid && !state.running && state.preview?.canExecute == true,
-                        modifier = Modifier.testTag("batch_rename_execute"),
-                    ) {
-                        LText("Pervadinti ${state.preview?.changedCount ?: 0}")
-                    }
-                }
-            }
         }
     }
 }

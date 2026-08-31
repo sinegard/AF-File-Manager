@@ -20,7 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.DriveFileMove
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.BookmarkAdd
@@ -81,6 +81,7 @@ import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.SelectionActionBar
 import java.io.File
 import java.util.Locale
@@ -667,16 +668,35 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
 
     if (showStoragePicker) {
-        AlertDialog(
+        AfModalDialog(
+            title = "Pasirinkti saugyklas",
+            icon = Icons.Rounded.Storage,
             onDismissRequest = { showStoragePicker = false },
-            title = { LText("Pasirinkti saugyklas") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            modifier = Modifier.testTag("storage_picker_dialog"),
+            actions = {
+                TextButton(onClick = { showStoragePicker = false }) { LText("Atšaukti") }
+                Button(
+                    onClick = {
+                        selectedStoragePaths = storagePickerDraft
+                        scope = SearchScope.SELECTED_STORAGE
+                        showStoragePicker = false
+                    },
+                    enabled = storagePickerDraft.isNotEmpty(),
+                    modifier = Modifier.testTag("search_storage_apply"),
+                ) { LText("Taikyti") }
+            },
+        ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    item {
                     LText(
                         "Paieška bus vykdoma tik pažymėtose prijungtose saugyklose.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    storageRoots.forEach { root ->
+                    }
+                    items(storageRoots, key = StorageRoot::id) { root ->
                         Card(
                             onClick = {
                                 storagePickerDraft = if (root.path in storagePickerDraft) {
@@ -709,20 +729,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         }
                     }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        selectedStoragePaths = storagePickerDraft
-                        scope = SearchScope.SELECTED_STORAGE
-                        showStoragePicker = false
-                    },
-                    enabled = storagePickerDraft.isNotEmpty(),
-                    modifier = Modifier.testTag("search_storage_apply"),
-                ) { LText("Taikyti") }
-            },
-            dismissButton = { TextButton(onClick = { showStoragePicker = false }) { LText("Atšaukti") } },
-        )
+        }
     }
 
     if (showSave) {
@@ -1014,7 +1021,7 @@ private fun SearchSelectionToolbar(
             }
             IconButton(onClick = onMove) { Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti")) }
             IconButton(onClick = onBatchRename) {
-                Icon(Icons.AutoMirrored.Rounded.DriveFileMove, contentDescription = uiText("Masinis pervadinimas"))
+                Icon(Icons.Rounded.Edit, contentDescription = uiText("Masinis pervadinimas"))
             }
             IconButton(onClick = onTrash) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error) }
     }

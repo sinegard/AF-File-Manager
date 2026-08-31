@@ -54,6 +54,8 @@ class MainActivity : AppCompatActivity() {
         setContent {
             val mainViewModel: MainViewModel = viewModel()
             val appearance = mainViewModel.appearanceSettings.collectAsStateWithLifecycle()
+            val section = mainViewModel.section.collectAsStateWithLifecycle()
+            val filesHomeVisible = mainViewModel.filesHomeVisible.collectAsStateWithLifecycle()
             val leftPanel = mainViewModel.leftPanel.collectAsStateWithLifecycle()
             val network = mainViewModel.networkState.collectAsStateWithLifecycle()
             val storageRoots = mainViewModel.roots.collectAsStateWithLifecycle()
@@ -83,10 +85,22 @@ class MainActivity : AppCompatActivity() {
                     pendingBenchmarkRequest.value = null
                 }
             }
-            LaunchedEffect(leftPanel.value.path, leftPanel.value.loading, leftPanel.value.entries.size, network.value.loading, network.value.entries.size) {
+            LaunchedEffect(
+                section.value,
+                filesHomeVisible.value,
+                storageRoots.value.size,
+                leftPanel.value.path,
+                leftPanel.value.loading,
+                leftPanel.value.entries.size,
+                network.value.loading,
+                network.value.entries.size,
+            ) {
+                val homeReady = section.value == AppSection.FILES &&
+                    filesHomeVisible.value &&
+                    storageRoots.value.isNotEmpty()
                 val localReady = leftPanel.value.entries.isNotEmpty()
                 val remoteReady = network.value.connectedProfile != null && network.value.entries.isNotEmpty()
-                if (localReady || remoteReady) reportFullyDrawn()
+                if (homeReady || localReady || remoteReady) reportFullyDrawn()
             }
             AFFileManagerTheme(settings = appearance.value) {
                 CompositionLocalProvider(LocalStorageRoots provides storageRoots.value) {

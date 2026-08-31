@@ -33,6 +33,13 @@ internal object AfBenchmarkEnvironment {
 
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
+    fun resetTargetData() {
+        val result = UiDevice.getInstance(instrumentation)
+            .executeShellCommand("pm clear $PACKAGE_NAME")
+            .trim()
+        check(result == "Success") { "Benchmark target data reset failed: $result" }
+    }
+
     fun prepareTarget(device: UiDevice) {
         val intent = Intent().apply {
             component = ComponentName(PACKAGE_NAME, "$PACKAGE_NAME.benchmark.BenchmarkSetupActivity")

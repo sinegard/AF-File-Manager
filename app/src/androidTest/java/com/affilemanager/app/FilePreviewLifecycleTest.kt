@@ -9,6 +9,7 @@ import android.graphics.pdf.PdfDocument
 import android.hardware.usb.UsbManager
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.AnnotatedString
 import androidx.core.graphics.createBitmap
@@ -38,6 +40,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -143,6 +147,10 @@ class FilePreviewLifecycleTest {
                 compose.onAllNodesWithContentDescription(image.name, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithText("Open with another app").assertIsDisplayed()
+            compose.onNodeWithTag("image-zoom-viewport").performTouchInput { doubleClick() }
+            compose.onNodeWithText("200 %").fetchSemanticsNode()
+            compose.onNodeWithTag("image-zoom-viewport").performTouchInput { doubleClick() }
+            compose.onNodeWithText("100 %").fetchSemanticsNode()
             compose.onNodeWithContentDescription("Zoom in").performClick()
             compose.onNodeWithText("125 %").fetchSemanticsNode()
             captureRoot(File(validationRoot, "preview-image-zoomed.png"))
@@ -170,6 +178,35 @@ class FilePreviewLifecycleTest {
             captureRoot(File(validationRoot, "preview-pdf-continuous-page3.png"))
             compose.runOnUiThread { viewModel.closePreview() }
         } finally {
+            fixtureRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun audioPreviewUsesAfSeekAndPlaybackControls() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("preview-audio")), "current")
+        fixtureRoot.deleteRecursively()
+        require(fixtureRoot.mkdirs())
+        val audio = File(fixtureRoot, "controls.wav")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            createWaveAudio(audio)
+            compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(audio)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("audio_player", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("audio_seek").assertIsDisplayed()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    compose.onNodeWithTag("audio_play_pause").assertIsEnabled()
+                    true
+                }.getOrDefault(false)
+            }
+            compose.onNodeWithTag("audio_play_pause").performClick()
+            compose.onNodeWithTag("audio_play_pause").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
             fixtureRoot.deleteRecursively()
         }
     }
@@ -495,6 +532,28 @@ class FilePreviewLifecycleTest {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    private fun createWaveAudio(file: File) {
+        val sampleRate = 8_000
+        val sampleCount = sampleRate
+        val dataBytes = sampleCount * 2
+        val buffer = ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.put("RIFF".toByteArray(Charsets.US_ASCII))
+        buffer.putInt(36 + dataBytes)
+        buffer.put("WAVE".toByteArray(Charsets.US_ASCII))
+        buffer.put("fmt ".toByteArray(Charsets.US_ASCII))
+        buffer.putInt(16)
+        buffer.putShort(1.toShort())
+        buffer.putShort(1.toShort())
+        buffer.putInt(sampleRate)
+        buffer.putInt(sampleRate * 2)
+        buffer.putShort(2.toShort())
+        buffer.putShort(16.toShort())
+        buffer.put("data".toByteArray(Charsets.US_ASCII))
+        buffer.putInt(dataBytes)
+        repeat(sampleCount) { buffer.putShort(0.toShort()) }
+        file.writeBytes(buffer.array())
     }
 
     private fun createExifImage(file: File) {

@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -33,6 +34,7 @@ import androidx.core.view.WindowCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.ViewModelProvider
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.HomeToolPage
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.localization.AppLanguageManager
@@ -95,6 +97,181 @@ class MainActivityTest {
         compose.onNodeWithText("Section order").fetchSemanticsNode()
         compose.onNodeWithText("Add a file or folder shortcut").assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
+    }
+
+    @Test
+    fun unifiedAfDialogUsesTheLargeBatchRenameFrame() {
+        compose.onNodeWithTag("home_customize").performClick()
+        val dialog = compose.onNodeWithTag("home_customization_dialog")
+        val bounds = dialog.fetchSemanticsNode().boundsInRoot
+        val metrics = compose.activity.resources.displayMetrics
+        assertTrue(bounds.width >= metrics.widthPixels * 0.90f)
+        assertTrue(bounds.height >= metrics.heightPixels * 0.80f)
+
+        val artifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "af-unified-dialog.png")
+        artifact.outputStream().use { output ->
+            assertTrue(
+                dialog.captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output),
+            )
+        }
+        assertTrue(artifact.isFile && artifact.length() > 0L)
+        compose.onNodeWithText("Done").performClick()
+    }
+
+    @Test
+    fun homeToolsUseDedicatedAfPagesAndSystemBackReturnsHome() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        compose.runOnUiThread { viewModel.showFilesHome() }
+        compose.onNodeWithText("Tools and security").assertIsDisplayed()
+
+        compose.onNodeWithTag("home_tool_favorites").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == HomeToolPage.FAVORITES }
+        compose.onNodeWithTag("home_tools_page_favorites").assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == null }
+        compose.onNodeWithText("File locations").assertIsDisplayed()
+
+        compose.onNodeWithTag("home_tool_tags").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == HomeToolPage.TAGS }
+        compose.onNodeWithTag("home_tools_page_tags").assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == null }
+    }
+
+    @Test
+    fun localRootOpenedFromHomeDoesNotInheritTheOldFolderHistory() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        compose.runOnUiThread {
+            viewModel.setAdvancedAccessMode(com.affilemanager.app.advanced.AdvancedAccessMode.OFF)
+            viewModel.showFilesHome()
+            viewModel.openRootFromHome(PanelId.LEFT)
+        }
+        compose.waitUntil(timeoutMillis = 10_000) { viewModel.leftPanel.value.path == "/" }
+        compose.runOnIdle { assertTrue(viewModel.leftPanel.value.backHistory.isEmpty()) }
+
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitUntil(timeoutMillis = 5_000) { viewModel.filesHomeVisible.value }
+        compose.onNodeWithText("File locations").assertIsDisplayed()
+    }
+
+    @Test
+    fun folderMenuOpensOneFavoriteLocationsWindowInsteadOfInlineShortcuts() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "favorite-menu-${System.nanoTime()}").apply { mkdirs() }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, directory.absolutePath, rememberHistory = false) }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.path == directory.absolutePath }
+            if (directory.absolutePath !in viewModel.favorites.value) {
+                compose.onAllNodesWithContentDescription("Folder actions")[0].performClick()
+                compose.onNodeWithText("Add to favorites").performClick()
+                compose.waitUntil(timeoutMillis = 5_000) { directory.absolutePath in viewModel.favorites.value }
+            }
+
+            compose.onAllNodesWithContentDescription("Folder actions")[0].performClick()
+            compose.onNodeWithTag("open_favorites_LEFT").performClick()
+            compose.onNodeWithTag("favorite_locations_dialog").assertIsDisplayed()
+            compose.onNodeWithTag("favorite_location_${directory.absolutePath.hashCode()}").assertIsDisplayed()
+            compose.onNodeWithText("Close").performClick()
+        } finally {
+            compose.runOnUiThread {
+                if (directory.absolutePath in viewModel.favorites.value) viewModel.toggleFavorite(directory.absolutePath)
+            }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun entryThreeDotMenuOpensTagsForOnlyThatEntry() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "tag-menu-${System.nanoTime()}").apply { mkdirs() }
+        val target = File(directory, "issue-108.txt").apply { writeText("AF") }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, directory.absolutePath, rememberHistory = false) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                viewModel.leftPanel.value.entries.any { it.absolutePath == target.absolutePath }
+            }
+
+            compose.onNodeWithContentDescription("File actions: ${target.name}").performClick()
+            compose.onNodeWithTag("tag_entry_action").performClick()
+            val dialog = compose.onNodeWithTag("tag_dialog").assertIsDisplayed()
+            val bounds = dialog.fetchSemanticsNode().boundsInRoot
+            val metrics = compose.activity.resources.displayMetrics
+            assertTrue(bounds.width >= metrics.widthPixels * 0.90f)
+            assertTrue(bounds.height >= metrics.heightPixels * 0.80f)
+            compose.runOnIdle {
+                assertEquals(setOf(target.absolutePath), viewModel.leftPanel.value.selectedPaths)
+            }
+            compose.onNodeWithText("Cancel").performClick()
+        } finally {
+            compose.runOnUiThread { viewModel.clearSelection(PanelId.LEFT) }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun entryAndSelectionMenusExposeCopyMoveAndFavoritesActions() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "issue-108-actions-${System.nanoTime()}").apply { mkdirs() }
+        val first = File(directory, "first.txt").apply { writeText("one") }
+        val second = File(directory, "second.txt").apply { writeText("two") }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, directory.absolutePath, rememberHistory = false) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                viewModel.leftPanel.value.entries.count { it.absolutePath == first.absolutePath || it.absolutePath == second.absolutePath } == 2
+            }
+
+            compose.onNodeWithContentDescription("File actions: ${first.name}").performClick()
+            compose.onNodeWithTag("copy_entry_action").assertIsDisplayed()
+            compose.onNodeWithTag("move_entry_action").assertIsDisplayed()
+            compose.onNodeWithTag("favorite_entry_action").assertIsDisplayed()
+            compose.onNodeWithTag("copy_entry_action").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.clipboard.value?.paths == listOf(first.absolutePath) }
+            compose.runOnUiThread { viewModel.clearAfClipboard() }
+
+            compose.onNodeWithContentDescription("File actions: ${first.name}").performClick()
+            compose.onNodeWithTag("favorite_entry_action").assertIsDisplayed().performClick()
+            compose.waitUntil(timeoutMillis = 5_000) { first.absolutePath in viewModel.favorites.value }
+            compose.runOnUiThread {
+                viewModel.toggleFavorite(first.absolutePath)
+                viewModel.selectPaths(PanelId.LEFT, listOf(first.absolutePath, second.absolutePath))
+            }
+            compose.onNodeWithTag("selection_favorite_local").assertIsDisplayed().performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                first.absolutePath in viewModel.favorites.value && second.absolutePath in viewModel.favorites.value
+            }
+        } finally {
+            compose.runOnUiThread {
+                viewModel.clearAfClipboard()
+                viewModel.clearSelection(PanelId.LEFT)
+                listOf(first, second).forEach { file ->
+                    if (file.absolutePath in viewModel.favorites.value) viewModel.toggleFavorite(file.absolutePath)
+                }
+            }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun createDialogUsesTheSharedLargeAfFrame() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "issue-106-create-${System.nanoTime()}").apply { mkdirs() }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, directory.absolutePath, rememberHistory = false) }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.leftPanel.value.path == directory.absolutePath }
+            compose.onAllNodesWithTag("create_local_item")[0].performClick()
+            val dialog = compose.onNodeWithTag("create_item_dialog").assertIsDisplayed()
+            val bounds = dialog.fetchSemanticsNode().boundsInRoot
+            val metrics = compose.activity.resources.displayMetrics
+            assertTrue(bounds.width >= metrics.widthPixels * 0.90f)
+            assertTrue(bounds.height >= metrics.heightPixels * 0.80f)
+            val artifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "issue-106-create-dialog.png")
+            artifact.outputStream().use { output ->
+                assertTrue(dialog.captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output))
+            }
+            compose.onNodeWithText("Close").performClick()
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test
@@ -423,7 +600,7 @@ class MainActivityTest {
         compose.runOnUiThread { viewModel.openAfWorkflowCenter() }
 
         compose.onNodeWithTag("af_plans_list").fetchSemanticsNode()
-        compose.onNodeWithText("AF Plans").fetchSemanticsNode()
+        assertTrue(compose.onAllNodesWithText("AF Plans").fetchSemanticsNodes().isNotEmpty())
         compose.onNodeWithText("Timeline").performClick()
         compose.onNodeWithTag("af_timeline_list").fetchSemanticsNode()
         compose.onNodeWithText("Where did my file go?").fetchSemanticsNode()
@@ -436,34 +613,34 @@ class MainActivityTest {
     }
 
     @Test
-    fun homeLayoutButtonTogglesAndLongPressOpensFourToSixColumnSettings() {
+    fun homeLayoutButtonTogglesAndLongPressOpensOneToThreeColumnSettings() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         try {
             compose.runOnUiThread {
                 viewModel.setSection(AppSection.FILES)
                 viewModel.setFilesHomeDisplaySettings(
-                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 4),
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
                 )
             }
-            compose.onNodeWithTag("home_layout_toggle").performClick()
+            compose.onNodeWithTag("home_layout_toggle").performScrollTo().performClick()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.filesHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.GRID
             }
 
-            compose.onNodeWithTag("home_layout_toggle").performTouchInput { longClick() }
+            compose.onNodeWithTag("home_layout_toggle").performScrollTo().performTouchInput { longClick() }
             compose.onNodeWithTag("display_settings_dialog").fetchSemanticsNode()
-            compose.onNodeWithTag("display_grid_columns_4").fetchSemanticsNode()
-            compose.onNodeWithTag("display_grid_columns_5").fetchSemanticsNode()
-            compose.onNodeWithTag("display_grid_columns_6").performClick()
+            compose.onNodeWithTag("display_grid_columns_1").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_2").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_3").performClick()
             compose.onNodeWithTag("display_apply").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
-                viewModel.filesHomeDisplaySettings.value.gridColumns == 6
+                viewModel.filesHomeDisplaySettings.value.gridColumns == 3
             }
         } finally {
             compose.runOnUiThread {
                 viewModel.setFilesHomeDisplaySettings(
-                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 4),
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
                 )
             }
         }
@@ -628,7 +805,7 @@ class MainActivityTest {
                 viewModel.leftPanel.value.path == directory.canonicalPath && !viewModel.leftPanel.value.loading
             }
 
-            compose.onNodeWithTag("create_local_item").performClick()
+            compose.onAllNodesWithTag("create_local_item")[0].performClick()
             compose.onNodeWithTag("create_type_folder").assertIsSelected()
             compose.onNodeWithTag("create_type_file").assertIsNotSelected().performClick().assertIsSelected()
             compose.onNodeWithTag("create_type_folder").assertIsNotSelected()
@@ -793,7 +970,7 @@ class MainActivityTest {
                 viewModel.setThemeMode(AppThemeMode.LIGHT)
                 viewModel.setColorPalette(AppColorPalette.DYNAMIC)
             }
-            val expectedLight = dynamicLightColorScheme(compose.activity).surfaceContainer.toArgb()
+            val expectedLight = dynamicLightColorScheme(compose.activity).surface.toArgb()
             compose.waitUntil(timeoutMillis = 5_000) {
                 val settings = viewModel.appearanceSettings.value
                 settings.themeMode == AppThemeMode.LIGHT && settings.colorPalette == AppColorPalette.DYNAMIC
@@ -810,7 +987,7 @@ class MainActivityTest {
             )
 
             compose.runOnUiThread { viewModel.setThemeMode(AppThemeMode.DARK) }
-            val expectedDark = dynamicDarkColorScheme(compose.activity).surfaceContainer.toArgb()
+            val expectedDark = dynamicDarkColorScheme(compose.activity).surface.toArgb()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.appearanceSettings.value.themeMode == AppThemeMode.DARK
             }

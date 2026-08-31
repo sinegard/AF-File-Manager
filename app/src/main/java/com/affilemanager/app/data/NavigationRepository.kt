@@ -82,7 +82,12 @@ class NavigationRepository(context: Context) {
         val item = JSONObject(raw)
         val sections = item.optJSONArray("sections")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
-                runCatching { HomeSection.valueOf(array.getString(index)) }.getOrNull()
+                when (val stored = array.getString(index)) {
+                    // v0.28 and older stored these as three separate home sections.
+                    // They now share one AF tools section, while retaining the first saved position.
+                    "TRASH", "FAVORITES", "TAGS" -> HomeSection.TOOLS
+                    else -> runCatching { HomeSection.valueOf(stored) }.getOrNull()
+                }
             }
         }.orEmpty()
         val shortcuts = item.optJSONArray("shortcuts")?.let { array ->
@@ -141,6 +146,14 @@ class NavigationRepository(context: Context) {
         require(updated.size <= MAX_FAVORITES) { "Žymų riba viršyta" }
         writeStringArray(KEY_FAVORITES, updated)
         return updated
+    }
+
+    fun addFavorites(paths: Collection<String>): List<String> {
+        val existing = favorites()
+        val updated = LinkedHashSet(existing)
+        paths.forEach { path -> updated += File(path).canonicalPath }
+        require(updated.size <= MAX_FAVORITES) { "Nustatymų elementų riba viršyta" }
+        return updated.toList().also { writeStringArray(KEY_FAVORITES, it) }
     }
 
     fun recents(): List<RecentItem> {

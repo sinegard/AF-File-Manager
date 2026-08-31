@@ -13,10 +13,10 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.pdf.PdfRenderer
 import android.media.MediaMetadataRetriever
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import android.widget.MediaController
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +24,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +61,11 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAs
@@ -77,15 +83,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -96,6 +106,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -163,6 +174,13 @@ private val pdfRenderPermits = Semaphore(1)
 private data class PdfDocumentInfo(val pageAspectRatios: List<Float>) {
     val pageCount: Int get() = pageAspectRatios.size
 }
+
+private data class MediaPreviewInfo(
+    val durationMillis: Long,
+    val mimeType: String?,
+    val bitRate: String?,
+    val artwork: Bitmap?,
+)
 
 @Composable
 fun FilePreviewDialog(
@@ -526,6 +544,7 @@ private fun ImagePreview(source: PreviewSource) {
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     var offset by remember(source.key) { mutableStateOf(Offset.Zero) }
     var viewportSize by remember(source.key) { mutableStateOf(IntSize.Zero) }
+    val currentScale by rememberUpdatedState(scale)
     @Suppress("DEPRECATION")
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         val nextScale = PreviewZoomRules.clamp(scale * zoomChange, PreviewZoomRules.IMAGE_MAX_SCALE)
@@ -553,6 +572,13 @@ private fun ImagePreview(source: PreviewSource) {
                             .background(MaterialTheme.colorScheme.surfaceContainer)
                             .testTag("image-zoom-viewport")
                             .onSizeChanged { viewportSize = it }
+                            .pointerInput(source.key) {
+                                detectTapGestures(
+                                    onDoubleTap = {
+                                        updateScale(if (currentScale > PreviewZoomRules.MIN_SCALE) PreviewZoomRules.MIN_SCALE else 2f)
+                                    },
+                                )
+                            }
                             .transformable(
                                 state = transformState,
                                 canPan = { scale > PreviewZoomRules.MIN_SCALE },
@@ -746,41 +772,265 @@ private fun PreviewLoadError(error: Throwable) {
 @Composable
 private fun MediaPreview(source: PreviewSource) {
     val context = LocalContext.current
-    val metadata by produceState(initialValue = emptyList<Pair<String, String>>(), source.key) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                val retriever = MediaMetadataRetriever()
-                try {
-                    source.localFile?.let { retriever.setDataSource(it.absolutePath) }
-                        ?: retriever.setDataSource(context, source.uri(context))
-                    listOfNotNull(
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { "Trukmė" to "${it / 1_000} s" },
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)?.let { "Tipas" to it },
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.let { "Bitų sparta" to it },
-                    )
-                } finally {
-                    retriever.release()
-                }
-            }.getOrDefault(emptyList())
+    val infoResult by produceState<Result<MediaPreviewInfo>?>(initialValue = null, source.key) {
+        value = withContext(Dispatchers.IO) { runCatching { mediaPreviewInfo(context, source) } }
+    }
+    when (val loaded = infoResult) {
+        null -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        else -> {
+            val info = loaded.getOrNull()
+            if (info == null) {
+                PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
+            } else if (source.kind == EntryKind.AUDIO) {
+                AudioPreview(source, info)
+            } else {
+                VideoPreview(source, info)
+            }
         }
     }
-    Column(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { context ->
-                VideoView(context).apply {
-                    val controls = MediaController(context)
-                    controls.setAnchorView(this)
-                    setMediaController(controls)
-                    setVideoURI(source.localFile?.let(Uri::fromFile) ?: source.uri(context))
-                    setOnPreparedListener { seekTo(1) }
+}
+
+@Composable
+private fun AudioPreview(source: PreviewSource, info: MediaPreviewInfo) {
+    val context = LocalContext.current
+    var player by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
+    var prepared by remember(source.key) { mutableStateOf(false) }
+    var playing by remember(source.key) { mutableStateOf(false) }
+    var positionMillis by remember(source.key) { mutableLongStateOf(0L) }
+    var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
+    var playbackError by remember(source.key) { mutableStateOf(false) }
+
+    DisposableEffect(source.key) {
+        val created = MediaPlayer()
+        player = created
+        runCatching {
+            setMediaDataSource(created, context, source)
+            created.setOnPreparedListener { ready ->
+                durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
+                prepared = true
+                playbackError = false
+            }
+            created.setOnCompletionListener {
+                playing = false
+                positionMillis = durationMillis
+            }
+            created.setOnErrorListener { _, _, _ ->
+                playing = false
+                prepared = false
+                playbackError = true
+                true
+            }
+            created.prepareAsync()
+        }.onFailure { playbackError = true }
+        onDispose {
+            runCatching { created.stop() }
+            created.release()
+        }
+    }
+    LaunchedEffect(player, prepared) {
+        while (prepared) {
+            player?.let { active ->
+                positionMillis = runCatching { active.currentPosition.toLong() }.getOrDefault(positionMillis)
+                playing = runCatching { active.isPlaying }.getOrDefault(false)
+            }
+            delay(if (playing) 250L else 600L)
+        }
+    }
+
+    if (playbackError) {
+        PreviewLoadError(IllegalStateException())
+        return
+    }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp).testTag("audio_player"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Top,
+    ) {
+        Surface(
+            modifier = Modifier.size(240.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        ) {
+            val artwork = info.artwork
+            if (artwork != null) {
+                Image(
+                    bitmap = artwork.asImageBitmap(),
+                    contentDescription = source.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.MusicNote, contentDescription = null, modifier = Modifier.size(92.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+        Text(
+            source.name,
+            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        PlaybackControls(
+            prefix = "audio",
+            prepared = prepared,
+            playing = playing,
+            positionMillis = positionMillis,
+            durationMillis = durationMillis,
+            onToggle = {
+                player?.let { active ->
+                    if (playing) active.pause() else {
+                        if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
+                        active.start()
+                    }
+                    playing = active.isPlaying
                 }
             },
-            modifier = Modifier.fillMaxWidth().weight(1f).background(androidx.compose.ui.graphics.Color.Black),
+            onSeek = { requested ->
+                positionMillis = requested
+                player?.seekTo(requested.toInt())
+            },
         )
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-            metadata.forEach { (label, value) -> PropertyRow(label, value) }
+        MediaPropertyRows(info)
+    }
+}
+
+@Composable
+private fun VideoPreview(source: PreviewSource, info: MediaPreviewInfo) {
+    val context = LocalContext.current
+    var videoView by remember(source.key) { mutableStateOf<VideoView?>(null) }
+    var prepared by remember(source.key) { mutableStateOf(false) }
+    var playing by remember(source.key) { mutableStateOf(false) }
+    var positionMillis by remember(source.key) { mutableLongStateOf(0L) }
+    var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
+    var playbackError by remember(source.key) { mutableStateOf(false) }
+
+    DisposableEffect(source.key) {
+        onDispose { runCatching { videoView?.stopPlayback() } }
+    }
+    LaunchedEffect(videoView, prepared) {
+        while (prepared) {
+            videoView?.let { active ->
+                positionMillis = runCatching { active.currentPosition.toLong() }.getOrDefault(positionMillis)
+                playing = runCatching { active.isPlaying }.getOrDefault(false)
+            }
+            delay(if (playing) 250L else 600L)
         }
     }
+
+    Column(modifier = Modifier.fillMaxSize().testTag("video_player")) {
+        Box(modifier = Modifier.fillMaxWidth().weight(1f).background(androidx.compose.ui.graphics.Color.Black)) {
+            AndroidView(
+                factory = { viewContext ->
+                    VideoView(viewContext).apply {
+                        videoView = this
+                        setOnPreparedListener { ready ->
+                            durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
+                            prepared = true
+                            playbackError = false
+                            seekTo(1)
+                        }
+                        setOnCompletionListener {
+                            playing = false
+                            positionMillis = durationMillis
+                        }
+                        setOnErrorListener { _, _, _ ->
+                            playing = false
+                            prepared = false
+                            playbackError = true
+                            true
+                        }
+                        setVideoURI(source.localFile?.let(Uri::fromFile) ?: source.uri(context))
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (!prepared && !playbackError) CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            if (playbackError) PreviewLoadError(IllegalStateException())
+        }
+        PlaybackControls(
+            prefix = "video",
+            prepared = prepared,
+            playing = playing,
+            positionMillis = positionMillis,
+            durationMillis = durationMillis,
+            onToggle = {
+                videoView?.let { active ->
+                    if (playing) active.pause() else {
+                        if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
+                        active.start()
+                    }
+                    playing = active.isPlaying
+                }
+            },
+            onSeek = { requested ->
+                positionMillis = requested
+                videoView?.seekTo(requested.toInt())
+            },
+        )
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+            MediaPropertyRows(info)
+        }
+    }
+}
+
+@Composable
+private fun PlaybackControls(
+    prefix: String,
+    prepared: Boolean,
+    playing: Boolean,
+    positionMillis: Long,
+    durationMillis: Long,
+    onToggle: () -> Unit,
+    onSeek: (Long) -> Unit,
+) {
+    val progress = MediaPlaybackRules.progress(positionMillis, durationMillis)
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Slider(
+            value = progress,
+            onValueChange = { onSeek(MediaPlaybackRules.positionForProgress(it, durationMillis)) },
+            enabled = prepared && durationMillis > 0L,
+            modifier = Modifier.fillMaxWidth().testTag("${prefix}_seek"),
+        )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(MediaPlaybackRules.timeLabel(positionMillis), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.weight(1f))
+            Text(MediaPlaybackRules.timeLabel(durationMillis), style = MaterialTheme.typography.labelSmall)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(
+                onClick = { onSeek(MediaPlaybackRules.skippedPosition(positionMillis, durationMillis, -MediaPlaybackRules.SKIP_MILLIS)) },
+                enabled = prepared,
+            ) { Icon(Icons.Rounded.Replay10, contentDescription = uiText("Atgal")) }
+            FilledTonalButton(
+                onClick = onToggle,
+                enabled = prepared,
+                modifier = Modifier.padding(horizontal = 14.dp).testTag("${prefix}_play_pause"),
+            ) {
+                Icon(
+                    if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = uiText(if (playing) "Pauzė" else "Paleisti"),
+                )
+            }
+            IconButton(
+                onClick = { onSeek(MediaPlaybackRules.skippedPosition(positionMillis, durationMillis, MediaPlaybackRules.SKIP_MILLIS)) },
+                enabled = prepared,
+            ) { Icon(Icons.Rounded.Forward10, contentDescription = uiText("Pirmyn")) }
+        }
+    }
+}
+
+@Composable
+private fun MediaPropertyRows(info: MediaPreviewInfo) {
+    PropertyRow("Trukmė", MediaPlaybackRules.timeLabel(info.durationMillis))
+    info.mimeType?.let { PropertyRow("Tipas", it) }
+    info.bitRate?.let { PropertyRow("Bitų sparta", it) }
 }
 
 @Composable
@@ -1379,6 +1629,42 @@ private fun PropertyRow(label: String, value: String) {
         Text(value, modifier = Modifier.weight(0.65f), style = MaterialTheme.typography.bodyMedium)
     }
     HorizontalDivider()
+}
+
+private fun mediaPreviewInfo(context: android.content.Context, source: PreviewSource): MediaPreviewInfo {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        source.localFile?.let { retriever.setDataSource(it.absolutePath) }
+            ?: retriever.setDataSource(context, source.uri(context))
+        MediaPreviewInfo(
+            durationMillis = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE),
+            bitRate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE),
+            artwork = retriever.embeddedPicture
+                ?.takeIf { it.size <= 8 * 1_024 * 1_024 }
+                ?.let(::decodeMediaArtwork),
+        )
+    } finally {
+        retriever.release()
+    }
+}
+
+private fun decodeMediaArtwork(bytes: ByteArray): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / sample > 1_024 || bounds.outHeight / sample > 1_024) sample *= 2
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+}
+
+private fun setMediaDataSource(
+    player: MediaPlayer,
+    context: android.content.Context,
+    source: PreviewSource,
+) {
+    source.localFile?.let { player.setDataSource(it.absolutePath) }
+        ?: player.setDataSource(context, source.uri(context))
 }
 
 private fun pdfDocumentInfo(context: android.content.Context, source: PreviewSource): PdfDocumentInfo =

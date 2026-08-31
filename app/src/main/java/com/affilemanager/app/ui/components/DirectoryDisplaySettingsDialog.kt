@@ -3,6 +3,7 @@ package com.affilemanager.app.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -10,7 +11,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.rounded.GridView
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,14 +59,46 @@ fun DirectoryDisplaySettingsDialog(
     }
     var draftSortMode by remember(initialSortMode) { mutableStateOf(initialSortMode ?: SortMode.NAME) }
     var draftSortDirection by remember(initialSortDirection) { mutableStateOf(initialSortDirection) }
-    AlertDialog(
+    AfModalDialog(
+        title = "Rodinio nustatymai",
+        icon = Icons.Rounded.GridView,
         onDismissRequest = onDismiss,
-        title = { LText("Rodinio nustatymai") },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("display_settings_dialog"),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
+        modifier = Modifier.testTag("display_settings_dialog"),
+        actions = {
+            TextButton(
+                onClick = {
+                    draft = DirectoryDisplaySettings(gridColumns = gridColumnRange.first, showThumbnails = false)
+                    draftSortMode = SortMode.NAME
+                    draftSortDirection = SortDirection.ASCENDING
+                },
+            ) { LText("Atstatyti") }
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            onApplyToAll?.let { applyToAll ->
+                TextButton(
+                    onClick = {
+                        applyToAll(
+                            DirectoryDisplayRules.requireValid(draft),
+                            initialSortMode?.let { draftSortMode },
+                            draftSortDirection,
+                        )
+                    },
+                    modifier = Modifier.testTag("display_apply_all"),
+                ) {
+                    LText("Taikyti visiems")
+                }
+            }
+            TextButton(onClick = {
+                onApply(DirectoryDisplayRules.requireValid(draft))
+                if (initialSortMode != null) onApplySort?.invoke(draftSortMode, draftSortDirection)
+            }, modifier = Modifier.testTag("display_apply")) {
+                LText("Taikyti")
+            }
+        },
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
                 LText("Išdėstymas", fontWeight = FontWeight.SemiBold)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -191,45 +223,8 @@ fun DirectoryDisplaySettingsDialog(
                         )
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Row {
-                onApplyToAll?.let { applyToAll ->
-                    TextButton(
-                        onClick = {
-                            applyToAll(
-                                DirectoryDisplayRules.requireValid(draft),
-                                initialSortMode?.let { draftSortMode },
-                                draftSortDirection,
-                            )
-                        },
-                        modifier = Modifier.testTag("display_apply_all"),
-                    ) {
-                        LText("Taikyti visiems")
-                    }
-                }
-                TextButton(onClick = {
-                    onApply(DirectoryDisplayRules.requireValid(draft))
-                    if (initialSortMode != null) onApplySort?.invoke(draftSortMode, draftSortDirection)
-                }, modifier = Modifier.testTag("display_apply")) {
-                    LText("Taikyti")
-                }
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(
-                    onClick = {
-                        draft = DirectoryDisplaySettings(gridColumns = gridColumnRange.first, showThumbnails = false)
-                        draftSortMode = SortMode.NAME
-                        draftSortDirection = SortDirection.ASCENDING
-                    },
-                ) { LText("Atstatyti") }
-                TextButton(onClick = onDismiss) { LText("Atšaukti") }
-            }
-        },
-    )
+        }
+    }
 }
 
 private fun directorySortLabel(mode: SortMode): String = when (mode) {

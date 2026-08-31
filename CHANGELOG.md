@@ -4,6 +4,26 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-08-31
+
+### Added
+
+- Dedicated Favorites and Tags browsers under a single Tools section on the Files home screen.
+- Image zoom controls, continuous PDF page scrolling, and clearer video and audio playback controls.
+- Quick access to favorite locations and viewing history from the active folder menu.
+- Copy, move, tags, and favorite actions in each local file menu, plus an Add to favorites action for a multi-file selection.
+
+### Changed
+
+- Storage, Quick locations, and Tools now use a clearer three-row home layout with configurable list or grid presentation.
+- Large forms, selectors, file information, connection setup, create, rename, transfer, tagging, sharing, and storage-selection windows now use AF's shared full-size dialog layout.
+- Tab and file action menus now use consistent, descriptive icons, including a distinct Installed apps shortcut icon.
+
+### Fixed
+
+- Back from a root folder opened directly from Files home now returns to Files home instead of an unrelated storage screen.
+- Media preview controls now remain usable without obscuring the viewed content.
+
 ## [0.28.0] - 2026-08-30
 
 ### Added
@@ -66,6 +86,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 English and Lithuanian are maintained directly. The other bundled translations were generated offline and may still need corrections from native speakers.
 
+[0.29.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.25.4...v0.26.0

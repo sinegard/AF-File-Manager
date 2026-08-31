@@ -24,15 +24,19 @@ class AfMacrobenchmark {
     @get:Rule
     val benchmarkRule = MacrobenchmarkRule()
 
-    private lateinit var ftp: LoopbackFtpServer
+    private var ftp: LoopbackFtpServer? = null
 
     @Before
     fun prepare() {
+        AfBenchmarkEnvironment.resetTargetData()
         ftp = LoopbackFtpServer().also { it.start() }
     }
 
     @After
-    fun close() = ftp.close()
+    fun close() {
+        ftp?.close()
+        ftp = null
+    }
 
     @Test
     fun coldStartAndFirstPaint() = benchmarkRule.measureRepeated(
