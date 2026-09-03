@@ -2,13 +2,17 @@ package com.affilemanager.app.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,8 +31,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.ui.localization.LText
 
 /**
- * AF's shared large-dialog structure. It originates from the app's batch-rename workflow and
- * keeps long forms, lists, and their actions predictable without imitating another product.
+ * AF's adaptive dialog structure. Short forms wrap their content while long lists and forms use
+ * the available height, keeping actions predictable without imitating another product.
  */
 @Composable
 fun AfModalDialog(
@@ -39,6 +43,7 @@ fun AfModalDialog(
     subtitle: String? = null,
     translateTitle: Boolean = true,
     showFooter: Boolean = true,
+    expandedContent: Boolean = false,
     actions: @Composable () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -46,61 +51,73 @@ fun AfModalDialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .fillMaxHeight(0.92f)
-                .then(modifier),
-            shape = MaterialTheme.shapes.extraLarge,
-            tonalElevation = 6.dp,
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Icon(icon, contentDescription = null)
-                    Column(modifier = Modifier.weight(1f)) {
-                        if (translateTitle) {
-                            LText(
-                                title,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        } else {
-                            Text(
-                                title,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+        // Keep the dialog window fitted to its surface so Android can still dismiss
+        // an outside tap; a full-screen wrapper consumes that tap as dialog content.
+        BoxWithConstraints(modifier = Modifier.imePadding(), contentAlignment = Alignment.Center) {
+            val maximumDialogHeight = maxHeight * 0.92f
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 760.dp)
+                    .fillMaxWidth(0.94f)
+                    .then(
+                        if (expandedContent) Modifier.height(maximumDialogHeight)
+                        else Modifier.heightIn(max = maximumDialogHeight),
+                    )
+                    .then(modifier),
+                shape = MaterialTheme.shapes.extraLarge,
+                tonalElevation = 6.dp,
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(icon, contentDescription = null)
+                        Column(modifier = Modifier.weight(1f)) {
+                            if (translateTitle) {
+                                LText(
+                                    title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            } else {
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            subtitle?.let {
+                                LText(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
-                        subtitle?.let {
-                            LText(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                        TextButton(onClick = onDismissRequest) { LText("Uždaryti") }
                     }
-                    TextButton(onClick = onDismissRequest) { LText("Uždaryti") }
-                }
-                HorizontalDivider()
-                Box(modifier = Modifier.fillMaxWidth().weight(1f), content = content)
-                if (showFooter) {
                     HorizontalDivider()
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        horizontalArrangement = Arrangement.End,
-                        itemVerticalAlignment = Alignment.CenterVertically,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) { actions() }
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f, fill = expandedContent),
+                        content = content,
+                    )
+                    if (showFooter) {
+                        HorizontalDivider()
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.End,
+                            itemVerticalAlignment = Alignment.CenterVertically,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) { actions() }
+                    }
                 }
             }
         }

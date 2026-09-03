@@ -21,6 +21,7 @@ import java.io.InputStream
 import java.time.Duration
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 
 internal fun webDavScheme(profile: NetworkProfile): String = if (profile.webDavUseTls) "https" else "http"
 
@@ -54,6 +55,11 @@ class WebDavRemoteClient private constructor(
                 val remote = WebDavRemoteClient(client, baseUrl, auth)
                 remote.list(profile.basePath)
                 remote
+            } catch (error: Throwable) {
+                client.dispatcher.cancelAll()
+                client.dispatcher.executorService.shutdown()
+                client.connectionPool.evictAll()
+                throw error
             } finally {
                 password.fill('\u0000')
             }
@@ -70,7 +76,7 @@ class WebDavRemoteClient private constructor(
         """.trimIndent().toRequestBody(XML)
         execute(
             Request.Builder()
-                .url(url(normalized))
+                .url(url(normalized, directory = true))
                 .header("Depth", "1")
                 .method("PROPFIND", body)
                 .build(),
@@ -79,7 +85,10 @@ class WebDavRemoteClient private constructor(
             val contentLength = response.body?.contentLength() ?: -1
             require(contentLength < 0 || contentLength <= MAX_XML_BYTES) { "WebDAV atsakymas per didelis" }
             val stream = LimitedInputStream(requireNotNull(response.body).byteStream(), MAX_XML_BYTES)
-            parseMultiStatus(stream, normalized)
+            // A server may canonicalize its collection path. Do not show the collection itself
+            // as a child when parsing a listing received after that redirect.
+            val resolvedPath = "/" + response.request.url.pathSegments.joinToString("/")
+            parseMultiStatus(stream, resolvedPath)
         }
     }
 
@@ -190,23 +199,37 @@ class WebDavRemoteClient private constructor(
     }
 
     private fun execute(request: Request, expected: Set<Int>): Response {
-        val authenticated = request.newBuilder()
+        var authenticated = request.newBuilder()
             .header("Authorization", authorization)
             .header("User-Agent", "AFFileManager/${BuildConfig.VERSION_NAME}")
             .build()
-        val response = client.newCall(authenticated).execute()
-        if (response.code !in expected) {
-            response.close()
-            throw IllegalStateException("WebDAV serveris grąžino HTTP ${response.code}")
+        var followed = 0
+        while (true) {
+            val call = client.newCall(authenticated)
+            // Bound metadata responses, but do not abort healthy large file transfers
+            // merely because they take longer than a directory listing.
+            if (authenticated.method == "PROPFIND") call.timeout().timeout(45, TimeUnit.SECONDS)
+            val response = call.execute()
+            if (response.code in expected) return response
+            response.use {
+                if (response.code in 300..399) {
+                    val target = WebDavRedirects.next(authenticated, response.code, response.header("Location"), followed)
+                    // newBuilder preserves PROPFIND, its XML body and Depth rather than changing
+                    // a 301/302 response into an unrelated GET. Credentials stay on this origin.
+                    authenticated = authenticated.newBuilder().url(target).build()
+                    followed += 1
+                } else {
+                    throw WebDavHttpException(response.code)
+                }
+            }
         }
-        return response
     }
 
-    private fun url(path: String): HttpUrl {
+    private fun url(path: String, directory: Boolean = false): HttpUrl {
         val normalized = RemotePath.normalize(path)
         val builder = baseUrl.newBuilder()
         normalized.trim('/').split('/').filter(String::isNotEmpty).forEach(builder::addPathSegment)
-        if (normalized.endsWith('/')) builder.addPathSegment("")
+        if (directory && normalized != "/") builder.addPathSegment("")
         return builder.build()
     }
 

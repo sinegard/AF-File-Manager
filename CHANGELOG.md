@@ -4,6 +4,22 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-03
+
+### Changed
+
+- Storage, Quick locations, Favorites, and Tags now remember their own display settings. Quick locations supports up to six columns, with icons aligned across short and long names.
+- Small dialogs fit their content; longer forms still scroll and keep their actions above the keyboard. Tapping outside a dialog cancels without applying unfinished changes.
+
+### Fixed
+
+- WebDAV collection addresses keep their trailing slash. Safe redirects within the same server now work, including the `/dav/` redirect used by InfiniCLOUD.
+- WebDAV errors show the HTTP status and useful connection or path guidance without exposing credentials. Connection help also uses the selected interface language.
+- Opening a terminal from a root folder no longer closes the app. An active Root or Shizuku backend provides the terminal in that folder; unavailable access is explained clearly.
+- Shizuku reconnects cleanly when its access mode is switched off and on again.
+- Root folder discovery includes more device-specific entries when Android restricts ordinary directory listing.
+- Folder-unavailable and unchanged-value labels no longer appear in Lithuanian when English is selected.
+
 ## [0.29.0] - 2026-08-31
 
 ### Added
@@ -86,6 +102,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 English and Lithuanian are maintained directly. The other bundled translations were generated offline and may still need corrections from native speakers.
 
+[0.30.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.26.0...v0.27.0

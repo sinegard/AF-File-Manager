@@ -3,6 +3,7 @@ package com.affilemanager.app.ui
 import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
+import com.affilemanager.app.terminal.CapturedTerminalOutput
 import com.affilemanager.app.terminal.TerminalBackend
 import com.affilemanager.app.terminal.TerminalKeepAliveService
 import com.affilemanager.app.terminal.TerminalLimits
@@ -32,6 +33,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 enum class TerminalLocation {
     PHONE,
+    PRIVILEGED,
     SERVER,
 }
 
@@ -229,8 +231,10 @@ class TerminalSessionStore(
         clipboardTextSnapshot = readClipboardText()
     }
 
+    internal fun lastCommandOutput(): CapturedTerminalOutput? = session?.lastCommandOutput()
+
     fun copyLastOutput() {
-        val output = session?.lastCommandOutput()
+        val output = lastCommandOutput()
         when {
             output == null -> _notices.tryEmit("Nėra terminalo išvesties, kurią būtų galima kopijuoti")
             output.truncated || output.text.toByteArray(Charsets.UTF_8).size > TerminalLimits.MAX_CLIPBOARD_COPY_BYTES ->
@@ -239,7 +243,7 @@ class TerminalSessionStore(
         }
     }
 
-    fun hasCopyableLastOutput(): Boolean = session?.lastCommandOutput()?.let { output ->
+    fun hasCopyableLastOutput(): Boolean = lastCommandOutput()?.let { output ->
         !output.truncated &&
             output.text.isNotBlank() &&
             output.text.toByteArray(Charsets.UTF_8).size <= TerminalLimits.MAX_CLIPBOARD_COPY_BYTES
@@ -257,7 +261,7 @@ class TerminalSessionStore(
         session?.modifiers?.toggleAlt()
     }
 
-    fun closeNow() {
+    fun closeNow(stopKeepAlive: Boolean = true) {
         val sessionToClose: TerminalSessionController?
         val jobToCancel: Job?
         synchronized(lock) {
@@ -271,7 +275,7 @@ class TerminalSessionStore(
         }
         jobToCancel?.cancel()
         if (sessionToClose != null) scope.launch { sessionToClose.close() }
-        TerminalKeepAliveService.stop(application)
+        if (stopKeepAlive) TerminalKeepAliveService.stop(application)
     }
 
     private fun handleTransportEnded(currentRequest: Long, transportError: String?) {

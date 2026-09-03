@@ -7,6 +7,17 @@ enum class HomeSection {
     RECENT_FILES,
 }
 
+/**
+ * Display settings are deliberately scoped to the surface the user is looking at. Changing the
+ * storage cards must not silently change Quick locations, Favorites, or Tags.
+ */
+enum class HomeDisplayArea {
+    STORAGE,
+    QUICK_LOCATIONS,
+    FAVORITES,
+    TAGS,
+}
+
 data class HomeShortcut(
     val id: String,
     val title: String,

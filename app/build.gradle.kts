@@ -22,8 +22,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
-        versionName = "0.29.0"
+        versionCode = 46
+        versionName = "0.30.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -66,6 +66,15 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
         create("benchmark") {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
@@ -82,15 +91,6 @@ android {
             // separately minified benchmark variant above.
             isMinifyEnabled = false
             isShrinkResources = false
-        }
-        release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            signingConfig = signingConfigs.findByName("release")
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
         }
     }
 
@@ -199,6 +199,9 @@ tasks.register("verifyReleaseDynamicRuntimeClasses") {
 
         val requiredDescriptors = listOf(
             "Lcom/affilemanager/app/network/SftpRuntimeVerifier;",
+            "Lcom/affilemanager/app/network/WebDavRuntimeVerifier;",
+            "Lcom/affilemanager/app/terminal/PrivilegedTerminalRuntimeVerifier;",
+            "Lcom/affilemanager/app/terminal/LocalPtyNative;",
             "Lcom/affilemanager/app/advanced/ShizukuFileService;",
             "Lcom/affilemanager/app/advanced/RootFileService;",
             "Lcom/jcraft/jsch/JSchException;",

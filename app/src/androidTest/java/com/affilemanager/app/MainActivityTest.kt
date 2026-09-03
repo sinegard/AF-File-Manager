@@ -30,8 +30,11 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
+import android.view.MotionEvent
 import androidx.core.view.WindowCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.lifecycle.ViewModelProvider
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.HomeToolPage
@@ -40,6 +43,7 @@ import com.affilemanager.app.ui.AppSection
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
+import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.ui.theme.AppColorPalette
 import com.affilemanager.app.ui.theme.AppThemeMode
@@ -100,12 +104,45 @@ class MainActivityTest {
     }
 
     @Test
-    fun unifiedAfDialogUsesTheLargeBatchRenameFrame() {
+    fun shortDisplayDialogDismissesOnOutsideTapWithoutApplyingDraft() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val original = viewModel.storageHomeDisplaySettings.value
+        try {
+            compose.runOnUiThread {
+                viewModel.showFilesHome()
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.STORAGE,
+                    original.copy(layoutMode = DirectoryLayoutMode.LIST),
+                )
+            }
+            compose.onNodeWithTag("home_storage_layout_toggle").performScrollTo().performTouchInput { longClick() }
+            compose.onNodeWithText("Grid").performClick()
+            compose.onNodeWithTag("display_settings_dialog").assertIsDisplayed()
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val downTime = SystemClock.uptimeMillis()
+            val y = compose.activity.resources.displayMetrics.heightPixels / 2f
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 4f, y, 0)
+                try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithTag("display_settings_dialog").fetchSemanticsNodes().isEmpty()
+            }
+            assertEquals(DirectoryLayoutMode.LIST, viewModel.storageHomeDisplaySettings.value.layoutMode)
+        } finally {
+            compose.runOnUiThread { viewModel.setHomeDisplaySettings(HomeDisplayArea.STORAGE, original) }
+        }
+    }
+
+    @Test
+    fun longHomeCustomizationDialogUsesTheAvailableHeightAndCapsTabletWidth() {
         compose.onNodeWithTag("home_customize").performClick()
         val dialog = compose.onNodeWithTag("home_customization_dialog")
         val bounds = dialog.fetchSemanticsNode().boundsInRoot
         val metrics = compose.activity.resources.displayMetrics
-        assertTrue(bounds.width >= metrics.widthPixels * 0.90f)
+        val maximumWidth = minOf(metrics.widthPixels.toFloat(), 760f * metrics.density)
+        assertTrue(bounds.width >= maximumWidth * 0.90f)
+        assertTrue(bounds.width <= maximumWidth)
         assertTrue(bounds.height >= metrics.heightPixels * 0.80f)
 
         val artifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "af-unified-dialog.png")
@@ -196,8 +233,11 @@ class MainActivityTest {
             val dialog = compose.onNodeWithTag("tag_dialog").assertIsDisplayed()
             val bounds = dialog.fetchSemanticsNode().boundsInRoot
             val metrics = compose.activity.resources.displayMetrics
-            assertTrue(bounds.width >= metrics.widthPixels * 0.90f)
-            assertTrue(bounds.height >= metrics.heightPixels * 0.80f)
+            val maxWidth = minOf(metrics.widthPixels.toFloat(), 760f * metrics.density)
+            assertTrue(bounds.width in (maxWidth * 0.90f)..maxWidth)
+            assertTrue(bounds.height in (180f * metrics.density)..(metrics.heightPixels * 0.80f))
+            compose.onNodeWithText("Unchanged").assertIsDisplayed()
+            compose.onNodeWithText("Cancel").assertIsDisplayed()
             compose.runOnIdle {
                 assertEquals(setOf(target.absolutePath), viewModel.leftPanel.value.selectedPaths)
             }
@@ -252,7 +292,7 @@ class MainActivityTest {
     }
 
     @Test
-    fun createDialogUsesTheSharedLargeAfFrame() {
+    fun createDialogWrapsContentAndKeepsActionsReachable() {
         val directory = File(compose.activity.getExternalFilesDir(null), "issue-106-create-${System.nanoTime()}").apply { mkdirs() }
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         try {
@@ -262,8 +302,11 @@ class MainActivityTest {
             val dialog = compose.onNodeWithTag("create_item_dialog").assertIsDisplayed()
             val bounds = dialog.fetchSemanticsNode().boundsInRoot
             val metrics = compose.activity.resources.displayMetrics
-            assertTrue(bounds.width >= metrics.widthPixels * 0.90f)
-            assertTrue(bounds.height >= metrics.heightPixels * 0.80f)
+            val maxWidth = minOf(metrics.widthPixels.toFloat(), 760f * metrics.density)
+            assertTrue(bounds.width in (maxWidth * 0.90f)..maxWidth)
+            assertTrue(bounds.height in (180f * metrics.density)..(metrics.heightPixels * 0.80f))
+            compose.onNodeWithText("Create").assertIsDisplayed()
+            compose.onNodeWithText("Close").assertIsDisplayed()
             val artifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "issue-106-create-dialog.png")
             artifact.outputStream().use { output ->
                 assertTrue(dialog.captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output))
@@ -613,33 +656,80 @@ class MainActivityTest {
     }
 
     @Test
-    fun homeLayoutButtonTogglesAndLongPressOpensOneToThreeColumnSettings() {
+    fun quickLocationsLayoutIsIndependentAndOffersOneToSixColumns() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         try {
             compose.runOnUiThread {
                 viewModel.setSection(AppSection.FILES)
-                viewModel.setFilesHomeDisplaySettings(
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.STORAGE,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
+                )
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.QUICK_LOCATIONS,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
+                )
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.FAVORITES,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
+                )
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.TAGS,
                     DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
                 )
             }
             compose.onNodeWithTag("home_layout_toggle").performScrollTo().performClick()
             compose.waitUntil(timeoutMillis = 5_000) {
-                viewModel.filesHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.GRID
+                viewModel.filesHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.GRID &&
+                    viewModel.storageHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.LIST &&
+                    viewModel.favoritesHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.LIST &&
+                    viewModel.tagsHomeDisplaySettings.value.layoutMode == DirectoryLayoutMode.LIST
             }
 
             compose.onNodeWithTag("home_layout_toggle").performScrollTo().performTouchInput { longClick() }
             compose.onNodeWithTag("display_settings_dialog").fetchSemanticsNode()
             compose.onNodeWithTag("display_grid_columns_1").fetchSemanticsNode()
             compose.onNodeWithTag("display_grid_columns_2").fetchSemanticsNode()
-            compose.onNodeWithTag("display_grid_columns_3").performClick()
+            compose.onNodeWithTag("display_grid_columns_3").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_4").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_5").fetchSemanticsNode()
+            compose.onNodeWithTag("display_grid_columns_6").performClick()
             compose.onNodeWithTag("display_apply").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
-                viewModel.filesHomeDisplaySettings.value.gridColumns == 3
+                viewModel.filesHomeDisplaySettings.value.gridColumns == 6 &&
+                    viewModel.storageHomeDisplaySettings.value.gridColumns == 2 &&
+                    viewModel.favoritesHomeDisplaySettings.value.gridColumns == 2 &&
+                    viewModel.tagsHomeDisplaySettings.value.gridColumns == 2
+            }
+
+            compose.runOnUiThread {
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.FAVORITES,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.GRID, gridColumns = 4),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.favoritesHomeDisplaySettings.value.gridColumns == 4 &&
+                    viewModel.filesHomeDisplaySettings.value.gridColumns == 6 &&
+                    viewModel.tagsHomeDisplaySettings.value.gridColumns == 2
             }
         } finally {
             compose.runOnUiThread {
-                viewModel.setFilesHomeDisplaySettings(
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.STORAGE,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
+                )
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.QUICK_LOCATIONS,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
+                )
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.FAVORITES,
+                    DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
+                )
+                viewModel.setHomeDisplaySettings(
+                    HomeDisplayArea.TAGS,
                     DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.LIST, gridColumns = 2),
                 )
             }

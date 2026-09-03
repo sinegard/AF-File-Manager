@@ -487,6 +487,7 @@ private fun LanguagePickerDialog(
         subtitle = "59 kalbos",
         icon = Icons.Rounded.Language,
         onDismissRequest = onDismiss,
+        expandedContent = true,
         modifier = Modifier.testTag("language_picker"),
         actions = {
             TextButton(onClick = onDismiss) { LText("Atšaukti") }

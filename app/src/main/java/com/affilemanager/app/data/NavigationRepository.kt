@@ -199,10 +199,15 @@ class NavigationRepository(context: Context) {
     }
 
     fun directoryDisplaySettings(directoryIdentity: String): DirectoryDisplaySettings? {
+        return directoryDisplaySettingsOverride(directoryIdentity) ?: directoryDisplayDefaults()?.settings
+    }
+
+    /** Returns only a setting explicitly saved for this identity, without applying global defaults. */
+    fun directoryDisplaySettingsOverride(directoryIdentity: String): DirectoryDisplaySettings? {
         val identity = validateDirectoryIdentity(directoryIdentity)
         val storageKey = directoryDisplayStorageKey(identity)
         val raw = preferences.getString(storageKey, null)
-            ?: return directoryDisplayDefaults()?.settings
+            ?: return null
         require(raw.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Katalogo rodinio nustatymas per didelis" }
         val item = JSONObject(raw)
         require(item.getString("identity") == identity) { "Katalogo rodinio tapatybė nesutampa" }
@@ -213,7 +218,9 @@ class NavigationRepository(context: Context) {
     fun setDirectoryDisplaySettings(directoryIdentity: String, settings: DirectoryDisplaySettings) {
         val identity = validateDirectoryIdentity(directoryIdentity)
         val valid = DirectoryDisplayRules.requireValid(settings)
-        if (directoryDisplaySettings(identity) == valid) return
+        // An inherited default is not an explicit per-location choice. Persisting it is what
+        // keeps independently configured home sections independent after the app restarts.
+        if (directoryDisplaySettingsOverride(identity) == valid) return
         val digest = directoryDisplayDigest(identity)
         val storageKey = "$KEY_DIRECTORY_DISPLAY_PREFIX$digest"
         preferences.getString(storageKey, null)?.let { existing ->

@@ -38,6 +38,7 @@ import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.HomeCustomization
 import com.affilemanager.app.data.HomeCustomizationRules
+import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
 import com.affilemanager.app.data.HomeShortcutNavigationRules
@@ -96,6 +97,7 @@ import com.affilemanager.app.sync.SyncMode
 import com.affilemanager.app.sync.SyncPreview
 import com.affilemanager.app.sync.SyncSchedule
 import com.affilemanager.app.terminal.LocalPtyBackend
+import com.affilemanager.app.terminal.PrivilegedPtyBackend
 import com.affilemanager.app.terminal.ShellCommandRules
 import com.affilemanager.app.terminal.SshTerminalBackend
 import com.affilemanager.app.terminal.TerminalPasteRules
@@ -456,7 +458,7 @@ enum class HomeToolPage {
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as AFFileManagerApplication).graph
-    private val filesHomeDisplayIdentity = "virtual:files-home"
+    private val legacyFilesHomeDisplayIdentity = "virtual:files-home"
     private val remotePreviewCache = RemotePreviewCache(application.cacheDir)
     private val initialPrimaryPath = Environment.getExternalStorageDirectory().absolutePath
     private val initialDownloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -525,12 +527,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _homeToolPage = MutableStateFlow<HomeToolPage?>(null)
     val homeToolPage: StateFlow<HomeToolPage?> = _homeToolPage.asStateFlow()
 
-    private val _filesHomeDisplaySettings = MutableStateFlow(
-        runCatching { graph.navigation.directoryDisplaySettings(filesHomeDisplayIdentity) }.getOrNull()
-            ?.let { it.copy(gridColumns = it.gridColumns.coerceIn(1, 3)) }
-            ?: DirectoryDisplaySettings(gridColumns = 2),
-    )
+    private val _filesHomeDisplaySettings = MutableStateFlow(initialHomeDisplaySettings(HomeDisplayArea.QUICK_LOCATIONS))
     val filesHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _filesHomeDisplaySettings.asStateFlow()
+
+    private val _storageHomeDisplaySettings = MutableStateFlow(initialHomeDisplaySettings(HomeDisplayArea.STORAGE))
+    val storageHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _storageHomeDisplaySettings.asStateFlow()
+
+    private val _favoritesHomeDisplaySettings = MutableStateFlow(initialHomeDisplaySettings(HomeDisplayArea.FAVORITES))
+    val favoritesHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _favoritesHomeDisplaySettings.asStateFlow()
+
+    private val _tagsHomeDisplaySettings = MutableStateFlow(initialHomeDisplaySettings(HomeDisplayArea.TAGS))
+    val tagsHomeDisplaySettings: StateFlow<DirectoryDisplaySettings> = _tagsHomeDisplaySettings.asStateFlow()
 
     private val _homeCustomization = MutableStateFlow(
         runCatching { graph.navigation.homeCustomization(homeBuiltInShortcuts) }
@@ -1121,9 +1128,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun homeDisplayIdentity(area: HomeDisplayArea): String =
+        "virtual:files-home:${area.name.lowercase()}"
+
+    private fun initialHomeDisplaySettings(area: HomeDisplayArea): DirectoryDisplaySettings {
+        val saved = runCatching {
+            graph.navigation.directoryDisplaySettingsOverride(homeDisplayIdentity(area))
+                ?: graph.navigation.directoryDisplaySettingsOverride(legacyFilesHomeDisplayIdentity)
+                ?: graph.navigation.directoryDisplayDefaults()?.settings
+        }.getOrNull()
+        return normalizeHomeDisplaySettings(area, saved ?: DirectoryDisplaySettings(gridColumns = 2))
+    }
+
+    private fun normalizeHomeDisplaySettings(
+        area: HomeDisplayArea,
+        settings: DirectoryDisplaySettings,
+    ): DirectoryDisplaySettings = settings.copy(
+        showThumbnails = false,
+        gridColumns = settings.gridColumns.coerceIn(
+            1,
+            if (area == HomeDisplayArea.STORAGE) 3 else 6,
+        ),
+    )
+
+    private fun homeDisplayFlow(area: HomeDisplayArea): MutableStateFlow<DirectoryDisplaySettings> = when (area) {
+        HomeDisplayArea.STORAGE -> _storageHomeDisplaySettings
+        HomeDisplayArea.QUICK_LOCATIONS -> _filesHomeDisplaySettings
+        HomeDisplayArea.FAVORITES -> _favoritesHomeDisplaySettings
+        HomeDisplayArea.TAGS -> _tagsHomeDisplaySettings
+    }
+
     fun toggleFilesHomeLayout() {
-        val current = _filesHomeDisplaySettings.value
-        setFilesHomeDisplaySettings(
+        toggleHomeDisplayLayout(HomeDisplayArea.QUICK_LOCATIONS)
+    }
+
+    fun toggleHomeDisplayLayout(area: HomeDisplayArea) {
+        val current = homeDisplayFlow(area).value
+        setHomeDisplaySettings(
+            area,
             current.copy(
                 layoutMode = if (current.layoutMode == DirectoryLayoutMode.GRID) {
                     DirectoryLayoutMode.LIST
@@ -1136,9 +1178,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setFilesHomeDisplaySettings(settings: DirectoryDisplaySettings) {
-        val homeSettings = settings.copy(showThumbnails = false, gridColumns = settings.gridColumns.coerceIn(1, 3))
-        runCatching { graph.navigation.setDirectoryDisplaySettings(filesHomeDisplayIdentity, homeSettings) }
-            .onSuccess { _filesHomeDisplaySettings.value = homeSettings }
+        setHomeDisplaySettings(HomeDisplayArea.QUICK_LOCATIONS, settings)
+    }
+
+    fun setHomeDisplaySettings(area: HomeDisplayArea, settings: DirectoryDisplaySettings) {
+        val homeSettings = normalizeHomeDisplaySettings(area, settings)
+        runCatching { graph.navigation.setDirectoryDisplaySettings(homeDisplayIdentity(area), homeSettings) }
+            .onSuccess { homeDisplayFlow(area).value = homeSettings }
             .onFailure { message(it.message ?: "Pradžios rodinio nustatymo išsaugoti nepavyko", true) }
     }
 
@@ -1165,7 +1211,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 DirectoryDisplayDefaults(normalized, sortMode, sortDirection),
             )
         }.onSuccess {
-            _filesHomeDisplaySettings.value = normalized.copy(showThumbnails = false, gridColumns = normalized.gridColumns.coerceIn(1, 3))
             _leftPanel.update { it.withDirectoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection) }
             _rightPanel.update { it.withDirectoryDisplaySettings(normalized).copy(sortMode = sortMode, sortDirection = sortDirection) }
             _fileCategory.update {
@@ -4172,6 +4217,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openLocalTerminal(panel: PanelId = _activePanel.value) {
         val directory = File(panelFlow(panel).value.path)
+        if (directory.absolutePath == File.separator) {
+            val rootBackend = graph.advancedAccess.state.value.activeBackend in setOf(
+                AdvancedAccessBackend.ROOT,
+                AdvancedAccessBackend.SHIZUKU_ROOT,
+            )
+            if (rootBackend) openPrivilegedTerminal(directory.absolutePath)
+            else message(
+                "Root terminalui reikia aktyvios Root arba Shizuku root prieigos. Įprastas telefono terminalas root teisių neapsimeta.",
+                true,
+            )
+            return
+        }
         graph.terminalSessions.begin(
             location = TerminalLocation.PHONE,
             title = "Telefono terminalas",
@@ -4196,6 +4253,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     },
                     suggestion = "Atverkite kitą telefono aplanką ir bandykite dar kartą.",
                     diagnosticCode = "LOCAL-PTY-${error.javaClass.simpleName.uppercase().filter(Char::isLetterOrDigit).take(24).ifBlank { "UNKNOWN" }}",
+                )
+            },
+        )
+    }
+
+    fun openAdvancedTerminal() {
+        val path = _advancedBrowser.value.path.takeIf(String::isNotBlank) ?: return
+        openPrivilegedTerminal(path)
+    }
+
+    private fun openPrivilegedTerminal(path: String) {
+        val access = graph.advancedAccess.state.value
+        if (access.activeBackend == AdvancedAccessBackend.NONE) {
+            message("Privilegijuota terminalo prieiga neaktyvi", true)
+            return
+        }
+        val rootSession = access.activeBackend in setOf(
+            AdvancedAccessBackend.ROOT,
+            AdvancedAccessBackend.SHIZUKU_ROOT,
+        )
+        graph.terminalSessions.begin(
+            location = TerminalLocation.PRIVILEGED,
+            title = if (rootSession) "Root terminalas" else "Shizuku terminalas",
+            path = path,
+            openBackend = {
+                PrivilegedPtyBackend.open(
+                    service = graph.advancedAccess.privilegedTerminalServiceOrThrow(),
+                    workingDirectory = path,
+                )
+            },
+            errorInfo = { error ->
+                TerminalFailureUi(
+                    title = "Privilegijuoto terminalo atidaryti nepavyko",
+                    detail = when (error) {
+                        is SecurityException -> "Privilegijuota tarnyba neleido terminalui pasiekti šio aplanko."
+                        is IllegalArgumentException,
+                        is IllegalStateException,
+                        -> "Privilegijuota prieiga arba dabartinis aplankas nebepasiekiamas."
+                        else -> "Privilegijuoto terminalo proceso paleisti nepavyko."
+                    },
+                    suggestion = "Patikrinkite Root arba Shizuku būseną skiltyje Daugiau ir bandykite dar kartą.",
+                    diagnosticCode = when (error) {
+                        is android.os.DeadObjectException -> "PRIV-PTY-DISCONNECTED"
+                        is SecurityException -> "PRIV-PTY-DENIED"
+                        is IllegalArgumentException -> "PRIV-PTY-PATH"
+                        is IllegalStateException -> "PRIV-PTY-STATE"
+                        is java.io.IOException -> "PRIV-PTY-IO"
+                        is UnsatisfiedLinkError -> "PRIV-PTY-NATIVE"
+                        else -> "PRIV-PTY-FAILED"
+                    },
                 )
             },
         )

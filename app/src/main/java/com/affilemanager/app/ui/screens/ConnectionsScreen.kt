@@ -1536,6 +1536,7 @@ internal fun NetworkProfileDialog(
         title = if (existingProfile == null) "Nauja jungtis" else "Redaguoti jungtį",
         icon = Icons.Rounded.Link,
         onDismissRequest = onDismiss,
+        expandedContent = true,
         modifier = Modifier.testTag("network_profile_dialog"),
         actions = {
             TextButton(onClick = onDismiss) { LText("Atšaukti") }
@@ -1780,7 +1781,7 @@ internal fun NetworkError(error: RemoteErrorInfo) {
                 )
                 LText(error.detail, color = MaterialTheme.colorScheme.onErrorContainer)
                 LText(
-                    "Ką daryti: ${error.suggestion}",
+                    error.suggestion,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )

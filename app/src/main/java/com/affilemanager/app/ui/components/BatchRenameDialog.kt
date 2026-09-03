@@ -56,6 +56,7 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
         subtitle = "Pakeitimai bus vykdomi tik patvirtinus planą",
         icon = Icons.Rounded.DriveFileRenameOutline,
         onDismissRequest = viewModel::closeBatchRename,
+        expandedContent = true,
         modifier = Modifier.testTag("batch_rename_dialog"),
         actions = {
             TextButton(onClick = viewModel::closeBatchRename) { LText("Atšaukti") }

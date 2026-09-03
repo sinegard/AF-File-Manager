@@ -21,6 +21,7 @@ class TerminalKeepAliveService : Service() {
     companion object {
         private const val ACTION_START = "com.affilemanager.app.action.START_TERMINAL"
         private const val ACTION_CLOSE = "com.affilemanager.app.action.CLOSE_TERMINAL"
+        private const val ACTION_STOP = "com.affilemanager.app.action.STOP_TERMINAL_SERVICE"
         private const val EXTRA_LOCATION = "terminal_location"
         private const val CHANNEL_ID = "active_terminal"
         private const val NOTIFICATION_ID = 43
@@ -34,7 +35,8 @@ class TerminalKeepAliveService : Service() {
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, TerminalKeepAliveService::class.java))
+            val intent = Intent(context, TerminalKeepAliveService::class.java).setAction(ACTION_STOP)
+            ContextCompat.startForegroundService(context, intent)
         }
     }
 
@@ -47,21 +49,24 @@ class TerminalKeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val store = (application as AFFileManagerApplication).graph.terminalSessions
-        if (intent?.action == ACTION_CLOSE) {
-            store.closeNow()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        if (intent?.action != ACTION_START || !store.state.value.visible) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
         val location = runCatching {
-            TerminalLocation.valueOf(intent.getStringExtra(EXTRA_LOCATION).orEmpty())
+            TerminalLocation.valueOf(intent?.getStringExtra(EXTRA_LOCATION).orEmpty())
         }.getOrDefault(store.state.value.location)
+
+        // A stop can race with startForegroundService when a PTY fails immediately. Android still
+        // requires this service to enter the foreground before handling either queued command.
         startAsForeground(activeNotification(location))
+        if (intent?.action == ACTION_CLOSE) {
+            store.closeNow(stopKeepAlive = false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_STOP || intent?.action != ACTION_START || !store.state.value.visible) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         return START_NOT_STICKY
     }
 
@@ -98,10 +103,11 @@ class TerminalKeepAliveService : Service() {
             Intent(this, TerminalKeepAliveService::class.java).setAction(ACTION_CLOSE),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val activeText = if (location == TerminalLocation.PHONE) {
-            getString(R.string.terminal_phone_active)
-        } else {
-            getString(R.string.terminal_server_active)
+        val activeText = when (location) {
+            TerminalLocation.PHONE,
+            TerminalLocation.PRIVILEGED,
+            -> getString(R.string.terminal_phone_active)
+            TerminalLocation.SERVER -> getString(R.string.terminal_server_active)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_app)

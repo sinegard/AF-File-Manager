@@ -8,7 +8,9 @@ The Android package is `com.affilemanager.app`. Every public APK must be signed 
 2. Regenerate the Baseline/Startup Profiles when critical user journeys changed, then run the full local validation and performance gate on the dedicated emulator.
 3. Commit and push the version change to `main`.
 4. Create and push the exact matching tag, for example `v0.9.5`.
-5. The `Publish signed APK` workflow validates that the tag matches Gradle, runs JVM tests and lint, builds with the repository signing secrets, and publishes the APK plus a SHA-256 file.
+5. The `Publish signed APK` workflow validates that the tag matches Gradle, runs JVM tests and lint, builds with the repository signing secrets, and prepares a draft release containing the APK and SHA-256 file.
+6. Download that exact draft APK, verify its package/version, checksum and signing certificate, and exercise affected optimized runtime paths on the test device. In particular, JNI/Binder and network checks must use the downloadable artifact, not just a local rebuild. Keep failures visible and leave the release as a draft until they are resolved.
+7. Add concise release notes from `CHANGELOG.md`, then publish the draft. Only a published stable release is offered by the in-app updater.
 
 Required repository secrets:
 

@@ -55,6 +55,11 @@ class TrashBrowserVisualTest {
 
             compose.onNodeWithText("Open trash").performClick()
             compose.onNodeWithText("AFTrashVisual").assertIsDisplayed()
+            // The view choice survives app restarts and previous test runs. Start
+            // this toggle check from icons without relying on a fresh install.
+            compose.runOnUiThread {
+                if (viewModel.trashBrowser.value.showThumbnails) viewModel.toggleTrashThumbnails()
+            }
             compose.onNodeWithTag("directory_toolbar_trash").assertIsDisplayed()
             compose.onNodeWithTag("directory_search_trash").assertIsDisplayed()
             compose.onNodeWithTag("directory_layout_trash").assertIsDisplayed()

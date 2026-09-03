@@ -297,24 +297,10 @@ class FileNavigationUiTest {
 
     @Test
     fun rootStorageOpensAsAFileOverlayAndBackReturnsToFiles() {
-        assumeTrue(InstrumentationRegistry.getArguments().getString("afRoot") == "true")
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
 
         try {
-            compose.runOnUiThread {
-                viewModel.setSection(AppSection.FILES)
-                viewModel.setAdvancedAccessMode(AdvancedAccessMode.ROOT)
-                viewModel.requestRootAccess()
-            }
-            compose.waitUntil(timeoutMillis = 20_000) {
-                val state = viewModel.advancedAccess.value
-                state.activeBackend == AdvancedAccessBackend.ROOT || (!state.connecting && state.error != null)
-            }
-            assertEquals(
-                "Root backend did not connect: ${viewModel.advancedAccess.value}",
-                AdvancedAccessBackend.ROOT,
-                viewModel.advancedAccess.value.activeBackend,
-            )
+            connectRootBackend(viewModel)
             compose.runOnUiThread { viewModel.openAdvancedBrowser("/") }
             compose.waitUntil(timeoutMillis = 10_000) {
                 val state = viewModel.advancedBrowser.value
@@ -338,26 +324,12 @@ class FileNavigationUiTest {
 
     @Test
     fun directlyOpenedPrivilegedSubfolderBackMovesToItsParentFirst() {
-        assumeTrue(InstrumentationRegistry.getArguments().getString("afRoot") == "true")
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         val parent = requireNotNull(compose.activity.getExternalFilesDir(null)).canonicalFile
         val child = File(parent, "advanced-back-${System.nanoTime()}").apply { mkdirs() }.canonicalFile
 
         try {
-            compose.runOnUiThread {
-                viewModel.setSection(AppSection.FILES)
-                viewModel.setAdvancedAccessMode(AdvancedAccessMode.ROOT)
-                viewModel.requestRootAccess()
-            }
-            compose.waitUntil(timeoutMillis = 20_000) {
-                val state = viewModel.advancedAccess.value
-                state.activeBackend == AdvancedAccessBackend.ROOT || (!state.connecting && state.error != null)
-            }
-            assertEquals(
-                "Root backend did not connect: ${viewModel.advancedAccess.value}",
-                AdvancedAccessBackend.ROOT,
-                viewModel.advancedAccess.value.activeBackend,
-            )
+            connectRootBackend(viewModel)
 
             compose.runOnUiThread { viewModel.openAdvancedBrowser(child.absolutePath) }
             compose.waitUntil(timeoutMillis = 10_000) {
@@ -383,14 +355,49 @@ class FileNavigationUiTest {
         }
     }
 
+    private fun connectRootBackend(viewModel: MainViewModel) {
+        val arguments = InstrumentationRegistry.getArguments()
+        val useRoot = arguments.getString("afRoot") == "true"
+        assumeTrue(useRoot || arguments.getString("afShizukuRoot") == "true")
+        val expected = if (useRoot) AdvancedAccessBackend.ROOT else AdvancedAccessBackend.SHIZUKU_ROOT
+        compose.runOnUiThread {
+            viewModel.setSection(AppSection.FILES)
+            viewModel.setAdvancedAccessMode(if (useRoot) AdvancedAccessMode.ROOT else AdvancedAccessMode.SHIZUKU)
+            if (useRoot) viewModel.requestRootAccess() else viewModel.requestShizukuAccess()
+        }
+        compose.waitUntil(timeoutMillis = 20_000) {
+            val state = viewModel.advancedAccess.value
+            state.activeBackend == expected || (!state.connecting && state.error != null)
+        }
+        assertEquals("Root backend did not connect: ${viewModel.advancedAccess.value}", expected, viewModel.advancedAccess.value.activeBackend)
+        assertEquals(0, viewModel.advancedAccess.value.serviceUid)
+    }
+
     @Test
-    fun shizukuRootOpensProtectedStorageAndBackReturnsToFiles() {
+    fun shizukuReconnectsAfterRapidModeChanges() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("afShizukuRoot") == "true")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            repeat(3) {
+                compose.runOnUiThread { viewModel.setAdvancedAccessMode(AdvancedAccessMode.OFF) }
+                connectRootBackend(viewModel)
+                compose.runOnUiThread { viewModel.setAdvancedAccessMode(AdvancedAccessMode.SHIZUKU) }
+                assertEquals(AdvancedAccessBackend.SHIZUKU_ROOT, viewModel.advancedAccess.value.activeBackend)
+            }
+        } finally {
+            compose.runOnUiThread { viewModel.setAdvancedAccessMode(AdvancedAccessMode.OFF) }
+        }
+    }
+
+    @Test
+    fun shizukuRootBrowsesProtectedStorageAndBackUsesRootBoundaries() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("afShizukuRoot") == "true")
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
 
         try {
             compose.runOnUiThread {
                 viewModel.setSection(AppSection.FILES)
+                viewModel.showFilesHome()
                 viewModel.setAdvancedAccessMode(AdvancedAccessMode.SHIZUKU)
                 viewModel.requestShizukuAccess()
             }
@@ -410,6 +417,18 @@ class FileNavigationUiTest {
             }
             compose.onNodeWithTag("directory_toolbar_advanced").assertIsDisplayed()
 
+            // Shizuku running as UID 0 can navigate above Android/data; only the
+            // shell backend stops at the protected-storage boundary.
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.advancedBrowser.value
+                state.open && !state.loading && state.path == "/storage/emulated/0/Android" && state.error == null
+            }
+            compose.runOnUiThread { viewModel.openAdvancedBrowser("/") }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                val state = viewModel.advancedBrowser.value
+                state.open && !state.loading && state.path == "/" && state.error == null
+            }
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.advancedBrowser.value.open }
             assertEquals(AppSection.FILES, viewModel.section.value)

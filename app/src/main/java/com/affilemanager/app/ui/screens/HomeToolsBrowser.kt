@@ -147,6 +147,7 @@ import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.FileTagDefinition
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.HomeCustomization
+import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
 import com.affilemanager.app.data.HomeShortcutNavigationRules
@@ -295,17 +296,21 @@ private fun FavoriteBrowserItems(
     if (files.isEmpty()) {
         EmptyHomeToolPage("Mėgstamų vietų dar nėra", Icons.Rounded.Star)
     } else if (settings.layoutMode == DirectoryLayoutMode.GRID) {
+        val columns = settings.gridColumns.coerceIn(1, 6)
+        val spacing = (8f * settings.spacingScalePercent / 100f).dp
         LazyVerticalGrid(
-            columns = GridCells.Fixed(settings.gridColumns.coerceIn(1, 3)),
+            columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize().testTag("favorites_grid"),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+            verticalArrangement = Arrangement.spacedBy(spacing),
         ) {
             items(files, key = File::getAbsolutePath) { file ->
                 HomeBrowserGridCard(
                     title = file.name.ifBlank { file.absolutePath },
                     detail = file.absolutePath,
                     icon = if (file.isDirectory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
+                    compact = columns >= 4,
+                    iconScalePercent = settings.iconScalePercent,
                     onClick = { onOpen(file.absolutePath) },
                 )
             }
@@ -344,11 +349,13 @@ private fun TagBrowserItems(
         }
     }
     if (settings.layoutMode == DirectoryLayoutMode.GRID) {
+        val columns = settings.gridColumns.coerceIn(1, 6)
+        val spacing = (8f * settings.spacingScalePercent / 100f).dp
         LazyVerticalGrid(
-            columns = GridCells.Fixed(settings.gridColumns.coerceIn(1, 3)),
+            columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize().testTag("tags_grid"),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+            verticalArrangement = Arrangement.spacedBy(spacing),
         ) {
             items(definitions, key = FileTagDefinition::name) { tag ->
                 HomeBrowserGridCard(
@@ -356,6 +363,8 @@ private fun TagBrowserItems(
                     detail = uiText(itemCountLabel(counts[tag.name] ?: 0)),
                     icon = Icons.AutoMirrored.Rounded.Label,
                     accent = Color(tag.colorArgb),
+                    compact = columns >= 4,
+                    iconScalePercent = settings.iconScalePercent,
                     onClick = { onOpen(tag.name) },
                 )
             }
@@ -411,11 +420,14 @@ private fun HomeBrowserGridCard(
     detail: String,
     icon: ImageVector,
     accent: Color = MaterialTheme.colorScheme.primary,
+    compact: Boolean = false,
+    iconScalePercent: Int = 100,
     onClick: () -> Unit,
 ) {
+    val iconSize = ((if (compact) 26f else 38f) * iconScalePercent / 100f).dp
     ElevatedCard(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(132.dp),
+        modifier = Modifier.fillMaxWidth().height(if (compact) 104.dp else 132.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(
@@ -423,9 +435,11 @@ private fun HomeBrowserGridCard(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(38.dp))
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(iconSize))
             Text(title, modifier = Modifier.padding(top = 8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!compact) {
+                Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
@@ -455,6 +469,7 @@ internal fun FavoriteLocationsDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("favorite_locations_dialog"),
         showFooter = false,
+        expandedContent = true,
         actions = {},
     ) {
         if (files.isEmpty()) {
@@ -496,7 +511,8 @@ internal fun FilesHome(
     recentFiles: List<RecentFileItem>,
     recentFilesLoading: Boolean,
     recentFilesError: String?,
-    displaySettings: DirectoryDisplaySettings,
+    storageDisplaySettings: DirectoryDisplaySettings,
+    quickLocationsDisplaySettings: DirectoryDisplaySettings,
     customization: HomeCustomization,
     favorites: List<String>,
     tagSnapshot: FileTagSnapshot,
@@ -512,8 +528,8 @@ internal fun FilesHome(
     onOpenPlans: () -> Unit,
     onOpenCleanup: () -> Unit,
     onRefreshRecent: () -> Unit,
-    onToggleLayout: () -> Unit,
-    onConfigureLayout: () -> Unit,
+    onToggleLayout: (HomeDisplayArea) -> Unit,
+    onConfigureLayout: (HomeDisplayArea) -> Unit,
     onConfigureHome: () -> Unit,
 ) {
     val quickLocations = customization.shortcuts.filter(HomeShortcut::visible).map { shortcut ->
@@ -571,12 +587,12 @@ internal fun FilesHome(
                     HomeSection.STORAGE -> StorageHomeSection(
                         roots = roots,
                         rootStorageAvailable = rootStorageAvailable,
-                        displaySettings = displaySettings,
+                        displaySettings = storageDisplaySettings,
                         onOpen = onOpenStorage,
                         onOpenRoot = onOpenRoot,
                         onOpenCleanup = onOpenCleanup,
-                        onToggleLayout = onToggleLayout,
-                        onConfigureLayout = onConfigureLayout,
+                        onToggleLayout = { onToggleLayout(HomeDisplayArea.STORAGE) },
+                        onConfigureLayout = { onConfigureLayout(HomeDisplayArea.STORAGE) },
                     )
                     HomeSection.TOOLS -> HomeToolsSection(
                         trashCount = trashCount,
@@ -589,10 +605,10 @@ internal fun FilesHome(
                     )
                     HomeSection.QUICK_LOCATIONS -> QuickLocationsHomeSection(
                         locations = quickLocations,
-                        displaySettings = displaySettings,
+                        displaySettings = quickLocationsDisplaySettings,
                         onOpen = onOpen,
-                        onToggleLayout = onToggleLayout,
-                        onConfigureLayout = onConfigureLayout,
+                        onToggleLayout = { onToggleLayout(HomeDisplayArea.QUICK_LOCATIONS) },
+                        onConfigureLayout = { onConfigureLayout(HomeDisplayArea.QUICK_LOCATIONS) },
                     )
                 }
             }
@@ -607,6 +623,7 @@ internal fun FilesHome(
             onDismissRequest = { showAllRecent = false },
             modifier = Modifier.testTag("recent_files_dialog"),
             showFooter = false,
+            expandedContent = true,
             actions = {},
         ) {
             LazyColumn(
@@ -791,7 +808,7 @@ private fun QuickLocationsHomeSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     } else if (displaySettings.layoutMode == DirectoryLayoutMode.GRID) {
-        val columns = displaySettings.gridColumns.coerceIn(1, 3)
+        val columns = displaySettings.gridColumns.coerceIn(1, 6)
         val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
         locations.chunked(columns).forEach { rowLocations ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
@@ -799,6 +816,7 @@ private fun QuickLocationsHomeSection(
                     QuickLocationTile(
                         location = location,
                         iconScalePercent = displaySettings.iconScalePercent,
+                        compact = columns >= 5,
                         modifier = Modifier.weight(1f).testTag("quick_location_${location.id}"),
                         onClick = { onOpen(location) },
                     )
@@ -876,6 +894,7 @@ internal fun HomeCustomizationDialog(
         icon = Icons.Rounded.Edit,
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("home_customization_dialog"),
+        expandedContent = true,
         actions = {
             TextButton(onClick = onDismiss) { LText("Baigti") }
         },
@@ -1112,13 +1131,14 @@ private data class HomeToolLocation(
 private fun QuickLocationTile(
     location: QuickLocation,
     iconScalePercent: Int,
+    compact: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val iconSize = (32f * iconScalePercent / 100f).dp
+    val iconSize = ((if (compact) 24f else 32f) * iconScalePercent / 100f).dp
     ElevatedCard(
         onClick = onClick,
-        modifier = modifier.height(92.dp),
+        modifier = modifier.heightIn(min = if (compact) 80.dp else 92.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(
@@ -1131,6 +1151,7 @@ private fun QuickLocationTile(
             LText(
                 location.title,
                 style = MaterialTheme.typography.labelSmall,
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )

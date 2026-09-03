@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.automirrored.rounded.Undo
@@ -686,17 +687,15 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 ) { LText("Taikyti") }
             },
         ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    item {
                     LText(
                         "Paieška bus vykdoma tik pažymėtose prijungtose saugyklose.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    }
-                    items(storageRoots, key = StorageRoot::id) { root ->
+                    storageRoots.forEach { root ->
                         Card(
                             onClick = {
                                 storagePickerDraft = if (root.path in storagePickerDraft) {

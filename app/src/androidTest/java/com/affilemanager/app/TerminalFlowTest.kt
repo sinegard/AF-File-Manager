@@ -234,7 +234,11 @@ class TerminalFlowTest {
                 clipboard.clearPrimaryClip()
                 viewModel.pasteIntoTerminal("printf '$marker\\n'\r")
             }
-            compose.waitUntil(timeoutMillis = 10_000) { application.graph.terminalSessions.hasCopyableLastOutput() }
+            // A prompt or a partial echo can be copyable before the command's answer arrives.
+            // Wait for this command's output, then exercise the real Copy last output button.
+            compose.waitUntil(timeoutMillis = 10_000) {
+                application.graph.terminalSessions.lastCommandOutput()?.text?.contains(marker) == true
+            }
 
             compose.onNodeWithTag("terminal-copy-last").performClick()
             compose.waitUntil(timeoutMillis = 5_000) {
