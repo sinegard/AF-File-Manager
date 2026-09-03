@@ -156,6 +156,7 @@ import com.affilemanager.app.data.RecentItem
 import com.affilemanager.app.data.RecentFileItem
 import com.affilemanager.app.data.TaggedFileRecord
 import com.affilemanager.app.data.HomeCustomization
+import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
 import com.affilemanager.app.data.HomeShortcutNavigationRules
@@ -237,6 +238,9 @@ fun FilesScreen(
     val roots by viewModel.roots.collectAsStateWithLifecycle()
     val recentFiles by viewModel.recentFiles.collectAsStateWithLifecycle()
     val filesHomeDisplaySettings by viewModel.filesHomeDisplaySettings.collectAsStateWithLifecycle()
+    val storageHomeDisplaySettings by viewModel.storageHomeDisplaySettings.collectAsStateWithLifecycle()
+    val favoritesHomeDisplaySettings by viewModel.favoritesHomeDisplaySettings.collectAsStateWithLifecycle()
+    val tagsHomeDisplaySettings by viewModel.tagsHomeDisplaySettings.collectAsStateWithLifecycle()
     val homeCustomization by viewModel.homeCustomization.collectAsStateWithLifecycle()
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
     val homeToolPage by viewModel.homeToolPage.collectAsStateWithLifecycle()
@@ -259,7 +263,7 @@ fun FilesScreen(
     var pastePanel by remember { mutableStateOf<PanelId?>(null) }
     var tagPanel by remember { mutableStateOf<PanelId?>(null) }
     var displayPanel by remember { mutableStateOf<PanelId?>(null) }
-    var showHomeDisplaySettings by remember { mutableStateOf(false) }
+    var homeDisplayArea by remember { mutableStateOf<HomeDisplayArea?>(null) }
     var showHomeCustomization by remember { mutableStateOf(false) }
     var infoTargets by remember { mutableStateOf<List<FileEntry>?>(null) }
     val clipboardAvailable = clipboard != null || remoteClipboard != null || afClipboard != null
@@ -350,16 +354,25 @@ fun FilesScreen(
                 PermissionBanner(onRequestAllFilesAccess)
             }
             if (homeToolPage != null) {
+                val toolDisplayArea = if (homeToolPage == HomeToolPage.FAVORITES) {
+                    HomeDisplayArea.FAVORITES
+                } else {
+                    HomeDisplayArea.TAGS
+                }
                 HomeToolsBrowser(
                     page = requireNotNull(homeToolPage),
                     favorites = favorites,
                     tagSnapshot = tagSnapshot,
-                    displaySettings = filesHomeDisplaySettings,
+                    displaySettings = if (toolDisplayArea == HomeDisplayArea.FAVORITES) {
+                        favoritesHomeDisplaySettings
+                    } else {
+                        tagsHomeDisplaySettings
+                    },
                     onBack = viewModel::closeHomeToolPage,
                     onOpenFavorite = { path -> viewModel.openQuickPathFromHome(path, activePanel) },
                     onOpenTag = { tag -> viewModel.closeHomeToolPage(); viewModel.openTagFromHome(tag) },
-                    onToggleLayout = viewModel::toggleFilesHomeLayout,
-                    onOpenDisplaySettings = { showHomeDisplaySettings = true },
+                    onToggleLayout = { viewModel.toggleHomeDisplayLayout(toolDisplayArea) },
+                    onOpenDisplaySettings = { homeDisplayArea = toolDisplayArea },
                 )
             } else if (fileCategory.open) {
                 PanelTabsBar(
@@ -379,7 +392,8 @@ fun FilesScreen(
                     recentFiles = recentFiles.items,
                     recentFilesLoading = recentFiles.loading,
                     recentFilesError = recentFiles.error,
-                    displaySettings = filesHomeDisplaySettings,
+                    storageDisplaySettings = storageHomeDisplaySettings,
+                    quickLocationsDisplaySettings = filesHomeDisplaySettings,
                     customization = homeCustomization,
                     favorites = favorites,
                     tagSnapshot = tagSnapshot,
@@ -398,8 +412,8 @@ fun FilesScreen(
                     onOpenPlans = { viewModel.openAfWorkflowCenter() },
                     onOpenCleanup = viewModel::openCleanupFromHome,
                     onRefreshRecent = viewModel::refreshRecentFiles,
-                    onToggleLayout = viewModel::toggleFilesHomeLayout,
-                    onConfigureLayout = { showHomeDisplaySettings = true },
+                    onToggleLayout = viewModel::toggleHomeDisplayLayout,
+                    onConfigureLayout = { area -> homeDisplayArea = area },
                     onConfigureHome = { showHomeCustomization = true },
                 )
             } else if (dualPane) {
@@ -624,15 +638,21 @@ fun FilesScreen(
             },
         )
     }
-    if (showHomeDisplaySettings) {
+    homeDisplayArea?.let { area ->
+        val settings = when (area) {
+            HomeDisplayArea.STORAGE -> storageHomeDisplaySettings
+            HomeDisplayArea.QUICK_LOCATIONS -> filesHomeDisplaySettings
+            HomeDisplayArea.FAVORITES -> favoritesHomeDisplaySettings
+            HomeDisplayArea.TAGS -> tagsHomeDisplaySettings
+        }
         DirectoryDisplaySettingsDialog(
-            initialSettings = filesHomeDisplaySettings,
+            initialSettings = settings,
             thumbnailsAvailable = false,
-            gridColumnRange = 1..3,
-            onDismiss = { showHomeDisplaySettings = false },
+            gridColumnRange = if (area == HomeDisplayArea.STORAGE) 1..3 else 1..6,
+            onDismiss = { homeDisplayArea = null },
             onApply = { settings ->
-                viewModel.setFilesHomeDisplaySettings(settings)
-                showHomeDisplaySettings = false
+                viewModel.setHomeDisplaySettings(area, settings)
+                homeDisplayArea = null
             },
         )
     }
@@ -1089,6 +1109,7 @@ private fun ViewingHistoryDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("viewing_history_dialog"),
         showFooter = recents.isNotEmpty(),
+        expandedContent = true,
         actions = {
             if (recents.isNotEmpty()) TextButton(onClick = onClear) { LText("Išvalyti istoriją") }
         },
@@ -1751,7 +1772,7 @@ private fun TagDialog(
         },
     ) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 LText("Pasirinkta: ${paths.size}. Naujos žymos pridedamos prie esamų; viską pašalina atskiras mygtukas.", style = MaterialTheme.typography.bodySmall)
@@ -1795,7 +1816,7 @@ private fun TagDialog(
                         FilterChip(
                             selected = rating == value,
                             onClick = { rating = value },
-                            label = { Text(value?.let { "★".repeat(it) } ?: "Nekeisti") },
+                            label = { Text(value?.let { "★".repeat(it) } ?: uiText("Nekeisti")) },
                         )
                     }
                 }
@@ -1987,7 +2008,7 @@ private fun CreateItemDialog(
         },
     ) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(
@@ -2059,7 +2080,7 @@ private fun TextInputDialog(
             Button(onClick = { onConfirm(value) }, enabled = value.isNotBlank()) { LText(confirmLabel) }
         },
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
             OutlinedTextField(
                 value = value,
                 onValueChange = { value = it },
@@ -2153,7 +2174,7 @@ private fun TransferOptionsDialog(
         },
     ) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 LText("Planas bus išsaugotas prieš vykdymą. Ši taisyklė bus taikoma visiems sutampantiems vardams.")

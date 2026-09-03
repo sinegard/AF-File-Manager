@@ -3,7 +3,6 @@ package com.affilemanager.app.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -96,7 +95,7 @@ fun DirectoryDisplaySettingsDialog(
         },
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
                 LText("Išdėstymas", fontWeight = FontWeight.SemiBold)
@@ -136,14 +135,19 @@ fun DirectoryDisplaySettingsDialog(
 
                 if (draft.layoutMode == DirectoryLayoutMode.GRID) {
                     LText("Tinklelio stulpeliai", fontWeight = FontWeight.SemiBold)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        gridColumnRange.forEach { count ->
-                            FilterChip(
-                                selected = draft.gridColumns == count,
-                                onClick = { draft = draft.copy(gridColumns = count) },
-                                label = { Text(count.toString()) },
-                                modifier = Modifier.weight(1f).testTag("display_grid_columns_$count"),
-                            )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        gridColumnRange.chunked(3).forEach { counts ->
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                counts.forEach { count ->
+                                    FilterChip(
+                                        selected = draft.gridColumns == count,
+                                        onClick = { draft = draft.copy(gridColumns = count) },
+                                        label = { Text(count.toString()) },
+                                        modifier = Modifier.weight(1f).testTag("display_grid_columns_$count"),
+                                    )
+                                }
+                                repeat(3 - counts.size) { androidx.compose.foundation.layout.Spacer(Modifier.weight(1f)) }
+                            }
                         }
                     }
                     LText("Tinklelio stilius", fontWeight = FontWeight.SemiBold)

@@ -115,6 +115,8 @@ class UiTranslatorTest {
             UiTranslator.translate("Atidaryti terminalą šiame aplanke", AppLanguageManager.ENGLISH),
         )
         assertEquals("Close terminal?", UiTranslator.translate("Uždaryti terminalą?", AppLanguageManager.ENGLISH))
+        assertEquals("Unchanged", UiTranslator.translate("Nekeisti", AppLanguageManager.ENGLISH))
+        assertEquals("Folder unavailable", UiTranslator.translate("Aplankas nepasiekiamas", AppLanguageManager.ENGLISH))
         assertEquals(
             "Could not open the phone terminal",
             UiTranslator.translate("Telefono terminalo atidaryti nepavyko", AppLanguageManager.ENGLISH),

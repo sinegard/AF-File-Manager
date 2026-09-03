@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.DriveFileRenameOutline
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -183,6 +184,12 @@ fun AdvancedStorageBrowserDialog(
                                 onDismissMenu = { menu = false },
                             )
                             HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { LText("Atidaryti terminalą šiame aplanke") },
+                                leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
+                                enabled = state.path.isNotBlank() && !state.loading,
+                                onClick = { menu = false; viewModel.openAdvancedTerminal() },
+                            )
                             DropdownMenuItem(
                                 text = { LText("Atnaujinti") },
                                 leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },

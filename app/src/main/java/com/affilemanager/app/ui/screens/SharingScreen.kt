@@ -289,6 +289,7 @@ private fun SharedFolderPickerDialog(
         title = "Pasirinkti bendrinamą aplanką",
         icon = Icons.Rounded.Folder,
         onDismissRequest = ::dismissOrBack,
+        expandedContent = true,
         modifier = Modifier.testTag("share_folder_picker_dialog"),
         actions = {
             TextButton(onClick = ::dismissOrBack) { LText(if (navigation.canNavigateBack) "Grįžti" else "Atšaukti") }

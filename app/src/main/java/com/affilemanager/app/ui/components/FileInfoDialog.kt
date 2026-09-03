@@ -3,7 +3,6 @@ package com.affilemanager.app.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -50,7 +49,7 @@ fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
         actions = {},
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             InfoLine("Tipas", if (entry.isDirectory) uiText("Aplankas") else entry.extension.uppercase().ifBlank { entry.kind.name })
@@ -107,7 +106,7 @@ fun FileInfoDialog(
         actions = {},
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
                 if (single == null) InfoLine("Pasirinkta", stableEntries.size.toString())

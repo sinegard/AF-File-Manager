@@ -57,6 +57,19 @@ object RemoteErrorPresenter {
     fun present(protocol: NetworkProtocol, operation: RemoteOperation, error: Throwable): RemoteErrorInfo {
         val causes = error.causeChain()
         causes.filterIsInstance<FtpCommandException>().firstOrNull()?.let(::ftpFailure)?.let { return it }
+        causes.filterIsInstance<WebDavHttpException>().firstOrNull()?.let { return webDavHttpFailure(operation, it) }
+        causes.filterIsInstance<WebDavRedirectException>().firstOrNull()?.let {
+            return RemoteErrorInfo(
+                title = "WebDAV peradresavimo tęsti negalima",
+                detail = when (it.reason) {
+                    WebDavRedirectFailure.UNSAFE -> "Serveris pasiūlė nesaugų peradresavimą. Prisijungimo duomenys nebuvo persiųsti."
+                    WebDavRedirectFailure.LIMIT -> "Serveris peradresuoja per daug kartų."
+                    WebDavRedirectFailure.UNSUPPORTED -> "Šiam veiksmui serverio peradresavimas nepalaikomas."
+                },
+                suggestion = "Redaguokite jungtį ir įrašykite galutinį WebDAV URL bei pradinį kelią.",
+                diagnosticCode = "WEBDAV-${operation.diagnosticPart}-${it.reason.diagnosticPart}",
+            )
+        }
         if (causes.any { it is UnknownHostException }) {
             return RemoteErrorInfo(
                 title = "Serverio adresas neteisingas",
@@ -157,6 +170,28 @@ object RemoteErrorPresenter {
             detail = "Gauta netikėta ryšio klaida; prisijungimo duomenys saugumo sumetimais nerodomi.",
             suggestion = "Patikrinkite jungties nustatymus ir pateikite diagnostikos kodą, jei klaida kartojasi.",
             diagnosticCode = "${protocol.name}-${operation.diagnosticPart}-UNEXPECTED",
+        )
+    }
+
+    private fun webDavHttpFailure(operation: RemoteOperation, error: WebDavHttpException): RemoteErrorInfo {
+        val (title, suggestion) = when (error.statusCode) {
+            401 -> "Prisijungimas atmestas" to
+                "Patikrinkite WebDAV naudotoją ir programos slaptažodį. Kai kurioms debesijoms reikia atskiro programos slaptažodžio."
+            403 -> "Serveris neleido atlikti veiksmo" to "Patikrinkite paskyros teises ir pradinį katalogą."
+            404, 405, 200 -> "WebDAV kelias nepasiekiamas" to
+                "Naudokite visą paslaugos pateiktą WebDAV URL su keliu, pavyzdžiui, /dav/. Svetainės pradinis puslapis gali nepalaikyti WebDAV."
+            409, 412, 423 -> "Nuotolinis veiksmas nepavyko" to
+                "Atnaujinkite katalogą ir patikrinkite, ar failas nebuvo pakeistas arba užrakintas."
+            507 -> "Nepakanka vietos serveryje" to "Atlaisvinkite vietos serveryje ir bandykite dar kartą."
+            429, in 500..599 -> "Serverio klaida" to "Serveris laikinai nepasiekiamas. Bandykite dar kartą vėliau."
+            else -> "Nuotolinis veiksmas nepavyko" to
+                "Patikrinkite jungties nustatymus ir pateikite diagnostikos kodą, jei klaida kartojasi."
+        }
+        return RemoteErrorInfo(
+            title = title,
+            detail = "HTTP ${error.statusCode}",
+            suggestion = suggestion,
+            diagnosticCode = "WEBDAV-${operation.diagnosticPart}-HTTP-${error.statusCode}",
         )
     }
 

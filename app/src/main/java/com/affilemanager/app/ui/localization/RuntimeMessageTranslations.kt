@@ -3,6 +3,18 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "WebDAV peradresavimo tęsti negalima" to "Cannot follow the WebDAV redirect",
+        "Serveris pasiūlė nesaugų peradresavimą. Prisijungimo duomenys nebuvo persiųsti." to "The server requested an unsafe redirect. Credentials were not forwarded.",
+        "Serveris peradresuoja per daug kartų." to "The server redirected too many times.",
+        "Šiam veiksmui serverio peradresavimas nepalaikomas." to "The server redirect is not supported for this action.",
+        "Redaguokite jungtį ir įrašykite galutinį WebDAV URL bei pradinį kelią." to "Edit the connection and enter the final WebDAV URL and starting path.",
+        "Patikrinkite WebDAV naudotoją ir programos slaptažodį. Kai kurioms debesijoms reikia atskiro programos slaptažodžio." to "Check the WebDAV username and app password. Some cloud services need a separate app password.",
+        "WebDAV kelias nepasiekiamas" to "WebDAV path unavailable",
+        "Naudokite visą paslaugos pateiktą WebDAV URL su keliu, pavyzdžiui, /dav/. Svetainės pradinis puslapis gali nepalaikyti WebDAV." to "Use the full WebDAV URL supplied by the service, including its path, such as /dav/. The website home page may not support WebDAV.",
+        "Atnaujinkite katalogą ir patikrinkite, ar failas nebuvo pakeistas arba užrakintas." to "Refresh the folder and check whether the file was changed or locked.",
+        "Nepakanka vietos serveryje" to "Not enough space on the server",
+        "Atlaisvinkite vietos serveryje ir bandykite dar kartą." to "Free up space on the server and try again.",
+        "Serveris laikinai nepasiekiamas. Bandykite dar kartą vėliau." to "The server is temporarily unavailable. Try again later.",
         "Nepasirinkta failų" to "No files selected",
         "Kai kurie šaltiniai nebeegzistuoja" to "Some source files no longer exist",
         "Šį formatą galima tik išpakuoti" to "This format can only be extracted",

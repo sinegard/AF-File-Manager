@@ -1,10 +1,14 @@
 package com.affilemanager.app.data
 
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.AFFileManagerApplication
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.SearchFilters
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -61,6 +65,35 @@ class NavigationRepositoryTest {
         } finally {
             repository.clearDirectoryDisplaySettings(firstIdentity)
             repository.clearDirectoryDisplaySettings(secondIdentity)
+        }
+    }
+
+    @Test
+    fun settingAnInheritedDefaultCreatesAnIndependentOverride() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val preferenceName = "navigation-independent-${System.nanoTime()}"
+        val isolatedContext = object : ContextWrapper(application) {
+            override fun getSharedPreferences(name: String?, mode: Int): SharedPreferences =
+                application.getSharedPreferences(preferenceName, mode)
+        }
+        val identity = "instrumentation:display:independent:${System.nanoTime()}"
+        val repository = NavigationRepository(isolatedContext)
+        val inherited = DirectoryDisplaySettings(
+            layoutMode = DirectoryLayoutMode.GRID,
+            gridColumns = 4,
+        )
+        try {
+            repository.setDirectoryDisplayDefaults(
+                DirectoryDisplayDefaults(inherited, SortMode.NAME, SortDirection.ASCENDING),
+            )
+            assertEquals(inherited, repository.directoryDisplaySettings(identity))
+            assertEquals(null, repository.directoryDisplaySettingsOverride(identity))
+
+            repository.setDirectoryDisplaySettings(identity, inherited)
+
+            assertEquals(inherited, NavigationRepository(isolatedContext).directoryDisplaySettingsOverride(identity))
+        } finally {
+            application.deleteSharedPreferences(preferenceName)
         }
     }
 

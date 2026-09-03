@@ -68,7 +68,7 @@ jobs:
           cp "$source_apk" "$apk"
           sha256sum "$apk" > "$apk.sha256"
 
-      - name: Publish GitHub Release
+      - name: Prepare draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -79,4 +79,5 @@ jobs:
             "dist/AF-File-Manager-$AF_VERSION.apk.sha256#SHA-256 checksum" \
             --verify-tag \
             --title "AF File Manager $AF_VERSION" \
+            --draft \
             --generate-notes

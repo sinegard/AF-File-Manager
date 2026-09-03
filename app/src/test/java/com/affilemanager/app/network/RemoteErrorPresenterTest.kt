@@ -9,6 +9,28 @@ import java.net.UnknownHostException
 
 class RemoteErrorPresenterTest {
     @Test
+    fun webDavHttpFailuresKeepStatusAndOfferProtocolSpecificHelp() {
+        for (status in listOf(200, 401, 403, 404, 405, 409, 412, 423, 429, 500, 507)) {
+            val shown = RemoteErrorPresenter.present(NetworkProtocol.WEBDAV, RemoteOperation.CONNECT, WebDavHttpException(status))
+            assertEquals("WEBDAV-CONNECT-HTTP-$status", shown.diagnosticCode)
+            assertEquals("HTTP $status", shown.detail)
+            assertTrue(shown.suggestion.isNotBlank())
+            assertFalse(shown.diagnosticCode.endsWith("UNEXPECTED"))
+        }
+        val wrongPath = RemoteErrorPresenter.present(NetworkProtocol.WEBDAV, RemoteOperation.CONNECT, WebDavHttpException(405))
+        assertTrue(wrongPath.suggestion.contains("/dav/"))
+    }
+
+    @Test
+    fun webDavUnsafeRedirectHasStableNonSecretDiagnostic() {
+        val shown = RemoteErrorPresenter.present(
+            NetworkProtocol.WEBDAV, RemoteOperation.LIST, WebDavRedirectException(WebDavRedirectFailure.UNSAFE),
+        )
+        assertEquals("WEBDAV-LIST-UNSAFE-REDIRECT", shown.diagnosticCode)
+        assertTrue(shown.detail.contains("nebuvo persiųsti"))
+    }
+
+    @Test
     fun dnsErrorNeverEchoesExceptionTextOrCredentialMarker() {
         val marker = "TOP_SECRET_MARKER"
         val shown = RemoteErrorPresenter.present(

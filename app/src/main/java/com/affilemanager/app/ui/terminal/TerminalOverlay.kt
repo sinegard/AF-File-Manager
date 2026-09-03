@@ -121,11 +121,15 @@ fun TerminalOverlay(
                     Column(modifier = Modifier.weight(1f).padding(vertical = 7.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             LText(
-                                if (state.location == TerminalLocation.PHONE) "Telefonas" else "Serveris",
+                                when (state.location) {
+                                    TerminalLocation.PHONE -> "Telefonas"
+                                    TerminalLocation.PRIVILEGED -> "Root"
+                                    TerminalLocation.SERVER -> "Serveris"
+                                },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                             )
-                            if (state.location == TerminalLocation.PHONE) {
+                            if (state.location != TerminalLocation.SERVER) {
                                 LText(
                                     state.title,
                                     style = MaterialTheme.typography.titleMedium,
@@ -180,7 +184,13 @@ fun TerminalOverlay(
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 CircularProgressIndicator()
-                                LText(if (state.location == TerminalLocation.PHONE) "Paleidžiamas telefono terminalas…" else "Jungiamasi prie serverio terminalo…")
+                                LText(
+                                    when (state.location) {
+                                        TerminalLocation.PHONE -> "Paleidžiamas telefono terminalas…"
+                                        TerminalLocation.PRIVILEGED -> "Paleidžiamas privilegijuotas terminalas…"
+                                        TerminalLocation.SERVER -> "Jungiamasi prie serverio terminalo…"
+                                    },
+                                )
                             }
                         }
                         emulator == null -> {
