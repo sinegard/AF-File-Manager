@@ -9,6 +9,7 @@ class UiTranslatorTest {
     @Test
     fun englishTranslatesStaticAndDynamicInterfaceCopy() {
         assertEquals("Files", UiTranslator.translate("Failai", AppLanguageManager.ENGLISH))
+        assertEquals("Videos", UiTranslator.translate("Vaizdo įrašai", AppLanguageManager.ENGLISH))
         assertEquals("Selected: 12", UiTranslator.translate("Pasirinkta: 12", AppLanguageManager.ENGLISH))
         assertEquals("Will create: backup", UiTranslator.translate("Bus sukurta: backup", AppLanguageManager.ENGLISH))
         assertEquals("Sending to Test phone", UiTranslator.translate("Siunčiama į Test phone", AppLanguageManager.ENGLISH))

@@ -4,6 +4,12 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-09-04
+
+### Fixed
+
+- The phone-transfer video category now follows the selected interface language instead of showing a Lithuanian label in English.
+
 ## [0.31.0] - 2026-09-04
 
 ### Added
@@ -123,6 +129,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 English and Lithuanian are maintained directly. The other bundled translations were generated offline and may still need corrections from native speakers.
 
+[0.31.1]: https://github.com/sinegard/AF-File-Manager/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.28.0...v0.29.0

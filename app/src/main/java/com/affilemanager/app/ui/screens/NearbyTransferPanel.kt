@@ -468,7 +468,7 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
                         documentsLauncher.launch(arrayOf("*/*"))
                     }
                     NearbyCategoryChip("Nuotraukos", Icons.Rounded.Image, selected = category == FileCategory.IMAGES) { category = FileCategory.IMAGES }
-                    NearbyCategoryChip("Vaizdo", Icons.Rounded.VideoFile, selected = category == FileCategory.VIDEOS) { category = FileCategory.VIDEOS }
+                    NearbyCategoryChip("Vaizdo įrašai", Icons.Rounded.VideoFile, selected = category == FileCategory.VIDEOS) { category = FileCategory.VIDEOS }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp).horizontalScroll(rememberScrollState()),
