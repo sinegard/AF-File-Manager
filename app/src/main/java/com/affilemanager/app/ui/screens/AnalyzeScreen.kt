@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.CheckBox
+import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
@@ -105,6 +106,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val cleanupRequested by viewModel.cleanupRequested.collectAsStateWithLifecycle()
+    val deviceCleanup by viewModel.deviceCleanup.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) leftPanel.path else rightPanel.path
 
     var query by remember { mutableStateOf(searchState.filters.query) }
@@ -209,32 +211,55 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         .maxByOrNull { it.path.length }
         ?: storageRoots.firstOrNull()
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(contentPadding).testTag("analyze_list"),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                LText("Paieška ir vietos analizė", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                LText(
+                    when (scope) {
+                        SearchScope.ALL_STORAGE -> "Visos Android matomos saugyklos"
+                        SearchScope.SELECTED_STORAGE -> "Pasirinkta saugyklų: ${selectedRoots.size}"
+                        SearchScope.CURRENT_FOLDER -> selectedRoots.firstOrNull().orEmpty()
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (renameUndo != null) {
+                IconButton(onClick = viewModel::undoBatchRename) {
+                    Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = uiText("Atšaukti paskutinį masinį pervadinimą"))
+                }
+            }
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f).testTag("analyze_list"),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         item {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Card(
+                onClick = viewModel::openDeviceCleanup,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("open_device_cleanup"),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(Icons.Rounded.CleaningServices, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Column(modifier = Modifier.weight(1f)) {
-                        LText("Paieška ir vietos analizė", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        LText("Įrenginio valymas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         LText(
-                            when (scope) {
-                                SearchScope.ALL_STORAGE -> "Visos Android matomos saugyklos"
-                                SearchScope.SELECTED_STORAGE -> "Pasirinkta saugyklų: ${selectedRoots.size}"
-                                SearchScope.CURRENT_FOLDER -> selectedRoots.firstOrNull().orEmpty()
-                            },
+                            "Nenaudojamos programos, programų talpyklos ir seni medijos failai — viską peržiūrėkite prieš sistemos veiksmą",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
                         )
-                    }
-                    if (renameUndo != null) {
-                        IconButton(onClick = viewModel::undoBatchRename) {
-                            Icon(Icons.AutoMirrored.Rounded.Undo, contentDescription = uiText("Atšaukti paskutinį masinį pervadinimą"))
-                        }
                     }
                 }
             }
@@ -635,6 +660,20 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 }
             }
             item {
+                val oldMedia = analysis.oldMediaFiles
+                AnalysisOverviewCard(
+                    title = "Sena medija ir ekrano kopijos",
+                    testTag = "analysis_overview_old_media",
+                    count = oldMedia.size,
+                    icon = Icons.Rounded.CleaningServices,
+                    onViewAll = { cleanupCategory = CleanupCategory.OLD_MEDIA; showCleanupReview = true },
+                ) {
+                    oldMedia.take(2).forEach { entry ->
+                        ResultRow(entry, onOpen = { viewModel.open(entry) }, onReveal = { viewModel.revealSearchResult(entry) })
+                    }
+                }
+            }
+            item {
                 AnalysisOverviewCard(
                     title = "Tušti aplankai",
                     testTag = "analysis_overview_empty",
@@ -666,6 +705,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 }
             }
         }
+    }
     }
 
     if (showStoragePicker) {
@@ -837,6 +877,24 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             )
         }
     }
+
+    DeviceCleanupDialog(
+        state = deviceCleanup,
+        onDismiss = viewModel::closeDeviceCleanup,
+        onRefresh = viewModel::refreshDeviceCleanup,
+        onGrantUsageAccess = viewModel::openUsageAccessSettings,
+        onOpenAppSettings = viewModel::openApplicationSettings,
+        onUninstall = viewModel::requestApplicationUninstall,
+        oldMediaScanned = analysisState.analysis != null,
+        oldMediaLoading = analysisState.running,
+        oldMediaCount = analysisState.analysis?.oldMediaFiles?.size ?: 0,
+        onRefreshOldMedia = viewModel::refreshAnalysis,
+        onReviewOldMedia = {
+            viewModel.closeDeviceCleanup()
+            cleanupCategory = CleanupCategory.OLD_MEDIA
+            showCleanupReview = true
+        },
+    )
 }
 
 private fun sameAnalysisPath(first: String, second: String?): Boolean {

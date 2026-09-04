@@ -118,6 +118,7 @@ import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
 import com.affilemanager.app.ui.components.longPressDragSelect
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
@@ -514,13 +515,19 @@ internal fun RemoteBrowser(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         state.error?.let { NetworkError(it) }
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                state.error != null && displayedEntries.isEmpty() -> Unit
-                state.loading && orderedEntries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                orderedEntries.isEmpty() -> RemoteEmptyPanel()
-                displayedEntries.isEmpty() -> RemoteEmptyPanel("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
-                state.grid -> RemoteEntryGrid(
+        AfPullToRefresh(
+            isRefreshing = state.loading,
+            onRefresh = onRefresh,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            testTag = "pull_to_refresh_remote",
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    state.error != null && displayedEntries.isEmpty() -> Unit
+                    state.loading && orderedEntries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    orderedEntries.isEmpty() -> RemoteEmptyPanel()
+                    displayedEntries.isEmpty() -> RemoteEmptyPanel("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
+                    state.grid -> RemoteEntryGrid(
                     entries = displayedEntries,
                     loading = state.loading,
                     selectedPaths = state.selectedPaths,
@@ -538,7 +545,7 @@ internal fun RemoteBrowser(
                     onInfo = onInfo,
                     onDelete = { onDelete(listOf(it)) },
                 )
-                else -> RemoteEntryList(
+                    else -> RemoteEntryList(
                     entries = displayedEntries,
                     loading = state.loading,
                     selectedPaths = state.selectedPaths,
@@ -554,9 +561,9 @@ internal fun RemoteBrowser(
                     onInfo = onInfo,
                     onDelete = { onDelete(listOf(it)) },
                 )
-            }
-            if (state.selectedPaths.isNotEmpty()) {
-                SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
+                }
+                if (state.selectedPaths.isNotEmpty()) {
+                    SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
                     IconButton(onClick = onCopySelected, enabled = !state.loading) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                     }
@@ -584,13 +591,14 @@ internal fun RemoteBrowser(
                     ) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Ištrinti"), tint = MaterialTheme.colorScheme.error)
                     }
-                }
-            } else {
-                FloatingActionButton(
-                    onClick = onCreateFolder,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                ) {
-                    Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti aplanką"))
+                    }
+                } else {
+                    FloatingActionButton(
+                        onClick = onCreateFolder,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti aplanką"))
+                    }
                 }
             }
         }
@@ -1149,11 +1157,12 @@ internal fun LocalUploadDialog(
     var entries by remember(initialDirectoryPath, remotePath) { mutableStateOf(initialEntries) }
     var loading by remember(initialDirectoryPath, remotePath) { mutableStateOf(false) }
     var error by remember(initialDirectoryPath, remotePath) { mutableStateOf<String?>(null) }
+    var refreshToken by remember(initialDirectoryPath, remotePath) { mutableStateOf(0) }
     var selected: Set<String> by remember(initialDirectoryPath, remotePath) {
         mutableStateOf(initiallySelected.take(RemoteCopyEngine.MAX_SELECTED_ROOTS).toCollection(linkedSetOf()))
     }
 
-    LaunchedEffect(currentPath) {
+    LaunchedEffect(currentPath, refreshToken) {
         loading = true
         error = null
         if (currentPath != initialDirectoryPath) entries = emptyList()
@@ -1196,8 +1205,14 @@ internal fun LocalUploadDialog(
         icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
         title = { LText("Kopijuoti į serverį") },
         text = {
-            LazyColumn(
+            AfPullToRefresh(
+                isRefreshing = loading,
+                onRefresh = { refreshToken += 1 },
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                testTag = "pull_to_refresh_local_upload",
+            ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 item {
@@ -1310,6 +1325,7 @@ internal fun LocalUploadDialog(
                         }
                     }
                 }
+            }
             }
         },
         confirmButton = {
@@ -1590,6 +1606,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText("Jungties pavadinimas") },
                         singleLine = true,
                         isError = nameProblem != null,
@@ -1601,6 +1618,7 @@ internal fun NetworkProfileDialog(
                         value = host,
                         onValueChange = { host = it },
                         modifier = Modifier
+                            .fillMaxWidth()
                             .testTag("network_host")
                             .onFocusChanged { focus ->
                                 if (!focus.isFocused) {
@@ -1629,6 +1647,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = port,
                         onValueChange = { port = it.filter(Char::isDigit) },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText("Prievadas") },
                         singleLine = true,
                         isError = portProblem != null,
@@ -1639,6 +1658,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText("Naudotojas") },
                         singleLine = true,
                         isError = usernameProblem != null,
@@ -1649,6 +1669,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText(if (existingProfile == null) "Slaptažodis" else "Naujas slaptažodis (nebūtinas)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
@@ -1666,6 +1687,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = basePath,
                         onValueChange = { basePath = it },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText("Pradinis kelias") },
                         singleLine = true,
                         isError = basePathProblem != null,
@@ -1673,8 +1695,8 @@ internal fun NetworkProfileDialog(
                     )
                 }
                 if (protocol == NetworkProtocol.SMB) {
-                    item { OutlinedTextField(value = share, onValueChange = { share = it }, label = { LText("Bendrinimo vardas") }, singleLine = true) }
-                    item { OutlinedTextField(value = domain, onValueChange = { domain = it }, label = { LText("Domenas (nebūtinas)") }, singleLine = true) }
+                    item { OutlinedTextField(value = share, onValueChange = { share = it }, label = { LText("Bendrinimo vardas") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+                    item { OutlinedTextField(value = domain, onValueChange = { domain = it }, label = { LText("Domenas (nebūtinas)") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
                 }
                 if (protocol == NetworkProtocol.SFTP) {
                     item {
@@ -1691,6 +1713,7 @@ internal fun NetworkProfileDialog(
                             OutlinedTextField(
                                 value = privateKeyPem,
                                 onValueChange = { if (it.length <= 1_048_576) privateKeyPem = it },
+                                modifier = Modifier.fillMaxWidth(),
                                 label = { LText(if (existingProfile == null) "Privatus raktas PEM / OpenSSH" else "Naujas privatus raktas PEM / OpenSSH") },
                                 minLines = 4,
                                 maxLines = 8,
@@ -1701,6 +1724,7 @@ internal fun NetworkProfileDialog(
                         OutlinedTextField(
                             value = fingerprint,
                             onValueChange = { fingerprint = it },
+                            modifier = Modifier.fillMaxWidth(),
                             label = { LText("SSH rakto SHA256 atspaudas") },
                             singleLine = true,
                             enabled = !trustFirstUse,

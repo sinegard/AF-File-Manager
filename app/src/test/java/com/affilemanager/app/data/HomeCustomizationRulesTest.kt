@@ -62,6 +62,18 @@ class HomeCustomizationRulesTest {
     }
 
     @Test
+    fun storageVisibilityAndOrderAreIndependentFromQuickLocations() {
+        val available = listOf("primary", "sd-card", HomeCustomizationRules.ROOT_STORAGE_ID)
+        var value = HomeCustomizationRules.normalize(HomeCustomization(), defaults)
+        value = HomeCustomizationRules.moveStorage(value, available, "sd-card", -1)
+        value = HomeCustomizationRules.setStorageVisible(value, HomeCustomizationRules.ROOT_STORAGE_ID, false)
+
+        assertEquals(listOf("sd-card", "primary", HomeCustomizationRules.ROOT_STORAGE_ID), value.storageOrder)
+        assertTrue(HomeCustomizationRules.ROOT_STORAGE_ID in value.hiddenStorageIds)
+        assertEquals(defaults.map(HomeShortcut::id), value.shortcuts.map(HomeShortcut::id))
+    }
+
+    @Test
     fun realQuickLocationFoldersUseStandardDirectoryNavigation() {
         val folderIds = listOf("builtin.downloads")
 

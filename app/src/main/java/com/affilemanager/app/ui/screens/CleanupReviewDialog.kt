@@ -63,6 +63,7 @@ import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.DirectoryContentUsage
 import com.affilemanager.app.model.DirectoryContentsUsage
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.cleanup.OldMediaRules
 import com.affilemanager.app.model.SimilarImageGroup
 import com.affilemanager.app.model.StorageAnalysis
 import com.affilemanager.app.ui.localization.LText
@@ -79,6 +80,7 @@ internal enum class CleanupCategory {
     LARGEST_FOLDERS,
     LARGE,
     OLDEST,
+    OLD_MEDIA,
     EMPTY_FOLDERS,
     DUPLICATES,
     PACKAGES,
@@ -567,6 +569,7 @@ private fun cleanupCandidates(
         }
     CleanupCategory.LARGE -> analysis.largestFiles.map(FileEntry::toCleanupCandidate)
     CleanupCategory.OLDEST -> analysis.oldestFiles.map(FileEntry::toCleanupCandidate)
+    CleanupCategory.OLD_MEDIA -> analysis.oldMediaFiles.map(FileEntry::toCleanupCandidate)
     CleanupCategory.PACKAGES -> analysis.installerAndArchiveFiles.map(FileEntry::toCleanupCandidate)
     CleanupCategory.DUPLICATES -> duplicates.flatMapIndexed { index, group ->
         group.paths.map { path ->
@@ -700,6 +703,7 @@ private fun cleanupCategoryLabel(category: CleanupCategory): String = when (cate
     CleanupCategory.LARGEST_FOLDERS -> "Didžiausi aplankai"
     CleanupCategory.LARGE -> "Didžiausi failai"
     CleanupCategory.OLDEST -> "Seniausiai keisti failai"
+    CleanupCategory.OLD_MEDIA -> "Sena medija ir ekrano kopijos"
     CleanupCategory.PACKAGES -> "APK ir archyvai"
     CleanupCategory.DUPLICATES -> "Vienodi failai"
     CleanupCategory.EMPTY_FOLDERS -> "Tušti aplankai"
@@ -711,10 +715,15 @@ private fun cleanupCategoryIcon(category: CleanupCategory): ImageVector = when (
     CleanupCategory.LARGEST_FOLDERS -> Icons.Rounded.Folder
     CleanupCategory.LARGE -> Icons.AutoMirrored.Rounded.InsertDriveFile
     CleanupCategory.OLDEST -> Icons.AutoMirrored.Rounded.InsertDriveFile
+    CleanupCategory.OLD_MEDIA -> Icons.Rounded.Image
     CleanupCategory.PACKAGES -> Icons.Rounded.Archive
     CleanupCategory.DUPLICATES -> Icons.Rounded.ContentCopy
     CleanupCategory.EMPTY_FOLDERS -> Icons.Rounded.Folder
     CleanupCategory.SIMILAR_IMAGES -> Icons.Rounded.Image
+}
+
+internal fun isOldMediaCleanupCandidate(entry: FileEntry): Boolean {
+    return OldMediaRules.isCategoryCandidate(entry)
 }
 
 private fun cleanupKindLabel(kind: com.affilemanager.app.model.EntryKind): String = when (kind) {

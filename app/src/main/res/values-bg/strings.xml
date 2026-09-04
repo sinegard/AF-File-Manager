@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">Прехвърляне на AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Стартиращ сървър...</string>
     <string name="lan_transfer_running_title">Прехвърляне AF File Manager LAN се изпълнява</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Активен терминал</string>
     <string name="terminal_channel_description">Поддържа отворен телефон или сървърски терминал, който работи в фона</string>
     <string name="terminal_notification_title">Терминал AF File Manager</string>

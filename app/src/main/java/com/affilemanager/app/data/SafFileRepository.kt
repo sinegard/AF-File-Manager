@@ -3,6 +3,7 @@ package com.affilemanager.app.data
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.core.FileSystemRules
@@ -84,8 +85,7 @@ class SafFileRepository(private val context: Context) {
     suspend fun list(treeOrDirectoryUri: String): Result<List<SafEntry>> = withContext(Dispatchers.IO) {
         runCatching {
             val uri = Uri.parse(treeOrDirectoryUri)
-            val directory = DocumentFile.fromSingleUri(context, uri) ?: DocumentFile.fromTreeUri(context, uri)
-                ?: throw IllegalArgumentException("Vieta nepasiekiama")
+            val directory = document(uri)
             require(directory.isDirectory) { "Tai nėra aplankas" }
             val files = directory.listFiles()
             require(files.size <= MAX_DIRECTORY_ENTRIES) { "Aplanke per daug elementų" }
@@ -139,9 +139,23 @@ class SafFileRepository(private val context: Context) {
             }
         }
 
-    private fun document(uri: String): DocumentFile = DocumentFile.fromSingleUri(context, Uri.parse(uri))
-        ?: DocumentFile.fromTreeUri(context, Uri.parse(uri))
+    private fun document(uri: String): DocumentFile = document(Uri.parse(uri))
+
+    private fun document(uri: Uri): DocumentFile = if (isTreeRootUri(uri)) {
+        DocumentFile.fromTreeUri(context, uri)
+    } else {
+        DocumentFile.fromSingleUri(context, uri) ?: DocumentFile.fromTreeUri(context, uri)
+    }
         ?: throw IllegalArgumentException("Dokumentas nepasiekiamas")
+
+    /**
+     * ACTION_OPEN_DOCUMENT_TREE returns a tree root URI rather than a regular document URI.
+     * Treating that URI as a single document makes some providers expose a non-navigable item.
+     * Child document URIs contain both `tree` and `document`, so they must stay single-document
+     * handles or they would incorrectly jump back to the granted root.
+     */
+    private fun isTreeRootUri(uri: Uri): Boolean =
+        DocumentsContract.isTreeUri(uri) && "document" !in uri.pathSegments
 
     private fun toEntry(file: DocumentFile) = SafEntry(
         uri = file.uri.toString(),

@@ -66,7 +66,7 @@ class AfMacrobenchmark {
         setupBlock = { prepareTargetForColdStart() },
     ) {
         startActivityAndWait(AfBenchmarkEnvironment.localIntent("large"))
-        AfBenchmarkEnvironment.run { awaitObject("file_list_LEFT") }
+        AfBenchmarkEnvironment.run { awaitObject("file_list_content_LEFT") }
     }
 
     @Test
@@ -108,7 +108,7 @@ class AfMacrobenchmark {
         setupBlock = {
             AfBenchmarkEnvironment.prepareTarget(device)
             startActivityAndWait(AfBenchmarkEnvironment.localIntent(dataset))
-            AfBenchmarkEnvironment.run { awaitObject(resourceName.readyTag()) }
+            AfBenchmarkEnvironment.run { awaitObject(resourceName.contentTag()) }
             device.waitForIdle()
         },
     ) {
@@ -120,8 +120,8 @@ class AfMacrobenchmark {
 
     private fun profileCompilation() = CompilationMode.Partial(BaselineProfileMode.UseIfAvailable)
 
-    private fun String.readyTag(): String =
-        "${substringBeforeLast('_')}_ready_${substringAfterLast('_')}"
+    private fun String.contentTag(): String =
+        "${substringBeforeLast('_')}_content_${substringAfterLast('_')}"
 
     private fun androidx.benchmark.macro.MacrobenchmarkScope.prepareTargetForColdStart() {
         AfBenchmarkEnvironment.prepareTarget(device)

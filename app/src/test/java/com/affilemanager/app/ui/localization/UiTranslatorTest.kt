@@ -10,6 +10,14 @@ class UiTranslatorTest {
     fun englishTranslatesStaticAndDynamicInterfaceCopy() {
         assertEquals("Files", UiTranslator.translate("Failai", AppLanguageManager.ENGLISH))
         assertEquals("Selected: 12", UiTranslator.translate("Pasirinkta: 12", AppLanguageManager.ENGLISH))
+        assertEquals("Will create: backup", UiTranslator.translate("Bus sukurta: backup", AppLanguageManager.ENGLISH))
+        assertEquals("Sending to Test phone", UiTranslator.translate("Siunčiama į Test phone", AppLanguageManager.ENGLISH))
+        assertEquals("Receiver: Test phone", UiTranslator.translate("Gavėjas: Test phone", AppLanguageManager.ENGLISH))
+        assertEquals("Ready to send: 7", UiTranslator.translate("Paruošta siųsti: 7", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Selected archive entries extracted to /Download/sample",
+            UiTranslator.translate("Pasirinkti archyvo įrašai išpakuoti į /Download/sample", AppLanguageManager.ENGLISH),
+        )
         assertEquals("Copy (4)", UiTranslator.translate("Kopijuoti (4)", AppLanguageManager.ENGLISH))
         assertEquals("Paste (2)", UiTranslator.translate("Įklijuoti (2)", AppLanguageManager.ENGLISH))
         assertEquals("Paste from server", UiTranslator.translate("Įklijuoti iš serverio", AppLanguageManager.ENGLISH))

@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">Förflyttning av AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Starterande server...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN överföring körs</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Aktiva terminaler</string>
     <string name="terminal_channel_description">Håller en öppen telefon eller serverterminal som körs i bakgrunden</string>
     <string name="terminal_notification_title">AF File Manager terminalen</string>

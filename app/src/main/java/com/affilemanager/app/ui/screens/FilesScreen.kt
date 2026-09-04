@@ -73,10 +73,12 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.SdStorage
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -160,6 +162,7 @@ import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
 import com.affilemanager.app.data.HomeShortcutNavigationRules
+import com.affilemanager.app.data.SafLocation
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.AppSection
@@ -171,6 +174,7 @@ import com.affilemanager.app.ui.PanelComparisonStatus
 import com.affilemanager.app.ui.ProgressiveScrollRules
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
@@ -230,6 +234,8 @@ fun FilesScreen(
     contentPadding: PaddingValues,
     hasAllFilesAccess: Boolean,
     onRequestAllFilesAccess: () -> Unit,
+    onAddSafLocation: () -> Unit,
+    onOpenSystemFiles: () -> Unit,
 ) {
     val left by viewModel.leftPanel.collectAsStateWithLifecycle()
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -255,6 +261,7 @@ fun FilesScreen(
     val trashItems by viewModel.trashItems.collectAsStateWithLifecycle()
     val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
     val fileCategory by viewModel.fileCategory.collectAsStateWithLifecycle()
+    val safLocations by viewModel.safLocations.collectAsStateWithLifecycle()
 
     var createFor by remember { mutableStateOf<PanelId?>(null) }
     var renameTarget by remember { mutableStateOf<Pair<PanelId, FileEntry>?>(null) }
@@ -373,6 +380,10 @@ fun FilesScreen(
                     onOpenTag = { tag -> viewModel.closeHomeToolPage(); viewModel.openTagFromHome(tag) },
                     onToggleLayout = { viewModel.toggleHomeDisplayLayout(toolDisplayArea) },
                     onOpenDisplaySettings = { homeDisplayArea = toolDisplayArea },
+                    onRefresh = {
+                        viewModel.refreshNavigationState()
+                        viewModel.refreshTags()
+                    },
                 )
             } else if (fileCategory.open) {
                 PanelTabsBar(
@@ -389,6 +400,7 @@ fun FilesScreen(
             } else if (filesHomeVisible) {
                 FilesHome(
                     roots = roots,
+                    safLocations = safLocations,
                     recentFiles = recentFiles.items,
                     recentFilesLoading = recentFiles.loading,
                     recentFilesError = recentFiles.error,
@@ -414,7 +426,9 @@ fun FilesScreen(
                     onRefreshRecent = viewModel::refreshRecentFiles,
                     onToggleLayout = viewModel::toggleHomeDisplayLayout,
                     onConfigureLayout = { area -> homeDisplayArea = area },
-                    onConfigureHome = { showHomeCustomization = true },
+                    onAddSafLocation = onAddSafLocation,
+                    onOpenSafLocation = viewModel::openSafLocation,
+                    onOpenSystemFiles = onOpenSystemFiles,
                 )
             } else if (dualPane) {
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -654,6 +668,25 @@ fun FilesScreen(
                 viewModel.setHomeDisplaySettings(area, settings)
                 homeDisplayArea = null
             },
+            extraContent = {
+                if (area == HomeDisplayArea.STORAGE || area == HomeDisplayArea.QUICK_LOCATIONS) {
+                    HorizontalDivider()
+                    OutlinedButton(
+                        onClick = {
+                            homeDisplayArea = null
+                            showHomeCustomization = true
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("home_customize"),
+                    ) {
+                        Icon(Icons.Rounded.Edit, contentDescription = null)
+                        LText(
+                            if (area == HomeDisplayArea.STORAGE) "Tvarkyti saugyklas ir pradžios ekraną"
+                            else "Tvarkyti greitas vietas",
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+            },
         )
     }
     infoTargets?.let { entries ->
@@ -667,11 +700,14 @@ fun FilesScreen(
         val currentPath = if (activePanel == PanelId.LEFT) left.path else right.path
         HomeCustomizationDialog(
             customization = homeCustomization,
+            roots = roots,
             currentPath = currentPath,
             onDismiss = { showHomeCustomization = false },
             onMoveSection = viewModel::moveHomeSection,
             onMoveShortcut = viewModel::moveHomeShortcut,
             onSetShortcutVisible = viewModel::setHomeShortcutVisible,
+            onMoveStorage = viewModel::moveHomeStorage,
+            onSetStorageVisible = viewModel::setHomeStorageVisible,
             onRemoveShortcut = viewModel::removeHomeShortcut,
             onAddShortcut = viewModel::addHomeShortcut,
         )
@@ -894,7 +930,12 @@ private fun FilePanel(
             }
         }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        AfPullToRefresh(
+            isRefreshing = state.loading,
+            onRefresh = { viewModel.refreshPanel(panelId) },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            testTag = "pull_to_refresh_local_$panelId",
+        ) {
             when {
                 state.error != null -> EmptyPanel("Aplankas nepasiekiamas", state.error)
                 state.loading && state.entries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -921,6 +962,18 @@ private fun FilePanel(
                         modifier = Modifier.testTag("selection_favorite_local"),
                     ) {
                         Icon(Icons.Rounded.Star, contentDescription = uiText("Pridėti prie mėgstamų"))
+                    }
+                    IconButton(
+                        onClick = { viewModel.bookmarkSelection(panelId) },
+                        modifier = Modifier.testTag("selection_bookmark_local"),
+                    ) {
+                        Icon(Icons.Rounded.BookmarkAdd, contentDescription = uiText("Pridėti žymelę"))
+                    }
+                    IconButton(
+                        onClick = { viewModel.shareSelection(panelId) },
+                        modifier = Modifier.testTag("selection_share_local"),
+                    ) {
+                        Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
                     }
                     IconButton(
                         onClick = {
@@ -989,6 +1042,7 @@ private fun FilePanel(
                 showFavoriteLocations = false
                 viewModel.openQuickPath(path, panelId)
             },
+            onRefresh = viewModel::refreshNavigationState,
         )
     }
 }
@@ -1374,9 +1428,12 @@ private fun FileList(
                     onCopy = { viewModel.copyEntry(panel, entry.absolutePath, move = false) },
                     onMove = { viewModel.copyEntry(panel, entry.absolutePath, move = true) },
                     onToggleFavorite = { viewModel.toggleFavorite(entry.absolutePath) },
+                    onBookmark = { viewModel.bookmarkPath(entry.absolutePath) },
+                    onShare = { viewModel.shareEntry(entry.absolutePath) },
                 )
             }
         }
+        if (state.entries.isNotEmpty()) Spacer(Modifier.size(1.dp).testTag("file_list_content_$panel"))
         if (!state.loading) Spacer(Modifier.size(1.dp).testTag("file_list_ready_$panel"))
     }
 }
@@ -1524,9 +1581,12 @@ private fun FileGrid(
                     onCopy = { viewModel.copyEntry(panel, entry.absolutePath, move = false) },
                     onMove = { viewModel.copyEntry(panel, entry.absolutePath, move = true) },
                     onToggleFavorite = { viewModel.toggleFavorite(entry.absolutePath) },
+                    onBookmark = { viewModel.bookmarkPath(entry.absolutePath) },
+                    onShare = { viewModel.shareEntry(entry.absolutePath) },
                 )
             }
         }
+        if (state.entries.isNotEmpty()) Spacer(Modifier.size(1.dp).testTag("file_grid_content_$panel"))
         if (!state.loading) Spacer(Modifier.size(1.dp).testTag("file_grid_ready_$panel"))
     }
 }
@@ -1562,6 +1622,8 @@ private fun FileRow(
     onCopy: () -> Unit,
     onMove: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onBookmark: () -> Unit,
+    onShare: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(8.dp)
     val iconSize = (42f * iconScalePercent / 100f).dp
@@ -1611,7 +1673,7 @@ private fun FileRow(
             }
         }
         if (!entry.isReadable) LText("Neprieinama", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite)
+        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
     }
     HorizontalDivider(
         modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
@@ -1646,6 +1708,8 @@ private fun FileTile(
     onCopy: () -> Unit,
     onMove: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onBookmark: () -> Unit,
+    onShare: () -> Unit,
 ) {
     val selectionShape = RoundedCornerShape(12.dp)
     val visualHeight = (76f * iconScalePercent / 100f).dp
@@ -1691,7 +1755,7 @@ private fun FileTile(
                 )
             },
             actions = {
-                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite)
+                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
             },
             extraContent = {
                 if (largestSizeBytes != null && entry.metadataComplete) {
@@ -1845,6 +1909,8 @@ private fun EntryActionsButton(
     onCopy: () -> Unit,
     onMove: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onBookmark: () -> Unit,
+    onShare: () -> Unit,
 ) {
     var expanded by remember(entry.absolutePath) { mutableStateOf(false) }
     Box {
@@ -1944,6 +2010,19 @@ private fun EntryActionsButton(
                 modifier = Modifier.testTag("favorite_entry_action"),
             )
             DropdownMenuItem(
+                text = { LText("Pridėti žymelę") },
+                leadingIcon = { Icon(Icons.Rounded.BookmarkAdd, contentDescription = null) },
+                onClick = { expanded = false; onBookmark() },
+                modifier = Modifier.testTag("bookmark_entry_action"),
+            )
+            DropdownMenuItem(
+                text = { LText("Bendrinti") },
+                leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
+                onClick = { expanded = false; onShare() },
+                enabled = entry.isReadable,
+                modifier = Modifier.testTag("share_entry_action"),
+            )
+            DropdownMenuItem(
                 text = { LText("Į šiukšlinę") },
                 leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                 onClick = { expanded = false; onTrash() },
@@ -2039,7 +2118,7 @@ private fun CreateItemDialog(
                     onValueChange = { name = it },
                     label = { LText("Pavadinimas") },
                     singleLine = true,
-                    modifier = Modifier.testTag("create_item_name"),
+                    modifier = Modifier.fillMaxWidth().testTag("create_item_name"),
                 )
                 if (itemType == CreateItemType.ARCHIVE) {
                     LText("Formatas", style = MaterialTheme.typography.labelLarge)
@@ -2106,7 +2185,7 @@ private fun ArchiveDialog(initialName: String, onDismiss: () -> Unit, onCreate: 
                     onValueChange = { name = it },
                     label = { LText("Pavadinimas") },
                     singleLine = true,
-                    modifier = Modifier.testTag("archive_name"),
+                    modifier = Modifier.fillMaxWidth().testTag("archive_name"),
                 )
                 LText("Formatas", style = MaterialTheme.typography.labelLarge)
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2125,6 +2204,7 @@ private fun ArchiveDialog(initialName: String, onDismiss: () -> Unit, onCreate: 
                         onValueChange = { password = it },
                         label = { LText("Slaptažodis (nebūtinas, AES-256)") },
                         singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 LText("Pasirinkta: ${format.name}", style = MaterialTheme.typography.bodySmall)

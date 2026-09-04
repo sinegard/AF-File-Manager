@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN uhamisho</string>
     <string name="lan_transfer_starting_text">Kuanza server...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN uhamisho unaendelea</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Kituo cha terminal cha kazi</string>
     <string name="terminal_channel_description">Anaweka simu wazi au terminal server kazi katika background</string>
     <string name="terminal_notification_title">terminal AF File Manager</string>

@@ -76,6 +76,18 @@ class BackNavigationRulesTest {
         )
         assertEquals(
             SystemBackAction.SHOW_FILES,
+            BackNavigationRules.decide(
+                previewOpen = false,
+                section = AppSection.FILES,
+                filesHomeVisible = false,
+                selectedCount = 0,
+                hasBackHistory = false,
+                hasParent = true,
+                returnToHomeAtBoundary = true,
+            ),
+        )
+        assertEquals(
+            SystemBackAction.SHOW_FILES,
             BackNavigationRules.decide(false, AppSection.FILES, false, 0, false, false),
         )
     }

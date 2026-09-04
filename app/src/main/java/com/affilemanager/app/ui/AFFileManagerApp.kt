@@ -85,6 +85,7 @@ import com.affilemanager.app.ui.screens.FilesScreen
 import com.affilemanager.app.ui.screens.ToolsScreen
 import com.affilemanager.app.ui.screens.SharingScreen
 import com.affilemanager.app.ui.screens.TrashBrowserDialog
+import com.affilemanager.app.ui.screens.SafBrowserDialog
 import com.affilemanager.app.ui.terminal.TerminalOverlay
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
@@ -131,6 +132,7 @@ fun AFFileManagerApp(
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val networkState by viewModel.networkState.collectAsStateWithLifecycle()
+    val safBrowser by viewModel.safBrowser.collectAsStateWithLifecycle()
     var hasAllFilesAccess by remember { mutableStateOf(hasFullFileAccess(context)) }
     var unlocked by remember(appLockEnabled) { mutableStateOf(!appLockEnabled) }
     var appStopped by remember { mutableStateOf(false) }
@@ -153,6 +155,7 @@ fun AFFileManagerApp(
         homeToolPageOpen = homeToolPage != null,
         selectedCount = activePanelState.selectedPaths.size,
         hasBackHistory = activePanelState.backHistory.isNotEmpty(),
+        returnToHomeAtBoundary = activePanelState.returnToHomeAtBoundary,
         hasParent = File(activePanelState.path).parentFile != null &&
             !sameNormalizedPath(Environment.getExternalStorageDirectory().absolutePath, activePanelState.path) &&
             storageRoots.none { root -> sameNormalizedPath(root.path, activePanelState.path) },
@@ -168,7 +171,7 @@ fun AFFileManagerApp(
         when (systemBackAction) {
             SystemBackAction.CLOSE_PREVIEW -> viewModel.closePreview()
             SystemBackAction.CLOSE_HOME_TOOL_PAGE -> viewModel.closeHomeToolPage()
-            SystemBackAction.SHOW_FILES -> viewModel.setSection(AppSection.FILES)
+            SystemBackAction.SHOW_FILES -> viewModel.showFilesHome()
             SystemBackAction.CLEAR_REMOTE_SELECTION -> viewModel.clearRemoteSelection()
             SystemBackAction.NAVIGATE_REMOTE_BACK -> viewModel.navigateRemoteBack()
             SystemBackAction.NAVIGATE_REMOTE_UP -> viewModel.navigateRemoteUp()
@@ -181,6 +184,9 @@ fun AFFileManagerApp(
 
     val safLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.addSafLocation(uri, uri.lastPathSegment?.substringAfterLast(':').orEmpty())
+    }
+    val systemFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.openExternalUri(uri, context.contentResolver.getType(uri))
     }
     val legacyStorageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasAllFilesAccess = hasFullFileAccess(context)
@@ -293,6 +299,8 @@ fun AFFileManagerApp(
                                     )
                                 }
                             },
+                            onAddSafLocation = { safLauncher.launch(null) },
+                            onOpenSystemFiles = { systemFilesLauncher.launch(arrayOf("*/*")) },
                         )
                         AppSection.ANALYZE -> AnalyzeScreen(viewModel, padding)
                         AppSection.CONNECTIONS -> ConnectionsScreen(viewModel, padding)
@@ -334,6 +342,15 @@ fun AFFileManagerApp(
         )
     }
 
+    if (safBrowser.location != null) {
+        SafBrowserDialog(
+            state = safBrowser,
+            selectedLocalPath = activePanelState.selectedPaths.singleOrNull(),
+            viewModel = viewModel,
+            onDismiss = viewModel::closeSafBrowser,
+        )
+    }
+
     AdvancedStorageBrowserDialog(
         state = advancedBrowser,
         access = advancedAccess,
@@ -370,7 +387,16 @@ fun AFFileManagerApp(
             onKeepEditing = viewModel::keepEditing,
             onDiscardEditAndClose = viewModel::discardFileEditAndClose,
             onCopyArchiveEntry = viewModel::copyArchiveEntryToSet,
-            onExtract = { file, password -> viewModel.extractArchive(file, password) },
+            onCopyArchiveEntries = viewModel::copyArchiveEntriesToSet,
+            onOpenArchiveEntry = viewModel::openArchiveEntry,
+            onShareArchiveEntries = viewModel::shareArchiveEntries,
+            onExtractArchiveEntries = viewModel::extractArchiveEntries,
+            onRenameArchiveEntry = viewModel::renameArchiveEntry,
+            onDeleteArchiveEntries = viewModel::deleteArchiveEntries,
+            onMoveArchiveEntries = viewModel::moveArchiveEntriesOut,
+            onRefreshArchive = viewModel::refreshArchivePreview,
+            loadArchiveThumbnail = viewModel::materializeArchiveThumbnail,
+            onExtract = { file, destination, password -> viewModel.extractArchive(file, destination, password) },
             onDecrypt = { file, password -> viewModel.decryptVault(file, password) },
         )
     }

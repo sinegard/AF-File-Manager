@@ -55,6 +55,8 @@ import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
@@ -65,6 +67,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Lock
@@ -147,6 +150,7 @@ import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.FileTagDefinition
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.HomeCustomization
+import com.affilemanager.app.data.HomeCustomizationRules
 import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
@@ -155,6 +159,7 @@ import com.affilemanager.app.data.PanelWorkspace
 import com.affilemanager.app.data.RecentFileItem
 import com.affilemanager.app.data.RecentItem
 import com.affilemanager.app.data.TaggedFileRecord
+import com.affilemanager.app.data.SafLocation
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.EntryKind
@@ -173,6 +178,7 @@ import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.PanelUiState
 import com.affilemanager.app.ui.ProgressiveScrollRules
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
@@ -212,6 +218,7 @@ internal fun HomeToolsBrowser(
     onOpenTag: (String) -> Unit,
     onToggleLayout: () -> Unit,
     onOpenDisplaySettings: () -> Unit,
+    onRefresh: () -> Unit,
 ) {
     var searchVisible by remember(page) { mutableStateOf(false) }
     var query by remember(page) { mutableStateOf("") }
@@ -269,19 +276,26 @@ internal fun HomeToolsBrowser(
                 modifier = Modifier.testTag("home_tools_search_${page.name.lowercase()}"),
             )
         }
-        Box(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            when (page) {
-                HomeToolPage.FAVORITES -> FavoriteBrowserItems(
-                    files = favoriteFiles,
-                    settings = displaySettings,
-                    onOpen = onOpenFavorite,
-                )
-                HomeToolPage.TAGS -> TagBrowserItems(
-                    definitions = tagDefinitions,
-                    snapshot = tagSnapshot,
-                    settings = displaySettings,
-                    onOpen = onOpenTag,
-                )
+        AfPullToRefresh(
+            isRefreshing = false,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+            testTag = "pull_to_refresh_home_tools",
+        ) {
+            Box(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                when (page) {
+                    HomeToolPage.FAVORITES -> FavoriteBrowserItems(
+                        files = favoriteFiles,
+                        settings = displaySettings,
+                        onOpen = onOpenFavorite,
+                    )
+                    HomeToolPage.TAGS -> TagBrowserItems(
+                        definitions = tagDefinitions,
+                        snapshot = tagSnapshot,
+                        settings = displaySettings,
+                        onOpen = onOpenTag,
+                    )
+                }
             }
         }
     }
@@ -461,6 +475,7 @@ internal fun FavoriteLocationsDialog(
     favorites: List<String>,
     onDismiss: () -> Unit,
     onOpen: (String) -> Unit,
+    onRefresh: () -> Unit,
 ) {
     val files = remember(favorites) { favorites.map(::File).filter(File::exists) }
     AfModalDialog(
@@ -472,32 +487,39 @@ internal fun FavoriteLocationsDialog(
         expandedContent = true,
         actions = {},
     ) {
-        if (files.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                LText("Mėgstamų vietų dar nėra")
-            }
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
-                items(files, key = File::getAbsolutePath) { file ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("favorite_location_${file.absolutePath.hashCode()}")
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            if (file.isDirectory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                        Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                            Text(file.name.ifBlank { file.absolutePath }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(file.absolutePath, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        AfPullToRefresh(
+            isRefreshing = false,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+            testTag = "pull_to_refresh_favorite_locations",
+        ) {
+            if (files.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    LText("Mėgstamų vietų dar nėra")
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                    items(files, key = File::getAbsolutePath) { file ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("favorite_location_${file.absolutePath.hashCode()}")
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (file.isDirectory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
+                                Text(file.name.ifBlank { file.absolutePath }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(file.absolutePath, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            TextButton(onClick = { onOpen(file.absolutePath) }) { LText("Atidaryti") }
                         }
-                        TextButton(onClick = { onOpen(file.absolutePath) }) { LText("Atidaryti") }
+                        HorizontalDivider()
                     }
-                    HorizontalDivider()
                 }
             }
         }
@@ -508,6 +530,7 @@ internal fun FavoriteLocationsDialog(
 @Composable
 internal fun FilesHome(
     roots: List<StorageRoot>,
+    safLocations: List<SafLocation>,
     recentFiles: List<RecentFileItem>,
     recentFilesLoading: Boolean,
     recentFilesError: String?,
@@ -530,7 +553,9 @@ internal fun FilesHome(
     onRefreshRecent: () -> Unit,
     onToggleLayout: (HomeDisplayArea) -> Unit,
     onConfigureLayout: (HomeDisplayArea) -> Unit,
-    onConfigureHome: () -> Unit,
+    onAddSafLocation: () -> Unit,
+    onOpenSafLocation: (SafLocation) -> Unit,
+    onOpenSystemFiles: () -> Unit,
 ) {
     val quickLocations = customization.shortcuts.filter(HomeShortcut::visible).map { shortcut ->
         QuickLocation(
@@ -542,38 +567,48 @@ internal fun FilesHome(
         )
     }
     var showAllRecent by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+    var showCloudLocations by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    val bookmarks = remember(customization.shortcuts) { customization.shortcuts.filter { !it.builtIn } }
+    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp).widthIn(max = 760.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
         ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            ) {
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        LText(
-                            "Failų vietos",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = onConfigureHome, modifier = Modifier.testTag("home_customize")) {
-                            Icon(Icons.Rounded.Edit, contentDescription = uiText("Tvarkyti pradžios ekraną"))
-                        }
-                    }
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     LText(
-                        "Pasirinkite saugyklą, kategoriją arba dažną vietą.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "Failų vietos",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
                     )
+                    IconButton(onClick = onOpenSystemFiles, modifier = Modifier.testTag("open_system_files")) {
+                        Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Atidaryti Android sistemos failus"))
+                    }
                 }
+                LText(
+                    "Pasirinkite saugyklą, kategoriją arba dažną vietą.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+        }
+        AfPullToRefresh(
+            isRefreshing = recentFilesLoading,
+            onRefresh = onRefreshRecent,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            testTag = "pull_to_refresh_home",
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
             customization.sectionOrder.forEach { section ->
                 when (section) {
                     HomeSection.RECENT_FILES -> RecentFilesHomeSection(
@@ -586,6 +621,7 @@ internal fun FilesHome(
                     )
                     HomeSection.STORAGE -> StorageHomeSection(
                         roots = roots,
+                        customization = customization,
                         rootStorageAvailable = rootStorageAvailable,
                         displaySettings = storageDisplaySettings,
                         onOpen = onOpenStorage,
@@ -598,10 +634,16 @@ internal fun FilesHome(
                         trashCount = trashCount,
                         favoritesCount = favorites.count { File(it).exists() },
                         tagsCount = tagSnapshot.definitions.size,
+                        cloudCount = safLocations.size,
+                        bookmarkCount = bookmarks.size,
                         onOpenTrash = onOpenTrash,
                         onOpenPlans = onOpenPlans,
                         onOpenFavorites = onOpenFavoritesPage,
                         onOpenTags = onOpenTagsPage,
+                        // Always open the provider list: even with one saved location the user
+                        // still needs a visible route for adding a second cloud/provider account.
+                        onOpenCloud = { showCloudLocations = true },
+                        onOpenBookmarks = { showBookmarks = true },
                     )
                     HomeSection.QUICK_LOCATIONS -> QuickLocationsHomeSection(
                         locations = quickLocations,
@@ -613,6 +655,8 @@ internal fun FilesHome(
                 }
             }
             Spacer(Modifier.height(76.dp))
+                }
+            }
         }
     }
 
@@ -626,18 +670,110 @@ internal fun FilesHome(
             expandedContent = true,
             actions = {},
         ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp).testTag("recent_files_all"),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+            AfPullToRefresh(
+                isRefreshing = recentFilesLoading,
+                onRefresh = onRefreshRecent,
+                modifier = Modifier.fillMaxSize(),
+                testTag = "pull_to_refresh_recent_files",
             ) {
-                items(recentFiles, key = { it.entry.absolutePath }) { item ->
-                    RecentFileListItem(
-                        item = item,
-                        onOpen = {
-                            showAllRecent = false
-                            onOpenRecent(item.entry)
-                        },
-                    )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp).testTag("recent_files_all"),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(recentFiles, key = { it.entry.absolutePath }) { item ->
+                        RecentFileListItem(
+                            item = item,
+                            onOpen = {
+                                showAllRecent = false
+                                onOpenRecent(item.entry)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCloudLocations) {
+        AfModalDialog(
+            title = "Debesija ir teikėjų vietos",
+            icon = Icons.Rounded.Cloud,
+            onDismissRequest = { showCloudLocations = false },
+            expandedContent = true,
+            modifier = Modifier.testTag("cloud_locations_dialog"),
+            actions = {
+                TextButton(onClick = onAddSafLocation) { LText("Pridėti vietą") }
+                TextButton(onClick = { showCloudLocations = false }) { LText("Uždaryti") }
+            },
+        ) {
+            if (safLocations.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    LText("Teikėjo vietų dar nepridėta")
+                    LText("Pridėkite Google Drive, Nextcloud, Files arba bet kurį Android įdiegtą teikėją.", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = onAddSafLocation, modifier = Modifier.padding(top = 12.dp)) { LText("Pridėti vietą") }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(safLocations, key = SafLocation::uri) { location ->
+                        Card(onClick = { showCloudLocations = false; onOpenSafLocation(location) }) {
+                            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.Cloud, contentDescription = null)
+                                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text(location.title, fontWeight = FontWeight.SemiBold)
+                                    Text(location.uri, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showBookmarks) {
+        AfModalDialog(
+            title = "Žymelės",
+            icon = Icons.Rounded.Bookmark,
+            onDismissRequest = { showBookmarks = false },
+            expandedContent = true,
+            modifier = Modifier.testTag("bookmarks_dialog"),
+            actions = { TextButton(onClick = { showBookmarks = false }) { LText("Uždaryti") } },
+        ) {
+            if (bookmarks.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    LText("Naudokite „Pridėti žymelę“ bet kurio failo ar aplanko meniu.")
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(bookmarks, key = HomeShortcut::id) { shortcut ->
+                        Card(onClick = {
+                            showBookmarks = false
+                            onOpen(
+                                QuickLocation(
+                                    id = shortcut.id,
+                                    title = shortcut.title,
+                                    path = shortcut.path,
+                                    icon = homeShortcutIcon(shortcut),
+                                    virtual = false,
+                                ),
+                            )
+                        }) {
+                            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(homeShortcutIcon(shortcut), contentDescription = null)
+                                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text(shortcut.title, fontWeight = FontWeight.SemiBold)
+                                    Text(shortcut.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -686,6 +822,7 @@ private fun RecentFilesHomeSection(
 @Composable
 private fun StorageHomeSection(
     roots: List<StorageRoot>,
+    customization: HomeCustomization,
     rootStorageAvailable: Boolean,
     displaySettings: DirectoryDisplaySettings,
     onOpen: (StorageRoot) -> Unit,
@@ -714,11 +851,12 @@ private fun StorageHomeSection(
             onOpenSettings = onConfigureLayout,
         )
     }
-    val locations = roots.map { root ->
+    val locationsById = roots.associate { root ->
         val usageFraction = root.totalBytes.takeIf { it > 0L }?.let { total ->
             (total - root.freeBytes).coerceIn(0L, total).toFloat() / total.toFloat()
         }
-        HomeStorageLocation(
+        root.id to HomeStorageLocation(
+            id = root.id,
             title = when (root.kind) {
                 StorageRootKind.INTERNAL -> "Vidinė atmintis"
                 StorageRootKind.SD_CARD -> root.title.ifBlank { "SD kortelė" }
@@ -734,14 +872,15 @@ private fun StorageHomeSection(
             usageFraction = usageFraction,
             onClick = { onOpen(root) },
         )
-    }.toMutableList()
+    }
     val rootSpace = remember {
         File("/").let { root -> root.totalSpace.coerceAtLeast(0L) to root.usableSpace.coerceAtLeast(0L) }
     }
     val rootUsageFraction = rootSpace.first.takeIf { it > 0L }?.let { total ->
         (total - rootSpace.second).coerceIn(0L, total).toFloat() / total.toFloat()
     }
-    locations += HomeStorageLocation(
+    val allLocations = locationsById + (HomeCustomizationRules.ROOT_STORAGE_ID to HomeStorageLocation(
+        id = HomeCustomizationRules.ROOT_STORAGE_ID,
         title = "Root",
         description = rootSpace.first.takeIf { it > 0L }?.let { total ->
             "${FileSystemRules.humanBytes(rootSpace.second)} laisva iš ${FileSystemRules.humanBytes(total)}"
@@ -749,7 +888,12 @@ private fun StorageHomeSection(
         icon = if (rootStorageAvailable) Icons.Rounded.LockOpen else Icons.Rounded.Folder,
         usageFraction = rootUsageFraction,
         onClick = onOpenRoot,
-    )
+    ))
+    val locations = HomeCustomizationRules.orderedStorageIds(customization, allLocations.keys)
+        .asSequence()
+        .filterNot(customization.hiddenStorageIds::contains)
+        .mapNotNull(allLocations::get)
+        .toList()
     if (displaySettings.layoutMode == DirectoryLayoutMode.GRID) {
         val columns = displaySettings.gridColumns.coerceIn(1, 3)
         val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
@@ -760,7 +904,7 @@ private fun StorageHomeSection(
                         location = location,
                         iconScalePercent = displaySettings.iconScalePercent,
                         modifier = Modifier.weight(1f).then(
-                            if (location.title == "Root") Modifier.testTag("root_storage_location") else Modifier,
+                            if (location.id == HomeCustomizationRules.ROOT_STORAGE_ID) Modifier.testTag("root_storage_location") else Modifier,
                         ),
                     )
                 }
@@ -775,7 +919,7 @@ private fun StorageHomeSection(
                 icon = location.icon,
                 usageFraction = location.usageFraction,
                 onClick = location.onClick,
-                modifier = if (location.title == "Root") Modifier.testTag("root_storage_location") else Modifier,
+                modifier = if (location.id == HomeCustomizationRules.ROOT_STORAGE_ID) Modifier.testTag("root_storage_location") else Modifier,
             )
         }
     }
@@ -842,10 +986,14 @@ private fun HomeToolsSection(
     trashCount: Int,
     favoritesCount: Int,
     tagsCount: Int,
+    cloudCount: Int,
+    bookmarkCount: Int,
     onOpenTrash: () -> Unit,
     onOpenPlans: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenTags: () -> Unit,
+    onOpenCloud: () -> Unit,
+    onOpenBookmarks: () -> Unit,
 ) {
     LText("Įrankiai ir saugumas", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
     val tools = listOf(
@@ -853,6 +1001,8 @@ private fun HomeToolsSection(
         HomeToolLocation("plans", "AF planai", "AF planai ir operacijų istorija", Icons.AutoMirrored.Rounded.PlaylistAdd, onOpenPlans),
         HomeToolLocation("favorites", "Mėgstami", itemCountLabel(favoritesCount), Icons.Rounded.Star, onOpenFavorites),
         HomeToolLocation("tags", "Žymos", itemCountLabel(tagsCount), Icons.AutoMirrored.Rounded.Label, onOpenTags),
+        HomeToolLocation("cloud", "Debesija", itemCountLabel(cloudCount), Icons.Rounded.Cloud, onOpenCloud),
+        HomeToolLocation("bookmarks", "Žymelės", itemCountLabel(bookmarkCount), Icons.Rounded.Bookmark, onOpenBookmarks),
     )
     tools.chunked(2).forEach { rowTools ->
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -880,15 +1030,29 @@ private fun HomeToolsSection(
 @Composable
 internal fun HomeCustomizationDialog(
     customization: HomeCustomization,
+    roots: List<StorageRoot>,
     currentPath: String,
     onDismiss: () -> Unit,
     onMoveSection: (HomeSection, Int) -> Unit,
     onMoveShortcut: (String, Int) -> Unit,
     onSetShortcutVisible: (String, Boolean) -> Unit,
+    onMoveStorage: (String, Int) -> Unit,
+    onSetStorageVisible: (String, Boolean) -> Unit,
     onRemoveShortcut: (String) -> Unit,
     onAddShortcut: (String, String) -> Boolean,
 ) {
     var showAdd by remember { mutableStateOf(false) }
+    val storageItems = remember(roots, customization.storageOrder) {
+        val labels = roots.associate { root ->
+            root.id to when (root.kind) {
+                StorageRootKind.INTERNAL -> "Vidinė atmintis"
+                StorageRootKind.SD_CARD -> root.title.ifBlank { "SD kortelė" }
+                StorageRootKind.USB_STORAGE -> root.title.ifBlank { "USB saugykla" }
+                StorageRootKind.REMOVABLE -> root.title.ifBlank { "Išimama saugykla" }
+            }
+        } + (HomeCustomizationRules.ROOT_STORAGE_ID to "Root")
+        HomeCustomizationRules.orderedStorageIds(customization, labels.keys).mapNotNull { id -> labels[id]?.let { id to it } }
+    }
     AfModalDialog(
         title = "Tvarkyti pradžios ekraną",
         icon = Icons.Rounded.Edit,
@@ -922,6 +1086,26 @@ internal fun HomeCustomizationDialog(
                         onMoveUp = { onMoveSection(section, -1) },
                         onMoveDown = { onMoveSection(section, 1) },
                     )
+                }
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    LText("Saugyklos", style = MaterialTheme.typography.titleSmall)
+                }
+                items(storageItems, key = { it.first }) { (id, title) ->
+                    val index = storageItems.indexOfFirst { it.first == id }
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = id !in customization.hiddenStorageIds,
+                            onCheckedChange = { onSetStorageVisible(id, it) },
+                        )
+                        LText(title, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+                        IconButton(onClick = { onMoveStorage(id, -1) }, enabled = index > 0) {
+                            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Perkelti aukštyn"))
+                        }
+                        IconButton(onClick = { onMoveStorage(id, 1) }, enabled = index < storageItems.lastIndex) {
+                            Icon(Icons.Rounded.ArrowDownward, contentDescription = uiText("Perkelti žemyn"))
+                        }
+                    }
                 }
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -1112,6 +1296,7 @@ internal data class QuickLocation(
 )
 
 private data class HomeStorageLocation(
+    val id: String,
     val title: String,
     val description: String,
     val icon: ImageVector,

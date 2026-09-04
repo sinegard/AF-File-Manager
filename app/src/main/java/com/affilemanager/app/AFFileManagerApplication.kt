@@ -11,6 +11,7 @@ import com.affilemanager.app.data.RecentFileRepository
 import com.affilemanager.app.data.SafFileRepository
 import com.affilemanager.app.data.TrashRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
+import com.affilemanager.app.cleanup.DeviceCleanupRepository
 import com.affilemanager.app.data.FileTagRepository
 import com.affilemanager.app.data.FileCategoryRepository
 import com.affilemanager.app.data.FileSelectionInfoScanner
@@ -30,6 +31,8 @@ import com.affilemanager.app.search.SimilarImageEngine
 import com.affilemanager.app.security.CredentialVault
 import com.affilemanager.app.security.AppLockRepository
 import com.affilemanager.app.security.FileVaultEngine
+import com.affilemanager.app.sharing.LocalShareManager
+import com.affilemanager.app.transfer.NearbySourcePreparer
 import com.affilemanager.app.sync.SyncEngine
 import com.affilemanager.app.sync.SyncScheduleRepository
 import com.affilemanager.app.update.AppUpdateManager
@@ -73,6 +76,7 @@ class AppGraph(application: Application) {
     val localFiles = LocalFileRepository(application)
     val recentFiles = RecentFileRepository(application, localFiles)
     val fileCategories = FileCategoryRepository(application, localFiles)
+    val deviceCleanup = DeviceCleanupRepository(application)
     val fileSelectionInfo = FileSelectionInfoScanner()
     val contentFiles = ContentFileRepository(application)
     val navigation = NavigationRepository(application)
@@ -91,6 +95,8 @@ class AppGraph(application: Application) {
     val search = FileSearchEngine(localFiles)
     val similarImages = SimilarImageEngine()
     val archives = ArchiveEngine()
+    val localShare = LocalShareManager(application, archives)
+    val nearbySources = NearbySourcePreparer(application, fileCategories)
     val credentialVault = CredentialVault()
     val appLock = AppLockRepository(application)
     val networkProfiles = NetworkProfileStore(application, credentialVault)

@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
     <string name="lan_transfer_starting_text">Starting server…</string>
     <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Active terminal</string>
     <string name="terminal_channel_description">Keeps an open phone or server terminal running in the background</string>
     <string name="terminal_notification_title">AF File Manager terminal</string>

@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN బదిలీ</string>
     <string name="lan_transfer_starting_text">ప్రారంభ సర్వర్...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN బదిలీ నడుస్తోంది</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">యాక్టివ్ టెర్మినల్</string>
     <string name="terminal_channel_description">తెరచిన ఫోన్ లేదా సర్వర్ టెర్మినల్ను నేపథ్యంలో నడుపుతుంది</string>
     <string name="terminal_notification_title">AF File Manager టెర్మినల్</string>

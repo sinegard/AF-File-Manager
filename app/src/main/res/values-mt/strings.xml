@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN trasferiment</string>
     <string name="lan_transfer_starting_text">Server li jibda...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN trasferiment qed isir</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Terminal attiv</string>
     <string name="terminal_channel_description">Żomm telefon miftuħ jew terminali tas-server qed jaħdem fl-isfond</string>
     <string name="terminal_notification_title">AF File Manager terminal</string>

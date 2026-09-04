@@ -23,6 +23,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.transformable
@@ -52,9 +53,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Calculate
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Folder
@@ -72,6 +76,7 @@ import androidx.compose.material.icons.rounded.SaveAs
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -128,6 +133,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveBrowserIndex
 import com.affilemanager.app.archive.ArchiveBrowserItem
+import com.affilemanager.app.archive.ArchiveMutationRules
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
 import com.affilemanager.app.core.FileSystemRules
@@ -157,6 +163,9 @@ import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
+import com.affilemanager.app.ui.components.AfPullToRefresh
+import com.affilemanager.app.ui.components.SelectionActionBar
+import com.affilemanager.app.ui.components.LocalFileVisual
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -210,7 +219,16 @@ fun FilePreviewDialog(
     onKeepEditing: () -> Unit,
     onDiscardEditAndClose: () -> Unit,
     onCopyArchiveEntry: (String) -> Unit,
-    onExtract: (FileEntry, CharArray?) -> Unit,
+    onCopyArchiveEntries: (Set<String>) -> Unit,
+    onOpenArchiveEntry: (String) -> Unit,
+    onShareArchiveEntries: (Set<String>) -> Unit,
+    onExtractArchiveEntries: (Set<String>, String, CharArray?) -> Unit,
+    onRenameArchiveEntry: (String, String) -> Unit,
+    onDeleteArchiveEntries: (Set<String>) -> Unit,
+    onMoveArchiveEntries: (Set<String>) -> Unit,
+    onRefreshArchive: () -> Unit,
+    loadArchiveThumbnail: suspend (String) -> Result<File>,
+    onExtract: (FileEntry, String, CharArray?) -> Unit,
     onDecrypt: (FileEntry, CharArray) -> Unit,
 ) {
     val context = LocalContext.current
@@ -223,8 +241,11 @@ fun FilePreviewDialog(
     var launchExternalEditorWhenReady by remember(source.key) { mutableStateOf(false) }
     var showSaveAs by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val internalEditor = EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
-    val externalEditorAvailable = remember(source.key) { canEditExternally(context, source) }
+    val archiveMaterializedEntry = target is PreviewTarget.ArchiveEntry
+    val internalEditor = !archiveMaterializedEntry && EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
+    val externalEditorAvailable = remember(source.key, archiveMaterializedEntry) {
+        !archiveMaterializedEntry && canEditExternally(context, source)
+    }
     val activeEditState = editState.takeIf { it.sourceKey == source.key }
     val editSession = activeEditState?.session
     val actionSource = editSession
@@ -387,7 +408,19 @@ fun FilePreviewDialog(
                         currentPath = archivePath,
                         onPathChanged = { archivePath = it },
                         onCopyEntry = onCopyArchiveEntry,
+                        onCopyEntries = onCopyArchiveEntries,
+                        onOpenEntry = onOpenArchiveEntry,
+                        onShareEntries = onShareArchiveEntries,
+                        onExtractEntries = onExtractArchiveEntries,
+                        onRenameEntry = onRenameArchiveEntry,
+                        onDeleteEntries = onDeleteArchiveEntries,
+                        onMoveEntries = onMoveArchiveEntries,
+                        onRefresh = onRefreshArchive,
+                        loadThumbnail = loadArchiveThumbnail,
                         onExtract = onExtract,
+                        initialExtractDirectory = target.file.file.parentFile?.absolutePath ?: initialLocalSavePath,
+                        loadExtractDirectory = loadLocalSaveDirectory,
+                        mutable = target.file.file.name.lowercase(Locale.ROOT).endsWith(".zip") && target.file.isWritable,
                         initialDisplayDefaults = archiveDisplayDefaults,
                         onApplyDisplayToAll = onApplyArchiveDisplayToAll,
                     )
@@ -397,7 +430,19 @@ fun FilePreviewDialog(
                         currentPath = archivePath,
                         onPathChanged = { archivePath = it },
                         onCopyEntry = null,
-                        onExtract = null,
+                        onCopyEntries = null,
+                        onOpenEntry = onOpenArchiveEntry,
+                        onShareEntries = onShareArchiveEntries,
+                        onExtractEntries = onExtractArchiveEntries,
+                        onRenameEntry = null,
+                        onDeleteEntries = null,
+                        onMoveEntries = null,
+                        onRefresh = onRefreshArchive,
+                        loadThumbnail = loadArchiveThumbnail,
+                        onExtract = onExtract,
+                        initialExtractDirectory = initialLocalSavePath,
+                        loadExtractDirectory = loadLocalSaveDirectory,
+                        mutable = false,
                         initialDisplayDefaults = archiveDisplayDefaults,
                         onApplyDisplayToAll = onApplyArchiveDisplayToAll,
                     )
@@ -407,6 +452,7 @@ fun FilePreviewDialog(
                     is PreviewTarget.ContentFile,
                     is PreviewTarget.RemoteFile,
                     is PreviewTarget.PrivilegedFile,
+                    is PreviewTarget.ArchiveEntry,
                     -> FileContentPreview(
                         source = source,
                         editState = activeEditState,
@@ -1289,21 +1335,51 @@ private fun ArchivePreview(
     currentPath: String,
     onPathChanged: (String) -> Unit,
     onCopyEntry: ((String) -> Unit)?,
-    onExtract: ((FileEntry, CharArray?) -> Unit)?,
+    onCopyEntries: ((Set<String>) -> Unit)?,
+    onOpenEntry: (String) -> Unit,
+    onShareEntries: (Set<String>) -> Unit,
+    onExtractEntries: (Set<String>, String, CharArray?) -> Unit,
+    onRenameEntry: ((String, String) -> Unit)?,
+    onDeleteEntries: ((Set<String>) -> Unit)?,
+    onMoveEntries: ((Set<String>) -> Unit)?,
+    onRefresh: () -> Unit,
+    loadThumbnail: suspend (String) -> Result<File>,
+    onExtract: ((FileEntry, String, CharArray?) -> Unit)?,
+    initialExtractDirectory: String,
+    loadExtractDirectory: suspend (String) -> Result<List<FileEntry>>,
+    mutable: Boolean,
     initialDisplayDefaults: DirectoryDisplayDefaults,
     onApplyDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
 ) {
-    var askPassword by remember { mutableStateOf(false) }
+    var extractAllRequested by remember { mutableStateOf(false) }
+    var extractSelectionRequested by remember { mutableStateOf<Set<String>?>(null) }
     var searchVisible by remember(file.absolutePath) { mutableStateOf(false) }
     var searchQuery by remember(file.absolutePath) { mutableStateOf("") }
     var menu by remember(file.absolutePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(file.absolutePath) { mutableStateOf(false) }
-    var displaySettings by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.settings.copy(showThumbnails = false)) }
+    var displaySettings by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.settings) }
     var sortMode by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.sortMode) }
     var sortDirection by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.sortDirection) }
+    var selectedPaths by remember(file.absolutePath, currentPath) { mutableStateOf(emptySet<String>()) }
+    var renameTarget by remember(file.absolutePath) { mutableStateOf<ArchiveBrowserItem?>(null) }
+    var renameText by remember(file.absolutePath) { mutableStateOf("") }
+    var deleteRequested by remember(file.absolutePath) { mutableStateOf<Set<String>?>(null) }
+    var moveRequested by remember(file.absolutePath) { mutableStateOf<Set<String>?>(null) }
+    var refreshing by remember(file.absolutePath) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(currentPath) {
         searchVisible = false
         searchQuery = ""
+        selectedPaths = emptySet()
+    }
+    LaunchedEffect(entries) {
+        selectedPaths = selectedPaths.filterTo(linkedSetOf()) { selected ->
+            entries.any { entry ->
+                val normalized = entry.name.replace('\\', '/').trim('/')
+                normalized == selected || normalized.startsWith("$selected/")
+            }
+        }
+        refreshing = false
     }
     val browser = remember(entries) { ArchiveBrowserIndex.from(entries) }
     val children = remember(browser, currentPath) { browser.children(currentPath) }
@@ -1322,7 +1398,74 @@ private fun ArchivePreview(
     }
     val grid = displaySettings.layoutMode == DirectoryLayoutMode.GRID
     val goUp = { if (currentPath.isNotEmpty()) onPathChanged(ArchiveBrowserIndex.parentOf(currentPath)) }
+    val visiblePaths = visibleEntries.mapTo(linkedSetOf(), ArchiveBrowserItem::path)
+    val allVisibleSelected = visiblePaths.isNotEmpty() && visiblePaths.all(selectedPaths::contains)
+    val toggleSelection: (String) -> Unit = { path ->
+        selectedPaths = if (path in selectedPaths) selectedPaths - path else selectedPaths + path
+    }
+    val requestRefresh: () -> Unit = {
+        if (!refreshing) {
+            refreshing = true
+            onRefresh()
+            scope.launch {
+                delay(800)
+                refreshing = false
+            }
+        }
+    }
+    val openOrSelect: (ArchiveBrowserItem) -> Unit = { entry ->
+        when {
+            selectedPaths.isNotEmpty() -> toggleSelection(entry.path)
+            entry.directory -> onPathChanged(entry.path)
+            else -> onOpenEntry(entry.path)
+        }
+    }
+    val beginRename: (ArchiveBrowserItem) -> Unit = { entry ->
+        renameTarget = entry
+        renameText = entry.name
+    }
     Column(modifier = Modifier.fillMaxSize()) {
+        if (selectedPaths.isNotEmpty()) {
+            SelectionActionBar(
+                count = selectedPaths.size,
+                allSelected = allVisibleSelected,
+                onClose = { selectedPaths = emptySet() },
+                onToggleSelectAll = {
+                    selectedPaths = if (allVisibleSelected) selectedPaths - visiblePaths else selectedPaths + visiblePaths
+                },
+            ) {
+                onCopyEntries?.let { copy ->
+                    IconButton(onClick = { copy(selectedPaths); selectedPaths = emptySet() }) {
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+                    }
+                }
+                IconButton(onClick = { onShareEntries(selectedPaths); selectedPaths = emptySet() }) {
+                    Icon(Icons.Rounded.Share, contentDescription = uiText("Dalintis"))
+                }
+                IconButton(onClick = { extractSelectionRequested = selectedPaths }) {
+                    Icon(Icons.Rounded.Archive, contentDescription = uiText("Išpakuoti"))
+                }
+                if (mutable && onMoveEntries != null) {
+                    IconButton(onClick = { moveRequested = selectedPaths }) {
+                        Icon(Icons.Rounded.DriveFileMove, contentDescription = uiText("Perkelti iš archyvo"))
+                    }
+                }
+                if (mutable && selectedPaths.size == 1 && onRenameEntry != null) {
+                    IconButton(onClick = {
+                        renameTarget = visibleEntries.firstOrNull { it.path == selectedPaths.single() }
+                            ?: children.firstOrNull { it.path == selectedPaths.single() }
+                        renameText = renameTarget?.name.orEmpty()
+                    }) {
+                        Icon(Icons.Rounded.Edit, contentDescription = uiText("Pervadinti"))
+                    }
+                }
+                if (mutable && onDeleteEntries != null) {
+                    IconButton(onClick = { deleteRequested = selectedPaths }) {
+                        Icon(Icons.Rounded.Delete, contentDescription = uiText("Ištrinti"))
+                    }
+                }
+            }
+        } else {
         DirectoryBrowserToolbar(
             title = if (currentPath.isEmpty()) uiText("Archyvo pradžia") else ArchiveBrowserIndex.folderName(currentPath),
             path = if (currentPath.isEmpty()) file.name else "${file.name} / $currentPath",
@@ -1347,7 +1490,7 @@ private fun ArchivePreview(
             onOpenSettings = { showDisplaySettings = true },
         ) {
             Box {
-                IconButton(onClick = { menu = true }) {
+                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("archive_actions")) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -1355,7 +1498,7 @@ private fun ArchivePreview(
                         DropdownMenuItem(
                             text = { LText("Išpakuoti") },
                             leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
-                            onClick = { menu = false; askPassword = true },
+                            onClick = { menu = false; extractAllRequested = true },
                         )
                     }
                     if (onCopyEntry != null && currentPath.isNotEmpty()) {
@@ -1370,8 +1513,8 @@ private fun ArchivePreview(
                         grid = grid,
                         includeHidden = false,
                         hiddenFilesAvailable = false,
-                        showThumbnails = false,
-                        thumbnailsAvailable = false,
+                        showThumbnails = displaySettings.showThumbnails,
+                        thumbnailsAvailable = true,
                         sortMode = sortMode,
                         sortDirection = sortDirection,
                         displaySettingsTestTag = "archive_display_settings",
@@ -1381,7 +1524,7 @@ private fun ArchivePreview(
                                 layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
                             )
                         },
-                        onToggleThumbnails = {},
+                        onToggleThumbnails = { displaySettings = displaySettings.copy(showThumbnails = !displaySettings.showThumbnails) },
                         onOpenSettings = { showDisplaySettings = true },
                         onSort = { sortMode = it },
                         onDismissMenu = { menu = false },
@@ -1390,11 +1533,12 @@ private fun ArchivePreview(
                     DropdownMenuItem(
                         text = { LText("Atnaujinti") },
                         leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                        enabled = false,
-                        onClick = {},
+                        enabled = !refreshing,
+                        onClick = { menu = false; requestRefresh() },
                     )
                 }
             }
+        }
         }
         if (searchVisible) {
             DirectoryQuickSearchField(
@@ -1404,6 +1548,12 @@ private fun ArchivePreview(
                 modifier = Modifier.testTag("directory_search_field_archive"),
             )
         }
+        AfPullToRefresh(
+            isRefreshing = refreshing,
+            onRefresh = requestRefresh,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            testTag = "pull_to_refresh_archive",
+        ) {
         when {
             transforming && visibleEntries.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -1418,32 +1568,63 @@ private fun ArchivePreview(
                 verticalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
             ) {
                 gridItems(visibleEntries, key = { it.path }) { entry ->
-                    ArchiveGridItem(entry, displaySettings.iconScalePercent, displaySettings.gridStyle, onPathChanged, onCopyEntry)
+                    ArchiveGridItem(
+                        entry = entry,
+                        iconScalePercent = displaySettings.iconScalePercent,
+                        gridStyle = displaySettings.gridStyle,
+                        selected = entry.path in selectedPaths,
+                        selectionMode = selectedPaths.isNotEmpty(),
+                        showThumbnails = displaySettings.showThumbnails,
+                        onClick = { openOrSelect(entry) },
+                        onLongClick = { toggleSelection(entry.path) },
+                        onSelect = { toggleSelection(entry.path) },
+                        onOpen = { if (entry.directory) onPathChanged(entry.path) else onOpenEntry(entry.path) },
+                        onCopy = onCopyEntry?.let { copy -> { copy(entry.path) } },
+                        onShare = { onShareEntries(setOf(entry.path)) },
+                        onExtract = { extractSelectionRequested = setOf(entry.path) },
+                        onRename = if (mutable && onRenameEntry != null) ({ beginRename(entry) }) else null,
+                        onMove = if (mutable && onMoveEntries != null) ({ moveRequested = setOf(entry.path) }) else null,
+                        onDelete = if (mutable && onDeleteEntries != null) ({ deleteRequested = setOf(entry.path) }) else null,
+                        loadThumbnail = loadThumbnail,
+                    )
                 }
             }
             else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(visibleEntries, key = { it.path }) { entry ->
                     ArchiveListItem(
-                        entry,
-                        displaySettings.iconScalePercent,
-                        displaySettings.spacingScalePercent,
-                        onPathChanged,
-                        onCopyEntry,
+                        entry = entry,
+                        iconScalePercent = displaySettings.iconScalePercent,
+                        spacingScalePercent = displaySettings.spacingScalePercent,
+                        selected = entry.path in selectedPaths,
+                        selectionMode = selectedPaths.isNotEmpty(),
+                        showThumbnails = displaySettings.showThumbnails,
+                        onClick = { openOrSelect(entry) },
+                        onLongClick = { toggleSelection(entry.path) },
+                        onSelect = { toggleSelection(entry.path) },
+                        onOpen = { if (entry.directory) onPathChanged(entry.path) else onOpenEntry(entry.path) },
+                        onCopy = onCopyEntry?.let { copy -> { copy(entry.path) } },
+                        onShare = { onShareEntries(setOf(entry.path)) },
+                        onExtract = { extractSelectionRequested = setOf(entry.path) },
+                        onRename = if (mutable && onRenameEntry != null) ({ beginRename(entry) }) else null,
+                        onMove = if (mutable && onMoveEntries != null) ({ moveRequested = setOf(entry.path) }) else null,
+                        onDelete = if (mutable && onDeleteEntries != null) ({ deleteRequested = setOf(entry.path) }) else null,
+                        loadThumbnail = loadThumbnail,
                     )
                     HorizontalDivider()
                 }
             }
         }
+        }
     }
     if (showDisplaySettings) {
         DirectoryDisplaySettingsDialog(
             initialSettings = displaySettings,
-            thumbnailsAvailable = false,
+            thumbnailsAvailable = true,
             initialSortMode = sortMode,
             initialSortDirection = sortDirection,
             onDismiss = { showDisplaySettings = false },
             onApply = {
-                displaySettings = it.copy(showThumbnails = false)
+                displaySettings = it
                 showDisplaySettings = false
             },
             onApplySort = { mode, direction ->
@@ -1451,7 +1632,7 @@ private fun ArchivePreview(
                 sortDirection = direction
             },
             onApplyToAll = { settings, mode, direction ->
-                displaySettings = settings.copy(showThumbnails = false)
+                displaySettings = settings
                 mode?.let { sortMode = it }
                 sortDirection = direction
                 onApplyDisplayToAll(settings, mode, direction)
@@ -1459,23 +1640,80 @@ private fun ArchivePreview(
             },
         )
     }
-    if (askPassword && onExtract != null) {
-        var password by remember { mutableStateOf("") }
+    if (extractAllRequested || extractSelectionRequested != null) {
+        val selection = extractSelectionRequested
+        ArchiveExtractionDialog(
+            archiveName = file.name,
+            selection = selection,
+            initialDirectory = initialExtractDirectory,
+            loadDirectory = loadExtractDirectory,
+            onDismiss = {
+                extractAllRequested = false
+                extractSelectionRequested = null
+            },
+            onConfirm = { destinationDirectory, secret ->
+                selection?.let { onExtractEntries(it, destinationDirectory, secret) }
+                    ?: onExtract?.invoke(file, destinationDirectory, secret)
+                extractAllRequested = false
+                extractSelectionRequested = null
+                selectedPaths = emptySet()
+            },
+        )
+    }
+    renameTarget?.let { entry ->
         AlertDialog(
-            onDismissRequest = { askPassword = false },
-            title = { LText("Išpakuoti archyvą") },
+            onDismissRequest = { renameTarget = null; renameText = "" },
+            title = { LText("Pervadinti archyvo įrašą") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LText("Slaptažodį palikite tuščią, jei archyvas nešifruotas.")
-                    OutlinedTextField(value = password, onValueChange = { password = it }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-                }
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { LText("Naujas pavadinimas") },
+                    singleLine = true,
+                )
             },
             confirmButton = {
-                Button(onClick = { onExtract(file, password.takeIf(String::isNotBlank)?.toCharArray()); password = ""; askPassword = false }) {
-                    LText("Išpakuoti")
-                }
+                Button(
+                    onClick = {
+                        onRenameEntry?.invoke(entry.path, renameText)
+                        selectedPaths = emptySet()
+                        renameTarget = null
+                        renameText = ""
+                    },
+                    enabled = renameText.isNotBlank() && renameText.trim() != entry.name,
+                ) { LText("Pervadinti") }
             },
-            dismissButton = { TextButton(onClick = { askPassword = false }) { LText("Atšaukti") } },
+            dismissButton = { TextButton(onClick = { renameTarget = null; renameText = "" }) { LText("Atšaukti") } },
+        )
+    }
+    deleteRequested?.let { requested ->
+        AlertDialog(
+            onDismissRequest = { deleteRequested = null },
+            title = { LText("Ištrinti iš archyvo?") },
+            text = { LText("Bus saugiai perrašytas ZIP archyvas. Prieš pakeitimą sukuriama atkūrimo kopija.") },
+            confirmButton = {
+                Button(onClick = {
+                    onDeleteEntries?.invoke(requested)
+                    selectedPaths = emptySet()
+                    deleteRequested = null
+                }) { LText("Ištrinti") }
+            },
+            dismissButton = { TextButton(onClick = { deleteRequested = null }) { LText("Atšaukti") } },
+        )
+    }
+    moveRequested?.let { requested ->
+        AlertDialog(
+            onDismissRequest = { moveRequested = null },
+            title = { LText("Perkelti iš archyvo?") },
+            text = { LText("Pirmiausia failai bus patikrintai išpakuoti šalia archyvo. Tik tada jie bus pašalinti iš ZIP.") },
+            confirmButton = {
+                Button(onClick = {
+                    onMoveEntries?.invoke(requested)
+                    selectedPaths = emptySet()
+                    moveRequested = null
+                }) { LText("Perkelti") }
+            },
+            dismissButton = { TextButton(onClick = { moveRequested = null }) { LText("Atšaukti") } },
         )
     }
 }
@@ -1485,33 +1723,64 @@ private fun ArchiveListItem(
     entry: ArchiveBrowserItem,
     iconScalePercent: Int,
     spacingScalePercent: Int,
-    onPathChanged: (String) -> Unit,
-    onCopyEntry: ((String) -> Unit)?,
+    selected: Boolean,
+    selectionMode: Boolean,
+    showThumbnails: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onSelect: () -> Unit,
+    onOpen: () -> Unit,
+    onCopy: (() -> Unit)?,
+    onShare: () -> Unit,
+    onExtract: () -> Unit,
+    onRename: (() -> Unit)?,
+    onMove: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+    loadThumbnail: suspend (String) -> Result<File>,
 ) {
     val iconSize = (32f * iconScalePercent / 100f).dp
     val verticalPadding = (10f * spacingScalePercent / 100f).dp
+    var menuExpanded by remember(entry.path) { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = entry.directory) { if (entry.directory) onPathChanged(entry.path) }
+            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 14.dp, vertical = verticalPadding)
             .testTag("archive-entry-${entry.path}"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Description,
-            contentDescription = null,
-            tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(iconSize),
+        if (selectionMode) {
+            Checkbox(checked = selected, onCheckedChange = { onSelect() })
+        }
+        ArchiveEntryVisual(
+            entry = entry,
+            size = iconSize,
+            showThumbnails = showThumbnails,
+            loadThumbnail = loadThumbnail,
         )
         Text(entry.name, modifier = Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (!entry.directory && entry.sizeBytes >= 0) {
             Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
         }
-        onCopyEntry?.let { copy ->
-            IconButton(onClick = { copy(entry.path) }) {
-                Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Pridėti archyvo įrašą į kopijavimo rinkinį"))
+        Box {
+            IconButton(onClick = { menuExpanded = true }) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
             }
+            ArchiveEntryActionMenu(
+                expanded = menuExpanded,
+                selected = selected,
+                directory = entry.directory,
+                onDismiss = { menuExpanded = false },
+                onSelect = onSelect,
+                onOpen = onOpen,
+                onCopy = onCopy,
+                onShare = onShare,
+                onExtract = onExtract,
+                onRename = onRename,
+                onMove = onMove,
+                onDelete = onDelete,
+            )
         }
         if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
     }
@@ -1522,39 +1791,328 @@ private fun ArchiveGridItem(
     entry: ArchiveBrowserItem,
     iconScalePercent: Int,
     gridStyle: DirectoryGridStyle,
-    onPathChanged: (String) -> Unit,
-    onCopyEntry: ((String) -> Unit)?,
+    selected: Boolean,
+    selectionMode: Boolean,
+    showThumbnails: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onSelect: () -> Unit,
+    onOpen: () -> Unit,
+    onCopy: (() -> Unit)?,
+    onShare: () -> Unit,
+    onExtract: () -> Unit,
+    onRename: (() -> Unit)?,
+    onMove: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+    loadThumbnail: suspend (String) -> Result<File>,
 ) {
     val iconSize = (64f * iconScalePercent / 100f).dp
+    var menuExpanded by remember(entry.path) { mutableStateOf(false) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = entry.directory) { if (entry.directory) onPathChanged(entry.path) }
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .testTag("archive-entry-${entry.path}"),
         tonalElevation = if (gridStyle == DirectoryGridStyle.CLASSIC) 0.dp else 2.dp,
-        color = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surface,
+        color = when {
+            selected -> MaterialTheme.colorScheme.secondaryContainer
+            gridStyle == DirectoryGridStyle.CLASSIC -> MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+            else -> MaterialTheme.colorScheme.surface
+        },
         shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else MaterialTheme.shapes.medium,
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Description,
-                contentDescription = null,
-                tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(iconSize),
-            )
-            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (!entry.directory && entry.sizeBytes >= 0) {
-                Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
-            }
-            onCopyEntry?.let { copy ->
-                IconButton(onClick = { copy(entry.path) }) {
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Pridėti archyvo įrašą į kopijavimo rinkinį"))
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ArchiveEntryVisual(
+                    entry = entry,
+                    size = iconSize,
+                    showThumbnails = showThumbnails,
+                    loadThumbnail = loadThumbnail,
+                )
+                Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (!entry.directory && entry.sizeBytes >= 0) {
+                    Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
                 }
             }
+            if (selectionMode) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onSelect() },
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
+            }
+            Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
+                }
+                ArchiveEntryActionMenu(
+                    expanded = menuExpanded,
+                    selected = selected,
+                    directory = entry.directory,
+                    onDismiss = { menuExpanded = false },
+                    onSelect = onSelect,
+                    onOpen = onOpen,
+                    onCopy = onCopy,
+                    onShare = onShare,
+                    onExtract = onExtract,
+                    onRename = onRename,
+                    onMove = onMove,
+                    onDelete = onDelete,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchiveEntryVisual(
+    entry: ArchiveBrowserItem,
+    size: androidx.compose.ui.unit.Dp,
+    showThumbnails: Boolean,
+    loadThumbnail: suspend (String) -> Result<File>,
+) {
+    val kind = remember(entry.path) { FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = entry.directory) }
+    val supportsThumbnail = !entry.directory && kind in setOf(EntryKind.IMAGE, EntryKind.VIDEO)
+    val materialized by produceState<File?>(
+        initialValue = null,
+        key1 = entry.path,
+        key2 = showThumbnails,
+    ) {
+        value = if (showThumbnails && supportsThumbnail) loadThumbnail(entry.path).getOrNull() else null
+    }
+    val local = materialized
+    if (local != null && local.isFile) {
+        LocalFileVisual(
+            entry = FileEntry(
+                absolutePath = local.absolutePath,
+                name = entry.name,
+                kind = kind,
+                sizeBytes = local.length(),
+                modifiedAtMillis = entry.modifiedAtMillis ?: local.lastModified(),
+                isHidden = false,
+                isReadable = true,
+                isWritable = false,
+            ),
+            targetWidth = size,
+            targetHeight = size,
+            showThumbnails = true,
+            modifier = Modifier.size(size),
+        )
+    } else {
+        Icon(
+            if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Description,
+            contentDescription = null,
+            tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(size),
+        )
+    }
+}
+
+private data class ArchiveExtractionNavigation(
+    val currentPath: String,
+    val backStack: List<String> = emptyList(),
+) {
+    fun navigateTo(path: String): ArchiveExtractionNavigation = if (path == currentPath) this else copy(
+        currentPath = path,
+        backStack = (backStack + currentPath).takeLast(100),
+    )
+}
+
+@Composable
+private fun ArchiveExtractionDialog(
+    archiveName: String,
+    selection: Set<String>?,
+    initialDirectory: String,
+    loadDirectory: suspend (String) -> Result<List<FileEntry>>,
+    onDismiss: () -> Unit,
+    onConfirm: (String, CharArray?) -> Unit,
+) {
+    var navigation by remember(archiveName, initialDirectory) {
+        mutableStateOf(ArchiveExtractionNavigation(initialDirectory))
+    }
+    var directories by remember(archiveName) { mutableStateOf<List<FileEntry>>(emptyList()) }
+    var loading by remember(archiveName) { mutableStateOf(true) }
+    var error by remember(archiveName) { mutableStateOf<String?>(null) }
+    var refreshToken by remember(archiveName) { mutableStateOf(0) }
+    var password by remember(archiveName) { mutableStateOf("") }
+    val currentPath = navigation.currentPath
+    val outputName = ArchiveMutationRules.extractionBaseName(archiveName, "Extracted")
+
+    LaunchedEffect(currentPath, refreshToken) {
+        loading = true
+        error = null
+        directories = emptyList()
+        loadDirectory(currentPath).fold(
+            onSuccess = { loaded ->
+                directories = loaded.asSequence().filter(FileEntry::isDirectory).take(10_000).toList()
+            },
+            onFailure = { failure -> error = failure.message ?: "Katalogo atidaryti nepavyko" },
+        )
+        loading = false
+    }
+
+    AlertDialog(
+        modifier = Modifier.testTag("archive_extract_dialog"),
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
+        title = { LText(if (selection == null) "Išpakuoti archyvą" else "Išpakuoti pasirinktus įrašus") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LText("Pasirinkite katalogą, kuriame bus sukurtas išpakuotas aplankas.")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val parent = File(currentPath).parentFile?.absolutePath
+                    IconButton(
+                        onClick = { parent?.let { navigation = navigation.navigateTo(it) } },
+                        enabled = parent != null && !loading,
+                    ) {
+                        Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
+                    }
+                    Text(
+                        currentPath,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    IconButton(onClick = { refreshToken += 1 }, enabled = !loading) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = uiText("Atnaujinti"))
+                    }
+                }
+                LText("Bus sukurta: $outputName", fontWeight = FontWeight.SemiBold)
+                LText(
+                    "Jei toks aplankas jau yra, jis nebus perrašytas – bus parinktas naujas numeruotas pavadinimas.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                when {
+                    loading -> Box(Modifier.fillMaxWidth().heightIn(min = 120.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                    error != null -> LText(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    directories.isEmpty() -> LText("Šiame kataloge nėra poaplankių", style = MaterialTheme.typography.bodySmall)
+                    else -> LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp)) {
+                        items(directories, key = FileEntry::absolutePath) { directory ->
+                             Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("archive_extract_folder_${directory.absolutePath.hashCode()}")
+                                    .clickable {
+                                     navigation = navigation.navigateTo(directory.absolutePath)
+                                 }.padding(horizontal = 6.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Rounded.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    directory.name,
+                                    modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { LText("Archyvo slaptažodis (nebūtinas)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+             Button(
+                modifier = Modifier.testTag("archive_extract_confirm"),
+                onClick = {
+                    val secret = password.takeIf(String::isNotBlank)?.toCharArray()
+                    password = ""
+                    onConfirm(currentPath, secret)
+                },
+                enabled = !loading && error == null,
+            ) { LText("Išpakuoti čia") }
+        },
+        dismissButton = {
+            TextButton(onClick = { password = ""; onDismiss() }) { LText("Atšaukti") }
+        },
+    )
+}
+
+@Composable
+private fun ArchiveEntryActionMenu(
+    expanded: Boolean,
+    selected: Boolean,
+    directory: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: () -> Unit,
+    onOpen: () -> Unit,
+    onCopy: (() -> Unit)?,
+    onShare: () -> Unit,
+    onExtract: () -> Unit,
+    onRename: (() -> Unit)?,
+    onMove: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+) {
+    fun run(action: () -> Unit) {
+        onDismiss()
+        action()
+    }
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { LText(if (directory) "Atidaryti aplanką" else "Atidaryti") },
+            leadingIcon = { Icon(if (directory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null) },
+            onClick = { run(onOpen) },
+        )
+        DropdownMenuItem(
+            text = { LText(if (selected) "Atžymėti" else "Pasirinkti") },
+            leadingIcon = { Checkbox(checked = selected, onCheckedChange = null) },
+            onClick = { run(onSelect) },
+        )
+        onCopy?.let { copy ->
+            DropdownMenuItem(
+                text = { LText("Kopijuoti") },
+                leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
+                onClick = { run(copy) },
+            )
+        }
+        DropdownMenuItem(
+            text = { LText("Dalintis") },
+            leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
+            onClick = { run(onShare) },
+        )
+        DropdownMenuItem(
+            text = { LText("Išpakuoti") },
+            leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
+            onClick = { run(onExtract) },
+        )
+        if (onRename != null || onMove != null || onDelete != null) HorizontalDivider()
+        onMove?.let { move ->
+            DropdownMenuItem(
+                text = { LText("Perkelti iš archyvo") },
+                leadingIcon = { Icon(Icons.Rounded.DriveFileMove, contentDescription = null) },
+                onClick = { run(move) },
+            )
+        }
+        onRename?.let { rename ->
+            DropdownMenuItem(
+                text = { LText("Pervadinti") },
+                leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
+                onClick = { run(rename) },
+            )
+        }
+        onDelete?.let { delete ->
+            DropdownMenuItem(
+                text = { LText("Ištrinti") },
+                leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+                onClick = { run(delete) },
+            )
         }
     }
 }

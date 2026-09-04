@@ -59,6 +59,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
@@ -96,7 +97,8 @@ class MainActivityTest {
 
     @Test
     fun homeCustomizationExposesSectionAndQuickLocationControls() {
-        compose.onNodeWithTag("home_customize").performClick()
+        compose.onNodeWithTag("home_layout_toggle").performScrollTo().performTouchInput { longClick() }
+        compose.onNodeWithTag("home_customize").performScrollTo().performClick()
         compose.onNodeWithText("Customize home").fetchSemanticsNode()
         compose.onNodeWithText("Section order").fetchSemanticsNode()
         compose.onNodeWithText("Add a file or folder shortcut").assertIsDisplayed()
@@ -136,7 +138,8 @@ class MainActivityTest {
 
     @Test
     fun longHomeCustomizationDialogUsesTheAvailableHeightAndCapsTabletWidth() {
-        compose.onNodeWithTag("home_customize").performClick()
+        compose.onNodeWithTag("home_layout_toggle").performScrollTo().performTouchInput { longClick() }
+        compose.onNodeWithTag("home_customize").performScrollTo().performClick()
         val dialog = compose.onNodeWithTag("home_customization_dialog")
         val bounds = dialog.fetchSemanticsNode().boundsInRoot
         val metrics = compose.activity.resources.displayMetrics
@@ -394,6 +397,21 @@ class MainActivityTest {
         compose.onNodeWithText("WebDAV").assertIsDisplayed()
         compose.onNodeWithTag("sharing_list").performScrollToNode(hasText("Start sharing"))
         compose.onNodeWithText("Start sharing").assertIsDisplayed()
+    }
+
+    @Test
+    fun shareDestinationOpensBothPhoneTransferFlows() {
+        compose.onNodeWithText("Share").performClick()
+        compose.onNodeWithTag("sharing_list").performScrollToNode(hasTestTag("nearby_phone_transfer"))
+        compose.onNodeWithTag("nearby_phone_transfer").assertIsDisplayed()
+
+        compose.onNodeWithText("Send").performClick()
+        compose.onNodeWithTag("nearby_send_dialog").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").performClick()
+
+        compose.onNodeWithText("Receive").performClick()
+        compose.onNodeWithTag("nearby_receive_dialog").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_receive_close").performClick()
     }
 
     @Test
@@ -935,6 +953,47 @@ class MainActivityTest {
             compose.onNodeWithContentDescription("File actions: sample.zip").performClick()
             compose.onNodeWithText("Open archive").assertIsDisplayed().performClick()
             compose.waitUntil(timeoutMillis = 10_000) { viewModel.preview.value != null }
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun archiveExtractionLetsTheUserBrowseAndChooseTheDestination() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "archive-extract-${System.nanoTime()}").apply { mkdirs() }
+        val destination = File(directory, "chosen-destination").apply { mkdirs() }
+        val archive = File(directory, "sample.zip")
+        ZipOutputStream(archive.outputStream()).use { output ->
+            output.putNextEntry(ZipEntry("nested/value.txt"))
+            output.write("archive-value".toByteArray())
+            output.closeEntry()
+        }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                viewModel.setSection(AppSection.FILES)
+                viewModel.activatePanel(PanelId.LEFT)
+                viewModel.navigate(PanelId.LEFT, directory.absolutePath)
+            }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                viewModel.leftPanel.value.entries.any { it.absolutePath == archive.absolutePath }
+            }
+            val archiveEntry = viewModel.leftPanel.value.entries.first { it.absolutePath == archive.absolutePath }
+            compose.runOnUiThread { viewModel.open(archiveEntry) }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.preview.value != null }
+
+            compose.onNodeWithTag("archive_actions").performClick()
+            compose.onNodeWithText("Extract").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("archive_extract_dialog").assertIsDisplayed()
+            compose.onNodeWithText("Will create: sample").assertIsDisplayed()
+            compose.onNodeWithTag("archive_extract_folder_${destination.absolutePath.hashCode()}").performClick()
+            compose.onNodeWithText(destination.absolutePath).assertIsDisplayed()
+            compose.onNodeWithTag("archive_extract_confirm").performClick()
+
+            val extracted = File(destination, "sample/nested/value.txt")
+            compose.waitUntil(timeoutMillis = 10_000) { extracted.isFile }
+            assertEquals("archive-value", extracted.readText())
         } finally {
             compose.runOnUiThread { viewModel.closePreview() }
             directory.deleteRecursively()

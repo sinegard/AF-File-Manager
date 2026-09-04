@@ -1,6 +1,7 @@
 package com.affilemanager.app.search
 
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.cleanup.OldMediaRules
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.DuplicateAnalysisResult
@@ -39,6 +40,7 @@ class FileSearchEngine(
         const val MAX_DUPLICATE_CANDIDATES = 20_000
         const val MAX_CLEANUP_PACKAGES = 2_000
         const val MAX_SIMILAR_IMAGE_CANDIDATES = 1_000
+        const val MAX_OLD_MEDIA_FILES = 500
         const val MAX_CLEANUP_FOLDER_CHILDREN = 10_000
         const val MAX_CLEANUP_FOLDER_SCANNED_ENTRIES = 50_000
         const val MAX_ANALYSIS_ROOTS = 16
@@ -116,7 +118,7 @@ class FileSearchEngine(
         )
     }
 
-    suspend fun analyze(roots: List<String>): StorageAnalysis = withContext(Dispatchers.IO) {
+    suspend fun analyze(roots: List<String>, nowMillis: Long = System.currentTimeMillis()): StorageAnalysis = withContext(Dispatchers.IO) {
         var files = 0
         var directories = 0
         var bytes = 0L
@@ -124,6 +126,7 @@ class FileSearchEngine(
         val oldest = java.util.PriorityQueue<FileEntry>(compareByDescending { it.modifiedAtMillis })
         val installerAndArchives = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
         val similarImageCandidates = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
+        val oldMedia = java.util.PriorityQueue<FileEntry>(compareByDescending { it.modifiedAtMillis })
         val emptyDirectories = mutableListOf<String>()
         val directoryBytes = mutableMapOf<String, Long>()
         val directoryFiles = mutableMapOf<String, Int>()
@@ -170,6 +173,10 @@ class FileSearchEngine(
                     similarImageCandidates += entry
                     if (similarImageCandidates.size > MAX_SIMILAR_IMAGE_CANDIDATES) similarImageCandidates.remove()
                 }
+                if (OldMediaRules.isOldCandidate(entry, nowMillis)) {
+                    oldMedia += entry
+                    if (oldMedia.size > MAX_OLD_MEDIA_FILES) oldMedia.remove()
+                }
             }
             WalkAction.DESCEND
         }
@@ -192,6 +199,7 @@ class FileSearchEngine(
                 .sortedByDescending(FileTypeUsage::sizeBytes),
             installerAndArchiveFiles = installerAndArchives.toList().sortedByDescending(FileEntry::sizeBytes),
             similarImageCandidates = similarImageCandidates.toList().sortedByDescending(FileEntry::sizeBytes),
+            oldMediaFiles = oldMedia.toList().sortedBy(FileEntry::modifiedAtMillis),
         )
     }
 

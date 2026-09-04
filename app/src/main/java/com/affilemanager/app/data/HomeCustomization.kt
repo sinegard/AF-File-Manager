@@ -29,6 +29,8 @@ data class HomeShortcut(
 data class HomeCustomization(
     val sectionOrder: List<HomeSection> = HomeSection.entries,
     val shortcuts: List<HomeShortcut> = emptyList(),
+    val storageOrder: List<String> = emptyList(),
+    val hiddenStorageIds: Set<String> = emptySet(),
 )
 
 /**
@@ -56,6 +58,7 @@ object HomeCustomizationRules {
     const val MAX_TITLE_LENGTH = 80
     const val MAX_PATH_LENGTH = 4_096
     const val MAX_ID_LENGTH = 120
+    const val ROOT_STORAGE_ID = "af.root"
 
     fun normalize(
         value: HomeCustomization,
@@ -83,7 +86,16 @@ object HomeCustomizationRules {
             defaults.values.filterNot { default -> any { it.id == default.id } }.forEach(::add)
         }
         require(shortcuts.size <= MAX_SHORTCUTS) { "Too many home shortcuts" }
-        return HomeCustomization(sectionOrder = sections, shortcuts = shortcuts)
+        val storageOrder = value.storageOrder.asSequence().map(String::trim).filter(String::isNotEmpty)
+            .distinct().take(MAX_SHORTCUTS).toList()
+        val hiddenStorageIds = value.hiddenStorageIds.asSequence().map(String::trim).filter(String::isNotEmpty)
+            .take(MAX_SHORTCUTS).toSet()
+        return HomeCustomization(
+            sectionOrder = sections,
+            shortcuts = shortcuts,
+            storageOrder = storageOrder,
+            hiddenStorageIds = hiddenStorageIds,
+        )
     }
 
     fun moveSection(value: HomeCustomization, section: HomeSection, offset: Int): HomeCustomization {
@@ -117,6 +129,28 @@ object HomeCustomizationRules {
 
     fun removeShortcut(value: HomeCustomization, id: String): HomeCustomization = value.copy(
         shortcuts = value.shortcuts.filterNot { it.id == id && !it.builtIn },
+    )
+
+    fun orderedStorageIds(value: HomeCustomization, availableIds: Collection<String>): List<String> {
+        val available = availableIds.distinct()
+        return buildList {
+            value.storageOrder.filter { it in available }.forEach(::add)
+            available.filterNot(::contains).forEach(::add)
+        }
+    }
+
+    fun moveStorage(value: HomeCustomization, availableIds: Collection<String>, id: String, offset: Int): HomeCustomization {
+        val order = orderedStorageIds(value, availableIds).toMutableList()
+        val from = order.indexOf(id)
+        if (from == -1) return value
+        val to = (from + offset).coerceIn(0, order.lastIndex)
+        if (from == to) return value.copy(storageOrder = order)
+        order.add(to, order.removeAt(from))
+        return value.copy(storageOrder = order)
+    }
+
+    fun setStorageVisible(value: HomeCustomization, id: String, visible: Boolean): HomeCustomization = value.copy(
+        hiddenStorageIds = if (visible) value.hiddenStorageIds - id else value.hiddenStorageIds + id,
     )
 
     private fun validateShortcut(value: HomeShortcut): HomeShortcut {

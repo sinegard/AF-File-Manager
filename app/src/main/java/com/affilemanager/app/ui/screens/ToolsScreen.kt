@@ -98,7 +98,6 @@ fun ToolsScreen(
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val trash by viewModel.trashItems.collectAsStateWithLifecycle()
     val safLocations by viewModel.safLocations.collectAsStateWithLifecycle()
-    val safBrowser by viewModel.safBrowser.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val syncSchedules by viewModel.syncSchedules.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
@@ -121,15 +120,16 @@ fun ToolsScreen(
     var showLanguagePicker by remember { mutableStateOf(false) }
     var removeSaf by remember { mutableStateOf<com.affilemanager.app.data.SafLocation?>(null) }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(contentPadding).testTag("tools_list"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
+    Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
             LText("Įrankiai ir saugumas", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             LText("Jokių reklamų, sekimo SDK ar privalomos paskyros.", style = MaterialTheme.typography.bodySmall)
         }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f).testTag("tools_list"),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
 
         item {
             Card(
@@ -410,6 +410,7 @@ fun ToolsScreen(
                 Icons.Rounded.Security,
             )
         }
+        }
     }
 
     if (showLanguagePicker) {
@@ -447,17 +448,6 @@ fun ToolsScreen(
             },
         )
     }
-
-
-    if (safBrowser.location != null) {
-        SafBrowserDialog(
-            state = safBrowser,
-            selectedLocalPath = selectedEntry?.absolutePath,
-            viewModel = viewModel,
-            onDismiss = viewModel::closeSafBrowser,
-        )
-    }
-
 }
 
 @Composable

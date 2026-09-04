@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN பரிமாற்றம்</string>
     <string name="lan_transfer_starting_text">தொடக்க சேவையகம்...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN பரிமாற்றம் இயங்குகிறது</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">செயலில் உள்ள முனையம்</string>
     <string name="terminal_channel_description">பின்னணியில் ஒரு திறந்த தொலைபேசி அல்லது சர்வர் முனையம் இயங்கும் வைத்து</string>
     <string name="terminal_notification_title">AF File Manager முனையம்</string>

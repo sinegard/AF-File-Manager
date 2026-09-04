@@ -21,6 +21,7 @@ internal object BackNavigationRules {
         selectedCount: Int,
         hasBackHistory: Boolean,
         hasParent: Boolean,
+        returnToHomeAtBoundary: Boolean = false,
         homeToolPageOpen: Boolean = false,
         remoteSelectedCount: Int = 0,
         remoteConnected: Boolean = false,
@@ -36,6 +37,7 @@ internal object BackNavigationRules {
         filesHomeVisible -> SystemBackAction.DEFER_TO_SYSTEM
         selectedCount > 0 -> SystemBackAction.CLEAR_SELECTION
         hasBackHistory -> SystemBackAction.NAVIGATE_BACK
+        returnToHomeAtBoundary -> SystemBackAction.SHOW_FILES
         hasParent -> SystemBackAction.NAVIGATE_UP
         else -> SystemBackAction.SHOW_FILES
     }

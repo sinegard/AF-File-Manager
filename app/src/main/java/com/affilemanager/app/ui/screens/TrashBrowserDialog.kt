@@ -75,6 +75,7 @@ import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.LocalFileVisual
 import java.text.DateFormat
 import java.util.Date
@@ -191,7 +192,12 @@ fun TrashBrowserDialog(
                 HorizontalDivider()
                 if (state.loading || state.emptying) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
-                Box(modifier = Modifier.fillMaxSize()) {
+                AfPullToRefresh(
+                    isRefreshing = state.loading || state.emptying,
+                    onRefresh = viewModel::refreshTrashBrowser,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    testTag = "pull_to_refresh_trash",
+                ) {
                     when {
                         state.error != null -> TrashEmptyState("Katalogo atidaryti nepavyko", state.error)
                         state.loading && state.entries.isEmpty() -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))

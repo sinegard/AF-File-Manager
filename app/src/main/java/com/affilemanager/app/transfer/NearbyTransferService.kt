@@ -1,0 +1,375 @@
+package com.affilemanager.app.transfer
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import android.os.SystemClock
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.affilemanager.app.MainActivity
+import com.affilemanager.app.R
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.Call
+import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okio.BufferedSink
+import java.io.File
+import java.io.FileInputStream
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+enum class NearbyTransferStatus { IDLE, STARTING, RUNNING, COMPLETED, CANCELLED, ERROR }
+
+data class NearbyTransferState(
+    val status: NearbyTransferStatus = NearbyTransferStatus.IDLE,
+    val receiverName: String? = null,
+    val fileCount: Int = 0,
+    val completedFiles: Int = 0,
+    val totalBytes: Long = 0,
+    val sentBytes: Long = 0,
+    val currentFile: String? = null,
+    val message: String? = null,
+)
+
+object NearbyTransferController {
+    private val _state = MutableStateFlow(NearbyTransferState())
+    val state: StateFlow<NearbyTransferState> = _state.asStateFlow()
+
+    fun start(context: Context, pairing: NearbyPairing, prepared: PreparedNearbyTransfer) {
+        val validatedPairing = NearbyPairing.parse(pairing.encoded())
+        require(prepared.paths.isNotEmpty() && prepared.paths.size <= NearbySourcePreparer.MAX_FILES) {
+            "Netinkamas siunčiamų failų skaičius"
+        }
+        publish(
+            NearbyTransferState(
+                status = NearbyTransferStatus.STARTING,
+                receiverName = validatedPairing.receiverName,
+                fileCount = prepared.paths.size,
+                message = "Ruošiamas tiesioginis vietinis siuntimas",
+            ),
+        )
+        val intent = Intent(context, NearbyTransferService::class.java)
+            .setAction(NearbyTransferService.ACTION_START)
+            .putExtra(NearbyTransferService.EXTRA_PAIRING, validatedPairing.encoded())
+            .putStringArrayListExtra(NearbyTransferService.EXTRA_PATHS, ArrayList(prepared.paths))
+            .putExtra(NearbyTransferService.EXTRA_CLEANUP_ROOT, prepared.cleanupRootPath)
+        ContextCompat.startForegroundService(context, intent)
+    }
+
+    fun cancel(context: Context) {
+        context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_CANCEL))
+    }
+
+    fun clearFinished() {
+        if (_state.value.status in setOf(NearbyTransferStatus.COMPLETED, NearbyTransferStatus.CANCELLED, NearbyTransferStatus.ERROR)) {
+            _state.value = NearbyTransferState()
+        }
+    }
+
+    internal fun publish(state: NearbyTransferState) {
+        _state.value = state
+    }
+}
+
+class NearbyTransferService : Service() {
+    companion object {
+        const val ACTION_START = "com.affilemanager.app.action.START_NEARBY_TRANSFER"
+        const val ACTION_CANCEL = "com.affilemanager.app.action.CANCEL_NEARBY_TRANSFER"
+        const val EXTRA_PAIRING = "pairing"
+        const val EXTRA_PATHS = "paths"
+        const val EXTRA_CLEANUP_ROOT = "cleanup_root"
+        private const val CHANNEL_ID = "nearby_transfer"
+        private const val NOTIFICATION_ID = 42
+        private const val PROGRESS_INTERVAL_MILLIS = 150L
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var transferJob: Job? = null
+    @Volatile private var activeCall: Call? = null
+    @Volatile private var cancelledByUser = false
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.MINUTES)
+        .writeTimeout(10, TimeUnit.MINUTES)
+        .followRedirects(false)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    override fun onCreate() {
+        super.onCreate()
+        createChannel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            cancelTransfer()
+            return START_NOT_STICKY
+        }
+        if (intent?.action != ACTION_START) return START_NOT_STICKY
+        startAsForeground(progressNotification(NearbyTransferController.state.value))
+        if (transferJob?.isActive == true) return START_NOT_STICKY
+
+        val pairingPayload = intent.getStringExtra(EXTRA_PAIRING).orEmpty()
+        val paths = intent.getStringArrayListExtra(EXTRA_PATHS)?.toList().orEmpty()
+        val cleanupRoot = intent.getStringExtra(EXTRA_CLEANUP_ROOT)
+        intent.removeExtra(EXTRA_PAIRING)
+        intent.removeExtra(EXTRA_PATHS)
+        intent.removeExtra(EXTRA_CLEANUP_ROOT)
+        cancelledByUser = false
+        transferJob = scope.launch { runTransfer(pairingPayload, paths, cleanupRoot) }
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        activeCall?.cancel()
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private suspend fun runTransfer(pairingPayload: String, paths: List<String>, cleanupRoot: String?) {
+        try {
+            val pairing = NearbyPairing.parse(pairingPayload)
+            val files = validateFiles(paths)
+            val totalBytes = files.sumOf(File::length)
+            var completedBytes = 0L
+            var completedFiles = 0
+            publish(
+                NearbyTransferState(
+                    status = NearbyTransferStatus.RUNNING,
+                    receiverName = pairing.receiverName,
+                    fileCount = files.size,
+                    totalBytes = totalBytes,
+                    message = "Siunčiama tame pačiame privačiame tinkle",
+                ),
+            )
+            val cookie = login(pairing)
+            files.forEach { file ->
+                if (cancelledByUser) throw CancellationException("Siuntimas atšauktas")
+                var lastPublished = 0L
+                upload(pairing, cookie, file) { fileBytes ->
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastPublished >= PROGRESS_INTERVAL_MILLIS || fileBytes == file.length()) {
+                        lastPublished = now
+                        publish(
+                            NearbyTransferState(
+                                status = NearbyTransferStatus.RUNNING,
+                                receiverName = pairing.receiverName,
+                                fileCount = files.size,
+                                completedFiles = completedFiles,
+                                totalBytes = totalBytes,
+                                sentBytes = (completedBytes + fileBytes).coerceAtMost(totalBytes),
+                                currentFile = file.name,
+                                message = "Siunčiama tame pačiame privačiame tinkle",
+                            ),
+                        )
+                    }
+                }
+                completedBytes = Math.addExact(completedBytes, file.length())
+                completedFiles += 1
+            }
+            val completed = NearbyTransferState(
+                status = NearbyTransferStatus.COMPLETED,
+                receiverName = pairing.receiverName,
+                fileCount = files.size,
+                completedFiles = files.size,
+                totalBytes = totalBytes,
+                sentBytes = totalBytes,
+                message = "Siuntimas baigtas",
+            )
+            publish(completed)
+            finishForeground()
+        } catch (cancelled: CancellationException) {
+            val state = NearbyTransferController.state.value.copy(
+                status = NearbyTransferStatus.CANCELLED,
+                message = "Siuntimas atšauktas",
+            )
+            publish(state)
+            finishForeground()
+        } catch (error: Throwable) {
+            val state = NearbyTransferController.state.value.copy(
+                status = if (cancelledByUser) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.ERROR,
+                message = if (cancelledByUser) "Siuntimas atšauktas" else (error.message ?: "Siuntimas nepavyko").take(240),
+            )
+            publish(state)
+            finishForeground()
+        } finally {
+            activeCall = null
+            cleanupRoot?.let(::safeDeleteStage)
+            transferJob = null
+            stopSelf()
+        }
+    }
+
+    private fun login(pairing: NearbyPairing): String {
+        val url = "http://${pairing.host}:${pairing.port}/login".toHttpUrl()
+        val request = Request.Builder()
+            .url(url)
+            .post(FormBody.Builder().add("code", pairing.code).build())
+            .header("User-Agent", "AF-File-Manager/Nearby")
+            .build()
+        val call = client.newCall(request)
+        activeCall = call
+        call.execute().use { response ->
+            require(response.isSuccessful) { "Gavęs telefonas atmetė susiejimo kodą (${response.code})" }
+            val cookie = response.headers.values("Set-Cookie")
+                .asSequence()
+                .map { it.substringBefore(';').trim() }
+                .firstOrNull { it.startsWith("af_session=") }
+            require(!cookie.isNullOrBlank()) { "Gavimo sesija nepatvirtinta" }
+            return cookie
+        }
+    }
+
+    private fun upload(pairing: NearbyPairing, cookie: String, file: File, onProgress: (Long) -> Unit) {
+        val url = "http://${pairing.host}:${pairing.port}/".toHttpUrl().newBuilder()
+            .addPathSegment("upload")
+            .addQueryParameter("dir", "")
+            .addQueryParameter("name", file.name)
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .post(ProgressFileRequestBody(file, onProgress))
+            .header("Cookie", cookie)
+            .header("User-Agent", "AF-File-Manager/Nearby")
+            .build()
+        val call = client.newCall(request)
+        activeCall = call
+        call.execute().use { response ->
+            require(response.isSuccessful) {
+                response.body?.string()?.take(200)?.ifBlank { null } ?: "Gavęs telefonas atmetė failą (${response.code})"
+            }
+        }
+    }
+
+    private fun validateFiles(paths: List<String>): List<File> {
+        require(paths.isNotEmpty() && paths.size <= NearbySourcePreparer.MAX_FILES) { "Netinkamas siunčiamų failų skaičius" }
+        var total = 0L
+        return paths.distinct().map { path ->
+            val file = File(path).canonicalFile
+            require(file.isFile && file.canRead()) { "Failas nepasiekiamas: ${file.name}" }
+            require(file.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą: ${file.name}" }
+            total = Math.addExact(total, file.length())
+            require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
+            file
+        }
+    }
+
+    private fun cancelTransfer() {
+        cancelledByUser = true
+        activeCall?.cancel()
+        transferJob?.cancel(CancellationException("Siuntimas atšauktas"))
+        if (transferJob == null) stopSelf()
+    }
+
+    private fun publish(state: NearbyTransferState) {
+        NearbyTransferController.publish(state)
+        // Updating an active foreground notification does not require the optional Android 13
+        // notification-drawer permission. The transfer remains visible in Android's foreground
+        // service UI even when that permission is unavailable.
+        startAsForeground(progressNotification(state))
+    }
+
+    private fun safeDeleteStage(path: String) {
+        val root = runCatching { File(cacheDir, "nearby-send-staging").canonicalFile }.getOrNull() ?: return
+        val candidate = runCatching { File(path).canonicalFile }.getOrNull() ?: return
+        if (candidate.parentFile == root) candidate.deleteRecursively()
+    }
+
+    private fun createChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.nearby_transfer_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply { setShowBadge(false) }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun startAsForeground(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun progressNotification(state: NearbyTransferState): Notification {
+        val max = state.totalBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val progress = if (state.totalBytes <= 0) 0 else
+            ((state.sentBytes.toDouble() / state.totalBytes.toDouble()) * max).toInt().coerceIn(0, max)
+        return notificationBuilder()
+            .setContentTitle(getString(R.string.nearby_transfer_notification_title))
+            .setContentText(state.currentFile ?: state.message ?: getString(R.string.nearby_transfer_starting_text))
+            .setProgress(max.coerceAtLeast(1), progress, state.totalBytes <= 0)
+            .setOngoing(state.status in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING))
+            .addAction(0, getString(R.string.stop), cancelPendingIntent())
+            .build()
+    }
+
+    private fun finishForeground() = stopForeground(STOP_FOREGROUND_REMOVE)
+
+    private fun notificationBuilder(): NotificationCompat.Builder {
+        val openIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_app)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setContentIntent(openIntent)
+    }
+
+    private fun cancelPendingIntent(): PendingIntent = PendingIntent.getService(
+        this,
+        2,
+        Intent(this, NearbyTransferService::class.java).setAction(ACTION_CANCEL),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private class ProgressFileRequestBody(
+        private val file: File,
+        private val onProgress: (Long) -> Unit,
+    ) : RequestBody() {
+        override fun contentType() = "application/octet-stream".toMediaType()
+        override fun contentLength(): Long = file.length()
+
+        override fun writeTo(sink: BufferedSink) {
+            FileInputStream(file).use { input ->
+                val buffer = ByteArray(256 * 1_024)
+                var sent = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    sink.write(buffer, 0, read)
+                    sent = Math.addExact(sent, read.toLong())
+                    onProgress(sent)
+                }
+                buffer.fill(0)
+            }
+        }
+    }
+}

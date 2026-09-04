@@ -169,4 +169,5 @@ data class StorageAnalysis(
     val typeUsage: List<FileTypeUsage> = emptyList(),
     val installerAndArchiveFiles: List<FileEntry> = emptyList(),
     val similarImageCandidates: List<FileEntry> = emptyList(),
+    val oldMediaFiles: List<FileEntry> = emptyList(),
 )

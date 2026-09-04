@@ -86,6 +86,7 @@ import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.ui.components.PrivilegedFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 
@@ -250,33 +251,40 @@ fun AdvancedStorageBrowserDialog(
                     }
                 }
 
-                when {
-                    state.loading && state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                    state.error != null && state.entries.isEmpty() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            LText("Aplanko atidaryti nepavyko", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
-                            LText(state.error, style = MaterialTheme.typography.bodySmall)
-                            Button(onClick = viewModel::refreshAdvancedBrowser) { LText("Bandyti dar kartą") }
+                AfPullToRefresh(
+                    isRefreshing = state.loading,
+                    onRefresh = viewModel::refreshAdvancedBrowser,
+                    modifier = Modifier.weight(1f),
+                    testTag = "pull_to_refresh_advanced",
+                ) {
+                    when {
+                        state.loading && state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
                         }
+                        state.error != null && state.entries.isEmpty() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                LText("Aplanko atidaryti nepavyko", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                                LText(state.error, style = MaterialTheme.typography.bodySmall)
+                                Button(onClick = viewModel::refreshAdvancedBrowser) { LText("Bandyti dar kartą") }
+                            }
+                        }
+                        state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            LText("Aplankas tuščias")
+                        }
+                        displayedEntries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            LText("Atitikmenų nerasta")
+                        }
+                        state.grid -> AdvancedGrid(
+                            state = state,
+                            displayedEntries = displayedEntries,
+                            viewModel = viewModel,
+                        )
+                        else -> AdvancedList(
+                            state = state,
+                            displayedEntries = displayedEntries,
+                            viewModel = viewModel,
+                        )
                     }
-                    state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LText("Aplankas tuščias")
-                    }
-                    displayedEntries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LText("Atitikmenų nerasta")
-                    }
-                    state.grid -> AdvancedGrid(
-                        state = state,
-                        displayedEntries = displayedEntries,
-                        viewModel = viewModel,
-                    )
-                    else -> AdvancedList(
-                        state = state,
-                        displayedEntries = displayedEntries,
-                        viewModel = viewModel,
-                    )
                 }
             }
         }

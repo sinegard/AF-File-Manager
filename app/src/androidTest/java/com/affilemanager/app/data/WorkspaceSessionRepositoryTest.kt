@@ -76,7 +76,7 @@ class WorkspaceSessionRepositoryTest {
 
         val migrated = repository.load("fallback-left", "fallback-right")
 
-        assertEquals(2, migrated.schemaVersion)
+        assertEquals(3, migrated.schemaVersion)
         assertEquals(leftPath, migrated.left.activeTab.path)
         assertEquals(rightPath, migrated.right.activeTab.path)
         assertEquals(SortMode.NAME, migrated.left.activeTab.sortMode)
@@ -85,7 +85,7 @@ class WorkspaceSessionRepositoryTest {
         assertEquals(SortDirection.ASCENDING, migrated.right.activeTab.sortDirection)
 
         val persisted = JSONObject(File(directory, "workspace_session_v1.json").readText(Charsets.UTF_8))
-        assertEquals(2, persisted.getInt("schemaVersion"))
+        assertEquals(3, persisted.getInt("schemaVersion"))
     }
 
     private fun legacyPanel(id: String, path: String, mode: SortMode, direction: SortDirection): JSONObject {

@@ -79,6 +79,7 @@ import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.SafFileVisual
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.DirectorySearchButton
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -192,7 +193,12 @@ fun SafBrowserDialog(
                         LText(error, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.error)
                     }
                 }
-                Box(modifier = Modifier.fillMaxSize()) {
+                AfPullToRefresh(
+                    isRefreshing = state.loading,
+                    onRefresh = viewModel::refreshSafBrowser,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    testTag = "pull_to_refresh_saf",
+                ) {
                     if (state.loading && state.entries.isEmpty()) {
                         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                     } else if (transforming && displayedEntries.isEmpty()) {

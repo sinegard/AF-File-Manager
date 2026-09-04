@@ -2,6 +2,7 @@ package com.affilemanager.app.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -47,6 +48,7 @@ fun DirectoryDisplaySettingsDialog(
     onApply: (DirectoryDisplaySettings) -> Unit,
     onApplySort: ((SortMode, SortDirection) -> Unit)? = null,
     onApplyToAll: ((DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit)? = null,
+    extraContent: @Composable ColumnScope.() -> Unit = {},
 ) {
     require(gridColumnRange.first >= DirectoryDisplayRules.MIN_GRID_COLUMNS)
     require(gridColumnRange.last <= DirectoryDisplayRules.MAX_GRID_COLUMNS)
@@ -227,6 +229,7 @@ fun DirectoryDisplaySettingsDialog(
                         )
                     }
                 }
+                extraContent()
         }
     }
 }

@@ -102,8 +102,19 @@ class NavigationRepository(context: Context) {
                 )
             }
         }.orEmpty()
+        val storageOrder = item.optJSONArray("storageOrder")?.let { array ->
+            (0 until array.length()).map(array::getString)
+        }.orEmpty()
+        val hiddenStorageIds = item.optJSONArray("hiddenStorageIds")?.let { array ->
+            (0 until array.length()).mapTo(linkedSetOf(), array::getString)
+        }.orEmpty()
         return HomeCustomizationRules.normalize(
-            HomeCustomization(sectionOrder = sections, shortcuts = shortcuts),
+            HomeCustomization(
+                sectionOrder = sections,
+                shortcuts = shortcuts,
+                storageOrder = storageOrder,
+                hiddenStorageIds = hiddenStorageIds,
+            ),
             builtInShortcuts,
         )
     }
@@ -128,6 +139,8 @@ class NavigationRepository(context: Context) {
                     }
                 },
             )
+            .put("storageOrder", JSONArray().apply { normalized.storageOrder.forEach(::put) })
+            .put("hiddenStorageIds", JSONArray().apply { normalized.hiddenStorageIds.forEach(::put) })
             .toString()
         require(encoded.length <= MAX_HOME_CUSTOMIZATION_BYTES) { "Home customization is too large" }
         check(preferences.edit().putString(KEY_HOME_CUSTOMIZATION, encoded).commit()) {

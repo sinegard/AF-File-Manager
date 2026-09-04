@@ -34,6 +34,14 @@ ConnectBot Terminal embeds libvterm for terminal emulation.
 - Copyright John Wu and contributors
 - License: Apache License 2.0 — https://github.com/topjohnwu/libsu/blob/master/LICENSE
 
+## ZXing Core
+
+`com.google.zxing:core:3.5.4` generates the local pairing QR code used for phone-to-phone transfers.
+
+- Project: https://github.com/zxing/zxing
+- Copyright ZXing authors and contributors
+- License: Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
+
 ## Offline interface translation assets
 
 The generated language packs were prepared during development with Meta's NLLB-200 distilled 600M model. The model and translation runtime are not included in the Android app. Standard Android action labels are taken from the Android Open Source Project translations where an exact match exists.

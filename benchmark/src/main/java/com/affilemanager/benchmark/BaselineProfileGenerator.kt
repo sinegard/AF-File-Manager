@@ -50,11 +50,11 @@ class BaselineProfileGenerator {
         AfBenchmarkEnvironment.prepareTarget(device)
         pressHome()
         startActivityAndWait(AfBenchmarkEnvironment.localIntent("large"))
-        AfBenchmarkEnvironment.run { awaitObject("file_list_ready_LEFT") }
+        AfBenchmarkEnvironment.run { awaitObject("file_list_content_LEFT") }
         AfBenchmarkEnvironment.run { fling("file_list_LEFT", Direction.DOWN, times = 3) }
 
         startActivityAndWait(AfBenchmarkEnvironment.localIntent("thumbnails"))
-        AfBenchmarkEnvironment.run { awaitObject("file_grid_ready_LEFT") }
+        AfBenchmarkEnvironment.run { awaitObject("file_grid_content_LEFT") }
         AfBenchmarkEnvironment.run { fling("file_grid_LEFT", Direction.DOWN, times = 3) }
 
         startActivityAndWait(AfBenchmarkEnvironment.remoteIntent())

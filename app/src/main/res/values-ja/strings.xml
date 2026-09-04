@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
     <string name="lan_transfer_starting_text">サーバーを起動する</string>
     <string name="lan_transfer_running_title">AF File Manager LAN 転送が実行中</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">アクティブターミナル</string>
     <string name="terminal_channel_description">幕後に開いている電話またはサーバー端末を保持します</string>
     <string name="terminal_notification_title">端末は AF File Manager</string>

@@ -11,7 +11,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 
-private const val CURRENT_WORKSPACE_SCHEMA = 2
+private const val CURRENT_WORKSPACE_SCHEMA = 3
 
 data class WorkspaceTab(
     val id: String,
@@ -23,6 +23,7 @@ data class WorkspaceTab(
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val includeHidden: Boolean = false,
     val grid: Boolean = false,
+    val returnToHomeAtBoundary: Boolean = false,
 )
 
 data class PanelWorkspace(
@@ -137,6 +138,7 @@ class WorkspaceSessionRepository(context: Context) {
                 }.getOrDefault(SortDirection.ASCENDING),
                 includeHidden = item.optBoolean("includeHidden", false),
                 grid = item.optBoolean("grid", false),
+                returnToHomeAtBoundary = item.optBoolean("returnToHomeAtBoundary", false),
             )
         }
     }
@@ -166,6 +168,7 @@ class WorkspaceSessionRepository(context: Context) {
         .put("sortDirection", sortDirection.name)
         .put("includeHidden", includeHidden)
         .put("grid", grid)
+        .put("returnToHomeAtBoundary", returnToHomeAtBoundary)
 
     private fun validate(session: WorkspaceSession) {
         require(session.schemaVersion == CURRENT_WORKSPACE_SCHEMA) { "Nepalaikoma darbo sesijos versija" }

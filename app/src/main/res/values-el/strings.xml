@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">μεταφορά AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Αρχική διακομιστής...</string>
     <string name="lan_transfer_running_title">Η μεταφορά AF File Manager LAN εκτελείται</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Ενεργό τερματικό</string>
     <string name="terminal_channel_description">Κρατά ανοιχτό τηλέφωνο ή τερματικό διακομιστή που τρέχει στο φόντο</string>
     <string name="terminal_notification_title">Τερματικό AF File Manager</string>

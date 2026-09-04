@@ -170,6 +170,20 @@ class FileSearchEngineTest {
     }
 
     @Test
+    fun analysisKeepsASeparateNinetyDayOldMediaCollection() = runBlocking {
+        val root = temporary.newFolder("analysis-old-media")
+        val day = 24L * 60L * 60L * 1_000L
+        val now = 200L * day
+        val oldPhoto = File(root, "old.jpg").apply { writeBytes(ByteArray(20)); setLastModified(now - 100L * day) }
+        File(root, "recent.mp3").apply { writeBytes(ByteArray(20)); setLastModified(now - 5L * day) }
+        File(root, "old.txt").apply { writeBytes(ByteArray(20)); setLastModified(now - 120L * day) }
+
+        val analysis = engine().analyze(listOf(root.absolutePath), nowMillis = now)
+
+        assertEquals(listOf(oldPhoto.absolutePath), analysis.oldMediaFiles.map(FileEntry::absolutePath))
+    }
+
+    @Test
     fun analysisAcceptsASelectedFileWithoutAttributingItToParentFolders() = runBlocking {
         val parent = temporary.newFolder("selected-file")
         val selected = File(parent, "report.pdf").apply { writeBytes(ByteArray(42)) }

@@ -255,6 +255,7 @@ com.google.testing.platform:android-test-plugin:0.0.9-alpha04=unified-test-platf
 com.google.testing.platform:core-proto:0.0.9-alpha04=unified-test-platform-android-device-provider-ddmlib,unified-test-platform-android-test-plugin-host-apk-installer,unified-test-platform-android-test-plugin-result-listener-gradle,unified-test-platform-gradle-work-action
 com.google.testing.platform:core:0.0.9-alpha04=unified-test-platform-core
 com.google.testing.platform:launcher:0.0.9-alpha04=unified-test-platform-gradle-work-action,unified-test-platform-launcher
+com.google.zxing:core:3.5.4=benchmarkTestedApks,debugTestedApks,profileTestedApks
 com.hierynomus:asn-one:0.6.0=benchmarkTestedApks,debugTestedApks,profileTestedApks
 com.hierynomus:smbj:0.14.0=benchmarkTestedApks,debugTestedApks,profileTestedApks
 com.squareup.moshi:moshi:1.13.0=benchmarkLintChecksClasspath,benchmarkRuntimeClasspath,debugLintChecksClasspath,debugRuntimeClasspath,profileLintChecksClasspath,profileRuntimeClasspath

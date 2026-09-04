@@ -4,6 +4,27 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-04
+
+### Added
+
+- Authenticated phone-to-phone transfers over a trusted local network, with QR or manual pairing and guided selection of files, apps, photos, videos, and music.
+- AF File Manager integration with Android's system file picker, plus bookmarks for storage and cloud providers installed on the device.
+- A cleanup manager for reviewing unused apps, available app-cache information, and old media without deleting anything automatically.
+- Share actions for local files, archive entries, and staged app backups, together with working installed-app export and Android-owned uninstall confirmation.
+
+### Changed
+
+- Main lists now keep their top bars fixed and support pull-to-refresh at the top of the content.
+- Quick locations and storage visibility/order are managed from display settings.
+- Archive contents use AF's normal list/grid, selection, preview, and action model. Extraction now asks for a destination folder, including when only selected entries are extracted.
+- Writable archives can be renamed, moved, or cleaned transactionally so a failed change preserves the original archive.
+
+### Fixed
+
+- Back from Downloads or a favorite opened from Files home now returns to Files home at the correct boundary.
+- Network, archive, and creation forms no longer leave an unintended gap at the screen edge.
+
 ## [0.30.0] - 2026-09-03
 
 ### Changed
@@ -102,6 +123,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 English and Lithuanian are maintained directly. The other bundled translations were generated offline and may still need corrections from native speakers.
 
+[0.31.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/sinegard/AF-File-Manager/compare/v0.27.0...v0.28.0

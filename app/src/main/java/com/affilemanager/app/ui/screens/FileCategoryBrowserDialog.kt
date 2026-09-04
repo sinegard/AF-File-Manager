@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SaveAlt
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -73,6 +74,7 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.FileCategoryUiState
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
@@ -113,7 +115,7 @@ fun FileCategoryBrowser(
     var infoTarget by remember(state.category) { mutableStateOf<FileEntry?>(null) }
     var confirmTrash by remember(state.category) { mutableStateOf(false) }
     val exportAppsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) viewModel.exportSelectedInstalledApps(uri)
+        if (uri != null) viewModel.exportSelectedInstalledApps(uri) else viewModel.installedAppExportCancelled()
     }
     LaunchedEffect(state.category) {
         searchVisible = false
@@ -185,6 +187,12 @@ fun FileCategoryBrowser(
                     ) {
                         if (state.category == FileCategory.INSTALLED_APPS) {
                             IconButton(
+                                onClick = viewModel::shareFileCategorySelection,
+                                modifier = Modifier.testTag("category_share"),
+                            ) {
+                                Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
+                            }
+                            IconButton(
                                 enabled = state.selectedPaths.size == 1,
                                 onClick = { infoTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } },
                                 modifier = Modifier.testTag("category_info"),
@@ -205,6 +213,12 @@ fun FileCategoryBrowser(
                                 Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Pašalinti programą"), tint = MaterialTheme.colorScheme.error)
                             }
                         } else {
+                            IconButton(
+                                onClick = viewModel::shareFileCategorySelection,
+                                modifier = Modifier.testTag("category_share"),
+                            ) {
+                                Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
+                            }
                             IconButton(onClick = { viewModel.copyFileCategorySelection(move = false) }) {
                                 Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                             }
@@ -351,6 +365,12 @@ fun FileCategoryBrowser(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+                AfPullToRefresh(
+                    isRefreshing = state.loading,
+                    onRefresh = viewModel::refreshFileCategory,
+                    modifier = Modifier.weight(1f),
+                    testTag = "pull_to_refresh_category",
+                ) {
                 when {
                     state.loading && state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
@@ -419,6 +439,7 @@ fun FileCategoryBrowser(
                             }
                         }
                     }
+                }
                 }
         }
     }

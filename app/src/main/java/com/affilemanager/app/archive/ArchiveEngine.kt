@@ -27,6 +27,7 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Date
+import java.util.UUID
 import java.util.zip.ZipOutputStream
 
 class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
@@ -75,6 +76,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         entryPath: String,
         destinationFile: File,
         operation: OperationContext? = null,
+        password: CharArray? = null,
     ) = withContext(Dispatchers.IO) {
         require(archiveFile.isFile) { "Archive is unavailable" }
         val requested = normalizedEntryPath(entryPath)
@@ -83,7 +85,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         }
         when (detectFormat(archiveFile)) {
             ArchiveFormat.ZIP -> {
-                val zip = ZipFile(archiveFile)
+                val zip = if (password == null) ZipFile(archiveFile) else ZipFile(archiveFile, password)
                 val header = zip.fileHeaders.takeChecked().firstOrNull {
                     normalizedEntryPath(it.fileName) == requested
                 } ?: throw IllegalArgumentException("Archive entry was not found")
@@ -155,6 +157,165 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         require(destinationFile.isFile) { "Archive entry was not extracted" }
     }
 
+    /** Extracts selected files or directory trees without overwriting any existing destination. */
+    suspend fun extractEntries(
+        archiveFile: File,
+        selectedPaths: Collection<String>,
+        destinationDirectory: File,
+        operation: OperationContext? = null,
+        password: CharArray? = null,
+    ): Int = withContext(Dispatchers.IO) {
+        require(archiveFile.isFile) { "Archyvas nepasiekiamas" }
+        require(destinationDirectory.isDirectory || destinationDirectory.mkdirs()) { "Paskirties aplankas nepasiekiamas" }
+        val selected = ArchiveMutationRules.normalizeSelection(selectedPaths).toHashSet()
+        val entries = list(archiveFile, password)
+        val chosenEntries = entries.filter { entry ->
+            selectionContains(selected, ArchiveMutationRules.normalizePath(entry.name))
+        }
+        require(chosenEntries.isNotEmpty()) { "Pasirinktuose archyvo įrašuose nėra failų ar aplankų" }
+        require(chosenEntries.size <= limits.maxEntries) { "Archyve per daug įrašų" }
+        val chosenByPath = chosenEntries.associateBy { ArchiveMutationRules.normalizePath(it.name) }
+        require(chosenByPath.size == chosenEntries.size) { "Pasirinktuose archyvo įrašuose kartojasi keliai" }
+        enforceDeclaredLimits(chosenEntries.filterNot(ArchiveEntryInfo::directory).map(ArchiveEntryInfo::sizeBytes))
+        operation?.setTotals(chosenEntries.size, chosenEntries.sumOf { if (it.directory) 0L else it.sizeBytes.coerceAtLeast(0L) })
+
+        var processed = 0
+        var expanded = 0L
+        fun prepareTarget(path: String, directory: Boolean): File {
+            val target = SafeArchivePath.resolve(destinationDirectory, path, limits.maxDepth)
+            if (directory) {
+                require(target.isDirectory || target.mkdirs()) { "Nepavyko sukurti $path" }
+            } else {
+                require(!target.exists()) { "Paskirties failas jau yra: $path" }
+                target.parentFile?.let { require(it.isDirectory || it.mkdirs()) { "Nepavyko sukurti aplanko" } }
+            }
+            return target
+        }
+        suspend fun completed(path: String) {
+            processed += 1
+            operation?.progress(itemDelta = 1, currentName = path)
+        }
+
+        when (detectFormat(archiveFile)) {
+            ArchiveFormat.ZIP -> {
+                val zip = if (password == null) ZipFile(archiveFile) else ZipFile(archiveFile, password)
+                zip.fileHeaders.takeChecked().forEach { header ->
+                    val normalized = ArchiveMutationRules.normalizePath(header.fileName)
+                    if (normalized !in chosenByPath) return@forEach
+                    operation?.checkpoint()
+                    val target = prepareTarget(normalized, header.isDirectory)
+                    if (!header.isDirectory) {
+                        zip.getInputStream(header).use { input ->
+                            writeExtractedTarget(target) { output ->
+                                expanded = copyBounded(input, output, header.uncompressedSize, expanded, operation, normalized)
+                            }
+                        }
+                    }
+                    completed(normalized)
+                }
+            }
+            ArchiveFormat.SEVEN_Z -> SevenZFile(archiveFile).use { archive ->
+                while (true) {
+                    val entry = archive.nextEntry ?: break
+                    val normalized = ArchiveMutationRules.normalizePath(entry.name)
+                    if (normalized !in chosenByPath) continue
+                    operation?.checkpoint()
+                    val target = prepareTarget(normalized, entry.isDirectory)
+                    if (!entry.isDirectory) {
+                        writeExtractedTarget(target) { output ->
+                            expanded = copySevenZBounded(archive, output, entry.size, expanded, operation, normalized)
+                        }
+                    }
+                    completed(normalized)
+                }
+            }
+            ArchiveFormat.RAR -> Archive(archiveFile).use { archive ->
+                archive.fileHeaders.takeChecked().forEach { header ->
+                    val normalized = ArchiveMutationRules.normalizePath(header.fileName)
+                    if (normalized !in chosenByPath) return@forEach
+                    operation?.checkpoint()
+                    val target = prepareTarget(normalized, header.isDirectory)
+                    if (!header.isDirectory) {
+                        writeExtractedTarget(target) { output ->
+                            val bounded = BoundedOutputStream(output, limits.maxSingleEntryBytes) { written ->
+                                expanded = Math.addExact(expanded, written)
+                                require(expanded <= limits.maxExpandedBytes) { "Archyvo išplėtimo riba viršyta" }
+                                operation?.progress(byteDelta = written, currentName = normalized)
+                            }
+                            archive.extractFile(header, bounded)
+                        }
+                    }
+                    completed(normalized)
+                }
+            }
+            ArchiveFormat.TAR, ArchiveFormat.TAR_GZ -> openTarInput(archiveFile).use { input ->
+                while (true) {
+                    val entry = input.nextEntry ?: break
+                    val normalized = ArchiveMutationRules.normalizePath(entry.name)
+                    if (normalized !in chosenByPath) continue
+                    require(!entry.isSymbolicLink && !entry.isLink) { "Archyvo nuorodos saugumo sumetimais neišpakuojamos" }
+                    operation?.checkpoint()
+                    val target = prepareTarget(normalized, entry.isDirectory)
+                    if (!entry.isDirectory) {
+                        writeExtractedTarget(target) { output ->
+                            expanded = copyBounded(input, output, entry.size, expanded, operation, normalized)
+                        }
+                    }
+                    completed(normalized)
+                }
+            }
+            ArchiveFormat.GZIP -> {
+                val entry = chosenEntries.single()
+                val normalized = ArchiveMutationRules.normalizePath(entry.name)
+                operation?.checkpoint()
+                val target = prepareTarget(normalized, directory = false)
+                GzipCompressorInputStream(BufferedInputStream(FileInputStream(archiveFile))).use { input ->
+                    writeExtractedTarget(target) { output ->
+                        expanded = copyBounded(input, output, -1, expanded, operation, normalized)
+                    }
+                }
+                completed(normalized)
+            }
+        }
+        require(processed == chosenEntries.size) { "Pasirinktų archyvo įrašų išpakuoti nepavyko" }
+        processed
+    }
+
+    /** Transactionally removes selected entries from a writable .zip archive. */
+    suspend fun deleteZipEntries(
+        archiveFile: File,
+        selectedPaths: Collection<String>,
+        password: CharArray? = null,
+    ): List<ArchiveEntryInfo> = rewriteZip(archiveFile, password) { zip, before ->
+        val headers = ArchiveMutationRules.deletionHeaders(before, selectedPaths)
+        zip.removeFiles(headers)
+        val selected = ArchiveMutationRules.normalizeSelection(selectedPaths)
+        val verifier: (List<ArchiveEntryInfo>) -> Boolean = { after ->
+            after.none { entry ->
+                val normalized = ArchiveMutationRules.normalizePath(entry.name)
+                selected.any { normalized == it || normalized.startsWith("$it/") }
+            }
+        }
+        verifier
+    }
+
+    /** Transactionally renames one file or directory tree in a writable .zip archive. */
+    suspend fun renameZipEntry(
+        archiveFile: File,
+        sourcePath: String,
+        requestedName: String,
+        password: CharArray? = null,
+    ): List<ArchiveEntryInfo> = rewriteZip(archiveFile, password) { zip, before ->
+        val plan = ArchiveMutationRules.renamePlan(before, sourcePath, requestedName)
+        zip.renameFiles(plan.renamedHeaders)
+        val verifier: (List<ArchiveEntryInfo>) -> Boolean = { after ->
+            val normalized = after.map { ArchiveMutationRules.normalizePath(it.name) }.toSet()
+            plan.renamedHeaders.values.all { ArchiveMutationRules.normalizePath(it) in normalized } &&
+                normalized.none { it == plan.sourcePath || it.startsWith("${plan.sourcePath}/") }
+        }
+        verifier
+    }
+
     suspend fun create(
         format: ArchiveFormat,
         outputFile: File,
@@ -162,28 +323,81 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         password: CharArray? = null,
         operation: OperationContext? = null,
     ) = withContext(Dispatchers.IO) {
-        require(sources.all(File::exists)) { "Kai kurie šaltiniai nebeegzistuoja" }
-        require(format != ArchiveFormat.RAR && format != ArchiveFormat.GZIP) { "Šį formatą galima tik išpakuoti" }
-        require(password == null || format == ArchiveFormat.ZIP) { "Šifravimas palaikomas kuriant ZIP" }
-        require(sources.isNotEmpty() || password == null) { "Tuščias archyvas negali būti užšifruotas" }
-        require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
-        outputFile.parentFile?.mkdirs()
-        val partial = File(outputFile.parentFile, ".${outputFile.name}.partial")
+        var partial: File? = null
         try {
+            require(sources.all(File::exists)) { "Kai kurie šaltiniai nebeegzistuoja" }
+            require(format != ArchiveFormat.RAR && format != ArchiveFormat.GZIP) { "Šį formatą galima tik išpakuoti" }
+            require(password == null || format == ArchiveFormat.ZIP) { "Šifravimas palaikomas kuriant ZIP" }
+            require(sources.isNotEmpty() || password == null) { "Tuščias archyvas negali būti užšifruotas" }
+            require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
+            val parent = outputFile.parentFile
+            require(parent != null && (parent.isDirectory || parent.mkdirs())) { "Archyvo aplankas nepasiekiamas" }
+            validateCreateSources(sources, outputFile, operation)
+            val partialFile = File(parent, ".${outputFile.name}.partial")
+            partial = partialFile
+            require(!partialFile.exists()) { "Laikinas archyvo failas jau egzistuoja" }
             when (format) {
-                ArchiveFormat.ZIP -> if (sources.isEmpty()) createEmptyZip(partial) else createZip(partial, sources, password, operation)
-                ArchiveFormat.SEVEN_Z -> createSevenZ(partial, sources, operation)
-                ArchiveFormat.TAR -> createTar(partial, sources, gzip = false, operation)
-                ArchiveFormat.TAR_GZ -> createTar(partial, sources, gzip = true, operation)
+                ArchiveFormat.ZIP -> if (sources.isEmpty()) createEmptyZip(partialFile) else createZip(partialFile, sources, password, operation)
+                ArchiveFormat.SEVEN_Z -> createSevenZ(partialFile, sources, operation)
+                ArchiveFormat.TAR -> createTar(partialFile, sources, gzip = false, operation)
+                ArchiveFormat.TAR_GZ -> createTar(partialFile, sources, gzip = true, operation)
                 ArchiveFormat.RAR, ArchiveFormat.GZIP -> error("Nepalaikomas kūrimo formatas")
             }
-            require(partial.isFile && partial.length() > 0) { "Archyvas nesukurtas" }
+            require(partialFile.isFile && partialFile.length() > 0) { "Archyvas nesukurtas" }
             require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
-            require(partial.renameTo(outputFile)) { "Archyvo užbaigti nepavyko" }
+            require(partialFile.renameTo(outputFile)) { "Archyvo užbaigti nepavyko" }
         } finally {
             password?.fill('\u0000')
-            if (partial.exists()) partial.delete()
+            if (partial?.exists() == true) partial.delete()
         }
+    }
+
+    private data class CreateSourceScan(
+        var entries: Int = 0,
+        var bytes: Long = 0L,
+        val canonicalPaths: MutableSet<String> = hashSetOf(),
+    )
+
+    private suspend fun validateCreateSources(
+        sources: List<File>,
+        outputFile: File,
+        operation: OperationContext?,
+    ) {
+        val output = outputFile.canonicalFile
+        val scan = CreateSourceScan()
+        sources.forEach { source ->
+            val canonical = source.canonicalFile
+            require(output != canonical && !output.path.startsWith(canonical.path + File.separator)) {
+                "Archyvo negalima kurti archyvuojamo aplanko viduje"
+            }
+            scanCreateSource(source, depth = 0, scan, operation)
+        }
+        operation?.setTotals(scan.entries, scan.bytes)
+    }
+
+    private suspend fun scanCreateSource(
+        source: File,
+        depth: Int,
+        scan: CreateSourceScan,
+        operation: OperationContext?,
+    ) {
+        operation?.checkpoint()
+        require(depth <= limits.maxDepth) { "Per gilus aplankų medis" }
+        require(!Files.isSymbolicLink(source.toPath())) { "Simbolinės nuorodos į archyvą neįtraukiamos" }
+        val canonical = source.canonicalFile
+        require(scan.canonicalPaths.add(canonical.path)) { "Tas pats archyvo šaltinis pasirinktas kelis kartus" }
+        require(canonical.isFile || canonical.isDirectory) { "Archyvo šaltinio tipas nepalaikomas" }
+        scan.entries = Math.addExact(scan.entries, 1)
+        require(scan.entries <= limits.maxEntries) { "Pasirinkta per daug archyvo įrašų" }
+        if (canonical.isFile) {
+            val size = canonical.length().coerceAtLeast(0L)
+            require(size <= limits.maxSingleEntryBytes) { "Archyvo šaltinio failas per didelis" }
+            scan.bytes = Math.addExact(scan.bytes, size)
+            require(scan.bytes <= limits.maxExpandedBytes) { "Archyvo šaltiniai viršija dydžio ribą" }
+            return
+        }
+        val children = canonical.listFiles() ?: throw SecurityException("Aplankas neperskaitomas")
+        children.forEach { child -> scanCreateSource(child, depth + 1, scan, operation) }
     }
 
     fun detectFormat(file: File): ArchiveFormat {
@@ -394,6 +608,75 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         }
     }
 
+    private suspend fun rewriteZip(
+        archiveFile: File,
+        password: CharArray?,
+        mutate: (ZipFile, List<ArchiveEntryInfo>) -> (List<ArchiveEntryInfo>) -> Boolean,
+    ): List<ArchiveEntryInfo> = withContext(Dispatchers.IO) {
+        val original = archiveFile.canonicalFile
+        require(original.isFile && original.canRead() && original.canWrite()) { "Archyvo negalima pakeisti" }
+        require(original.name.lowercase().endsWith(".zip")) { "Keisti galima tik ZIP archyvus" }
+        val parent = original.parentFile ?: throw IllegalArgumentException("Archyvo aplankas nepasiekiamas")
+        require(parent.isDirectory && parent.canWrite()) { "Archyvo aplankas neleidžia rašyti" }
+        val token = UUID.randomUUID().toString()
+        val working = File(parent, ".${original.name}.$token.af-rewrite")
+        val backup = File(parent, ".${original.name}.$token.af-recovery")
+        var replacementStarted = false
+        try {
+            Files.copy(original.toPath(), working.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
+            require(working.length() == original.length()) { "Laikina archyvo kopija nepatikrinta" }
+            Files.copy(original.toPath(), backup.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
+            require(backup.length() == original.length()) { "Archyvo atkūrimo kopija nepatikrinta" }
+
+            val before = listZip(working, password)
+            val zip = if (password == null) ZipFile(working) else ZipFile(working, password)
+            require(zip.isValidZipFile) { "Laikina ZIP kopija sugadinta" }
+            val verify = mutate(zip, before)
+            require(zip.isValidZipFile) { "Pakeista ZIP kopija sugadinta" }
+            val expected = listZip(working, password)
+            require(verify(expected)) { "Archyvo pakeitimo patikra nepavyko" }
+
+            replacementStarted = true
+            moveReplacing(working, original)
+            val actual = listZip(original, password)
+            require(verify(actual)) { "Įrašyto archyvo patikra nepavyko" }
+            require(backup.delete()) { "Archyvas pakeistas, bet laikinos atkūrimo kopijos pašalinti nepavyko" }
+            actual
+        } catch (failure: Throwable) {
+            if (replacementStarted && backup.isFile) {
+                val restore = File(parent, ".${original.name}.$token.af-restore")
+                runCatching {
+                    Files.copy(backup.toPath(), restore.toPath())
+                    require(restore.length() == backup.length()) { "Archyvo atkūrimo kopija nepatikrinta" }
+                    moveReplacing(restore, original)
+                    require(ZipFile(original).isValidZipFile) { "Atkurto archyvo patikra nepavyko" }
+                    backup.delete()
+                }.onFailure { restoreFailure ->
+                    failure.addSuppressed(restoreFailure)
+                }
+                if (restore.exists()) restore.delete()
+            }
+            throw failure
+        } finally {
+            password?.fill('\u0000')
+            if (working.exists()) working.delete()
+            if (!replacementStarted && backup.exists()) backup.delete()
+        }
+    }
+
+    private fun moveReplacing(source: File, destination: File) {
+        runCatching {
+            Files.move(
+                source.toPath(),
+                destination.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }.getOrElse {
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
     private fun createEmptyZip(file: File) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(file))).use { output ->
             output.finish()
@@ -500,6 +783,16 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             "Unsafe archive entry path"
         }
         return pieces.joinToString("/")
+    }
+
+    private fun selectionContains(selectedPaths: Set<String>, path: String): Boolean {
+        var candidate = path
+        while (true) {
+            if (candidate in selectedPaths) return true
+            val separator = candidate.lastIndexOf('/')
+            if (separator < 0) return false
+            candidate = candidate.substring(0, separator)
+        }
     }
 
     private suspend fun copyBounded(

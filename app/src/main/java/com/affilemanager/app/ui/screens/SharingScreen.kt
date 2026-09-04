@@ -61,6 +61,7 @@ import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import java.io.File
@@ -104,16 +105,24 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         )
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(contentPadding).testTag("sharing_list"),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
+    Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp)) {
             LText("Bendrinti su kompiuteriu", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             LText(
                 "Laikinai atverkite pasirinktą aplanką tame pačiame privačiame Wi-Fi arba Ethernet tinkle.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f).testTag("sharing_list"),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+        item {
+            NearbyPhoneTransferCard(
+                viewModel = viewModel,
+                receiveDirectory = sharedPath,
+                lanState = transfer,
             )
         }
         item {
@@ -249,6 +258,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 }
             }
         }
+        }
     }
 }
 
@@ -263,9 +273,10 @@ private fun SharedFolderPickerDialog(
     var directories by remember(initialPath) { mutableStateOf<List<FileEntry>>(emptyList()) }
     var loading by remember(initialPath) { mutableStateOf(true) }
     var error by remember(initialPath) { mutableStateOf<String?>(null) }
+    var refreshToken by remember(initialPath) { mutableStateOf(0) }
     val currentPath = navigation.currentPath
 
-    LaunchedEffect(currentPath) {
+    LaunchedEffect(currentPath, refreshToken) {
         loading = true
         error = null
         loadDirectory(currentPath).fold(
@@ -302,6 +313,12 @@ private fun SharedFolderPickerDialog(
             }
         },
     ) {
+            AfPullToRefresh(
+                isRefreshing = loading,
+                onRefresh = { refreshToken += 1 },
+                modifier = Modifier.fillMaxSize(),
+                testTag = "pull_to_refresh_share_folder_picker",
+            ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp).testTag("share_folder_picker"),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -341,6 +358,7 @@ private fun SharedFolderPickerDialog(
                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Atidaryti aplanką"))
                     }
                 }
+            }
             }
     }
 }

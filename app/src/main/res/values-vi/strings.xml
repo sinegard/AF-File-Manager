@@ -14,6 +14,9 @@
     <string name="lan_transfer_starting_title">Chuyển AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Bắt đầu máy chủ...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN chuyển đổi đang chạy</string>
+    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
     <string name="terminal_channel_name">Điểm kết thúc hoạt động</string>
     <string name="terminal_channel_description">Giữ một điện thoại hoặc máy chủ mở chạy trong nền</string>
     <string name="terminal_notification_title">AF File Manager đầu cuối</string>
