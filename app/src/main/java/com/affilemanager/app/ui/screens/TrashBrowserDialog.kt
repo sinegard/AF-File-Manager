@@ -32,7 +32,6 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -72,6 +71,7 @@ import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.TrashBrowserUiState
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
@@ -248,31 +248,41 @@ fun TrashBrowserDialog(
     }
 
     if (confirmEmpty) {
-        AlertDialog(
+        AfModalDialog(
+            title = "Išvalyti visą šiukšliadėžę?",
+            icon = Icons.Rounded.Warning,
             onDismissRequest = { confirmEmpty = false },
-            icon = { Icon(Icons.Rounded.Warning, contentDescription = null) },
-            title = { LText("Išvalyti visą šiukšliadėžę?") },
-            text = { LText("Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.") },
-            confirmButton = {
+            modifier = Modifier.testTag("empty_trash_dialog"),
+            actions = {
+                TextButton(onClick = { confirmEmpty = false }) { LText("Atšaukti") }
                 Button(onClick = { confirmEmpty = false; viewModel.emptyTrash() }) { LText("Išvalyti viską") }
             },
-            dismissButton = { TextButton(onClick = { confirmEmpty = false }) { LText("Atšaukti") } },
-        )
+        ) {
+            LText(
+                "Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.",
+                modifier = Modifier.fillMaxWidth().padding(18.dp),
+            )
+        }
     }
 
     deleteTarget?.let { entry ->
-        AlertDialog(
+        AfModalDialog(
+            title = "Ištrinti visam laikui?",
+            icon = Icons.Rounded.Warning,
             onDismissRequest = { deleteTarget = null },
-            icon = { Icon(Icons.Rounded.Warning, contentDescription = null) },
-            title = { LText("Ištrinti visam laikui?") },
-            text = { LText("„${entry.name}“ nebebus galima atkurti iš programos šiukšliadėžės.") },
-            confirmButton = {
+            modifier = Modifier.testTag("delete_trash_item_dialog"),
+            actions = {
+                TextButton(onClick = { deleteTarget = null }) { LText("Atšaukti") }
                 Button(onClick = { viewModel.deleteTrashForever(entry.itemId); deleteTarget = null }) {
                     LText("Ištrinti visam laikui")
                 }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { LText("Atšaukti") } },
-        )
+        ) {
+            LText(
+                "„${entry.name}“ nebebus galima atkurti iš programos šiukšliadėžės.",
+                modifier = Modifier.fillMaxWidth().padding(18.dp),
+            )
+        }
     }
 
     if (showDisplaySettings) {

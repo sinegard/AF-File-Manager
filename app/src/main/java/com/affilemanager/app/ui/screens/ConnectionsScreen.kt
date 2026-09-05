@@ -1149,6 +1149,8 @@ internal fun LocalUploadDialog(
     loadDirectory: suspend (String) -> Result<List<FileEntry>>,
     onDismiss: () -> Unit,
     onCopy: (List<String>) -> Unit,
+    title: String = "Kopijuoti į serverį",
+    confirmLabel: String = "Kopijuoti",
 ) {
     var navigation by remember(initialDirectoryPath, remotePath) {
         mutableStateOf(LocalUploadNavigationState(initialDirectoryPath))
@@ -1203,7 +1205,7 @@ internal fun LocalUploadDialog(
     AlertDialog(
         onDismissRequest = { if (navigation.canNavigateBack) navigateBack() else onDismiss() },
         icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
-        title = { LText("Kopijuoti į serverį") },
+        title = { LText(title) },
         text = {
             AfPullToRefresh(
                 isRefreshing = loading,
@@ -1233,7 +1235,7 @@ internal fun LocalUploadDialog(
                         )
                     }
                     LText("Iš: $currentPath", style = MaterialTheme.typography.bodySmall)
-                    LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
+                    if (remotePath.isNotBlank()) LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
                     LText("Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
                 }
                 if (selected.isNotEmpty()) {
@@ -1332,7 +1334,7 @@ internal fun LocalUploadDialog(
             Button(
                 onClick = { onCopy(selected.toList()) },
                 enabled = selected.isNotEmpty(),
-            ) { LText("Kopijuoti (${selected.size})") }
+            ) { LText("$confirmLabel (${selected.size})") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )

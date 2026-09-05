@@ -71,6 +71,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.data.SearchDraftPreferences
+import com.affilemanager.app.data.SearchScopePreference
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.DirectoryUsage
@@ -85,6 +87,8 @@ import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.SelectionActionBar
+import com.affilemanager.app.search.AnalysisProgress
+import com.affilemanager.app.search.AnalysisScanPhase
 import java.io.File
 import java.util.Locale
 
@@ -92,6 +96,18 @@ private const val MEBIBYTE = 1_024L * 1_024L
 private const val DAY_MILLIS = 24L * 60L * 60L * 1_000L
 
 private enum class SearchScope { CURRENT_FOLDER, ALL_STORAGE, SELECTED_STORAGE }
+
+private fun SearchScopePreference.toSearchScope(): SearchScope = when (this) {
+    SearchScopePreference.CURRENT_FOLDER -> SearchScope.CURRENT_FOLDER
+    SearchScopePreference.ALL_STORAGE -> SearchScope.ALL_STORAGE
+    SearchScopePreference.SELECTED_STORAGE -> SearchScope.SELECTED_STORAGE
+}
+
+private fun SearchScope.toPreference(): SearchScopePreference = when (this) {
+    SearchScope.CURRENT_FOLDER -> SearchScopePreference.CURRENT_FOLDER
+    SearchScope.ALL_STORAGE -> SearchScopePreference.ALL_STORAGE
+    SearchScope.SELECTED_STORAGE -> SearchScopePreference.SELECTED_STORAGE
+}
 
 @Composable
 fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
@@ -107,21 +123,33 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val cleanupRequested by viewModel.cleanupRequested.collectAsStateWithLifecycle()
     val deviceCleanup by viewModel.deviceCleanup.collectAsStateWithLifecycle()
+    val searchDraft by viewModel.searchDraftPreferences.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) leftPanel.path else rightPanel.path
+    val hasActiveSearch = searchState.roots.isNotEmpty()
 
     var query by remember { mutableStateOf(searchState.filters.query) }
-    var includeHidden by remember { mutableStateOf(searchState.filters.includeHidden) }
-    var regex by remember { mutableStateOf(searchState.filters.useRegex) }
-    var kinds by remember { mutableStateOf(searchState.filters.kinds) }
-    var minimumMiB by remember { mutableStateOf(bytesToMiBText(searchState.filters.minBytes)) }
-    var maximumMiB by remember { mutableStateOf(bytesToMiBText(searchState.filters.maxBytes)) }
-    var newerThanDays by remember { mutableStateOf(daysFrom(searchState.filters.modifiedAfter)) }
-    var olderThanDays by remember { mutableStateOf(daysFrom(searchState.filters.modifiedBefore)) }
-    var tags by remember { mutableStateOf(searchState.filters.tags) }
-    var advancedExpanded by remember { mutableStateOf(searchState.filters.hasAdvancedFilters()) }
-    var scope by remember { mutableStateOf(SearchScope.CURRENT_FOLDER) }
+    var includeHidden by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.includeHidden else searchDraft.includeHidden) }
+    var regex by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.useRegex else searchDraft.useRegex) }
+    var kinds by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.kinds else searchDraft.kinds) }
+    var minimumMiB by remember {
+        mutableStateOf(if (hasActiveSearch) bytesToMiBText(searchState.filters.minBytes) else searchDraft.minimumMiB)
+    }
+    var maximumMiB by remember {
+        mutableStateOf(if (hasActiveSearch) bytesToMiBText(searchState.filters.maxBytes) else searchDraft.maximumMiB)
+    }
+    var newerThanDays by remember {
+        mutableStateOf(if (hasActiveSearch) daysFrom(searchState.filters.modifiedAfter) else searchDraft.newerThanDays)
+    }
+    var olderThanDays by remember {
+        mutableStateOf(if (hasActiveSearch) daysFrom(searchState.filters.modifiedBefore) else searchDraft.olderThanDays)
+    }
+    var tags by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.tags else searchDraft.tags) }
+    var advancedExpanded by remember {
+        mutableStateOf(if (hasActiveSearch) searchState.filters.hasAdvancedFilters() else searchDraft.advancedExpanded)
+    }
+    var scope by remember { mutableStateOf(searchDraft.scope.toSearchScope()) }
     var scopedRoots by remember { mutableStateOf(listOf(activePath)) }
-    var selectedStoragePaths by remember { mutableStateOf(emptySet<String>()) }
+    var selectedStoragePaths by remember { mutableStateOf(searchDraft.selectedStoragePaths) }
     var storagePickerDraft by remember { mutableStateOf(emptySet<String>()) }
     var showStoragePicker by remember { mutableStateOf(false) }
     var showSave by remember { mutableStateOf(false) }
@@ -141,17 +169,17 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
 
     LaunchedEffect(searchState.filters, searchState.roots) {
-        query = searchState.filters.query
-        includeHidden = searchState.filters.includeHidden
-        regex = searchState.filters.useRegex
-        kinds = searchState.filters.kinds
-        minimumMiB = bytesToMiBText(searchState.filters.minBytes)
-        maximumMiB = bytesToMiBText(searchState.filters.maxBytes)
-        newerThanDays = daysFrom(searchState.filters.modifiedAfter)
-        olderThanDays = daysFrom(searchState.filters.modifiedBefore)
-        tags = searchState.filters.tags
-        if (searchState.filters.hasAdvancedFilters()) advancedExpanded = true
         if (searchState.roots.isNotEmpty()) {
+            query = searchState.filters.query
+            includeHidden = searchState.filters.includeHidden
+            regex = searchState.filters.useRegex
+            kinds = searchState.filters.kinds
+            minimumMiB = bytesToMiBText(searchState.filters.minBytes)
+            maximumMiB = bytesToMiBText(searchState.filters.maxBytes)
+            newerThanDays = daysFrom(searchState.filters.modifiedAfter)
+            olderThanDays = daysFrom(searchState.filters.modifiedBefore)
+            tags = searchState.filters.tags
+            if (searchState.filters.hasAdvancedFilters()) advancedExpanded = true
             scopedRoots = searchState.roots
             val allStoragePaths = storageRoots.map(StorageRoot::path).toSet()
             scope = when {
@@ -165,11 +193,12 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
 
     LaunchedEffect(storageRoots) {
+        if (storageRoots.isEmpty()) return@LaunchedEffect
         val mounted = storageRoots.map(StorageRoot::path).toSet()
         selectedStoragePaths = selectedStoragePaths.intersect(mounted)
         storagePickerDraft = storagePickerDraft.intersect(mounted)
         if (scope == SearchScope.SELECTED_STORAGE && selectedStoragePaths.isEmpty()) {
-            scope = if (mounted.isEmpty()) SearchScope.CURRENT_FOLDER else SearchScope.ALL_STORAGE
+            scope = SearchScope.ALL_STORAGE
         }
     }
 
@@ -273,9 +302,11 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     analysisRootPaths = analysisState.rootPaths.ifEmpty { listOfNotNull(analysisState.rootPath) },
                     analysisAllStorage = analysisState.allStorage,
                     running = analysisState.running,
+                    progress = analysisState.progress,
                     onAnalyzeRoot = viewModel::analyze,
                     onAnalyzeFolder = { viewModel.analyze(activePath) },
                     onAnalyzeAllStorage = viewModel::analyzeAllStorage,
+                    onCancel = viewModel::cancelAnalysis,
                     onCleanup = { cleanupCategory = CleanupCategory.LARGE; showCleanupReview = true },
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -482,7 +513,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             }
         }
 
-        if (searchState.running || analysisState.running) {
+        if (searchState.running) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -490,10 +521,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CircularProgressIndicator()
-                    if (searchState.running) {
-                        OutlinedButton(onClick = viewModel::cancelSearch, modifier = Modifier.testTag("search_cancel")) {
-                            LText("Sustabdyti paiešką")
-                        }
+                    OutlinedButton(onClick = viewModel::cancelSearch, modifier = Modifier.testTag("search_cancel")) {
+                        LText("Sustabdyti paiešką")
                     }
                 }
             }
@@ -705,6 +734,36 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 }
             }
         }
+    }
+
+    LaunchedEffect(
+        scope,
+        selectedStoragePaths,
+        includeHidden,
+        regex,
+        kinds,
+        minimumMiB,
+        maximumMiB,
+        newerThanDays,
+        olderThanDays,
+        tags,
+        advancedExpanded,
+    ) {
+        viewModel.updateSearchDraftPreferences(
+            SearchDraftPreferences(
+                scope = scope.toPreference(),
+                selectedStoragePaths = selectedStoragePaths,
+                includeHidden = includeHidden,
+                useRegex = regex,
+                kinds = kinds,
+                minimumMiB = minimumMiB,
+                maximumMiB = maximumMiB,
+                newerThanDays = newerThanDays,
+                olderThanDays = olderThanDays,
+                tags = tags,
+                advancedExpanded = advancedExpanded,
+            ),
+        )
     }
     }
 
@@ -947,9 +1006,11 @@ private fun StorageOverviewCard(
     analysisRootPaths: List<String>,
     analysisAllStorage: Boolean,
     running: Boolean,
+    progress: AnalysisProgress?,
     onAnalyzeRoot: (String) -> Unit,
     onAnalyzeFolder: () -> Unit,
     onAnalyzeAllStorage: () -> Unit,
+    onCancel: () -> Unit,
     onCleanup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -988,8 +1049,12 @@ private fun StorageOverviewCard(
                     }
                 }
             }
-            LText("Nuskaityti saugyklą", style = MaterialTheme.typography.labelLarge)
-            roots.distinctBy(StorageRoot::path).forEach { target ->
+            LText(if (running) "Vykdoma analizė" else "Nuskaityti saugyklą", style = MaterialTheme.typography.labelLarge)
+            val activeStorageRoot = roots.firstOrNull { target ->
+                !analysisAllStorage && analysisRootPaths.singleOrNull()?.let { sameAnalysisPath(it, target.path) } == true
+            }
+            val visibleStorageRoots = if (running) listOfNotNull(activeStorageRoot) else roots.distinctBy(StorageRoot::path)
+            visibleStorageRoots.forEach { target ->
                 OutlinedButton(
                     onClick = { onAnalyzeRoot(target.path) },
                     enabled = !running,
@@ -1005,27 +1070,72 @@ private fun StorageOverviewCard(
                     }
                 }
             }
-            OutlinedButton(
-                onClick = onAnalyzeFolder,
-                enabled = !running,
-                modifier = Modifier.fillMaxWidth().testTag("analyze_current_folder"),
-            ) {
-                Icon(Icons.Rounded.FolderOpen, contentDescription = null)
-                LText("Analizuoti dabartinį aplanką", modifier = Modifier.padding(start = 8.dp))
+            if (!running || (!analysisAllStorage && activeStorageRoot == null)) {
+                OutlinedButton(
+                    onClick = onAnalyzeFolder,
+                    enabled = !running,
+                    modifier = Modifier.fillMaxWidth().testTag("analyze_current_folder"),
+                ) {
+                    Icon(Icons.Rounded.FolderOpen, contentDescription = null)
+                    LText("Analizuoti dabartinį aplanką", modifier = Modifier.padding(start = 8.dp))
+                    if (running) CircularProgressIndicator(modifier = Modifier.padding(start = 8.dp).size(20.dp), strokeWidth = 2.dp)
+                }
             }
-            OutlinedButton(
-                onClick = onAnalyzeAllStorage,
-                enabled = !running && roots.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().testTag("analyze_all_storage"),
-            ) {
-                Icon(Icons.Rounded.Storage, contentDescription = null)
-                Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
-                    LText("Analizuoti saugyklą")
-                    LText("Visose saugyklose", style = MaterialTheme.typography.labelSmall)
+            if (!running || analysisAllStorage) {
+                OutlinedButton(
+                    onClick = onAnalyzeAllStorage,
+                    enabled = !running && roots.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().testTag("analyze_all_storage"),
+                ) {
+                    Icon(Icons.Rounded.Storage, contentDescription = null)
+                    Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                        LText("Analizuoti saugyklą")
+                        LText("Visose saugyklose", style = MaterialTheme.typography.labelSmall)
+                    }
+                    if (running && analysisAllStorage) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
                 }
-                if (running && analysisAllStorage) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+            if (running) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().testTag("analysis_progress"))
+                progress?.let { current ->
+                    LText(
+                        if (current.phase == AnalysisScanPhase.SCANNING) "Nuskaitomi failai" else "Tikrinami galimi dublikatai",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (current.phase == AnalysisScanPhase.SCANNING) {
+                        LText(
+                            "Failai: ${current.scannedFiles} · aplankai: ${current.scannedDirectories} · ${FileSystemRules.humanBytes(current.scannedBytes)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LText(
+                            "Galimi dublikatai: ${current.scannedFiles} failų · ${FileSystemRules.humanBytes(current.scannedBytes)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        LText(
+                            "Patikrintos kontrolinės sumos: ${current.hashedFiles}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    current.currentPath?.let { path ->
+                        Text(
+                            path,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth().testTag("analysis_cancel"),
+                ) { LText("Sustabdyti analizę") }
             }
             if (analysis != null) {
                 Button(onClick = onCleanup, enabled = !running, modifier = Modifier.fillMaxWidth()) {

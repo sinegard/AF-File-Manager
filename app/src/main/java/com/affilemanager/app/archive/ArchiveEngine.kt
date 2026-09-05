@@ -17,6 +17,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
+import org.apache.commons.compress.compressors.gzip.GzipParameters
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -322,6 +323,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         sources: List<File>,
         password: CharArray? = null,
         operation: OperationContext? = null,
+        compressionLevel: Int = ArchiveCompressionRules.DEFAULT_LEVEL,
     ) = withContext(Dispatchers.IO) {
         var partial: File? = null
         try {
@@ -329,6 +331,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             require(format != ArchiveFormat.RAR && format != ArchiveFormat.GZIP) { "Šį formatą galima tik išpakuoti" }
             require(password == null || format == ArchiveFormat.ZIP) { "Šifravimas palaikomas kuriant ZIP" }
             require(sources.isNotEmpty() || password == null) { "Tuščias archyvas negali būti užšifruotas" }
+            val validatedCompressionLevel = ArchiveCompressionRules.validated(compressionLevel)
             require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
             val parent = outputFile.parentFile
             require(parent != null && (parent.isDirectory || parent.mkdirs())) { "Archyvo aplankas nepasiekiamas" }
@@ -337,10 +340,16 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             partial = partialFile
             require(!partialFile.exists()) { "Laikinas archyvo failas jau egzistuoja" }
             when (format) {
-                ArchiveFormat.ZIP -> if (sources.isEmpty()) createEmptyZip(partialFile) else createZip(partialFile, sources, password, operation)
+                ArchiveFormat.ZIP -> if (sources.isEmpty()) createEmptyZip(partialFile) else createZip(
+                    partialFile,
+                    sources,
+                    password,
+                    operation,
+                    validatedCompressionLevel,
+                )
                 ArchiveFormat.SEVEN_Z -> createSevenZ(partialFile, sources, operation)
-                ArchiveFormat.TAR -> createTar(partialFile, sources, gzip = false, operation)
-                ArchiveFormat.TAR_GZ -> createTar(partialFile, sources, gzip = true, operation)
+                ArchiveFormat.TAR -> createTar(partialFile, sources, gzip = false, operation, validatedCompressionLevel)
+                ArchiveFormat.TAR_GZ -> createTar(partialFile, sources, gzip = true, operation, validatedCompressionLevel)
                 ArchiveFormat.RAR, ArchiveFormat.GZIP -> error("Nepalaikomas kūrimo formatas")
             }
             require(partialFile.isFile && partialFile.length() > 0) { "Archyvas nesukurtas" }
@@ -590,11 +599,17 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         operation?.progress(itemDelta = 1, currentName = name)
     }
 
-    private suspend fun createZip(file: File, sources: List<File>, password: CharArray?, operation: OperationContext?) {
+    private suspend fun createZip(
+        file: File,
+        sources: List<File>,
+        password: CharArray?,
+        operation: OperationContext?,
+        compressionLevel: Int,
+    ) {
         val zip = if (password == null) ZipFile(file) else ZipFile(file, password)
         val parameters = ZipParameters().apply {
-            compressionMethod = CompressionMethod.DEFLATE
-            compressionLevel = CompressionLevel.NORMAL
+            compressionMethod = if (compressionLevel == 0) CompressionMethod.STORE else CompressionMethod.DEFLATE
+            this.compressionLevel = CompressionLevel.values().first { it.level == compressionLevel }
             if (password != null) {
                 isEncryptFiles = true
                 encryptionMethod = EncryptionMethod.AES
@@ -724,9 +739,14 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         sources: List<File>,
         gzip: Boolean,
         operation: OperationContext?,
+        compressionLevel: Int,
     ) {
         val fileOutput = BufferedOutputStream(FileOutputStream(file))
-        val compressed: OutputStream = if (gzip) GzipCompressorOutputStream(fileOutput) else fileOutput
+        val compressed: OutputStream = if (gzip) {
+            GzipCompressorOutputStream(fileOutput, GzipParameters().apply { this.compressionLevel = compressionLevel })
+        } else {
+            fileOutput
+        }
         TarArchiveOutputStream(compressed).use { output ->
             output.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
             sources.forEach { source -> addToTar(output, source, source.name, operation, 0) }

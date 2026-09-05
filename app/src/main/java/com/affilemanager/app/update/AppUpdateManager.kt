@@ -273,18 +273,34 @@ class AppUpdateManager(
             }
         }
 
-        private fun packageArchiveInfo(manager: PackageManager, apk: File): PackageInfo? = if (Build.VERSION.SDK_INT >= 33) {
-            manager.getPackageArchiveInfo(apk.absolutePath, PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()))
-        } else {
-            @Suppress("DEPRECATION")
-            manager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+        private fun packageArchiveInfo(manager: PackageManager, apk: File): PackageInfo? = when {
+            Build.VERSION.SDK_INT >= 33 -> manager.getPackageArchiveInfo(
+                apk.absolutePath,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+            Build.VERSION.SDK_INT >= 28 -> {
+                @Suppress("DEPRECATION")
+                manager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            }
+            else -> {
+                @Suppress("DEPRECATION")
+                manager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNATURES)
+            }
         }
 
-        private fun packageInfo(manager: PackageManager, packageName: String): PackageInfo = if (Build.VERSION.SDK_INT >= 33) {
-            manager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()))
-        } else {
-            @Suppress("DEPRECATION")
-            manager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        private fun packageInfo(manager: PackageManager, packageName: String): PackageInfo = when {
+            Build.VERSION.SDK_INT >= 33 -> manager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+            Build.VERSION.SDK_INT >= 28 -> {
+                @Suppress("DEPRECATION")
+                manager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            }
+            else -> {
+                @Suppress("DEPRECATION")
+                manager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+            }
         }
 
         private fun PackageInfo.longVersionCodeCompat(): Long = if (Build.VERSION.SDK_INT >= 28) longVersionCode else {

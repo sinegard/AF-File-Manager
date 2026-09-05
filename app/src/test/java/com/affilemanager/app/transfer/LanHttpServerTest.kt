@@ -98,6 +98,62 @@ class LanHttpServerTest {
     }
 
     @Test
+    fun phoneTransferCreatesFolderTreesAndReportsReceiverProgress() {
+        val root = temporary.newFolder("phone-tree")
+        val progress = mutableListOf<LanUploadProgress>()
+        LanHttpServer(
+            rootDirectory = root,
+            bindAddress = InetAddress.getLoopbackAddress(),
+            requestedCode = "12345678",
+            onUploadProgress = { update -> synchronized(progress) { progress += update } },
+        ).use { server ->
+            val session = server.start()
+            val cookie = login(session.port)
+            val mkdir = request(
+                session.port,
+                "POST /mkdir?path=album%2Fnested HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 0\r\n\r\n",
+            )
+            assertTrue(mkdir.startsWith("HTTP/1.1 201"))
+
+            val content = "photo-content"
+            val upload = request(
+                session.port,
+                "POST /upload?dir=album%2Fnested&name=photo.txt&fileIndex=2&fileCount=3&batchBytes=100&batchOffset=20 HTTP/1.1\r\n" +
+                    "Host: localhost\r\nCookie: $cookie\r\nContent-Length: ${content.length}\r\nContent-Type: application/octet-stream\r\n\r\n$content",
+            )
+
+            assertTrue(upload.startsWith("HTTP/1.1 201"))
+            assertEquals(content, root.resolve("album/nested/photo.txt").readText())
+            val completed = synchronized(progress) { progress.last() }
+            assertTrue(completed.completed)
+            assertEquals("photo.txt", completed.currentFile)
+            assertEquals(2, completed.currentFileIndex)
+            assertEquals(3, completed.totalFiles)
+            assertEquals(content.length.toLong(), completed.currentFileBytes)
+            assertEquals(20L + content.length, completed.receivedBytes)
+            assertEquals(100L, completed.totalBytes)
+        }
+    }
+
+    @Test
+    fun phoneTransferFolderCreationRejectsTraversal() {
+        val parent = temporary.newFolder("phone-tree-boundary")
+        val root = parent.resolve("root").apply { mkdir() }
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val session = server.start()
+            val cookie = login(session.port)
+
+            val response = request(
+                session.port,
+                "POST /mkdir?path=..%2Foutside HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 0\r\n\r\n",
+            )
+
+            assertTrue(response.startsWith("HTTP/1.1 400"))
+            assertFalse(parent.resolve("outside").exists())
+        }
+    }
+
+    @Test
     fun readOnlySessionKeepsBrowsingButRejectsUploads() {
         val root = temporary.newFolder("read-only-web").apply { resolve("visible.txt").writeText("visible") }
         LanHttpServer(

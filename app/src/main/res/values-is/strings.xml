@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN flutningur</string>
     <string name="lan_transfer_starting_text">Byrjađ þjónn...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN flutning er í gangi</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Nærri símskipti</string>
+    <string name="nearby_transfer_notification_title">AF File Manager símskipti</string>
+    <string name="nearby_transfer_starting_text">Ég er að undirbúa flutninginn...</string>
     <string name="terminal_channel_name">Virkjarstöð</string>
     <string name="terminal_channel_description">Heldur opið síma eða netþjónnartímal í bakgrunni</string>
     <string name="terminal_notification_title">AF File Manager stöð</string>

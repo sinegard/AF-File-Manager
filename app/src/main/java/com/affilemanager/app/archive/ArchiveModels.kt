@@ -9,6 +9,17 @@ enum class ArchiveFormat {
     GZIP,
 }
 
+object ArchiveCompressionRules {
+    const val MIN_LEVEL = 0
+    const val DEFAULT_LEVEL = 6
+    const val MAX_LEVEL = 9
+
+    fun validated(level: Int): Int {
+        require(level in MIN_LEVEL..MAX_LEVEL) { "Netinkamas suspaudimo lygis" }
+        return level
+    }
+}
+
 data class ArchiveEntryInfo(
     val name: String,
     val directory: Boolean,

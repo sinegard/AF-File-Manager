@@ -66,10 +66,15 @@ import androidx.compose.material.icons.rounded.InstallMobile
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAs
@@ -81,6 +86,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -150,11 +156,14 @@ import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.media.BackgroundPlaybackService
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryDisplayDefaults
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.network.RemoteEntry
+import com.affilemanager.app.pdfsigning.PdfSignaturePlacement
+import com.affilemanager.app.pdfsigning.SignatureDrawing
 import com.affilemanager.app.ui.PreviewTarget
 import com.affilemanager.app.ui.FileEditUiState
 import com.affilemanager.app.ui.editor.EditSaveAsDialog
@@ -178,9 +187,9 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private val pdfRenderPermits = Semaphore(1)
+internal val pdfRenderPermits = Semaphore(1)
 
-private data class PdfDocumentInfo(val pageAspectRatios: List<Float>) {
+internal data class PdfDocumentInfo(val pageAspectRatios: List<Float>) {
     val pageCount: Int get() = pageAspectRatios.size
 }
 
@@ -199,6 +208,7 @@ fun FilePreviewDialog(
     onApplyArchiveDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
     onClose: () -> Unit,
     onPrepareEdit: () -> Unit,
+    onApplyPdfSignature: (SignatureDrawing, PdfSignaturePlacement) -> Unit,
     onEditTextChanged: (String) -> Unit,
     onEditEncodingChanged: (TextEncoding) -> Unit,
     onEditLineEndingChanged: (LineEnding) -> Unit,
@@ -230,6 +240,9 @@ fun FilePreviewDialog(
     loadArchiveThumbnail: suspend (String) -> Result<File>,
     onExtract: (FileEntry, String, CharArray?) -> Unit,
     onDecrypt: (FileEntry, CharArray) -> Unit,
+    canNavigateMedia: Boolean,
+    onPreviousMedia: () -> Unit,
+    onNextMedia: () -> Unit,
 ) {
     val context = LocalContext.current
     val summaryDateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
@@ -239,12 +252,18 @@ fun FilePreviewDialog(
     var actionError by remember(source.key) { mutableStateOf<String?>(null) }
     var archivePath by remember(source.key) { mutableStateOf("") }
     var launchExternalEditorWhenReady by remember(source.key) { mutableStateOf(false) }
+    var launchPdfSignerWhenReady by remember(source.key) { mutableStateOf(false) }
+    var showPdfSigner by remember(source.key) { mutableStateOf(false) }
+    var pdfApplyBaseline by remember(source.key) { mutableStateOf<String?>(null) }
     var showSaveAs by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val archiveMaterializedEntry = target is PreviewTarget.ArchiveEntry
     val internalEditor = !archiveMaterializedEntry && EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
     val externalEditorAvailable = remember(source.key, archiveMaterializedEntry) {
         !archiveMaterializedEntry && canEditExternally(context, source)
+    }
+    val pdfSigningAvailable = remember(source.key, archiveMaterializedEntry) {
+        !archiveMaterializedEntry && (source.extension == "pdf" || source.mimeType(context) == "application/pdf")
     }
     val activeEditState = editState.takeIf { it.sourceKey == source.key }
     val editSession = activeEditState?.session
@@ -288,6 +307,34 @@ fun FilePreviewDialog(
         launchExternalEditorWhenReady = false
         runCatching { externalEditorLauncher.launch(createExternalEditIntent(context, session)) }
             .onFailure { actionError = it.message ?: "Nepavyko atidaryti redaktoriaus pasirinkimo" }
+    }
+    LaunchedEffect(
+        launchPdfSignerWhenReady,
+        editSession?.id,
+        activeEditState?.preparing,
+        activeEditState?.error,
+    ) {
+        if (!launchPdfSignerWhenReady) return@LaunchedEffect
+        if (activeEditState?.error != null) {
+            launchPdfSignerWhenReady = false
+            return@LaunchedEffect
+        }
+        if (editSession == null) return@LaunchedEffect
+        launchPdfSignerWhenReady = false
+        showPdfSigner = true
+    }
+    LaunchedEffect(
+        pdfApplyBaseline,
+        activeEditState?.modifyingPdf,
+        editSession?.workingRevision?.sha256,
+        activeEditState?.error,
+    ) {
+        val baseline = pdfApplyBaseline ?: return@LaunchedEffect
+        if (activeEditState?.modifyingPdf == true) return@LaunchedEffect
+        if (activeEditState?.error == null && editSession?.workingRevision?.sha256 != baseline) {
+            showPdfSigner = false
+            pdfApplyBaseline = null
+        }
     }
     val navigateBack: () -> Unit = {
         if ((target is PreviewTarget.Archive || target is PreviewTarget.RemoteArchive) && archivePath.isNotEmpty()) {
@@ -338,6 +385,26 @@ fun FilePreviewDialog(
                         Spacer(Modifier.width(7.dp))
                         LText("Atidaryti su kita programa")
                     }
+                    if (pdfSigningAvailable) {
+                        FilledTonalButton(
+                            onClick = {
+                                if (editSession == null) {
+                                    launchPdfSignerWhenReady = true
+                                    onPrepareEdit()
+                                } else {
+                                    showPdfSigner = true
+                                }
+                            },
+                            enabled = activeEditState?.preparing != true &&
+                                activeEditState?.saving != true &&
+                                activeEditState?.modifyingPdf != true,
+                            modifier = Modifier.testTag("sign-pdf-action"),
+                        ) {
+                            Icon(Icons.Rounded.Edit, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            LText("Pasirašyti PDF")
+                        }
+                    }
                     if (externalEditorAvailable) {
                         FilledTonalButton(
                             onClick = {
@@ -352,7 +419,9 @@ fun FilePreviewDialog(
                                     }
                                 }
                             },
-                            enabled = activeEditState?.preparing != true && activeEditState?.saving != true,
+                            enabled = activeEditState?.preparing != true &&
+                                activeEditState?.saving != true &&
+                                activeEditState?.modifyingPdf != true,
                             modifier = Modifier.testTag("edit-with-action"),
                         ) {
                             Icon(Icons.Rounded.Edit, contentDescription = null)
@@ -462,6 +531,9 @@ fun FilePreviewDialog(
                         onEditLineEndingChanged = onEditLineEndingChanged,
                         onSave = { onSaveEdit(false) },
                         onSaveAs = launchSaveAs,
+                        canNavigateMedia = canNavigateMedia,
+                        onPreviousMedia = onPreviousMedia,
+                        onNextMedia = onNextMedia,
                     )
                 }
             }
@@ -525,6 +597,23 @@ fun FilePreviewDialog(
             onDismiss = { showSaveAs = false },
         )
     }
+    if (showPdfSigner && editSession != null) {
+        PdfSignatureDialog(
+            source = PreviewSource.Working(source, editSession),
+            applying = activeEditState.modifyingPdf,
+            error = activeEditState.error,
+            onApply = { drawing, placement ->
+                pdfApplyBaseline = editSession.workingRevision.sha256
+                onApplyPdfSignature(drawing, placement)
+            },
+            onDismiss = {
+                if (!activeEditState.modifyingPdf) {
+                    showPdfSigner = false
+                    pdfApplyBaseline = null
+                }
+            },
+        )
+    }
     if (activeEditState?.confirmDiscard == true) {
         AlertDialog(
             onDismissRequest = onKeepEditing,
@@ -552,6 +641,9 @@ private fun FileContentPreview(
     onEditLineEndingChanged: (LineEnding) -> Unit,
     onSave: () -> Unit,
     onSaveAs: () -> Unit,
+    canNavigateMedia: Boolean,
+    onPreviousMedia: () -> Unit,
+    onNextMedia: () -> Unit,
 ) {
     val context = LocalContext.current
     val displayedSource = editState?.session
@@ -562,7 +654,12 @@ private fun FileContentPreview(
         source.extension == "afvault" -> PropertiesPreview(source, "Šifruotas AF File Manager failas. Jį galima iššifruoti tik atidarius iš vietinės saugyklos.")
         source.kind == EntryKind.IMAGE -> ImagePreview(displayedSource)
         source.extension == "pdf" || source.mimeType(context) == "application/pdf" -> PdfPreview(displayedSource)
-        source.kind == EntryKind.VIDEO || source.kind == EntryKind.AUDIO -> MediaPreview(displayedSource)
+        source.kind == EntryKind.VIDEO || source.kind == EntryKind.AUDIO -> MediaPreview(
+            displayedSource,
+            canNavigateMedia,
+            onPreviousMedia,
+            onNextMedia,
+        )
         source.kind == EntryKind.APK && source.localFile != null -> ApkPreview(requireNotNull(source.localFile))
         EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind) -> TextPreview(
             state = editState,
@@ -801,7 +898,7 @@ private fun ZoomControls(scale: Float, maximum: Float, onScaleChanged: (Float) -
 }
 
 @Composable
-private fun PreviewLoadError(error: Throwable) {
+internal fun PreviewLoadError(error: Throwable) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -816,7 +913,12 @@ private fun PreviewLoadError(error: Throwable) {
 }
 
 @Composable
-private fun MediaPreview(source: PreviewSource) {
+private fun MediaPreview(
+    source: PreviewSource,
+    canNavigateMedia: Boolean,
+    onPreviousMedia: () -> Unit,
+    onNextMedia: () -> Unit,
+) {
     val context = LocalContext.current
     val infoResult by produceState<Result<MediaPreviewInfo>?>(initialValue = null, source.key) {
         value = withContext(Dispatchers.IO) { runCatching { mediaPreviewInfo(context, source) } }
@@ -828,16 +930,22 @@ private fun MediaPreview(source: PreviewSource) {
             if (info == null) {
                 PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
             } else if (source.kind == EntryKind.AUDIO) {
-                AudioPreview(source, info)
+                AudioPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia)
             } else {
-                VideoPreview(source, info)
+                VideoPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia)
             }
         }
     }
 }
 
 @Composable
-private fun AudioPreview(source: PreviewSource, info: MediaPreviewInfo) {
+private fun AudioPreview(
+    source: PreviewSource,
+    info: MediaPreviewInfo,
+    canNavigateMedia: Boolean,
+    onPreviousMedia: () -> Unit,
+    onNextMedia: () -> Unit,
+) {
     val context = LocalContext.current
     var player by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
@@ -845,12 +953,17 @@ private fun AudioPreview(source: PreviewSource, info: MediaPreviewInfo) {
     var positionMillis by remember(source.key) { mutableLongStateOf(0L) }
     var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
     var playbackError by remember(source.key) { mutableStateOf(false) }
+    var loopEnabled by remember(source.key) { mutableStateOf(true) }
+    var playbackSpeed by remember(source.key) { mutableFloatStateOf(1f) }
+    var volume by remember(source.key) { mutableFloatStateOf(1f) }
+    var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
 
     DisposableEffect(source.key) {
         val created = MediaPlayer()
         player = created
         runCatching {
             setMediaDataSource(created, context, source)
+            created.isLooping = true
             created.setOnPreparedListener { ready ->
                 durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
                 prepared = true
@@ -871,6 +984,13 @@ private fun AudioPreview(source: PreviewSource, info: MediaPreviewInfo) {
         onDispose {
             runCatching { created.stop() }
             created.release()
+        }
+    }
+    LaunchedEffect(player, prepared, loopEnabled, volume) {
+        if (!prepared) return@LaunchedEffect
+        player?.let { active ->
+            runCatching { active.isLooping = loopEnabled }
+            runCatching { active.setVolume(volume, volume) }
         }
     }
     LaunchedEffect(player, prepared) {
@@ -925,10 +1045,17 @@ private fun AudioPreview(source: PreviewSource, info: MediaPreviewInfo) {
             playing = playing,
             positionMillis = positionMillis,
             durationMillis = durationMillis,
+            canNavigateMedia = canNavigateMedia,
+            loopEnabled = loopEnabled,
+            playbackSpeed = playbackSpeed,
+            volume = volume,
+            onPrevious = onPreviousMedia,
+            onNext = onNextMedia,
             onToggle = {
                 player?.let { active ->
                     if (playing) active.pause() else {
                         if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
+                        runCatching { active.playbackParams = active.playbackParams.setSpeed(playbackSpeed) }
                         active.start()
                     }
                     playing = active.isPlaying
@@ -938,13 +1065,49 @@ private fun AudioPreview(source: PreviewSource, info: MediaPreviewInfo) {
                 positionMillis = requested
                 player?.seekTo(requested.toInt())
             },
+            onLoopChanged = { loopEnabled = it },
+            onSpeedChanged = { requested ->
+                playbackSpeed = requested
+                if (playing) player?.let { active ->
+                    runCatching { active.playbackParams = active.playbackParams.setSpeed(requested) }
+                }
+            },
+            onVolumeChanged = { volume = it },
+            onPlayInBackground = {
+                runCatching {
+                    BackgroundPlaybackService.play(
+                        context,
+                        source.uri(context),
+                        source.name,
+                        positionMillis,
+                        loopEnabled,
+                        playbackSpeed,
+                        volume,
+                    )
+                }.onSuccess {
+                    player?.let { active -> if (runCatching { active.isPlaying }.getOrDefault(false)) active.pause() }
+                    playing = false
+                    backgroundPlaybackError = false
+                }.onFailure {
+                    backgroundPlaybackError = true
+                }
+            },
         )
+        if (backgroundPlaybackError) {
+            Text(uiText("Foninio atkūrimo paleisti nepavyko"), color = MaterialTheme.colorScheme.error)
+        }
         MediaPropertyRows(info)
     }
 }
 
 @Composable
-private fun VideoPreview(source: PreviewSource, info: MediaPreviewInfo) {
+private fun VideoPreview(
+    source: PreviewSource,
+    info: MediaPreviewInfo,
+    canNavigateMedia: Boolean,
+    onPreviousMedia: () -> Unit,
+    onNextMedia: () -> Unit,
+) {
     val context = LocalContext.current
     var videoView by remember(source.key) { mutableStateOf<VideoView?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
@@ -952,9 +1115,23 @@ private fun VideoPreview(source: PreviewSource, info: MediaPreviewInfo) {
     var positionMillis by remember(source.key) { mutableLongStateOf(0L) }
     var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
     var playbackError by remember(source.key) { mutableStateOf(false) }
+    var preparedPlayer by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
+    var loopEnabled by remember(source.key) { mutableStateOf(true) }
+    var playbackSpeed by remember(source.key) { mutableFloatStateOf(1f) }
+    var volume by remember(source.key) { mutableFloatStateOf(1f) }
+    var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
 
     DisposableEffect(source.key) {
-        onDispose { runCatching { videoView?.stopPlayback() } }
+        onDispose {
+            preparedPlayer = null
+            runCatching { videoView?.stopPlayback() }
+        }
+    }
+    LaunchedEffect(preparedPlayer, loopEnabled, volume) {
+        preparedPlayer?.let { active ->
+            runCatching { active.isLooping = loopEnabled }
+            runCatching { active.setVolume(volume, volume) }
+        }
     }
     LaunchedEffect(videoView, prepared) {
         while (prepared) {
@@ -973,6 +1150,9 @@ private fun VideoPreview(source: PreviewSource, info: MediaPreviewInfo) {
                     VideoView(viewContext).apply {
                         videoView = this
                         setOnPreparedListener { ready ->
+                            preparedPlayer = ready
+                            ready.isLooping = loopEnabled
+                            ready.setVolume(volume, volume)
                             durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
                             prepared = true
                             playbackError = false
@@ -1002,10 +1182,19 @@ private fun VideoPreview(source: PreviewSource, info: MediaPreviewInfo) {
             playing = playing,
             positionMillis = positionMillis,
             durationMillis = durationMillis,
+            canNavigateMedia = canNavigateMedia,
+            loopEnabled = loopEnabled,
+            playbackSpeed = playbackSpeed,
+            volume = volume,
+            onPrevious = onPreviousMedia,
+            onNext = onNextMedia,
             onToggle = {
                 videoView?.let { active ->
                     if (playing) active.pause() else {
                         if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
+                        preparedPlayer?.let { ready ->
+                            runCatching { ready.playbackParams = ready.playbackParams.setSpeed(playbackSpeed) }
+                        }
                         active.start()
                     }
                     playing = active.isPlaying
@@ -1015,8 +1204,38 @@ private fun VideoPreview(source: PreviewSource, info: MediaPreviewInfo) {
                 positionMillis = requested
                 videoView?.seekTo(requested.toInt())
             },
+            onLoopChanged = { loopEnabled = it },
+            onSpeedChanged = { requested ->
+                playbackSpeed = requested
+                if (playing) preparedPlayer?.let { active ->
+                    runCatching { active.playbackParams = active.playbackParams.setSpeed(requested) }
+                }
+            },
+            onVolumeChanged = { volume = it },
+            onPlayInBackground = {
+                runCatching {
+                    BackgroundPlaybackService.play(
+                        context,
+                        source.uri(context),
+                        source.name,
+                        positionMillis,
+                        loopEnabled,
+                        playbackSpeed,
+                        volume,
+                    )
+                }.onSuccess {
+                    videoView?.pause()
+                    playing = false
+                    backgroundPlaybackError = false
+                }.onFailure {
+                    backgroundPlaybackError = true
+                }
+            },
         )
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+            if (backgroundPlaybackError) {
+                Text(uiText("Foninio atkūrimo paleisti nepavyko"), color = MaterialTheme.colorScheme.error)
+            }
             MediaPropertyRows(info)
         }
     }
@@ -1029,8 +1248,18 @@ private fun PlaybackControls(
     playing: Boolean,
     positionMillis: Long,
     durationMillis: Long,
+    canNavigateMedia: Boolean,
+    loopEnabled: Boolean,
+    playbackSpeed: Float,
+    volume: Float,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     onToggle: () -> Unit,
     onSeek: (Long) -> Unit,
+    onLoopChanged: (Boolean) -> Unit,
+    onSpeedChanged: (Float) -> Unit,
+    onVolumeChanged: (Float) -> Unit,
+    onPlayInBackground: () -> Unit,
 ) {
     val progress = MediaPlaybackRules.progress(positionMillis, durationMillis)
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
@@ -1050,6 +1279,9 @@ private fun PlaybackControls(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(onClick = onPrevious, enabled = canNavigateMedia) {
+                Icon(Icons.Rounded.SkipPrevious, contentDescription = uiText("Ankstesnis failas"))
+            }
             IconButton(
                 onClick = { onSeek(MediaPlaybackRules.skippedPosition(positionMillis, durationMillis, -MediaPlaybackRules.SKIP_MILLIS)) },
                 enabled = prepared,
@@ -1068,6 +1300,50 @@ private fun PlaybackControls(
                 onClick = { onSeek(MediaPlaybackRules.skippedPosition(positionMillis, durationMillis, MediaPlaybackRules.SKIP_MILLIS)) },
                 enabled = prepared,
             ) { Icon(Icons.Rounded.Forward10, contentDescription = uiText("Pirmyn")) }
+            IconButton(onClick = onNext, enabled = canNavigateMedia) {
+                Icon(Icons.Rounded.SkipNext, contentDescription = uiText("Kitas failas"))
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilterChip(
+                selected = loopEnabled,
+                onClick = { onLoopChanged(!loopEnabled) },
+                label = { LText("Kartoti") },
+                leadingIcon = { Icon(Icons.Rounded.Repeat, contentDescription = null) },
+            )
+            var speedMenu by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { speedMenu = true }, enabled = prepared) {
+                    Text("${playbackSpeed}×")
+                }
+                DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
+                    listOf(0.5f, 1f, 1.5f, 2f).forEach { speed ->
+                        DropdownMenuItem(
+                            text = { Text("${speed}×") },
+                            onClick = { speedMenu = false; onSpeedChanged(speed) },
+                        )
+                    }
+                }
+            }
+            OutlinedButton(onClick = onPlayInBackground, enabled = prepared) {
+                Icon(Icons.Rounded.Headphones, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                LText("Groti fone")
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.VolumeUp, contentDescription = uiText("Garsumas"))
+            Slider(
+                value = volume,
+                onValueChange = onVolumeChanged,
+                valueRange = 0f..1f,
+                enabled = prepared,
+                modifier = Modifier.weight(1f).testTag("${prefix}_volume"),
+            )
         }
     }
 }
@@ -1086,7 +1362,7 @@ private fun FileEditActions(
     onSaveAs: () -> Unit,
 ) {
     val session = state.session
-    val busy = state.preparing || state.saving
+    val busy = state.preparing || state.saving || state.modifyingPdf
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -1101,6 +1377,7 @@ private fun FileEditActions(
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                 LText(
                     when {
+                        state.modifyingPdf -> "Parašas įrašomas į privačią darbinę kopiją…"
                         state.preparing -> "Ruošiama saugi redaguojama kopija…"
                         state.saving -> "Išsaugoma ir patikrinama…"
                         state.hasUnsavedChanges -> "Neišsaugoti pakeitimai laikomi privačioje darbinėje kopijoje"
@@ -2225,7 +2502,7 @@ private fun setMediaDataSource(
         ?: player.setDataSource(context, source.uri(context))
 }
 
-private fun pdfDocumentInfo(context: android.content.Context, source: PreviewSource): PdfDocumentInfo =
+internal fun pdfDocumentInfo(context: android.content.Context, source: PreviewSource): PdfDocumentInfo =
     source.openFileDescriptor(context).use { descriptor ->
         PdfRenderer(descriptor).use { renderer ->
             require(renderer.pageCount > 0) { "PDF neturi puslapių" }
@@ -2240,7 +2517,7 @@ private fun pdfDocumentInfo(context: android.content.Context, source: PreviewSou
         }
     }
 
-private fun renderPdfPage(
+internal fun renderPdfPage(
     context: android.content.Context,
     source: PreviewSource,
     pageIndex: Int,

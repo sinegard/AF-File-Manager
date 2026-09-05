@@ -104,6 +104,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -114,6 +115,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -140,6 +142,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.archive.ArchiveFormat
+import com.affilemanager.app.archive.ArchiveCompressionRules
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.ClipboardMode
@@ -153,6 +156,7 @@ import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.FileTagDefinition
+import com.affilemanager.app.data.FileSelectionSummary
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.RecentItem
 import com.affilemanager.app.data.RecentFileItem
@@ -338,7 +342,7 @@ fun FilesScreen(
                     event.isAltPressed && event.key == Key.DirectionRight -> viewModel.navigateForward(activePanel)
                     event.key == Key.Backspace -> viewModel.navigateUp(activePanel)
                     event.key == Key.F5 -> {
-                        viewModel.refreshPanel(activePanel); true
+                        viewModel.refreshPanel(activePanel, scrollToTop = true); true
                     }
                     event.key == Key.Delete && state.selectedPaths.isNotEmpty() -> {
                         trashPanel = activePanel; true
@@ -549,22 +553,37 @@ fun FilesScreen(
     }
     trashPanel?.let { panel ->
         val count = if (panel == PanelId.LEFT) left.selectedPaths.size else right.selectedPaths.size
-        AlertDialog(
+        AfModalDialog(
+            title = "Perkelti į šiukšlinę?",
+            icon = Icons.Rounded.Delete,
             onDismissRequest = { trashPanel = null },
-            title = { LText("Perkelti į šiukšlinę?") },
-            text = { LText("Pasirinkta: $count. Failus bus galima atkurti skiltyje „Daugiau“.") },
-            confirmButton = {
+            modifier = Modifier.testTag("move_to_trash_dialog"),
+            actions = {
+                TextButton(onClick = { trashPanel = null }) { LText("Atšaukti") }
                 Button(onClick = { viewModel.moveSelectionToTrash(panel); trashPanel = null }) { LText("Perkelti") }
             },
-            dismissButton = { TextButton(onClick = { trashPanel = null }) { LText("Atšaukti") } },
-        )
+        ) {
+            LText(
+                "Pasirinkta: $count. Failus bus galima atkurti skiltyje „Daugiau“.",
+                modifier = Modifier.fillMaxWidth().padding(18.dp),
+            )
+        }
     }
     archiveRequest?.let { request ->
         ArchiveDialog(
             initialName = request.initialName,
+            sourcePaths = request.sourcePaths,
+            loadSummary = viewModel::loadFileSelectionInfo,
             onDismiss = { archiveRequest = null },
-            onCreate = { name, format, password ->
-                viewModel.createArchive(request.panel, name, format, password, request.sourcePaths)
+            onCreate = { name, format, password, compressionLevel ->
+                viewModel.createArchive(
+                    request.panel,
+                    name,
+                    format,
+                    password,
+                    request.sourcePaths,
+                    compressionLevel,
+                )
                 archiveRequest = null
             },
         )
@@ -932,7 +951,7 @@ private fun FilePanel(
 
         AfPullToRefresh(
             isRefreshing = state.loading,
-            onRefresh = { viewModel.refreshPanel(panelId) },
+            onRefresh = { viewModel.refreshPanel(panelId, scrollToTop = true) },
             modifier = Modifier.weight(1f).fillMaxWidth(),
             testTag = "pull_to_refresh_local_$panelId",
         ) {
@@ -1143,7 +1162,7 @@ private fun CompactPanelActions(
             DropdownMenuItem(
                 text = { LText("Atnaujinti") },
                 leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                onClick = { viewModel.refreshPanel(panelId); onExpandedChange(false) },
+                onClick = { viewModel.refreshPanel(panelId, scrollToTop = true); onExpandedChange(false) },
             )
         }
     }
@@ -1322,6 +1341,13 @@ private fun FileList(
     val listState = key(scrollKey) {
         rememberLazyListState()
     }
+    LaunchedEffect(scrollKey, state.scrollToTopRequest) {
+        if (state.scrollToTopRequest > 0L) {
+            restoringPosition = false
+            pinInitialTop = false
+            listState.scrollToItem(0)
+        }
+    }
     val userDragging by listState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(scrollKey, userDragging) {
         if (userDragging) pinInitialTop = false
@@ -1473,6 +1499,13 @@ private fun FileGrid(
     }
     val gridState = key(scrollKey) {
         rememberLazyGridState()
+    }
+    LaunchedEffect(scrollKey, state.scrollToTopRequest) {
+        if (state.scrollToTopRequest > 0L) {
+            restoringPosition = false
+            pinInitialTop = false
+            gridState.scrollToItem(0)
+        }
     }
     val userDragging by gridState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(scrollKey, userDragging) {
@@ -2171,15 +2204,41 @@ private fun TextInputDialog(
 }
 
 @Composable
-private fun ArchiveDialog(initialName: String, onDismiss: () -> Unit, onCreate: (String, ArchiveFormat, CharArray?) -> Unit) {
+private fun ArchiveDialog(
+    initialName: String,
+    sourcePaths: List<String>,
+    loadSummary: suspend (Collection<String>) -> Result<FileSelectionSummary>,
+    onDismiss: () -> Unit,
+    onCreate: (String, ArchiveFormat, CharArray?, Int) -> Unit,
+) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     var format by remember { mutableStateOf(ArchiveFormat.ZIP) }
     var password by remember { mutableStateOf("") }
-    AlertDialog(
+    var compressionLevel by remember { mutableStateOf(ArchiveCompressionRules.DEFAULT_LEVEL) }
+    val selectionSummary by produceState<FileSelectionSummary?>(initialValue = null, sourcePaths) {
+        value = loadSummary(sourcePaths).getOrNull()
+    }
+    AfModalDialog(
+        title = "Sukurti archyvą",
+        icon = Icons.Rounded.Archive,
         onDismissRequest = onDismiss,
-        title = { LText("Sukurti archyvą") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        modifier = Modifier.testTag("archive_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(
+                onClick = {
+                    onCreate(name, format, password.takeIf(String::isNotBlank)?.toCharArray(), compressionLevel)
+                },
+                enabled = name.isNotBlank(),
+            ) {
+                LText("Kurti")
+            }
+        },
+    ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -2207,17 +2266,36 @@ private fun ArchiveDialog(initialName: String, onDismiss: () -> Unit, onCreate: 
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                val adjustableCompression = format == ArchiveFormat.ZIP || format == ArchiveFormat.TAR_GZ
+                LText(
+                    if (adjustableCompression) "Suspaudimo lygis: $compressionLevel iš 9"
+                    else "Šiam formatui naudojamas numatytasis suspaudimas",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = compressionLevel.toFloat(),
+                    onValueChange = { compressionLevel = it.roundToInt().coerceIn(0, 9) },
+                    valueRange = 0f..9f,
+                    steps = 8,
+                    enabled = adjustableCompression,
+                    modifier = Modifier.fillMaxWidth().testTag("archive_compression_level"),
+                )
+                selectionSummary?.let { summary ->
+                    LText(
+                        "Šaltinio dydis: ${FileSystemRules.humanBytes(summary.totalBytes)} · failų: ${summary.fileCount}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (!summary.complete) {
+                        LText("Dydis dalinis, nes pasiekta saugaus skenavimo riba", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                LText(
+                    "Galutinis archyvo dydis priklauso nuo duomenų ir bus žinomas baigus kurti.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 LText("Pasirinkta: ${format.name}", style = MaterialTheme.typography.bodySmall)
             }
-        },
-        confirmButton = {
-            Button(onClick = { onCreate(name, format, password.takeIf(String::isNotBlank)?.toCharArray()) }, enabled = name.isNotBlank()) {
-                LText("Kurti")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-        modifier = Modifier.testTag("archive_dialog"),
-    )
+    }
 }
 
 @Composable

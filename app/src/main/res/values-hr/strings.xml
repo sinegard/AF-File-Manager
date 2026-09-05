@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">Prenos AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Početak servera...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN prijenos se kreće</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">U blizini je telefon</string>
+    <string name="nearby_transfer_notification_title">AF File Manager telefonski prijenos</string>
+    <string name="nearby_transfer_starting_text">Pripremaju se za prebacivanje...</string>
     <string name="terminal_channel_name">Aktivni terminal</string>
     <string name="terminal_channel_description">Drži otvoreni telefon ili server terminal u pozadini</string>
     <string name="terminal_notification_title">AF File Manager terminal</string>

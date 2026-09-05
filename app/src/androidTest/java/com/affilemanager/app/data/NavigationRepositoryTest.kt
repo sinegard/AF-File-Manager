@@ -88,12 +88,54 @@ class NavigationRepositoryTest {
             )
             assertEquals(inherited, repository.directoryDisplaySettings(identity))
             assertEquals(null, repository.directoryDisplaySettingsOverride(identity))
+            assertEquals(
+                DirectorySortSettings(SortMode.NAME, SortDirection.ASCENDING),
+                repository.directorySortSettings(identity),
+            )
+            assertEquals(null, repository.directorySortSettingsOverride(identity))
 
             repository.setDirectoryDisplaySettings(identity, inherited)
 
             assertEquals(inherited, NavigationRepository(isolatedContext).directoryDisplaySettingsOverride(identity))
         } finally {
             application.deleteSharedPreferences(preferenceName)
+        }
+    }
+
+    @Test
+    fun sortSettingsPersistIndependentlyForEveryVirtualLocation() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val firstIdentity = "virtual:category/images-${System.nanoTime()}"
+        val secondIdentity = "virtual:category/documents-${System.nanoTime()}"
+        val repository = NavigationRepository(application)
+        try {
+            repository.setDirectorySortSettings(
+                firstIdentity,
+                DirectorySortSettings(SortMode.MODIFIED, SortDirection.DESCENDING),
+            )
+            repository.setDirectorySortSettings(
+                secondIdentity,
+                DirectorySortSettings(SortMode.SIZE, SortDirection.ASCENDING),
+            )
+
+            val restored = NavigationRepository(application)
+            assertEquals(
+                DirectorySortSettings(SortMode.MODIFIED, SortDirection.DESCENDING),
+                restored.directorySortSettings(firstIdentity),
+            )
+            assertEquals(
+                DirectorySortSettings(SortMode.MODIFIED, SortDirection.DESCENDING),
+                restored.directorySortSettingsOverride(firstIdentity),
+            )
+            assertEquals(
+                DirectorySortSettings(SortMode.SIZE, SortDirection.ASCENDING),
+                restored.directorySortSettings(secondIdentity),
+            )
+            assertEquals(null, restored.directoryDisplaySettingsOverride(firstIdentity))
+            assertEquals(null, restored.directorySortSettingsOverride("virtual:category:untouched-${System.nanoTime()}"))
+        } finally {
+            repository.clearDirectoryDisplaySettings(firstIdentity)
+            repository.clearDirectoryDisplaySettings(secondIdentity)
         }
     }
 

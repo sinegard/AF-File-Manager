@@ -42,6 +42,15 @@ ConnectBot Terminal embeds libvterm for terminal emulation.
 - Copyright ZXing authors and contributors
 - License: Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
 
+## PdfBox-Android
+
+`com.tom-roush:pdfbox-android:2.0.27.0` adds a visible handwritten mark to a
+user-selected PDF page while preserving the rest of the PDF as PDF content.
+
+- Project: https://github.com/TomRoush/PdfBox-Android
+- Copyright Tom Roush, Apache PDFBox authors, and contributors
+- License: Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
+
 ## Offline interface translation assets
 
 The generated language packs were prepared during development with Meta's NLLB-200 distilled 600M model. The model and translation runtime are not included in the Android app. Standard Android action labels are taken from the Android Open Source Project translations where an exact match exists.

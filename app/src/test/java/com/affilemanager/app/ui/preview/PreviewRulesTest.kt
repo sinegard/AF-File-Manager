@@ -37,4 +37,13 @@ class PreviewRulesTest {
         assertEquals("1:05", MediaPlaybackRules.timeLabel(65_000L))
         assertEquals("1:01:05", MediaPlaybackRules.timeLabel(3_665_000L))
     }
+
+    @Test
+    fun mediaNavigationWrapsInBothDirections() {
+        val items = listOf("a", "b", "c")
+        assertEquals("b", MediaNavigationRules.next(items, "a", 1) { it })
+        assertEquals("a", MediaNavigationRules.next(items, "c", 1) { it })
+        assertEquals("c", MediaNavigationRules.next(items, "a", -1) { it })
+        assertEquals(null, MediaNavigationRules.next(listOf("a"), "a", 1) { it })
+    }
 }

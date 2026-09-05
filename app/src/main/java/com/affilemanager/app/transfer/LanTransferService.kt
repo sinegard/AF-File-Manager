@@ -37,6 +37,7 @@ data class LanTransferState(
     val readOnly: Boolean = false,
     val expiresAtMillis: Long? = null,
     val message: String? = null,
+    val incomingUpload: LanUploadProgress? = null,
 )
 
 object LanTransferController {
@@ -161,6 +162,12 @@ class LanTransferService : Service() {
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
                     language = resources.configuration.locales[0].language,
+                    onUploadProgress = { progress ->
+                        val current = LanTransferController.state.value
+                        if (current.status == LanTransferStatus.RUNNING) {
+                            LanTransferController.publish(current.copy(incomingUpload = progress))
+                        }
+                    },
                     onStopped = stopped,
                 )
                 LanTransferProtocol.FTP -> LanFtpServer(

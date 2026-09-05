@@ -417,6 +417,50 @@ def load_pack(path: Path) -> tuple[list[str], list[str]]:
     return payload["exact"], payload["templates"]
 
 
+def load_catalog_index(path: Path) -> CatalogSource:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return CatalogSource(
+        exact=payload["exact"],
+        templates=payload["templates"],
+        android_strings={},
+    )
+
+
+def update_catalog(
+    source: CatalogSource,
+    previous_source: CatalogSource,
+    previous_exact: list[str],
+    previous_templates: list[str],
+    language: str,
+    target_code: str,
+    translator: NllbTranslator,
+    android_res: Path | None,
+) -> tuple[list[str], list[str]]:
+    if len(previous_exact) != len(previous_source.exact) or len(previous_templates) != len(previous_source.templates):
+        raise ValueError(f"{language}: existing pack does not match the previous catalog")
+
+    exact_by_source = dict(zip(previous_source.exact, previous_exact, strict=True))
+    template_by_source = dict(zip(previous_source.templates, previous_templates, strict=True))
+    missing_source = CatalogSource(
+        exact=[value for value in source.exact if value not in exact_by_source],
+        templates=[value for value in source.templates if value not in template_by_source],
+        android_strings={},
+    )
+    translated_exact, translated_templates = translate_catalog(
+        missing_source,
+        language,
+        target_code,
+        translator,
+        android_res,
+    )
+    exact_by_source.update(zip(missing_source.exact, translated_exact, strict=True))
+    template_by_source.update(zip(missing_source.templates, translated_templates, strict=True))
+    return (
+        [exact_by_source[value] for value in source.exact],
+        [template_by_source[value] for value in source.templates],
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--languages", help="Comma-separated BCP-47 tags; defaults to every generated pack")
@@ -427,6 +471,11 @@ def main() -> None:
         help="Optional Android platform data/res directory used for human-reviewed standard labels",
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--update-existing",
+        action="store_true",
+        help="Translate only catalog entries missing from existing language packs",
+    )
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
 
@@ -438,7 +487,10 @@ def main() -> None:
         raise SystemExit(f"Unknown language tags: {', '.join(unknown)}")
 
     source = collect_catalog()
-    write_json(INDEX_PATH, {"version": 1, "exact": source.exact, "templates": source.templates})
+    previous_source = load_catalog_index(INDEX_PATH) if INDEX_PATH.is_file() else None
+    catalog_changed = previous_source is None or (
+        previous_source.exact != source.exact or previous_source.templates != source.templates
+    )
     print(f"Catalog: {len(source.exact)} exact strings, {len(source.templates)} templates", flush=True)
 
     if args.verify_only:
@@ -448,30 +500,63 @@ def main() -> None:
         print(f"Verified {len(selected)} language packs", flush=True)
         return
 
-    pending = [tag for tag in selected if args.force or not (ASSET_DIRECTORY / f"{tag}.json").is_file()]
+    if catalog_changed and set(selected) != set(LANGUAGES):
+        raise SystemExit("A changed catalog must update every language pack in one run")
+
+    pending = [
+        tag
+        for tag in selected
+        if args.force or args.update_existing or not (ASSET_DIRECTORY / f"{tag}.json").is_file()
+    ]
     translator = NllbTranslator(args.batch_size) if pending else None
+    generated: dict[str, tuple[list[str], list[str]]] = {}
     for language in selected:
         output = ASSET_DIRECTORY / f"{language}.json"
         if language not in pending:
             exact, templates = load_pack(output)
             validate_pack(source, language, exact, templates)
-            write_android_strings(language, source, exact)
+            generated[language] = (exact, templates)
             print(f"{language}: existing pack verified", flush=True)
             continue
 
-        print(f"{language}: generating", flush=True)
         assert translator is not None
-        exact, templates = translate_catalog(
-            source,
-            language,
-            LANGUAGES[language],
-            translator,
-            args.android_res,
-        )
+        if output.is_file() and not args.force:
+            if not args.update_existing:
+                raise ValueError(f"{language}: existing pack is stale; use --update-existing or --force")
+            if previous_source is None:
+                raise ValueError(f"{language}: the previous catalog is unavailable")
+            print(f"{language}: translating new catalog entries", flush=True)
+            previous_exact, previous_templates = load_pack(output)
+            exact, templates = update_catalog(
+                source,
+                previous_source,
+                previous_exact,
+                previous_templates,
+                language,
+                LANGUAGES[language],
+                translator,
+                args.android_res,
+            )
+        else:
+            print(f"{language}: generating", flush=True)
+            exact, templates = translate_catalog(
+                source,
+                language,
+                LANGUAGES[language],
+                translator,
+                args.android_res,
+            )
         validate_pack(source, language, exact, templates)
+        generated[language] = (exact, templates)
+
+    for language, (exact, templates) in generated.items():
+        output = ASSET_DIRECTORY / f"{language}.json"
         write_json(output, {"version": 1, "language": language, "exact": exact, "templates": templates})
         write_android_strings(language, source, exact)
         print(f"{language}: saved", flush=True)
+
+    if set(selected) == set(LANGUAGES):
+        write_json(INDEX_PATH, {"version": 1, "exact": source.exact, "templates": source.templates})
 
 
 if __name__ == "__main__":

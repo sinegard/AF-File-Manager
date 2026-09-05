@@ -2,7 +2,35 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
-## [Unreleased]
+## [0.32.0] - 2026-09-05
+
+### Added
+
+- PDFs can be signed with a visible handwritten mark drawn by finger or stylus. The drawing can be reset, then placed on any page and moved or resized directly by its corner handle before using the existing safe Save or Save as workflow for phone and server files.
+- Storage analysis now shows live file, folder, byte, duplicate-candidate, and checksum progress and can be stopped without waiting for the current scan to finish.
+- Audio and video previews can move to the previous or next matching file, loop, change playback speed and volume, and keep audio playing through an Android foreground media notification.
+- Android's share sheet can send files directly into AF's phone-to-phone sender, while the sender can browse storage, media, archives, APK files, and installed apps.
+
+### Changed
+
+- Sort order is remembered independently for local folders, Quick locations, remote folders, trash paths, and Android document-provider folders. An explicit refresh returns the current list to the top without breaking back-navigation scroll restoration.
+- More creation, archive, trash confirmation, and automation dialogs now use AF's shared adaptive layout.
+- Non-secret sharing choices and search-filter controls are saved automatically. Temporary passwords and pairing codes remain session-only.
+- Archive creation offers compression levels where the format supports them and reports the scanned source size and file count without pretending to know the final compressed size in advance.
+- XML, SVG, web, mobile, scripting, configuration, and additional programming-language files receive more accurate type recognition and icons.
+- Phone-to-phone transfers show progress on both devices and support bounded recursive folders, including empty folders, while keeping their relative paths.
+
+### Fixed
+
+- Android document-provider and cloud folders retain their tree permission while navigating into child folders; failed additions roll back only newly acquired permissions, and a stale slow response cannot replace the currently open folder.
+- Cancelling duplicate analysis now interrupts checksum work instead of being swallowed as a failed hash.
+- Selected symbolic links cannot bypass phone-transfer safety checks through early path canonicalization.
+- APK signature verification uses the correct package-manager flag on Android 8, avoiding false update rejection on older supported devices.
+
+### Safety
+
+- Signing changes only the private working copy until the user explicitly saves it. Password-protected PDFs and PDFs that already contain a cryptographic signature are left unchanged, and the app clearly distinguishes a visible mark from a qualified electronic signature.
+- AF does not claim to force a 5 GHz band or boost Android's radio; it opens the relevant system settings and explains that both phones and the system must support the selected band.
 
 ## [0.31.1] - 2026-09-04
 

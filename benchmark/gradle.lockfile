@@ -266,6 +266,7 @@ com.squareup.wire:wire-runtime-jvm:5.2.1=benchmarkCompileClasspath,benchmarkLint
 com.squareup.wire:wire-runtime:5.2.1=benchmarkCompileClasspath,benchmarkLintChecksClasspath,benchmarkRuntimeClasspath,debugCompileClasspath,debugLintChecksClasspath,debugRuntimeClasspath,profileCompileClasspath,profileLintChecksClasspath,profileRuntimeClasspath
 com.sun.istack:istack-commons-runtime:3.0.8=androidLintTool,unified-test-platform-android-test-plugin-result-listener-gradle
 com.sun.xml.fastinfoset:FastInfoset:1.2.16=androidLintTool,unified-test-platform-android-test-plugin-result-listener-gradle
+com.tom-roush:pdfbox-android:2.0.27.0=benchmarkTestedApks,debugTestedApks,profileTestedApks
 commons-codec:commons-codec:1.17.1=androidLintTool,unified-test-platform-android-test-plugin-result-listener-gradle
 commons-codec:commons-codec:1.19.0=benchmarkTestedApks,debugTestedApks,profileTestedApks
 commons-io:commons-io:2.16.1=androidLintTool,unified-test-platform-android-test-plugin-host-emulator-control,unified-test-platform-android-test-plugin-result-listener-gradle,unified-test-platform-gradle-work-action

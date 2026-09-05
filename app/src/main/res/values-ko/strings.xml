@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN 전송</string>
     <string name="lan_transfer_starting_text">서버 시작...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN 전송이 실행중</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_channel_name">근처에 전화 전송</string>
     <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_starting_text">이적 준비...</string>
     <string name="terminal_channel_name">활성 터미널</string>
     <string name="terminal_channel_description">전화 또는 서버 터미널이 배경에서 실행되는 것을 유지합니다</string>
     <string name="terminal_notification_title">AF File Manager 터미널</string>

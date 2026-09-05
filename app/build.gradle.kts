@@ -22,8 +22,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 48
-        versionName = "0.31.1"
+        versionCode = 49
+        versionName = "0.32.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -170,6 +170,14 @@ dependencies {
     implementation("org.tukaani:xz:1.10")
     implementation("net.lingala.zip4j:zip4j:2.11.6")
     implementation("com.github.junrar:junrar:7.6.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
+        // Visual signatures do not use CMS or encrypted-PDF support. Keeping
+        // those optional crypto providers out avoids adding an unrelated,
+        // privileged-looking dependency surface to a local file operation.
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk15to18")
+        exclude(group = "org.bouncycastle", module = "bcpkix-jdk15to18")
+        exclude(group = "org.bouncycastle", module = "bcutil-jdk15to18")
+    }
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260719")

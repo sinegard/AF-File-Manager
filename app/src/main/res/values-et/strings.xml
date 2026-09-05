@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN ülekanne</string>
     <string name="lan_transfer_starting_text">Alustame serverit...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN ülekanne toimub</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_channel_name">Lähedas telefonite ülekande</string>
     <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_starting_text">Valmistan ülekande...</string>
     <string name="terminal_channel_name">Aktiivsed terminalid</string>
     <string name="terminal_channel_description">Püsivaltsuses avatud telefon või server</string>
     <string name="terminal_notification_title">AF File Manager terminal</string>

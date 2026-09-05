@@ -75,6 +75,7 @@ import com.affilemanager.app.operations.OperationSnapshot
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.ui.components.ProviderAppVisual
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.localization.AppLanguageOption
 import com.affilemanager.app.ui.localization.LText
@@ -258,10 +259,20 @@ fun ToolsScreen(
         items(safLocations, key = { it.uri }) { location ->
             Card(onClick = { viewModel.openSafLocation(location) }, modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.FolderSpecial, contentDescription = null)
+                    ProviderAppVisual(
+                        packageName = location.providerPackageName,
+                        fallbackIcon = Icons.Rounded.FolderSpecial,
+                        targetSize = 28.dp,
+                        modifier = Modifier.size(28.dp),
+                    )
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(location.title, fontWeight = FontWeight.SemiBold)
-                        Text(location.uri, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(location.providerLabel ?: location.title, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            location.folderName ?: uiText(if (location.canWrite) "Pasirinkta vieta" else "Tik skaitymui"),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     IconButton(onClick = { removeSaf = location }) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti vietą"))

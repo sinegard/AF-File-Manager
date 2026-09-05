@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
@@ -128,6 +129,47 @@ class EditSessionStore(cacheDirectory: File) {
         require(session.workingFile.isFile && session.workingFile.canRead()) { "Editable copy is no longer available" }
         val revision = revisionOf(session.workingFile)
         return session.copy(workingRevision = revision)
+    }
+
+    /**
+     * Produces a replacement beside an app-private working copy and publishes it only after the
+     * producer and integrity checks finish. The current copy remains intact on every failure.
+     */
+    fun transformWorking(
+        session: EditSession,
+        produce: (source: File, destination: File) -> Unit,
+    ): EditSession {
+        val directory = requireSessionDirectory(session)
+        val source = session.workingFile.canonicalFile
+        requireContained(directory, source)
+        require(source.isFile && source.canRead()) { "Editable copy is no longer available" }
+        val temporary = File(directory, ".${source.name}.af-transform-${UUID.randomUUID()}.tmp").canonicalFile
+        requireContained(directory, temporary)
+        try {
+            produce(source, temporary)
+            require(temporary.isFile && temporary.canRead() && temporary.length() > 0L) {
+                "Edited copy was not produced"
+            }
+            require(temporary.length() <= EditLimits.MAX_FILE_BYTES) { "File is too large to edit" }
+            RandomAccessFile(temporary, "rw").use { it.fd.sync() }
+            val current = revisionOf(source)
+            require(current.hasSameContent(session.workingRevision)) {
+                "Editable copy changed while the operation was running"
+            }
+            runCatching {
+                Files.move(
+                    temporary.toPath(),
+                    source.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }.getOrElse {
+                Files.move(temporary.toPath(), source.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            return refreshWorking(session)
+        } finally {
+            if (temporary.exists()) temporary.delete()
+        }
     }
 
     fun currentLocalRevision(path: String): FileRevision? {

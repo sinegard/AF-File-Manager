@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN हस्तांतरण</string>
     <string name="lan_transfer_starting_text">प्रारंभ करणारा सर्व्हर.</string>
     <string name="lan_transfer_running_title">AF File Manager LAN हस्तांतरण चालू आहे</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">जवळपासचा फोन ट्रान्सफर</string>
+    <string name="nearby_transfer_notification_title">AF File Manager फोन ट्रान्सफर</string>
+    <string name="nearby_transfer_starting_text">ट्रान्सफरची तयारी.</string>
     <string name="terminal_channel_name">सक्रिय टर्मिनल</string>
     <string name="terminal_channel_description">पार्श्वभूमीवर एक उघडा फोन किंवा सर्व्हर टर्मिनल चालवित आहे</string>
     <string name="terminal_notification_title">AF File Manager टर्मिनल</string>

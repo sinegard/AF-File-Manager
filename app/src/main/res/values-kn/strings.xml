@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN ವರ್ಗಾವಣೆ</string>
     <string name="lan_transfer_starting_text">ಆರಂಭಿಕ ಸರ್ವರ್...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN ವರ್ಗಾವಣೆ ಚಾಲನೆಯಲ್ಲಿರುತ್ತದೆ</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">ಹತ್ತಿರದ ಫೋನ್ ವರ್ಗಾವಣೆ</string>
+    <string name="nearby_transfer_notification_title">AF File Manager ದೂರವಾಣಿ ವರ್ಗಾವಣೆ</string>
+    <string name="nearby_transfer_starting_text">ವರ್ಗಾವಣೆ ತಯಾರಿ.</string>
     <string name="terminal_channel_name">ಸಕ್ರಿಯ ಟರ್ಮಿನಲ್</string>
     <string name="terminal_channel_description">ತೆರೆದ ಫೋನ್ ಅಥವಾ ಸರ್ವರ್ ಟರ್ಮಿನಲ್ ಅನ್ನು ಹಿನ್ನೆಲೆಯಲ್ಲಿ ಚಾಲನೆ ಮಾಡುತ್ತದೆ</string>
     <string name="terminal_notification_title">AF File Manager ಟರ್ಮಿನಲ್</string>

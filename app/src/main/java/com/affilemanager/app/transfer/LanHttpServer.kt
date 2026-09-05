@@ -39,6 +39,17 @@ data class LanServerSession(
     val url: String get() = "$scheme://$address:$port/"
 }
 
+data class LanUploadProgress(
+    val currentFile: String,
+    val currentFileIndex: Int,
+    val totalFiles: Int,
+    val currentFileBytes: Long,
+    val currentFileSize: Long,
+    val receivedBytes: Long,
+    val totalBytes: Long,
+    val completed: Boolean = false,
+)
+
 internal interface TemporaryLanServer : AutoCloseable {
     fun start(): LanServerSession
     fun stop(reason: String)
@@ -53,6 +64,7 @@ class LanHttpServer(
     private val readOnly: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val language: String = AppLanguageManager.ENGLISH,
+    private val onUploadProgress: (LanUploadProgress) -> Unit = {},
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
     companion object {
@@ -199,6 +211,9 @@ class LanHttpServer(
             request.method == "GET" && request.path == "/download" -> download(output, request.query["path"].orEmpty())
             request.method == "POST" && request.path == "/upload" && readOnly ->
                 writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
+            request.method == "POST" && request.path == "/mkdir" && readOnly ->
+                writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
+            request.method == "POST" && request.path == "/mkdir" -> createDirectory(request, output)
             request.method == "POST" && request.path == "/upload" -> upload(request, input, output)
             else -> writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
         }
@@ -294,7 +309,32 @@ class LanHttpServer(
         val target = FileSystemRules.keepBothTarget(requested)
         require(FileSystemRules.isContained(root, target)) { "Tikslas išeina už pasirinkto katalogo" }
         val partial = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
+        val totalFiles = request.query["fileCount"]?.toIntOrNull()?.coerceIn(1, 1_000) ?: 1
+        val fileIndex = request.query["fileIndex"]?.toIntOrNull()?.coerceIn(1, totalFiles) ?: 1
+        val totalBytes = request.query["batchBytes"]?.toLongOrNull()
+            ?.coerceIn(length, 5L * 1_024L * 1_024L * 1_024L) ?: length
+        val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
         var remaining = length
+        var received = 0L
+        var lastProgressAt = 0L
+        fun publishProgress(completed: Boolean = false) {
+            val now = System.nanoTime()
+            if (!completed && received > 0L && now - lastProgressAt < 150_000_000L) return
+            lastProgressAt = now
+            onUploadProgress(
+                LanUploadProgress(
+                    currentFile = name,
+                    currentFileIndex = fileIndex,
+                    totalFiles = totalFiles,
+                    currentFileBytes = received,
+                    currentFileSize = length,
+                    receivedBytes = (batchOffset + received).coerceAtMost(totalBytes),
+                    totalBytes = totalBytes,
+                    completed = completed,
+                ),
+            )
+        }
+        publishProgress()
         try {
             FileOutputStream(partial).use { fileOutput ->
                 val buffer = ByteArray(256 * 1_024)
@@ -303,12 +343,15 @@ class LanHttpServer(
                     if (read < 0) throw IllegalStateException("Įkėlimas nutrūko")
                     fileOutput.write(buffer, 0, read)
                     remaining -= read
+                    received = Math.addExact(received, read.toLong())
+                    publishProgress()
                 }
                 fileOutput.fd.sync()
                 buffer.fill(0)
             }
             require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
             require(partial.renameTo(target)) { "Įkėlimo užbaigti nepavyko" }
+            publishProgress(completed = true)
             writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
         } finally {
             if (partial.exists()) partial.delete()
@@ -348,6 +391,24 @@ class LanHttpServer(
         <form method="post" action="/login"><input name="code" $inputAttributes required><button type="submit">${html(t("Prisijungti"))}</button></form>
         <p>${html(t("Sesija baigsis automatiškai."))} ${html(t("Katalogas"))}: ${html(session.rootName)}</p></body></html>
         """.trimIndent()
+    }
+
+    private fun createDirectory(request: Request, output: BufferedOutputStream) {
+        val value = request.query["path"].orEmpty()
+        require(value.length in 1..4_096 && '\u0000' !in value) { "Netinkamas santykinis kelias" }
+        require(!value.startsWith('/') && !value.startsWith('\\')) { "Leidžiamas tik santykinis kelias" }
+        val parts = value.replace('\\', '/').split('/').filter(String::isNotBlank)
+        require(parts.isNotEmpty() && parts.size <= 65) { "Netinkamas santykinis kelias" }
+        var current = root
+        parts.forEach { rawName ->
+            val name = FileSystemRules.validateFileName(rawName).getOrThrow()
+            val child = File(current, name).canonicalFile
+            require(FileSystemRules.isContained(root, child)) { "Kelias išeina už pasirinkto katalogo" }
+            if (child.exists()) require(child.isDirectory) { "Tokiu vardu jau yra failas" }
+            else require(child.mkdir()) { "Aplanko sukurti nepavyko" }
+            current = child
+        }
+        writeText(output, 201, t("Aplankas paruoštas"), "text/plain; charset=utf-8")
     }
 
     private data class Request(

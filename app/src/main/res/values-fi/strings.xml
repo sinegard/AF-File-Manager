@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN siirto</string>
     <string name="lan_transfer_starting_text">Alkava palvelim...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN siirto käynnistyy</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Lähi-alueen puhelinsiirto</string>
+    <string name="nearby_transfer_notification_title">AF File Manager puhelinsiirto</string>
+    <string name="nearby_transfer_starting_text">Valmistelen siirtoa...</string>
     <string name="terminal_channel_name">Aktiivinen terminaali</string>
     <string name="terminal_channel_description">Pidä avoin puhelin tai palvelimen pääosasto käynnissä taustalla</string>
     <string name="terminal_notification_title">AF File Manager terminaali</string>

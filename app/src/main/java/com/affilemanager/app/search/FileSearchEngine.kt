@@ -26,6 +26,17 @@ import java.security.MessageDigest
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
+enum class AnalysisScanPhase { SCANNING, FINDING_DUPLICATES }
+
+data class AnalysisProgress(
+    val phase: AnalysisScanPhase = AnalysisScanPhase.SCANNING,
+    val scannedFiles: Int = 0,
+    val scannedDirectories: Int = 0,
+    val scannedBytes: Long = 0L,
+    val currentPath: String? = null,
+    val hashedFiles: Int = 0,
+)
+
 class FileSearchEngine(
     private val toEntry: (File) -> FileEntry,
     private val maxScannedEntries: Int = MAX_SCANNED_ENTRIES,
@@ -90,27 +101,62 @@ class FileSearchEngine(
         )
     }
 
-    suspend fun duplicates(roots: List<String>): DuplicateAnalysisResult = withContext(Dispatchers.IO) {
+    suspend fun duplicates(
+        roots: List<String>,
+        onProgress: (AnalysisProgress) -> Unit = {},
+    ): DuplicateAnalysisResult = withContext(Dispatchers.IO) {
         val bySize = mutableMapOf<Long, MutableList<File>>()
         var candidates = 0
+        var candidateBytes = 0L
+        var lastProgressAt = 0L
+        fun publish(currentPath: String?, hashedFiles: Int = 0, force: Boolean = false) {
+            val now = System.nanoTime()
+            if (!force && candidates % 64 != 0 && now - lastProgressAt < 100_000_000L) return
+            lastProgressAt = now
+            onProgress(
+                AnalysisProgress(
+                    phase = AnalysisScanPhase.FINDING_DUPLICATES,
+                    scannedFiles = candidates,
+                    scannedBytes = candidateBytes,
+                    currentPath = currentPath,
+                    hashedFiles = hashedFiles,
+                ),
+            )
+        }
         val walk = walk(roots) { file ->
             if (file.isFile && file.length() > 0) {
                 if (candidates >= maxDuplicateCandidates) return@walk WalkAction.STOP
                 candidates += 1
+                candidateBytes = saturatedAdd(candidateBytes, file.length().coerceAtLeast(0L))
                 bySize.getOrPut(file.length()) { mutableListOf() }.add(file)
+                publish(file.absolutePath)
             }
             WalkAction.DESCEND
         }
 
         val groups = mutableListOf<DuplicateGroup>()
+        var hashedFiles = 0
         bySize.filterValues { it.size > 1 }.forEach { (size, files) ->
             val byHash = files.mapNotNull { file ->
-                runCatching { sha256(file) }.getOrNull()?.let { hash -> hash to file }
+                coroutineContext.ensureActive()
+                val hash = try {
+                    sha256(file)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+                hash?.let {
+                    hashedFiles += 1
+                    publish(file.absolutePath, hashedFiles)
+                    it to file
+                }
             }.groupBy(keySelector = { it.first }, valueTransform = { it.second })
             byHash.filterValues { it.size > 1 }.forEach { (hash, duplicates) ->
                 groups += DuplicateGroup(hash, size, duplicates.map(File::getAbsolutePath).sorted())
             }
         }
+        publish(currentPath = null, hashedFiles = hashedFiles, force = true)
         DuplicateAnalysisResult(
             groups = groups.sortedByDescending { it.sizeBytes * it.paths.size },
             scannedCandidates = candidates,
@@ -118,10 +164,30 @@ class FileSearchEngine(
         )
     }
 
-    suspend fun analyze(roots: List<String>, nowMillis: Long = System.currentTimeMillis()): StorageAnalysis = withContext(Dispatchers.IO) {
+    suspend fun analyze(
+        roots: List<String>,
+        nowMillis: Long = System.currentTimeMillis(),
+        onProgress: (AnalysisProgress) -> Unit = {},
+    ): StorageAnalysis = withContext(Dispatchers.IO) {
         var files = 0
         var directories = 0
         var bytes = 0L
+        var processedEntries = 0
+        var lastProgressAt = 0L
+        fun publish(currentPath: String?, force: Boolean = false) {
+            val now = System.nanoTime()
+            if (!force && processedEntries % 64 != 0 && now - lastProgressAt < 100_000_000L) return
+            lastProgressAt = now
+            onProgress(
+                AnalysisProgress(
+                    phase = AnalysisScanPhase.SCANNING,
+                    scannedFiles = files,
+                    scannedDirectories = directories,
+                    scannedBytes = bytes,
+                    currentPath = currentPath,
+                ),
+            )
+        }
         val largest = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
         val oldest = java.util.PriorityQueue<FileEntry>(compareByDescending { it.modifiedAtMillis })
         val installerAndArchives = java.util.PriorityQueue<FileEntry>(compareBy { it.sizeBytes })
@@ -178,8 +244,11 @@ class FileSearchEngine(
                     if (oldMedia.size > MAX_OLD_MEDIA_FILES) oldMedia.remove()
                 }
             }
+            processedEntries += 1
+            publish(file.absolutePath)
             WalkAction.DESCEND
         }
+        publish(currentPath = null, force = true)
         StorageAnalysis(
             scannedFiles = files,
             scannedDirectories = directories,
@@ -370,11 +439,12 @@ class FileSearchEngine(
         return WalkResult(visited, limitReached = false, stoppedEarly = false)
     }
 
-    private fun sha256(file: File): String {
+    private suspend fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         FileInputStream(file).use { input ->
             val buffer = ByteArray(HASH_BUFFER)
             while (true) {
+                coroutineContext.ensureActive()
                 val read = input.read(buffer)
                 if (read < 0) break
                 digest.update(buffer, 0, read)

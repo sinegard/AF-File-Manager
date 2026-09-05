@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN pārdevēšana</string>
     <string name="lan_transfer_starting_text">Servera startēšana...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN pārveides darbība</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Telefonu pārskaitīšana</string>
+    <string name="nearby_transfer_notification_title">AF File Manager tālruņa pārveides</string>
+    <string name="nearby_transfer_starting_text">Priekšlikums pārvešanai...</string>
     <string name="terminal_channel_name">Aktiviskais termināls</string>
     <string name="terminal_channel_description">Pārbauda atvērtu tālruņu vai servera terminālu, kas darbojas fonā</string>
     <string name="terminal_notification_title">AF File Manager termīls</string>

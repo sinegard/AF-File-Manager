@@ -4,6 +4,13 @@
 -dontwarn javax.naming.**
 -dontwarn org.apache.commons.compress.archivers.sevenz.**
 
+# PdfBox-Android keeps JPEG 2000 support behind Gemalto's optional JP2 codec.
+# AF File Manager only appends its own lossless signature image and leaves
+# existing PDF streams untouched, so this optional decoder/encoder is not part
+# of the signing path. Keep every other PdfBox warning visible to R8.
+-dontwarn com.gemalto.jp2.JP2Decoder
+-dontwarn com.gemalto.jp2.JP2Encoder
+
 # JSch selects authentication, key-exchange, cipher, signature, and key parsing
 # implementations from fully qualified class-name strings at runtime. Preserve
 # the Android/JCE implementations AF File Manager can actually use; optional

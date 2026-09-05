@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">Overførsel af AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Startserver...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN overførsel kører</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Telefonoverførsel i nærheden</string>
+    <string name="nearby_transfer_notification_title">AF File Manager telefonoverførsel</string>
+    <string name="nearby_transfer_starting_text">- Jeg forbereder overførslen.</string>
     <string name="terminal_channel_name">Aktiv terminal</string>
     <string name="terminal_channel_description">Hold en åben telefon eller server terminal kører i baggrunden</string>
     <string name="terminal_notification_title">AF File Manager terminal</string>

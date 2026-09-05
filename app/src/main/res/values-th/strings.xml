@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">การถ่ายทอด AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">เริ่มเซอร์เวอร์...</string>
     <string name="lan_transfer_running_title">การโอน AF File Manager LAN กําลังดําเนินการ</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">โทรศัพท์โอนใกล้</string>
+    <string name="nearby_transfer_notification_title">AF File Manager โทรคมนาคม</string>
+    <string name="nearby_transfer_starting_text">เตรียมโอน...</string>
     <string name="terminal_channel_name">ปลายทางไฟฟ้าที่ทํางาน</string>
     <string name="terminal_channel_description">ทําให้โทรศัพท์หรือเครื่องใช้งานเปิดเปิดในพื้นฐาน</string>
     <string name="terminal_notification_title">AF File Manager ทิมินัล</string>

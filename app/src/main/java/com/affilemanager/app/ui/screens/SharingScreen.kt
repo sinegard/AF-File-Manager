@@ -40,7 +40,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,15 +73,17 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
     val roots by viewModel.roots.collectAsStateWithLifecycle()
     val transfer by LanTransferController.state.collectAsStateWithLifecycle()
+    val incomingShare by viewModel.incomingShare.collectAsStateWithLifecycle()
+    val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) left.path else right.path
-    var sharedPath by remember(activePath) { mutableStateOf(activePath) }
-    var protocol by remember { mutableStateOf(LanTransferProtocol.WEB) }
-    var duration by remember { mutableIntStateOf(15) }
+    val sharedPath = preferences.sharedPath
+    val protocol = preferences.protocol
+    val duration = preferences.durationMinutes
+    val portText = preferences.portText
+    val username = preferences.username
+    val readOnly = preferences.readOnly
     var pickerStartPath by remember { mutableStateOf<String?>(null) }
-    var portText by remember { mutableStateOf("") }
-    var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var readOnly by remember { mutableStateOf(false) }
     val running = transfer.status == LanTransferStatus.RUNNING || transfer.status == LanTransferStatus.STARTING
     val optionsResult = runCatching {
         LanTransferOptions(
@@ -99,7 +100,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             loadDirectory = viewModel::listLocalDirectoryForUpload,
             onDismiss = { pickerStartPath = null },
             onSelect = { selected ->
-                sharedPath = selected
+                viewModel.updateShareScreenPreferences { it.copy(sharedPath = selected) }
                 pickerStartPath = null
             },
         )
@@ -123,13 +124,26 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 viewModel = viewModel,
                 receiveDirectory = sharedPath,
                 lanState = transfer,
+                incomingShare = incomingShare,
+                onIncomingShareConsumed = viewModel::consumeIncomingShare,
+                onChooseReceiveDirectory = { pickerStartPath = sharedPath },
+                receiverName = preferences.receiverName,
+                onReceiverNameChange = { receiverName ->
+                    viewModel.updateShareScreenPreferences { it.copy(receiverName = receiverName) }
+                },
             )
         }
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                protocolChip("Web", LanTransferProtocol.WEB, protocol, !running) { protocol = it }
-                protocolChip("FTP", LanTransferProtocol.FTP, protocol, !running) { protocol = it }
-                protocolChip("WebDAV", LanTransferProtocol.WEBDAV, protocol, !running) { protocol = it }
+                protocolChip("Web", LanTransferProtocol.WEB, protocol, !running) { selected ->
+                    viewModel.updateShareScreenPreferences { it.copy(protocol = selected) }
+                }
+                protocolChip("FTP", LanTransferProtocol.FTP, protocol, !running) { selected ->
+                    viewModel.updateShareScreenPreferences { it.copy(protocol = selected) }
+                }
+                protocolChip("WebDAV", LanTransferProtocol.WEBDAV, protocol, !running) { selected ->
+                    viewModel.updateShareScreenPreferences { it.copy(protocol = selected) }
+                }
             }
         }
         item {
@@ -143,7 +157,11 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         }
                     }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { sharedPath = activePath }, enabled = !running, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(
+                            onClick = { viewModel.updateShareScreenPreferences { it.copy(sharedPath = activePath) } },
+                            enabled = !running,
+                            modifier = Modifier.weight(1f),
+                        ) {
                             LText("Naudoti aktyvų aplanką")
                         }
                         OutlinedButton(onClick = { pickerStartPath = sharedPath }, enabled = !running, modifier = Modifier.weight(1f)) {
@@ -164,7 +182,10 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     LText("Bendrinimo nustatymai", fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(
                         value = portText,
-                        onValueChange = { value -> portText = value.filter(Char::isDigit).take(5) },
+                        onValueChange = { value ->
+                            val filtered = value.filter(Char::isDigit).take(5)
+                            viewModel.updateShareScreenPreferences { it.copy(portText = filtered) }
+                        },
                         label = { LText("Prievadas (tuščias = automatinis)") },
                         enabled = !running,
                         singleLine = true,
@@ -174,7 +195,14 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     if (protocol != LanTransferProtocol.WEB) {
                         OutlinedTextField(
                             value = username,
-                            onValueChange = { username = it.take(LanTransferOptions.MAX_USERNAME_LENGTH) },
+                            onValueChange = { value ->
+                                viewModel.updateShareScreenPreferences {
+                                    it.copy(
+                                        username = value.filterNot(Char::isISOControl)
+                                            .take(LanTransferOptions.MAX_USERNAME_LENGTH),
+                                    )
+                                }
+                            },
                             label = { LText("Naudotojo vardas (tuščias = af)") },
                             enabled = !running,
                             singleLine = true,
@@ -195,7 +223,14 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             LText("Tik skaityti", fontWeight = FontWeight.Medium)
                             LText("Neleisti įkelti, pervadinti ar trinti", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(checked = readOnly, onCheckedChange = { readOnly = it }, enabled = !running, modifier = Modifier.testTag("share_read_only"))
+                        Switch(
+                            checked = readOnly,
+                            onCheckedChange = { selected ->
+                                viewModel.updateShareScreenPreferences { it.copy(readOnly = selected) }
+                            },
+                            enabled = !running,
+                            modifier = Modifier.testTag("share_read_only"),
+                        )
                     }
                     if (protocol == LanTransferProtocol.WEBDAV) {
                         LText("WebDAV naudoja HTTP. HTTPS/TLS šiame leidime dar nepalaikomas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -210,7 +245,11 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     LText("Sesijos trukmė · $duration min.", fontWeight = FontWeight.SemiBold)
                     Slider(
                         value = duration.toFloat(),
-                        onValueChange = { duration = it.toInt().coerceIn(5, 60) },
+                        onValueChange = { value ->
+                            viewModel.updateShareScreenPreferences {
+                                it.copy(durationMinutes = value.toInt().coerceIn(5, 60))
+                            }
+                        },
                         valueRange = 5f..60f,
                         steps = 10,
                         enabled = !running,

@@ -155,6 +155,23 @@ class FileSearchEngineTest {
     }
 
     @Test
+    fun analysisReportsBoundedProgressAndFinalCounts() = runBlocking {
+        val root = temporary.newFolder("analysis-progress")
+        File(root, "one.txt").writeBytes(ByteArray(12))
+        File(root, "two.jpg").writeBytes(ByteArray(18))
+        val updates = mutableListOf<AnalysisProgress>()
+
+        val analysis = engine().analyze(listOf(root.absolutePath), onProgress = updates::add)
+
+        val final = updates.last()
+        assertEquals(AnalysisScanPhase.SCANNING, final.phase)
+        assertEquals(analysis.scannedFiles, final.scannedFiles)
+        assertEquals(analysis.scannedDirectories, final.scannedDirectories)
+        assertEquals(analysis.totalBytes, final.scannedBytes)
+        assertEquals(null, final.currentPath)
+    }
+
+    @Test
     fun analysisAggregatesMultipleStorageRoots() = runBlocking {
         val firstRoot = temporary.newFolder("analysis-first")
         val secondRoot = temporary.newFolder("analysis-second")

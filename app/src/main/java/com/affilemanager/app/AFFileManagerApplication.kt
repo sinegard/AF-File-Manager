@@ -10,6 +10,7 @@ import com.affilemanager.app.data.NavigationRepository
 import com.affilemanager.app.data.RecentFileRepository
 import com.affilemanager.app.data.SafFileRepository
 import com.affilemanager.app.data.TrashRepository
+import com.affilemanager.app.data.UiPreferenceRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.cleanup.DeviceCleanupRepository
 import com.affilemanager.app.data.FileTagRepository
@@ -26,6 +27,7 @@ import com.affilemanager.app.operations.LocalFileOperator
 import com.affilemanager.app.operations.BatchRenameEngine
 import com.affilemanager.app.operations.DurableTransferCoordinator
 import com.affilemanager.app.operations.DurableTransferRepository
+import com.affilemanager.app.pdfsigning.PdfVisualSignatureEngine
 import com.affilemanager.app.search.FileSearchEngine
 import com.affilemanager.app.search.SimilarImageEngine
 import com.affilemanager.app.security.CredentialVault
@@ -46,6 +48,7 @@ import com.affilemanager.app.workflow.AfWorkflowCoordinator
 import com.affilemanager.app.ui.TerminalSessionStore
 import com.affilemanager.app.ui.localization.UiTranslationCatalog
 import com.affilemanager.app.ui.theme.AppearanceRepository
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +61,7 @@ class AFFileManagerApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         UiTranslationCatalog.initialize(this)
+        PDFBoxResourceLoader.init(this)
         graph = AppGraph(this)
         graph.applicationScope.launch {
             graph.syncSchedules.restoreWork()
@@ -80,10 +84,12 @@ class AppGraph(application: Application) {
     val fileSelectionInfo = FileSelectionInfoScanner()
     val contentFiles = ContentFileRepository(application)
     val navigation = NavigationRepository(application)
+    val uiPreferences = UiPreferenceRepository(application)
     val appearance = AppearanceRepository(application)
     val workspaceSession = WorkspaceSessionRepository(application)
     val fileTags = FileTagRepository.forApp(application)
     val editSessions = EditSessionStore(application.cacheDir)
+    val pdfSignatures = PdfVisualSignatureEngine(application.cacheDir)
     val remoteEdits = RemoteEditSaver(editSessions)
     val textMerge = ThreeWayTextMerge()
     val localFileOperator = LocalFileOperator()

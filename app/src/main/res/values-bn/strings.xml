@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN স্থানান্তর</string>
     <string name="lan_transfer_starting_text">সার্ভার শুরু হচ্ছে...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN স্থানান্তর চলছে</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">নিকটবর্তী টেলিফোন ট্রান্সফার</string>
+    <string name="nearby_transfer_notification_title">AF File Manager ফোন ট্রান্সফার</string>
+    <string name="nearby_transfer_starting_text">ট্রান্সফার করার প্রস্তুতি...</string>
     <string name="terminal_channel_name">সক্রিয় টার্মিনাল</string>
     <string name="terminal_channel_description">পটভূমিতে একটি খোলা ফোন বা সার্ভার টার্মিনাল চালানো রাখে</string>
     <string name="terminal_notification_title">AF File Manager টার্মিনাল</string>

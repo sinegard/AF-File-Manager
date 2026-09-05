@@ -145,7 +145,12 @@ internal object FileVisualRules {
             kind == EntryKind.VIDEO -> FileIconFamily.VIDEO
             kind == EntryKind.AUDIO -> FileIconFamily.AUDIO
             kind == EntryKind.DOCUMENT && ext == "pdf" -> FileIconFamily.PDF
-            ext in setOf("xml", "json", "yaml", "yml", "html", "htm", "lua", "kt", "kts", "java", "c", "h", "cpp", "hpp", "cs", "js", "ts", "py", "sh", "sql") -> FileIconFamily.CODE
+            ext in setOf(
+                "xml", "json", "yaml", "yml", "html", "htm", "css", "scss", "sass", "less",
+                "lua", "kt", "kts", "java", "c", "h", "cpp", "hpp", "cs", "js", "jsx", "ts", "tsx",
+                "py", "sh", "sql", "php", "rb", "go", "rs", "swift", "dart", "vue", "svelte", "smali",
+                "gradle", "properties", "toml", "ini", "conf", "cfg", "proto", "graphql", "gql", "env", "gitignore",
+            ) -> FileIconFamily.CODE
             ext in setOf("smil", "smi") -> FileIconFamily.PRESENTATION
             kind == EntryKind.DOCUMENT -> FileIconFamily.DOCUMENT
             kind == EntryKind.ARCHIVE -> FileIconFamily.ARCHIVE
@@ -308,6 +313,42 @@ fun PrivilegedFileVisual(
         accessLocked = FileVisualRules.showAccessLock(entry.isReadable),
         modifier = modifier,
     )
+}
+
+@Composable
+fun ProviderAppVisual(
+    packageName: String?,
+    fallbackIcon: ImageVector,
+    targetSize: Dp,
+    modifier: Modifier = Modifier,
+) {
+    if (packageName.isNullOrBlank()) {
+        Icon(fallbackIcon, contentDescription = null, modifier = modifier)
+        return
+    }
+    val context = LocalContext.current.applicationContext
+    val density = LocalDensity.current
+    val sizePx = FileVisualRules.boundedDimension(with(density) { targetSize.roundToPx() })
+    val key = FileVisualRules.installedAppCacheKey(packageName, sizePx, sizePx)
+    val cached = FileVisualLoader.peek(key)
+    val visual = if (cached != null || FileVisualLoader.isKnownMissing(key)) {
+        cached
+    } else {
+        val loaded by produceState<LoadedFileVisual?>(initialValue = null, key1 = key, key2 = context) {
+            value = FileVisualLoader.loadInstalledApp(context, packageName, sizePx, sizePx, key)
+        }
+        loaded
+    }
+    if (visual == null) {
+        Icon(fallbackIcon, contentDescription = null, modifier = modifier)
+    } else {
+        Image(
+            bitmap = visual.bitmap.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = modifier,
+        )
+    }
 }
 
 @Composable

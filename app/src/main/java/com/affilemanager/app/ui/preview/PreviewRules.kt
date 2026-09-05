@@ -67,3 +67,12 @@ internal object MediaPlaybackRules {
         else String.format(Locale.ROOT, "%d:%02d", minutes, seconds)
     }
 }
+
+internal object MediaNavigationRules {
+    fun <T> next(items: List<T>, currentKey: String, delta: Int, key: (T) -> String): T? {
+        if (items.size < 2 || delta == 0) return null
+        val currentIndex = items.indexOfFirst { key(it) == currentKey }
+        if (currentIndex < 0) return null
+        return items[Math.floorMod(currentIndex + delta, items.size)]
+    }
+}

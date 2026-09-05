@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
     <string name="lan_transfer_starting_text">Mae gweinydd cychwyn...</string>
     <string name="lan_transfer_running_title">Mae\'r trosglwyddo AF File Manager LAN yn rhedeg</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Trosi ffôn yn agos</string>
+    <string name="nearby_transfer_notification_title">AF File Manager trosglwyddo ffôn</string>
+    <string name="nearby_transfer_starting_text">Paratoi trosglwyddo...</string>
     <string name="terminal_channel_name">Terfynol gweithredol</string>
     <string name="terminal_channel_description">Mae\'n cadw ffôn agored neu terminale gweinydd yn rhedeg yn y cefndir</string>
     <string name="terminal_notification_title">Y terminale AF File Manager</string>

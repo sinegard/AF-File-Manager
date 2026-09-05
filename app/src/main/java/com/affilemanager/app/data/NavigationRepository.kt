@@ -51,6 +51,11 @@ data class DirectoryDisplayDefaults(
     val sortDirection: SortDirection,
 )
 
+data class DirectorySortSettings(
+    val mode: SortMode = SortMode.NAME,
+    val direction: SortDirection = SortDirection.ASCENDING,
+)
+
 class NavigationRepository(context: Context) {
     companion object {
         private const val PREFS = "navigation_v1"
@@ -218,13 +223,26 @@ class NavigationRepository(context: Context) {
     /** Returns only a setting explicitly saved for this identity, without applying global defaults. */
     fun directoryDisplaySettingsOverride(directoryIdentity: String): DirectoryDisplaySettings? {
         val identity = validateDirectoryIdentity(directoryIdentity)
-        val storageKey = directoryDisplayStorageKey(identity)
-        val raw = preferences.getString(storageKey, null)
-            ?: return null
-        require(raw.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Katalogo rodinio nustatymas per didelis" }
-        val item = JSONObject(raw)
-        require(item.getString("identity") == identity) { "Katalogo rodinio tapatybė nesutampa" }
+        val item = readDirectorySettingsItem(identity) ?: return null
+        if (!item.has("layout")) return null
         return decodeDirectoryDisplaySettings(item)
+    }
+
+    fun directorySortSettings(directoryIdentity: String): DirectorySortSettings {
+        directorySortSettingsOverride(directoryIdentity)?.let { return it }
+        val defaults = directoryDisplayDefaults()
+        return if (defaults == null) DirectorySortSettings() else DirectorySortSettings(
+            mode = defaults.sortMode,
+            direction = defaults.sortDirection,
+        )
+    }
+
+    /** Returns only a sort explicitly saved for this identity, without applying global defaults. */
+    fun directorySortSettingsOverride(directoryIdentity: String): DirectorySortSettings? {
+        val identity = validateDirectoryIdentity(directoryIdentity)
+        val item = readDirectorySettingsItem(identity) ?: return null
+        if (!item.has("sortMode") && !item.has("sortDirection")) return null
+        return decodeDirectorySortSettings(item)
     }
 
     @Synchronized
@@ -234,25 +252,25 @@ class NavigationRepository(context: Context) {
         // An inherited default is not an explicit per-location choice. Persisting it is what
         // keeps independently configured home sections independent after the app restarts.
         if (directoryDisplaySettingsOverride(identity) == valid) return
-        val digest = directoryDisplayDigest(identity)
-        val storageKey = "$KEY_DIRECTORY_DISPLAY_PREFIX$digest"
-        preferences.getString(storageKey, null)?.let { existing ->
-            require(JSONObject(existing).getString("identity") == identity) { "Katalogo rodinio rakto kolizija" }
-        }
-        val index = readStringArray(KEY_DIRECTORY_DISPLAY_INDEX, MAX_DIRECTORY_DISPLAY_SETTINGS)
-            .filterNot { it == digest }
-            .toMutableList()
-        index += digest
-        val evicted = mutableListOf<String>()
-        while (index.size > MAX_DIRECTORY_DISPLAY_SETTINGS) evicted += index.removeAt(0)
-        val item = JSONObject()
+        val item = readDirectorySettingsItem(identity) ?: JSONObject()
+        item
             .put("identity", identity)
             .putDirectoryDisplaySettings(valid)
-        val editor = preferences.edit()
-            .putString(storageKey, item.toString())
-            .putString(KEY_DIRECTORY_DISPLAY_INDEX, JSONArray().apply { index.forEach(::put) }.toString())
-        evicted.forEach { editor.remove("$KEY_DIRECTORY_DISPLAY_PREFIX$it") }
-        check(editor.commit()) { "Katalogo rodinio nustatymo įrašyti nepavyko" }
+        writeDirectorySettingsItem(identity, item)
+    }
+
+    @Synchronized
+    fun setDirectorySortSettings(directoryIdentity: String, settings: DirectorySortSettings) {
+        val identity = validateDirectoryIdentity(directoryIdentity)
+        val existing = readDirectorySettingsItem(identity)
+        if (existing != null && existing.has("sortMode") && existing.has("sortDirection") &&
+            decodeDirectorySortSettings(existing) == settings
+        ) return
+        val item = existing ?: JSONObject()
+        item.put("identity", identity)
+            .put("sortMode", settings.mode.name)
+            .put("sortDirection", settings.direction.name)
+        writeDirectorySettingsItem(identity, item)
     }
 
     fun directoryDisplayDefaults(): DirectoryDisplayDefaults? {
@@ -406,6 +424,31 @@ class NavigationRepository(context: Context) {
     private fun directoryDisplayStorageKey(identity: String): String =
         "$KEY_DIRECTORY_DISPLAY_PREFIX${directoryDisplayDigest(identity)}"
 
+    private fun readDirectorySettingsItem(identity: String): JSONObject? {
+        val raw = preferences.getString(directoryDisplayStorageKey(identity), null) ?: return null
+        require(raw.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Katalogo rodinio nustatymas per didelis" }
+        val item = JSONObject(raw)
+        require(item.getString("identity") == identity) { "Katalogo rodinio tapatybė nesutampa" }
+        return item
+    }
+
+    private fun writeDirectorySettingsItem(identity: String, item: JSONObject) {
+        val encoded = item.toString()
+        require(encoded.length <= MAX_DIRECTORY_DISPLAY_BYTES) { "Katalogo rodinio nustatymas per didelis" }
+        val digest = directoryDisplayDigest(identity)
+        val index = readStringArray(KEY_DIRECTORY_DISPLAY_INDEX, MAX_DIRECTORY_DISPLAY_SETTINGS)
+            .filterNot { it == digest }
+            .toMutableList()
+        index += digest
+        val evicted = mutableListOf<String>()
+        while (index.size > MAX_DIRECTORY_DISPLAY_SETTINGS) evicted += index.removeAt(0)
+        val editor = preferences.edit()
+            .putString("$KEY_DIRECTORY_DISPLAY_PREFIX$digest", encoded)
+            .putString(KEY_DIRECTORY_DISPLAY_INDEX, JSONArray().apply { index.forEach(::put) }.toString())
+        evicted.forEach { editor.remove("$KEY_DIRECTORY_DISPLAY_PREFIX$it") }
+        check(editor.commit()) { "Katalogo rodinio nustatymo įrašyti nepavyko" }
+    }
+
     private fun directoryDisplayDigest(identity: String): String = MessageDigest.getInstance("SHA-256")
         .digest(identity.toByteArray(Charsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
@@ -425,6 +468,14 @@ class NavigationRepository(context: Context) {
                 showThumbnails = item.optBoolean("thumbnails", false),
             ),
         )
+
+    private fun decodeDirectorySortSettings(item: JSONObject): DirectorySortSettings = DirectorySortSettings(
+        mode = runCatching { SortMode.valueOf(item.optString("sortMode", SortMode.NAME.name)) }
+            .getOrDefault(SortMode.NAME),
+        direction = runCatching {
+            SortDirection.valueOf(item.optString("sortDirection", SortDirection.ASCENDING.name))
+        }.getOrDefault(SortDirection.ASCENDING),
+    )
 
     private fun JSONObject.putDirectoryDisplaySettings(settings: DirectoryDisplaySettings): JSONObject =
         put("layout", settings.layoutMode.name)

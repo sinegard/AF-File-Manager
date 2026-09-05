@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.hardware.usb.UsbManager
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -34,6 +35,7 @@ import androidx.exifinterface.media.ExifInterface
 import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.preview.PdfSignaturePlacementSemanticsKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -42,6 +44,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -178,6 +181,93 @@ class FilePreviewLifecycleTest {
             captureRoot(File(validationRoot, "preview-pdf-continuous-page3.png"))
             compose.runOnUiThread { viewModel.closePreview() }
         } finally {
+            fixtureRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pdfSignatureUsesAPrivateCopyUntilExplicitSave() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("pdf-signature")), "current")
+        fixtureRoot.deleteRecursively()
+        require(fixtureRoot.mkdirs())
+        val pdf = File(fixtureRoot, "sign-me.pdf").also(::createPdf)
+        val originalHash = fileDigest(pdf)
+        val validationRoot = requireNotNull(application.getExternalFilesDir("validation"))
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread {
+                AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.ENGLISH)
+                viewModel.open(LocalFileRepository(application).toEntry(pdf))
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("sign-pdf-action", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("sign-pdf-action").performClick()
+            compose.waitUntil(timeoutMillis = 15_000) {
+                compose.onAllNodesWithTag("signature-pad", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("signature-pad").performTouchInput {
+                val start = Offset(visibleSize.width * 0.12f, visibleSize.height * 0.70f)
+                val middle = Offset(visibleSize.width * 0.48f, visibleSize.height * 0.25f)
+                val end = Offset(visibleSize.width * 0.88f, visibleSize.height * 0.65f)
+                down(start)
+                moveTo(middle, delayMillis = 180)
+                moveTo(end, delayMillis = 180)
+                up()
+            }
+            compose.onNodeWithTag("signature-next").assertIsEnabled().performClick()
+            compose.waitUntil(timeoutMillis = 15_000) {
+                compose.onAllNodesWithTag("signature-page-preview", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithContentDescription("Next page").performClick()
+            compose.waitUntil(timeoutMillis = 15_000) {
+                compose.onAllNodesWithContentDescription("PDF page 2", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            val initialPlacement = compose.onNodeWithTag("signature-overlay")
+                .fetchSemanticsNode().config[PdfSignaturePlacementSemanticsKey]
+            compose.onNodeWithTag("signature-overlay").performTouchInput {
+                val handle = Offset(visibleSize.width * 0.775f, visibleSize.height * 0.86f)
+                down(handle)
+                moveTo(Offset(visibleSize.width * 0.895f, visibleSize.height * 0.90f), delayMillis = 180)
+                up()
+            }
+            compose.waitForIdle()
+            val resizedPlacement = compose.onNodeWithTag("signature-overlay")
+                .fetchSemanticsNode().config[PdfSignaturePlacementSemanticsKey]
+            assertTrue(resizedPlacement.width > initialPlacement.width)
+            compose.onNodeWithTag("signature-overlay").performTouchInput {
+                val center = Offset(visibleSize.width * 0.56f, visibleSize.height * 0.81f)
+                down(center)
+                moveTo(Offset(visibleSize.width * 0.42f, visibleSize.height * 0.66f), delayMillis = 180)
+                up()
+            }
+            compose.waitForIdle()
+            val movedPlacement = compose.onNodeWithTag("signature-overlay")
+                .fetchSemanticsNode().config[PdfSignaturePlacementSemanticsKey]
+            assertEquals(1, movedPlacement.pageIndex)
+            assertTrue(movedPlacement.left < resizedPlacement.left)
+            assertTrue(movedPlacement.top < resizedPlacement.top)
+            captureTaggedNode("pdf-signature-dialog", File(validationRoot, "pdf-signature-placement.png"))
+            compose.onNodeWithTag("signature-apply").assertIsEnabled().performClick()
+            compose.waitUntil(timeoutMillis = 20_000) {
+                !viewModel.fileEditState.value.modifyingPdf &&
+                    viewModel.fileEditState.value.hasUnsavedChanges &&
+                    compose.onAllNodesWithTag("pdf-signature-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+            compose.runOnIdle { assertEquals(originalHash, fileDigest(pdf)) }
+            captureRoot(File(validationRoot, "pdf-signature-working-copy.png"))
+
+            compose.onNodeWithTag("save-edit-original").assertIsEnabled().performClick()
+            compose.waitUntil(timeoutMillis = 20_000) {
+                !viewModel.fileEditState.value.saving && fileDigest(pdf) != originalHash
+            }
+            compose.onNodeWithContentDescription("PDF page 1", useUnmergedTree = true).assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
             fixtureRoot.deleteRecursively()
         }
     }
@@ -504,10 +594,14 @@ class FilePreviewLifecycleTest {
     }
 
     private fun captureRoot(target: File) {
+        captureTaggedNode("file-preview-dialog", target)
+    }
+
+    private fun captureTaggedNode(tag: String, target: File) {
         target.parentFile?.mkdirs()
         target.outputStream().use { output ->
             assertTrue(
-                compose.onNodeWithTag("file-preview-dialog", useUnmergedTree = true)
+                compose.onNodeWithTag(tag, useUnmergedTree = true)
                     .captureToImage()
                     .asAndroidBitmap()
                     .compress(Bitmap.CompressFormat.PNG, 100, output),
@@ -581,7 +675,7 @@ class FilePreviewLifecycleTest {
                 val page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, index + 1).create())
                 page.canvas.drawColor(Color.WHITE)
                 page.canvas.drawText(
-                    "AF File Manager PDF puslapis ${index + 1}",
+                    "AF File Manager PDF page ${index + 1}",
                     48f,
                     120f,
                     Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(0, 96, 100); textSize = 32f },
@@ -607,4 +701,8 @@ class FilePreviewLifecycleTest {
             }
         }
     }
+
+    private fun fileDigest(file: File): String = MessageDigest.getInstance("SHA-256")
+        .digest(file.readBytes())
+        .joinToString("") { "%02x".format(it) }
 }

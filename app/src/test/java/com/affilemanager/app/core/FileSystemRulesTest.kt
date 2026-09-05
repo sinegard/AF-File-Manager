@@ -45,6 +45,8 @@ class FileSystemRulesTest {
         assertEquals(EntryKind.ARCHIVE, FileSystemRules.detectKind(File("archyvas.7z")))
         assertEquals(EntryKind.APK, FileSystemRules.detectKind(File("programa.apk")))
         assertEquals(EntryKind.DOCUMENT, FileSystemRules.detectKind(File("script.lua")))
+        assertEquals(EntryKind.DOCUMENT, FileSystemRules.detectKind(File("screen.tsx")))
+        assertEquals(EntryKind.DOCUMENT, FileSystemRules.detectKind(File("classes.smali")))
         assertEquals(EntryKind.DOCUMENT, FileSystemRules.detectKind(File("presentation.smil")))
     }
 

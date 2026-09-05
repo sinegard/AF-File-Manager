@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,15 +28,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.VideoFile
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.Button
@@ -76,6 +79,8 @@ import androidx.core.content.FileProvider
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategory
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.model.SortDirection
+import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.transfer.LanTransferController
 import com.affilemanager.app.transfer.LanTransferOptions
 import com.affilemanager.app.transfer.LanTransferProtocol
@@ -89,6 +94,7 @@ import com.affilemanager.app.transfer.NearbyTransferState
 import com.affilemanager.app.transfer.NearbyTransferStatus
 import com.affilemanager.app.transfer.PreparedNearbyTransfer
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.IncomingShareUiState
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.LocalFileVisual
@@ -108,11 +114,20 @@ internal fun NearbyPhoneTransferCard(
     viewModel: MainViewModel,
     receiveDirectory: String,
     lanState: LanTransferState,
+    incomingShare: IncomingShareUiState? = null,
+    onIncomingShareConsumed: (Long) -> Unit = {},
+    onChooseReceiveDirectory: () -> Unit = {},
+    receiverName: String,
+    onReceiverNameChange: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val nearbyState by NearbyTransferController.state.collectAsStateWithLifecycle()
     var showSender by remember { mutableStateOf(false) }
     var showReceiver by remember { mutableStateOf(false) }
+
+    LaunchedEffect(incomingShare?.requestId, nearbyState.status) {
+        if (incomingShare != null && !nearbyState.isActive()) showSender = true
+    }
 
     Card(modifier = Modifier.fillMaxWidth().testTag("nearby_phone_transfer")) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -143,12 +158,23 @@ internal fun NearbyPhoneTransferCard(
     }
 
     if (showSender) {
-        NearbySendDialog(viewModel = viewModel, onDismiss = { showSender = false })
+        NearbySendDialog(
+            viewModel = viewModel,
+            incomingShare = incomingShare,
+            onIncomingShareConsumed = onIncomingShareConsumed,
+            onDismiss = { showSender = false },
+        )
     }
     if (showReceiver) {
         NearbyReceiveDialog(
             receiveDirectory = receiveDirectory,
             lanState = lanState,
+            receiverName = receiverName,
+            onReceiverNameChange = onReceiverNameChange,
+            onChooseDirectory = {
+                showReceiver = false
+                onChooseReceiveDirectory()
+            },
             onDismiss = { showReceiver = false },
         )
     }
@@ -199,11 +225,13 @@ private fun NearbyProgress(state: NearbyTransferState, onCancel: () -> Unit) {
 private fun NearbyReceiveDialog(
     receiveDirectory: String,
     lanState: LanTransferState,
+    receiverName: String,
+    onReceiverNameChange: (String) -> Unit,
+    onChooseDirectory: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val pairingCopiedMessage = uiText("Susiejimo kodas nukopijuotas")
-    var receiverName by remember { mutableStateOf(Build.MODEL.take(NearbyPairing.MAX_NAME_LENGTH).ifBlank { "Android phone" }) }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val activeWebReceiver = lanState.status == LanTransferStatus.RUNNING &&
@@ -239,9 +267,15 @@ private fun NearbyReceiveDialog(
                 LText("Pirmiausia abu telefonai turi būti tame pačiame privačiame tinkle.")
                 LText("Gauti failai bus įrašyti į:", style = MaterialTheme.typography.bodySmall)
                 Text(receiveDirectory, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                OutlinedButton(onClick = onChooseDirectory, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.FolderOpen, contentDescription = null)
+                    LText("Keisti išsaugojimo vietą", modifier = Modifier.padding(start = 7.dp))
+                }
                 OutlinedTextField(
                     value = receiverName,
-                    onValueChange = { receiverName = it.filterNot(Char::isISOControl).take(NearbyPairing.MAX_NAME_LENGTH) },
+                    onValueChange = { value ->
+                        onReceiverNameChange(value.filterNot(Char::isISOControl).take(NearbyPairing.MAX_NAME_LENGTH))
+                    },
                     label = { LText("Šio telefono vardas") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -295,6 +329,25 @@ private fun NearbyReceiveDialog(
                 LText(receiverName, fontWeight = FontWeight.SemiBold)
                 Text(lanState.url.orEmpty(), style = MaterialTheme.typography.bodySmall)
                 lanState.code?.let { LText("Kodas: $it", fontWeight = FontWeight.Bold) }
+                lanState.incomingUpload?.let { progress ->
+                    LinearProgressIndicator(
+                        progress = {
+                            if (progress.totalBytes <= 0L) 0f
+                            else (progress.receivedBytes.toFloat() / progress.totalBytes.toFloat()).coerceIn(0f, 1f)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("nearby_receive_progress"),
+                    )
+                    LText(
+                        "${progress.currentFileIndex}/${progress.totalFiles} · ${FileSystemRules.humanBytes(progress.receivedBytes)} / ${FileSystemRules.humanBytes(progress.totalBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        "${progress.currentFile} · ${FileSystemRules.humanBytes(progress.currentFileBytes)} / ${FileSystemRules.humanBytes(progress.currentFileSize)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 OutlinedButton(
                     onClick = {
                         pairing?.encoded()?.let { payload ->
@@ -316,7 +369,12 @@ private fun NearbyReceiveDialog(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
+private fun NearbySendDialog(
+    viewModel: MainViewModel,
+    incomingShare: IncomingShareUiState?,
+    onIncomingShareConsumed: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(NearbySendStep.PICK) }
@@ -325,10 +383,26 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
     var selectedPaths by remember { mutableStateOf<Set<String>>(emptySet()) }
     var loading by remember { mutableStateOf(false) }
     var refreshToken by remember { mutableStateOf(0) }
+    var query by remember { mutableStateOf("") }
+    var sortMode by remember { mutableStateOf(SortMode.NAME) }
+    var sortDirection by remember { mutableStateOf(SortDirection.ASCENDING) }
+    var openStorage by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var pairingPayload by remember { mutableStateOf("") }
     var prepared by remember { mutableStateOf<PreparedNearbyTransfer?>(null) }
     var qrCaptureFile by remember { mutableStateOf<File?>(null) }
+
+    LaunchedEffect(incomingShare?.requestId) {
+        val request = incomingShare ?: return@LaunchedEffect
+        onIncomingShareConsumed(request.requestId)
+        loading = true
+        error = null
+        viewModel.prepareNearbyTransferDocuments(request.uris).fold(
+            onSuccess = { result -> prepared = result; step = NearbySendStep.PAIR },
+            onFailure = { failure -> error = failure.message ?: "Failų paruošti nepavyko" },
+        )
+        loading = false
+    }
 
     fun discardAndDismiss() {
         qrCaptureFile?.delete()
@@ -368,13 +442,13 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
         }
     }
 
-    LaunchedEffect(category, refreshToken) {
+    LaunchedEffect(category, refreshToken, sortMode, sortDirection) {
         val selectedCategory = category ?: return@LaunchedEffect
         loading = true
         error = null
         entries = emptyList()
         selectedPaths = emptySet()
-        viewModel.loadNearbyTransferCategory(selectedCategory).fold(
+        viewModel.loadNearbyTransferCategory(selectedCategory, sortMode, sortDirection).fold(
             onSuccess = { entries = it },
             onFailure = { failure -> error = failure.message ?: "Failų sąrašo įkelti nepavyko" },
         )
@@ -384,8 +458,11 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
     val parsedPairing = remember(pairingPayload) {
         pairingPayload.takeIf(String::isNotBlank)?.let { runCatching { NearbyPairing.parse(it) } }
     }
-    val selectablePaths = remember(entries) {
-        entries.asSequence().map(FileEntry::absolutePath).distinct()
+    val visibleEntries = remember(entries, query) {
+        if (query.isBlank()) entries else entries.filter { it.name.contains(query.trim(), ignoreCase = true) }
+    }
+    val selectablePaths = remember(visibleEntries) {
+        visibleEntries.asSequence().map(FileEntry::absolutePath).distinct()
             .take(NearbySourcePreparer.MAX_FILES).toCollection(linkedSetOf())
     }
     val allSelectableSelected = selectablePaths.isNotEmpty() && selectablePaths.all(selectedPaths::contains)
@@ -475,9 +552,47 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     NearbyCategoryChip("Muzika", Icons.Rounded.AudioFile, selected = category == FileCategory.AUDIO) { category = FileCategory.AUDIO }
+                    NearbyCategoryChip("Dokumentai", Icons.Rounded.Description, selected = category == FileCategory.DOCUMENTS) { category = FileCategory.DOCUMENTS }
+                    NearbyCategoryChip("Archyvai", Icons.Rounded.Archive, selected = category == FileCategory.ARCHIVES) { category = FileCategory.ARCHIVES }
+                    NearbyCategoryChip("APK", Icons.Rounded.Android, selected = category == FileCategory.APPS) { category = FileCategory.APPS }
                     NearbyCategoryChip("Programos", Icons.Rounded.Apps, selected = category == FileCategory.INSTALLED_APPS) { category = FileCategory.INSTALLED_APPS }
                 }
-                LText("Galima pasirinkti iki ${NearbySourcePreparer.MAX_FILES} failų. Ilgiau palaikykite medijos failą, kad jį peržiūrėtumėte.", modifier = Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { openStorage = true }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Icon(Icons.Rounded.FolderOpen, contentDescription = null)
+                    LText("Atidaryti saugyklą", modifier = Modifier.padding(start = 7.dp))
+                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it.take(200) },
+                    label = { LText("Ieškoti šiame sąraše") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    listOf(
+                        SortMode.NAME to "Pavadinimas",
+                        SortMode.MODIFIED to "Data",
+                        SortMode.SIZE to "Dydis",
+                        SortMode.TYPE to "Tipas",
+                    ).forEach { (mode, label) ->
+                        FilterChip(selected = sortMode == mode, onClick = { sortMode = mode }, label = { LText(label) })
+                    }
+                    IconButton(onClick = {
+                        sortDirection = if (sortDirection == SortDirection.ASCENDING) SortDirection.DESCENDING else SortDirection.ASCENDING
+                    }) {
+                        Icon(Icons.Rounded.SwapVert, contentDescription = uiText("Keisti rūšiavimo kryptį"))
+                    }
+                }
+                LText(
+                    "Sąrašas įkeliamas puslapiais (iki ${com.affilemanager.app.data.FileCategoryRepository.MAX_RESULTS} elementų); vienu siuntimu galima pasirinkti iki ${NearbySourcePreparer.MAX_FILES} failų ar aplankų. Ilgiau palaikykite medijos failą, kad jį peržiūrėtumėte.",
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 if (category != null && selectablePaths.isNotEmpty()) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
@@ -487,7 +602,7 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
                             },
                         )
                         LText(
-                            if (entries.size > NearbySourcePreparer.MAX_FILES) "Pasirinkti pirmus 100"
+                            if (visibleEntries.size > NearbySourcePreparer.MAX_FILES) "Pasirinkti pirmus ${NearbySourcePreparer.MAX_FILES}"
                             else if (allSelectableSelected) "Atžymėti visus" else "Pasirinkti visus",
                             modifier = Modifier.weight(1f),
                             fontWeight = FontWeight.SemiBold,
@@ -513,9 +628,9 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
                             Button(onClick = { documentsLauncher.launch(arrayOf("*/*")) }) { LText("Rinktis failus") }
                         }
                         loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                        entries.isEmpty() -> LText("Šioje kategorijoje failų nerasta", modifier = Modifier.align(Alignment.Center))
+                        visibleEntries.isEmpty() -> LText("Šioje kategorijoje atitinkančių failų nerasta", modifier = Modifier.align(Alignment.Center))
                         else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(entries, key = FileEntry::absolutePath) { entry ->
+                            items(visibleEntries, key = FileEntry::absolutePath) { entry ->
                                 val selected = entry.absolutePath in selectedPaths
                                 Row(
                                     modifier = Modifier.fillMaxWidth().combinedClickable(
@@ -580,6 +695,31 @@ private fun NearbySendDialog(viewModel: MainViewModel, onDismiss: () -> Unit) {
                 error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
             }
         }
+    }
+
+    if (openStorage) {
+        LocalUploadDialog(
+            initialDirectoryPath = viewModel.activePanelState().path,
+            remotePath = "",
+            initialEntries = emptyList(),
+            initiallySelected = emptySet(),
+            loadDirectory = viewModel::listLocalDirectoryForUpload,
+            onDismiss = { openStorage = false },
+            onCopy = { paths ->
+                openStorage = false
+                scope.launch {
+                    loading = true
+                    error = null
+                    viewModel.prepareNearbyTransferPaths(paths).fold(
+                        onSuccess = { result -> prepared = result; step = NearbySendStep.PAIR },
+                        onFailure = { failure -> error = failure.message ?: "Failų paruošti nepavyko" },
+                    )
+                    loading = false
+                }
+            },
+            title = "Pasirinkti siunčiamus failus ir aplankus",
+            confirmLabel = "Paruošti",
+        )
     }
 }
 

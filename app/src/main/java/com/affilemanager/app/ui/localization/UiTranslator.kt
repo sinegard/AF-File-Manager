@@ -3,6 +3,95 @@ package com.affilemanager.app.ui.localization
 /** English is the canonical public UI; Lithuanian source copy is retained as the second locale. */
 object UiTranslator {
     private val english = mapOf(
+        "Pasirinkta dokumentų vieta nepasiekiama" to "The selected document location is unavailable",
+        "Pasirinkta vieta nėra aplankas" to "The selected location is not a folder",
+        "Aplankas paruoštas" to "Folder ready",
+        "Pasirinkite bent vieną failą ar aplanką" to "Select at least one file or folder",
+        "Siunčiamo aplanko gylio riba viršyta" to "The transfer folder depth limit was exceeded",
+        "Simbolinės nuorodos telefonu nesiunčiamos" to "Symbolic links are not sent between phones",
+        "Siunčiamame rinkinyje per daug aplankų" to "The transfer set contains too many folders",
+        "Aplanko elementas išeina už pasirinkto aplanko" to "A folder item is outside the selected folder",
+        "Pasirinktame rinkinyje nėra siunčiamų failų" to "The selected set contains no files to send",
+        "Netinkamas siunčiamų elementų skaičius" to "Invalid number of transfer items",
+        "Siuntimo rinkinio kelių aprašas per didelis" to "The transfer path manifest is too large",
+        "Kategorijos rūšiavimo nustatymo perskaityti nepavyko" to "Could not read category sort settings",
+        "Kategorijos rūšiavimo nustatymo išsaugoti nepavyko" to "Could not save category sort settings",
+        "Dokumentų vietos rūšiavimo nustatymo perskaityti nepavyko" to "Could not read document-location sort settings",
+        "Dokumentų vietos rūšiavimo nustatymo išsaugoti nepavyko" to "Could not save document-location sort settings",
+        "Pirmiausia išsaugokite arba atmeskite redagavimo pakeitimus" to "Save or discard the editing changes first",
+        "Vykdoma analizė" to "Analysis in progress",
+        "Sustabdyti analizę" to "Stop analysis",
+        "Nuskaitomi failai" to "Scanning files",
+        "Tikrinami galimi dublikatai" to "Checking possible duplicates",
+        "Keisti išsaugojimo vietą" to "Change save location",
+        "Atidaryti saugyklą" to "Open storage",
+        "Ieškoti šiame sąraše" to "Search this list",
+        "Keisti rūšiavimo kryptį" to "Change sort direction",
+        "Šioje kategorijoje atitinkančių failų nerasta" to "No matching files were found in this category",
+        "Pasirinkti siunčiamus failus ir aplankus" to "Select files and folders to send",
+        "Paruošti" to "Prepare",
+        "Ankstesnis failas" to "Previous file",
+        "Kitas failas" to "Next file",
+        "Kartoti" to "Repeat",
+        "Groti fone" to "Play in background",
+        "Garsumas" to "Volume",
+        "Foninis medijos atkūrimas" to "Background media playback",
+        "Naudotojo paleista medija atkuriama fone" to "Media explicitly started by the user plays in the background",
+        "Ruošiamas foninis atkūrimas" to "Preparing background playback",
+        "Atkuriama fone" to "Playing in background",
+        "Foninio atkūrimo paleisti nepavyko" to "Could not start background playback",
+        "Pasirinktame rinkinyje nėra siunčiamų failų ar aplankų" to "The selection contains no files or folders to send",
+        "Katalogo rūšiavimo nustatymo išsaugoti nepavyko" to "Could not save the folder sort setting",
+        "Katalogo rūšiavimo nustatymo perskaityti nepavyko" to "Could not read the folder sort setting",
+        "Šiam formatui naudojamas numatytasis suspaudimas" to "This format uses its default compression",
+        "Dydis dalinis, nes pasiekta saugaus skenavimo riba" to "The size is partial because the safe scan limit was reached",
+        "Galutinis archyvo dydis priklauso nuo duomenų ir bus žinomas baigus kurti." to
+            "The final archive size depends on the data and is known after creation finishes.",
+        "Pasirašyti PDF" to "Sign PDF",
+        "1 iš 2 · Nupieškite parašą" to "1 of 2 · Draw your signature",
+        "2 iš 2 · Padėkite parašą" to "2 of 2 · Place your signature",
+        "Tai matomas ranka pieštas žymuo, o ne kvalifikuotas kriptografinis elektroninis parašas." to
+            "This is a visible handwritten mark, not a qualified cryptographic electronic signature.",
+        "Pieškite pirštu arba rašikliu baltoje srityje." to "Draw with your finger or stylus in the white area.",
+        "Išvalyti" to "Clear",
+        "Toliau" to "Next",
+        "Ankstesnis puslapis" to "Previous page",
+        "Puslapis" to "Page",
+        "Kitas puslapis" to "Next page",
+        "Vilkite parašą į norimą vietą." to "Drag the signature to the desired position.",
+        "Vilkite rėmelį į norimą vietą. Tempkite jo apatinį dešinį kampą dydžiui keisti." to
+            "Drag the box into position. Drag its bottom-right corner to resize it.",
+        "Įrašomas parašas…" to "Adding signature…",
+        "Pridėti parašą" to "Add signature",
+        "Nepavyko paruošti privačios PDF darbo vietos" to "Could not prepare the private PDF workspace",
+        "PDF darbo failai negali sutapti" to "PDF working files cannot be the same",
+        "PDF failas nepasiekiamas" to "The PDF file is unavailable",
+        "PDF failas per didelis redaguoti" to "The PDF file is too large to edit",
+        "Slaptažodžiu apsaugotų PDF pasirašymas dar nepalaikomas" to "Signing password-protected PDFs is not supported yet",
+        "PDF perskaityti nepavyko" to "Could not read the PDF",
+        "PDF jau turi kriptografinį parašą; jo keitimas galėtų panaikinti parašo galiojimą" to
+            "The PDF already has a cryptographic signature; changing it could invalidate that signature",
+        "Pasirašyto PDF sukurti nepavyko" to "Could not create the signed PDF",
+        "Pasirašytas PDF viršijo saugaus redagavimo ribą" to "The signed PDF exceeded the safe editing limit",
+        "Pasirašyto PDF patikra nepavyko" to "Signed PDF verification failed",
+        "Pasirašyto PDF puslapių patikra nepavyko" to "Signed PDF page verification failed",
+        "Nepakanka vietos saugiai PDF darbo kopijai" to "Not enough space for a safe PDF working copy",
+        "Parašas tuščias" to "The signature is empty",
+        "Paraše per daug brūkšnių" to "The signature contains too many strokes",
+        "Paraše per daug taškų" to "The signature contains too many points",
+        "Paraše yra tuščias brūkšnys" to "The signature contains an empty stroke",
+        "Parašo taškas netinkamas" to "The signature point is invalid",
+        "Parašo taškas yra už piešimo srities" to "The signature point is outside the drawing area",
+        "Parašo vieta netinkama" to "The signature position is invalid",
+        "Parašo dydis netinkamas" to "The signature size is invalid",
+        "Parašas netelpa PDF puslapyje" to "The signature does not fit on the PDF page",
+        "PDF puslapio geometrija netinkama" to "The PDF page geometry is invalid",
+        "PDF puslapio pasukimas nepalaikomas" to "The PDF page rotation is unsupported",
+        "Pasirašyti galima tik PDF failą" to "Only PDF files can be signed",
+        "Parašas įrašomas į privačią darbinę kopiją…" to "The signature is being added to the private working copy…",
+        "Matomas parašas pridėtas. Pasirinkite Išsaugoti arba Išsaugoti kaip." to
+            "The visible signature was added. Choose Save or Save as.",
+        "Parašo pridėti nepavyko" to "Could not add the signature",
         "Failai" to "Files",
         "Pasirinktuose archyvo įrašuose nėra failų" to "The selected archive entries contain no files",
         "Pasirinktuose archyvo įrašuose nėra failų ar aplankų" to "The selected archive entries contain no files or folders",
@@ -1340,6 +1429,24 @@ object UiTranslator {
         }
 
         val patterns = listOf(
+            Regex("^Failai: (\\d+) · aplankai: (\\d+) · (.+)$") to { match: MatchResult ->
+                "Files: ${match.groupValues[1]} · folders: ${match.groupValues[2]} · ${match.groupValues[3]}"
+            },
+            Regex("^Galimi dublikatai: (\\d+) failų · (.+)$") to { match: MatchResult ->
+                "Possible duplicates: ${match.groupValues[1]} files · ${match.groupValues[2]}"
+            },
+            Regex("^Patikrintos kontrolinės sumos: (\\d+)$") to { match: MatchResult ->
+                "Checksums verified: ${match.groupValues[1]}"
+            },
+            Regex("^Sąrašas įkeliamas puslapiais \\(iki (\\d+) elementų\\); vienu siuntimu galima pasirinkti iki (\\d+) failų ar aplankų\\. Ilgiau palaikykite medijos failą, kad jį peržiūrėtumėte\\.$") to { match: MatchResult ->
+                "The list is loaded in pages (up to ${match.groupValues[1]} items); one transfer can include up to ${match.groupValues[2]} files or folders. Touch and hold a media file to preview it."
+            },
+            Regex("^Suspaudimo lygis: (\\d+) iš 9$") to { match: MatchResult ->
+                "Compression level: ${match.groupValues[1]} of 9"
+            },
+            Regex("^Šaltinio dydis: (.+) · failų: (\\d+)$") to { match: MatchResult ->
+                "Source size: ${match.groupValues[1]} · files: ${match.groupValues[2]}"
+            },
             Regex("^Patikrinta (\\d+) failų\\. Rastos grupės rodomos, tačiau likusioje saugyklos dalyje gali būti daugiau dublikatų\\.$") to { match: MatchResult ->
                 "Checked ${match.groupValues[1]} files. Found groups are shown, but more duplicates may exist in the rest of storage."
             },
@@ -1615,6 +1722,7 @@ object UiTranslator {
             Regex("^Ištrinti (.+) visam laikui$") to { match: MatchResult -> "Delete ${match.groupValues[1]} permanently" },
             Regex("^Failo veiksmai: (.+)$") to { match: MatchResult -> "File actions: ${match.groupValues[1]}" },
             Regex("^PDF puslapis (\\d+)$") to { match: MatchResult -> "PDF page ${match.groupValues[1]}" },
+            Regex("^iš (\\d+)$") to { match: MatchResult -> "of ${match.groupValues[1]}" },
             Regex("^Dabartinės: (.+)$") to { match: MatchResult -> "Current: ${match.groupValues[1]}" },
             Regex("^Perskaityta (\\d+) elementų · (\\d+) vieta\\(-os\\)$") to { match: MatchResult -> "Scanned ${match.groupValues[1]} items · ${match.groupValues[2]} location(s)" },
             Regex("^Rasta (\\d+) · metaduomenys (\\d+)/(\\d+)$") to { match: MatchResult -> "Found ${match.groupValues[1]} · metadata ${match.groupValues[2]}/${match.groupValues[3]}" },

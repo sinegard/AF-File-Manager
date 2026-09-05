@@ -3,17 +3,21 @@ package com.affilemanager.app.transfer
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategoryRepository
 import com.affilemanager.app.model.FileEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
 data class PreparedNearbyTransfer(
     val paths: List<String>,
+    val relativePaths: List<String> = paths.map { File(it).name },
+    val directories: List<String> = emptyList(),
     val cleanupRootPath: String? = null,
 )
 
@@ -22,8 +26,11 @@ class NearbySourcePreparer(
     private val fileCategories: FileCategoryRepository,
 ) {
     companion object {
-        const val MAX_FILES = 100
+        const val MAX_FILES = 1_000
+        const val MAX_DIRECTORIES = 2_000
         const val MAX_TOTAL_BYTES = 5L * 1_024L * 1_024L * 1_024L
+        const val MAX_PATH_PAYLOAD_CHARS = 250_000
+        private const val MAX_DEPTH = 64
         private const val BUFFER_SIZE = 256 * 1_024
     }
 
@@ -36,7 +43,7 @@ class NearbySourcePreparer(
                 require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą" }
                 require(selected.size <= MAX_FILES) { "Vienu kartu galima siųsti iki $MAX_FILES failų" }
                 if (!installedApps) {
-                    return@runCatching validatedFiles(selected.map { File(it.absolutePath) }, cleanupRoot = null)
+                    return@runCatching prepareLocalNodes(selected.map { File(it.absolutePath) })
                 }
 
                 val stage = newStage()
@@ -48,7 +55,7 @@ class NearbySourcePreparer(
                         }
                         fileCategories.stageInstalledApp(entry, directory)
                     }
-                    validatedFiles(files, stage)
+                    validatedFiles(files, files.map(File::getName), emptyList(), stage)
                 } catch (error: Throwable) {
                     stage.deleteRecursively()
                     throw error
@@ -85,7 +92,7 @@ class NearbySourcePreparer(
                     } ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
                     target
                 }
-                validatedFiles(files, stage)
+                validatedFiles(files, files.map(File::getName), emptyList(), stage)
             } catch (error: Throwable) {
                 stage.deleteRecursively()
                 throw error
@@ -97,8 +104,69 @@ class NearbySourcePreparer(
         prepared.cleanupRootPath?.let(::safeDeleteStage)
     }
 
-    private fun validatedFiles(files: List<File>, cleanupRoot: File?): PreparedNearbyTransfer {
-        require(files.isNotEmpty() && files.size <= MAX_FILES) { "Netinkamas siunčiamų failų skaičius" }
+    suspend fun prepareLocalPaths(paths: Collection<String>): Result<PreparedNearbyTransfer> = withContext(Dispatchers.IO) {
+        runCatching {
+            val selected = paths.asSequence()
+                // Keep the selected filesystem node unresolved until the symbolic-link check.
+                // Canonicalizing first would silently turn a selected link into its target.
+                .map { File(it).toPath().toAbsolutePath().normalize().toFile() }
+                .filter(File::exists)
+                .distinctBy(File::getAbsolutePath)
+                .sortedBy { it.absolutePath.length }
+                .toList()
+            require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą ar aplanką" }
+            require(selected.size <= MAX_FILES) { "Vienu kartu galima pasirinkti iki $MAX_FILES pradinių elementų" }
+            val compact = selected.filter { candidate ->
+                selected.none { parent -> parent != candidate && parent.isDirectory && FileSystemRules.isContained(parent, candidate) }
+            }
+            prepareLocalNodes(compact)
+        }
+    }
+
+    private suspend fun prepareLocalNodes(roots: List<File>): PreparedNearbyTransfer {
+        val files = ArrayList<File>()
+        val relativePaths = ArrayList<String>()
+        val directories = LinkedHashSet<String>()
+        val pending = ArrayDeque<Triple<File, String, Int>>()
+        roots.asReversed().forEach { root -> pending.add(Triple(root, root.name, 0)) }
+        while (pending.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            val (node, relative, depth) = pending.removeLast()
+            require(depth <= MAX_DEPTH) { "Siunčiamo aplanko gylio riba viršyta" }
+            require(!Files.isSymbolicLink(node.toPath())) { "Simbolinės nuorodos telefonu nesiunčiamos" }
+            if (node.isDirectory) {
+                require(node.canRead()) { "Aplankas nepasiekiamas: ${node.name}" }
+                directories += normalizeRelative(relative)
+                require(directories.size <= MAX_DIRECTORIES) { "Siunčiamame rinkinyje per daug aplankų" }
+                val children = node.listFiles()?.sortedBy(File::getName)
+                    ?: throw SecurityException("Aplankas neperskaitomas: ${node.name}")
+                children.asReversed().forEach { child ->
+                    require(FileSystemRules.isContained(node, child)) { "Aplanko elementas išeina už pasirinkto aplanko" }
+                    pending.add(Triple(child, "$relative/${child.name}", depth + 1))
+                }
+            } else {
+                require(node.isFile) { "Nepalaikomas elementas: ${node.name}" }
+                files += node
+                relativePaths += normalizeRelative(relative)
+                require(files.size <= MAX_FILES) { "Siunčiamame rinkinyje daugiau nei $MAX_FILES failų" }
+            }
+        }
+        require(files.isNotEmpty() || directories.isNotEmpty()) {
+            "Pasirinktame rinkinyje nėra siunčiamų failų ar aplankų"
+        }
+        return validatedFiles(files, relativePaths, directories.toList(), cleanupRoot = null)
+    }
+
+    private fun validatedFiles(
+        files: List<File>,
+        relativePaths: List<String>,
+        directories: List<String>,
+        cleanupRoot: File?,
+    ): PreparedNearbyTransfer {
+        require(files.size == relativePaths.size) { "Siuntimo rinkinio keliai nesutampa" }
+        require(files.size <= MAX_FILES && (files.isNotEmpty() || directories.isNotEmpty())) {
+            "Netinkamas siunčiamų elementų skaičius"
+        }
         var total = 0L
         val canonical = files.map { file ->
             val source = file.canonicalFile
@@ -108,7 +176,23 @@ class NearbySourcePreparer(
             require(total <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
             source.absolutePath
         }
-        return PreparedNearbyTransfer(canonical, cleanupRoot?.canonicalPath)
+        val normalizedRelative = relativePaths.map(::normalizeRelative)
+        val normalizedDirectories = directories.map(::normalizeRelative).distinct()
+        val payloadChars = canonical.sumOf(String::length) + normalizedRelative.sumOf(String::length) +
+            normalizedDirectories.sumOf(String::length)
+        require(payloadChars <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+        return PreparedNearbyTransfer(
+            paths = canonical,
+            relativePaths = normalizedRelative,
+            directories = normalizedDirectories,
+            cleanupRootPath = cleanupRoot?.canonicalPath,
+        )
+    }
+
+    private fun normalizeRelative(value: String): String {
+        val parts = value.replace('\\', '/').split('/').filter(String::isNotBlank)
+        require(parts.isNotEmpty() && parts.size <= MAX_DEPTH + 1) { "Netinkamas santykinis siuntimo kelias" }
+        return parts.joinToString("/") { FileSystemRules.validateFileName(it).getOrThrow() }
     }
 
     private fun newStage(): File = File(stagingRoot, UUID.randomUUID().toString()).apply {

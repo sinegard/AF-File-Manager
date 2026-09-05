@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,7 +35,6 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -73,6 +74,7 @@ import com.affilemanager.app.operations.TransferFailurePolicy
 import com.affilemanager.app.operations.TransferVerification
 import com.affilemanager.app.ui.AfWorkflowTab
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.workflow.AfAutomationRule
@@ -575,11 +577,35 @@ private fun AutomationDialog(
     var unmetered by remember { mutableStateOf(true) }
     var charging by remember { mutableStateOf(false) }
     val preview = ui.automationPreview?.takeIf { it.plan.id == plan.id }
-    AlertDialog(
+    AfModalDialog(
+        title = "Automatizuoti AF planą",
+        icon = Icons.Rounded.Schedule,
         onDismissRequest = onDismiss,
-        title = { LText("Automatizuoti AF planą") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        expandedContent = true,
+        modifier = Modifier.testTag("automation_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            if (preview == null) {
+                Button(onClick = onPreview, enabled = name.isNotBlank() && !ui.working) {
+                    if (ui.working) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Rounded.Search, contentDescription = null)
+                    Spacer(Modifier.size(5.dp))
+                    LText("Peržiūrėti automatikos planą")
+                }
+            } else {
+                Button(
+                    onClick = { onSave(name, schedule, unmetered, charging) },
+                    enabled = name.isNotBlank() && preview.canRun && !ui.working,
+                ) {
+                    LText("Patvirtinti ir įjungti")
+                }
+            }
+        },
+    ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(value = name, onValueChange = { name = it.take(120) }, label = { LText("Taisyklės pavadinimas") }, singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(AfAutomationSchedule.EVERY_6_HOURS, AfAutomationSchedule.DAILY, AfAutomationSchedule.WEEKLY).forEach { option ->
@@ -612,26 +638,7 @@ private fun AutomationDialog(
                 }
                 ui.error?.let { ErrorText(it) }
             }
-        },
-        confirmButton = {
-            if (preview == null) {
-                Button(onClick = onPreview, enabled = name.isNotBlank() && !ui.working) {
-                    if (ui.working) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Rounded.Search, contentDescription = null)
-                    Spacer(Modifier.size(5.dp))
-                    LText("Peržiūrėti automatikos planą")
-                }
-            } else {
-                Button(
-                    onClick = { onSave(name, schedule, unmetered, charging) },
-                    enabled = name.isNotBlank() && preview.canRun && !ui.working,
-                ) {
-                    LText("Patvirtinti ir įjungti")
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+    }
 }
 
 @Composable

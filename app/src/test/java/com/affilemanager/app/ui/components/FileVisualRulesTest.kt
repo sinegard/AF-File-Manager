@@ -47,6 +47,8 @@ class FileVisualRulesTest {
     fun codeVectorAndSmilFilesUseDistinctIconFamilies() {
         assertEquals(FileIconFamily.CODE, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "xml"))
         assertEquals(FileIconFamily.CODE, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "lua"))
+        assertEquals(FileIconFamily.CODE, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "tsx"))
+        assertEquals(FileIconFamily.CODE, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "smali"))
         assertEquals(FileIconFamily.VECTOR_IMAGE, FileVisualRules.iconFamily(EntryKind.IMAGE, "svg"))
         assertEquals(FileIconFamily.PRESENTATION, FileVisualRules.iconFamily(EntryKind.DOCUMENT, "smil"))
         assertEquals(FileIconFamily.ARCHIVE, FileVisualRules.iconFamily(EntryKind.ARCHIVE, "zip"))

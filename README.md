@@ -12,7 +12,7 @@ AF File Manager is built for Android phones and tablets with Kotlin and Jetpack 
 - Use tabs or dual panes, folder history, real file icons, optional thumbnails, scoped search, saved searches, tags, ratings, and per-folder display settings.
 - Copy, move, rename, batch rename, share, compress, extract, recover from trash, verify copies with SHA-256, and resolve file conflicts.
 - Add missed items with **Copy more**, then paste one combined clipboard between local storage and connected servers.
-- Preview images, PDFs, media, text, code, APKs, metadata, and archive contents.
+- Preview images, PDFs, media, text, code, APKs, metadata, and archive contents. PDFs can also receive a visible handwritten signature on a chosen page, with placement and size controls.
 - Edit text and code locally or on a server, with Save, Save As, encoding and line-ending controls, conflict detection, and temporary-file cleanup.
 - Analyze storage for large files, duplicates, similar photos, empty folders, and leftovers without deleting anything automatically.
 - Connect through SMB 2/3, SFTP, WebDAV, FTP, and FTPS, with editable profiles and Android Keystore-protected secrets.

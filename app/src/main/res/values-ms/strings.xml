@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">pemindahan AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Mulakan pelayan...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN pemindahan sedang berjalan</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Penghantaran telefon berdekatan</string>
+    <string name="nearby_transfer_notification_title">AF File Manager pemindahan telefon</string>
+    <string name="nearby_transfer_starting_text">Mempersiapkan pemindahan...</string>
     <string name="terminal_channel_name">Terminal aktif</string>
     <string name="terminal_channel_description">Menjaga telefon terbuka atau terminal pelayan berjalan di latar belakang</string>
     <string name="terminal_notification_title">Terminal AF File Manager</string>

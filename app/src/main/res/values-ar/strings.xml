@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">نقل AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">أبدأ الخادم</string>
     <string name="lan_transfer_running_title">AF File Manager LAN نقل يجري</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">نقل الهاتف القريب</string>
+    <string name="nearby_transfer_notification_title">AF File Manager نقل الهاتف</string>
+    <string name="nearby_transfer_starting_text">إعداد النقل</string>
     <string name="terminal_channel_name">المحطة النشطة</string>
     <string name="terminal_channel_description">يبقي الهاتف المفتوح أو محطة الخادم تعمل في الخلفية</string>
     <string name="terminal_notification_title">محطة AF File Manager</string>

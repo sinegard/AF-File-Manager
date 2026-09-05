@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
     <string name="lan_transfer_starting_text">启动服务器...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
+    <string name="nearby_transfer_channel_name">附近的电话转移</string>
     <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_starting_text">准备转移...</string>
     <string name="terminal_channel_name">活动终端</string>
     <string name="terminal_channel_description">保持开放的电话或服务器终端在背景中运行</string>
     <string name="terminal_notification_title">AF File Manager terminal</string>

@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
+import com.affilemanager.app.core.FileSystemRules
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okio.BufferedSink
 import java.io.File
@@ -57,9 +59,14 @@ object NearbyTransferController {
 
     fun start(context: Context, pairing: NearbyPairing, prepared: PreparedNearbyTransfer) {
         val validatedPairing = NearbyPairing.parse(pairing.encoded())
-        require(prepared.paths.isNotEmpty() && prepared.paths.size <= NearbySourcePreparer.MAX_FILES) {
+        require(
+            prepared.paths.size <= NearbySourcePreparer.MAX_FILES &&
+                prepared.directories.size <= NearbySourcePreparer.MAX_DIRECTORIES &&
+                (prepared.paths.isNotEmpty() || prepared.directories.isNotEmpty()),
+        ) {
             "Netinkamas siunčiamų failų skaičius"
         }
+        require(prepared.relativePaths.size == prepared.paths.size) { "Siuntimo rinkinio keliai nesutampa" }
         publish(
             NearbyTransferState(
                 status = NearbyTransferStatus.STARTING,
@@ -72,6 +79,8 @@ object NearbyTransferController {
             .setAction(NearbyTransferService.ACTION_START)
             .putExtra(NearbyTransferService.EXTRA_PAIRING, validatedPairing.encoded())
             .putStringArrayListExtra(NearbyTransferService.EXTRA_PATHS, ArrayList(prepared.paths))
+            .putStringArrayListExtra(NearbyTransferService.EXTRA_RELATIVE_PATHS, ArrayList(prepared.relativePaths))
+            .putStringArrayListExtra(NearbyTransferService.EXTRA_DIRECTORIES, ArrayList(prepared.directories))
             .putExtra(NearbyTransferService.EXTRA_CLEANUP_ROOT, prepared.cleanupRootPath)
         ContextCompat.startForegroundService(context, intent)
     }
@@ -97,6 +106,8 @@ class NearbyTransferService : Service() {
         const val ACTION_CANCEL = "com.affilemanager.app.action.CANCEL_NEARBY_TRANSFER"
         const val EXTRA_PAIRING = "pairing"
         const val EXTRA_PATHS = "paths"
+        const val EXTRA_RELATIVE_PATHS = "relative_paths"
+        const val EXTRA_DIRECTORIES = "directories"
         const val EXTRA_CLEANUP_ROOT = "cleanup_root"
         private const val CHANNEL_ID = "nearby_transfer"
         private const val NOTIFICATION_ID = 42
@@ -133,12 +144,16 @@ class NearbyTransferService : Service() {
 
         val pairingPayload = intent.getStringExtra(EXTRA_PAIRING).orEmpty()
         val paths = intent.getStringArrayListExtra(EXTRA_PATHS)?.toList().orEmpty()
+        val relativePaths = intent.getStringArrayListExtra(EXTRA_RELATIVE_PATHS)?.toList().orEmpty()
+        val directories = intent.getStringArrayListExtra(EXTRA_DIRECTORIES)?.toList().orEmpty()
         val cleanupRoot = intent.getStringExtra(EXTRA_CLEANUP_ROOT)
         intent.removeExtra(EXTRA_PAIRING)
         intent.removeExtra(EXTRA_PATHS)
+        intent.removeExtra(EXTRA_RELATIVE_PATHS)
+        intent.removeExtra(EXTRA_DIRECTORIES)
         intent.removeExtra(EXTRA_CLEANUP_ROOT)
         cancelledByUser = false
-        transferJob = scope.launch { runTransfer(pairingPayload, paths, cleanupRoot) }
+        transferJob = scope.launch { runTransfer(pairingPayload, paths, relativePaths, directories, cleanupRoot) }
         return START_NOT_STICKY
     }
 
@@ -148,11 +163,21 @@ class NearbyTransferService : Service() {
         super.onDestroy()
     }
 
-    private suspend fun runTransfer(pairingPayload: String, paths: List<String>, cleanupRoot: String?) {
+    private suspend fun runTransfer(
+        pairingPayload: String,
+        paths: List<String>,
+        relativePaths: List<String>,
+        directories: List<String>,
+        cleanupRoot: String?,
+    ) {
         try {
             val pairing = NearbyPairing.parse(pairingPayload)
-            val files = validateFiles(paths)
-            val totalBytes = files.sumOf(File::length)
+            val validatedDirectories = directories.map(::validateRelativePath).distinct()
+            require(validatedDirectories.size <= NearbySourcePreparer.MAX_DIRECTORIES) {
+                "Siunčiamame rinkinyje per daug aplankų"
+            }
+            val files = validateFiles(paths, relativePaths, allowEmpty = validatedDirectories.isNotEmpty())
+            val totalBytes = files.sumOf { it.file.length() }
             var completedBytes = 0L
             var completedFiles = 0
             publish(
@@ -165,10 +190,22 @@ class NearbyTransferService : Service() {
                 ),
             )
             val cookie = login(pairing)
-            files.forEach { file ->
+            validatedDirectories.sortedBy { it.count { char -> char == '/' } }
+                .forEach { relative -> createRemoteDirectory(pairing, cookie, relative) }
+            files.forEachIndexed { index, transferFile ->
+                val file = transferFile.file
                 if (cancelledByUser) throw CancellationException("Siuntimas atšauktas")
                 var lastPublished = 0L
-                upload(pairing, cookie, file) { fileBytes ->
+                upload(
+                    pairing = pairing,
+                    cookie = cookie,
+                    file = file,
+                    relativePath = transferFile.relativePath,
+                    fileIndex = index + 1,
+                    fileCount = files.size,
+                    totalBytes = totalBytes,
+                    completedBytes = completedBytes,
+                ) { fileBytes ->
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastPublished >= PROGRESS_INTERVAL_MILLIS || fileBytes == file.length()) {
                         lastPublished = now
@@ -242,11 +279,27 @@ class NearbyTransferService : Service() {
         }
     }
 
-    private fun upload(pairing: NearbyPairing, cookie: String, file: File, onProgress: (Long) -> Unit) {
+    private fun upload(
+        pairing: NearbyPairing,
+        cookie: String,
+        file: File,
+        relativePath: String,
+        fileIndex: Int,
+        fileCount: Int,
+        totalBytes: Long,
+        completedBytes: Long,
+        onProgress: (Long) -> Unit,
+    ) {
+        val directory = relativePath.substringBeforeLast('/', "")
+        val name = relativePath.substringAfterLast('/')
         val url = "http://${pairing.host}:${pairing.port}/".toHttpUrl().newBuilder()
             .addPathSegment("upload")
-            .addQueryParameter("dir", "")
-            .addQueryParameter("name", file.name)
+            .addQueryParameter("dir", directory)
+            .addQueryParameter("name", name)
+            .addQueryParameter("fileIndex", fileIndex.toString())
+            .addQueryParameter("fileCount", fileCount.toString())
+            .addQueryParameter("batchBytes", totalBytes.toString())
+            .addQueryParameter("batchOffset", completedBytes.toString())
             .build()
         val request = Request.Builder()
             .url(url)
@@ -263,18 +316,63 @@ class NearbyTransferService : Service() {
         }
     }
 
-    private fun validateFiles(paths: List<String>): List<File> {
-        require(paths.isNotEmpty() && paths.size <= NearbySourcePreparer.MAX_FILES) { "Netinkamas siunčiamų failų skaičius" }
+    private fun createRemoteDirectory(pairing: NearbyPairing, cookie: String, relativePath: String) {
+        val url = "http://${pairing.host}:${pairing.port}/".toHttpUrl().newBuilder()
+            .addPathSegment("mkdir")
+            .addQueryParameter("path", relativePath)
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .post(ByteArray(0).toRequestBody("application/octet-stream".toMediaType()))
+            .header("Cookie", cookie)
+            .header("User-Agent", "AF-File-Manager/Nearby")
+            .build()
+        val call = client.newCall(request)
+        activeCall = call
+        call.execute().use { response ->
+            require(response.isSuccessful) {
+                response.body?.string()?.take(200)?.ifBlank { null }
+                    ?: "Gavęs telefonas neatvėrė aplanko (${response.code})"
+            }
+        }
+    }
+
+    private fun validateFiles(
+        paths: List<String>,
+        relativePaths: List<String>,
+        allowEmpty: Boolean,
+    ): List<TransferFile> {
+        require(
+            paths.size <= NearbySourcePreparer.MAX_FILES &&
+                paths.size == relativePaths.size &&
+                (paths.isNotEmpty() || allowEmpty),
+        ) {
+            "Netinkamas siunčiamų failų skaičius"
+        }
         var total = 0L
-        return paths.distinct().map { path ->
+        val seenSources = HashSet<String>()
+        return paths.zip(relativePaths).map { (path, relativePath) ->
             val file = File(path).canonicalFile
             require(file.isFile && file.canRead()) { "Failas nepasiekiamas: ${file.name}" }
+            require(seenSources.add(file.absolutePath)) { "Tas pats failas siuntimo rinkinyje kartojasi" }
             require(file.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą: ${file.name}" }
             total = Math.addExact(total, file.length())
             require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
-            file
+            TransferFile(file, validateRelativePath(relativePath))
         }
     }
+
+    private fun validateRelativePath(value: String): String {
+        require(value.length in 1..4_096 && '\u0000' !in value) { "Netinkamas santykinis kelias" }
+        val normalized = value.replace('\\', '/')
+        require(!normalized.startsWith('/') && !normalized.endsWith('/')) { "Netinkamas santykinis kelias" }
+        val parts = normalized.split('/')
+        require(parts.none(String::isBlank)) { "Netinkamas santykinis kelias" }
+        require(parts.isNotEmpty() && parts.size <= 65) { "Netinkamas santykinis kelias" }
+        return parts.joinToString("/") { FileSystemRules.validateFileName(it).getOrThrow() }
+    }
+
+    private data class TransferFile(val file: File, val relativePath: String)
 
     private fun cancelTransfer() {
         cancelledByUser = true

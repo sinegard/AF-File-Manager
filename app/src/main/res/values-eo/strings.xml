@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">translokigo de AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Komenciĝanta servilo...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN translokigo estas funkcianta</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Proksima telefontransdono</string>
+    <string name="nearby_transfer_notification_title">AF File Manager telefontransdono</string>
+    <string name="nearby_transfer_starting_text">Mi pretas translokigon...</string>
     <string name="terminal_channel_name">Aktiva terminalo</string>
     <string name="terminal_channel_description">Konservas malferma telefono aŭ servilo terminalo kuranta en la fono</string>
     <string name="terminal_notification_title">AF File Manager terminalo</string>

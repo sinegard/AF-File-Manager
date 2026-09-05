@@ -45,6 +45,14 @@ class UiTranslatorTest {
             UiTranslator.translate("Nukopijuota iš serverio į iškarpinę: 3", AppLanguageManager.ENGLISH),
         )
         assertEquals("PDF page 3", UiTranslator.translate("PDF puslapis 3", AppLanguageManager.ENGLISH))
+        assertEquals("Sign PDF", UiTranslator.translate("Pasirašyti PDF", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "This is a visible handwritten mark, not a qualified cryptographic electronic signature.",
+            UiTranslator.translate(
+                "Tai matomas ranka pieštas žymuo, o ne kvalifikuotas kriptografinis elektroninis parašas.",
+                AppLanguageManager.ENGLISH,
+            ),
+        )
         assertEquals("Downloads", UiTranslator.translate("Atsisiuntimai", AppLanguageManager.ENGLISH))
         assertEquals("Appearance", UiTranslator.translate("Išvaizda", AppLanguageManager.ENGLISH))
         assertEquals("Dynamic", UiTranslator.translate("Dinaminė", AppLanguageManager.ENGLISH))
@@ -160,6 +168,26 @@ class UiTranslatorTest {
         assertEquals(
             "Paste to many (4)",
             UiTranslator.translate("Įklijuoti į kelias vietas (4)", AppLanguageManager.ENGLISH),
+        )
+        assertEquals("Scanning files", UiTranslator.translate("Nuskaitomi failai", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Files: 12 · folders: 3 · 4 MB",
+            UiTranslator.translate("Failai: 12 · aplankai: 3 · 4 MB", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Possible duplicates: 7 files · 9 MB",
+            UiTranslator.translate("Galimi dublikatai: 7 failų · 9 MB", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "Checksums verified: 5",
+            UiTranslator.translate("Patikrintos kontrolinės sumos: 5", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "The list is loaded in pages (up to 5000 items); one transfer can include up to 1000 files or folders. Touch and hold a media file to preview it.",
+            UiTranslator.translate(
+                "Sąrašas įkeliamas puslapiais (iki 5000 elementų); vienu siuntimu galima pasirinkti iki 1000 failų ar aplankų. Ilgiau palaikykite medijos failą, kad jį peržiūrėtumėte.",
+                AppLanguageManager.ENGLISH,
+            ),
         )
     }
 

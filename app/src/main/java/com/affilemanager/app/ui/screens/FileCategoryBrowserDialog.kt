@@ -158,6 +158,10 @@ fun FileCategoryBrowser(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
 
+    LaunchedEffect(state.category, state.scrollToTopRequest) {
+        if (state.grid) gridState.scrollToItem(0) else listState.scrollToItem(0)
+    }
+
     LaunchedEffect(state.category, state.grid, state.nextOffset, state.loadingMore, visible.size) {
         if (transformed.sourceEntryCount != state.entries.size ||
             state.nextOffset == null || state.loading || state.loadingMore || visible.isEmpty()

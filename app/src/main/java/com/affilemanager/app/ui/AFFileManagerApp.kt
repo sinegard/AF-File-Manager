@@ -73,6 +73,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.IncomingViewRequest
+import com.affilemanager.app.IncomingShareRequest
 import com.affilemanager.app.ui.preview.FilePreviewDialog
 import com.affilemanager.app.ui.components.BatchRenameDialog
 import com.affilemanager.app.ui.localization.LText
@@ -109,6 +110,8 @@ fun AFFileManagerApp(
     viewModel: MainViewModel = viewModel(),
     incomingViewRequest: IncomingViewRequest? = null,
     onIncomingViewRequestConsumed: () -> Unit = {},
+    incomingShareRequest: IncomingShareRequest? = null,
+    onIncomingShareRequestConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
@@ -333,6 +336,13 @@ fun AFFileManagerApp(
         }
     }
 
+    LaunchedEffect(incomingShareRequest) {
+        incomingShareRequest?.let { request ->
+            viewModel.beginIncomingShare(request.uris)
+            onIncomingShareRequestConsumed()
+        }
+    }
+
     if (trashBrowser.open) {
         TrashBrowserDialog(
             state = trashBrowser,
@@ -367,6 +377,7 @@ fun AFFileManagerApp(
             onApplyArchiveDisplayToAll = viewModel::applyDirectoryDisplaySettingsToAll,
             onClose = viewModel::closePreview,
             onPrepareEdit = viewModel::prepareFileEdit,
+            onApplyPdfSignature = viewModel::applyPdfVisualSignature,
             onEditTextChanged = viewModel::updateEditText,
             onEditEncodingChanged = viewModel::updateEditEncoding,
             onEditLineEndingChanged = viewModel::updateEditLineEnding,
@@ -397,6 +408,9 @@ fun AFFileManagerApp(
             onRefreshArchive = viewModel::refreshArchivePreview,
             loadArchiveThumbnail = viewModel::materializeArchiveThumbnail,
             onExtract = { file, destination, password -> viewModel.extractArchive(file, destination, password) },
+            canNavigateMedia = viewModel.canNavigatePreviewMedia(target),
+            onPreviousMedia = { viewModel.navigatePreviewMedia(-1) },
+            onNextMedia = { viewModel.navigatePreviewMedia(1) },
             onDecrypt = { file, password -> viewModel.decryptVault(file, password) },
         )
     }

@@ -214,4 +214,24 @@ class ArchiveEngineTest {
         assertTrue(result.isFailure)
         assertTrue(before.contentEquals(archive.readBytes()))
     }
+
+    @Test
+    fun zipCompressionLevelChangesTheWrittenArchiveAndRejectsInvalidValues() = runBlocking {
+        val source = temporary.newFile("compressible.txt").apply {
+            outputStream().buffered().use { output -> repeat(32_768) { output.write("repeatable-data\n".toByteArray()) } }
+        }
+        val stored = File(temporary.root, "stored.zip")
+        val compressed = File(temporary.root, "compressed.zip")
+        val engine = ArchiveEngine()
+
+        engine.create(ArchiveFormat.ZIP, stored, listOf(source), compressionLevel = 0)
+        engine.create(ArchiveFormat.ZIP, compressed, listOf(source), compressionLevel = 9)
+
+        assertTrue(compressed.length() < stored.length())
+        assertTrue(
+            runCatching {
+                engine.create(ArchiveFormat.ZIP, File(temporary.root, "invalid.zip"), listOf(source), compressionLevel = 10)
+            }.isFailure,
+        )
+    }
 }

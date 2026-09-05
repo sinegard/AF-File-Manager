@@ -189,6 +189,7 @@ import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.FileInfoDialog
 import com.affilemanager.app.ui.components.FileSizeBar
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.ProviderAppVisual
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
 import com.affilemanager.app.ui.components.longPressDragSelect
@@ -724,10 +725,20 @@ internal fun FilesHome(
                     items(safLocations, key = SafLocation::uri) { location ->
                         Card(onClick = { showCloudLocations = false; onOpenSafLocation(location) }) {
                             Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Cloud, contentDescription = null)
+                                ProviderAppVisual(
+                                    packageName = location.providerPackageName,
+                                    fallbackIcon = Icons.Rounded.Cloud,
+                                    targetSize = 28.dp,
+                                    modifier = Modifier.size(28.dp),
+                                )
                                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                                    Text(location.title, fontWeight = FontWeight.SemiBold)
-                                    Text(location.uri, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(location.providerLabel ?: location.title, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        location.folderName ?: uiText(if (location.canWrite) "Pasirinkta vieta" else "Tik skaitymui"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
                             }
                         }

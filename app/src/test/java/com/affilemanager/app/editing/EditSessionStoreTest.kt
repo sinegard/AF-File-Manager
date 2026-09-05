@@ -221,4 +221,36 @@ class EditSessionStoreTest {
         assertFalse(session.workingFile.exists())
         assertEquals("original", source.readText())
     }
+
+    @Test
+    fun binaryTransformPublishesOnlyACompleteReplacement() {
+        val cache = temporaryFolder.newFolder("cache-transform")
+        val source = temporaryFolder.newFile("document.pdf").apply { writeBytes("original".toByteArray()) }
+        val store = EditSessionStore(cache)
+        val session = store.prepareFromFile(
+            sourceKey = "source",
+            displayName = source.name,
+            mimeType = "application/pdf",
+            sourceFile = source,
+            origin = EditOrigin.Local(source.absolutePath, canWrite = true),
+            modifiedAtMillis = source.lastModified(),
+            internalTextEditor = false,
+        )
+
+        val failed = runCatching {
+            store.transformWorking(session) { _, destination ->
+                destination.writeText("partial")
+                error("simulated transform failure")
+            }
+        }
+        assertTrue(failed.isFailure)
+        assertEquals("original", session.workingFile.readText())
+
+        val transformed = store.transformWorking(session) { input, destination ->
+            destination.writeText(input.readText() + " signed")
+        }
+        assertEquals("original signed", transformed.workingFile.readText())
+        assertEquals("original", source.readText())
+        assertTrue(transformed.hasUnsavedChanges)
+    }
 }

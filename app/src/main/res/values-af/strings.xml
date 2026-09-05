@@ -14,9 +14,9 @@
     <string name="lan_transfer_starting_title">AF File Manager LAN oordrag</string>
     <string name="lan_transfer_starting_text">Begin bediener...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN oordrag loop</string>
-    <string name="nearby_transfer_channel_name">Nearby phone transfer</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
-    <string name="nearby_transfer_starting_text">Preparing transfer…</string>
+    <string name="nearby_transfer_channel_name">Binne-afgeleë telefoon oordrag</string>
+    <string name="nearby_transfer_notification_title">AF File Manager telefoon oordrag</string>
+    <string name="nearby_transfer_starting_text">Berei die oordrag voor...</string>
     <string name="terminal_channel_name">Aktiewe terminale</string>
     <string name="terminal_channel_description">Hou \'n oop telefoon of bediener terminale loop in die agtergrond</string>
     <string name="terminal_notification_title">AF File Manager terminale</string>

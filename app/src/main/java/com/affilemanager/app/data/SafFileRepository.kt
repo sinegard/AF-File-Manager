@@ -2,6 +2,7 @@ package com.affilemanager.app.data
 
 import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
@@ -19,6 +20,10 @@ import java.nio.file.StandardCopyOption
 data class SafLocation(
     val uri: String,
     val title: String,
+    val providerPackageName: String? = null,
+    val providerLabel: String? = null,
+    val folderName: String? = null,
+    val canWrite: Boolean = false,
 )
 
 data class SafEntry(
@@ -51,20 +56,35 @@ class SafFileRepository(private val context: Context) {
         require(array.length() <= MAX_LOCATIONS) { "SAF vietų riba viršyta" }
         (0 until array.length()).map { index ->
             val item = array.getJSONObject(index)
-            SafLocation(item.getString("uri"), item.getString("title"))
+            describeLocation(
+                uri = Uri.parse(item.getString("uri")),
+                storedTitle = item.optionalString("title"),
+                storedProviderPackage = item.optionalString("providerPackage"),
+                storedProviderLabel = item.optionalString("providerLabel"),
+                storedFolderName = item.optionalString("folderName"),
+            )
         }
     }
 
-    suspend fun addLocation(uri: Uri, title: String): Result<Unit> = withContext(Dispatchers.IO) {
+    private fun JSONObject.optionalString(key: String): String? =
+        if (!has(key) || isNull(key)) null else optString(key).takeIf(String::isNotBlank)
+
+    suspend fun addLocation(uri: Uri, title: String = ""): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            resolver.takePersistableUriPermission(
-                uri,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-            val current = locations().toMutableList().apply { removeAll { it.uri == uri.toString() } }
-            current += SafLocation(uri.toString(), title.ifBlank { "Pasirinkta vieta" })
-            require(current.size <= MAX_LOCATIONS) { "Per daug pasirinktų vietų" }
-            writeLocations(current)
+            val permissionBefore = resolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+            try {
+                persistBestAvailablePermission(uri)
+                val root = DocumentFile.fromTreeUri(context, uri)
+                    ?: throw IllegalArgumentException("Pasirinkta dokumentų vieta nepasiekiama")
+                require(root.isDirectory) { "Pasirinkta vieta nėra aplankas" }
+                val current = locations().toMutableList().apply { removeAll { it.uri == uri.toString() } }
+                current += describeLocation(uri, storedTitle = title.takeIf(String::isNotBlank))
+                require(current.size <= MAX_LOCATIONS) { "Per daug pasirinktų vietų" }
+                writeLocations(current)
+            } catch (error: Throwable) {
+                releasePermissionAddedAfter(uri, permissionBefore?.isReadPermission == true, permissionBefore?.isWritePermission == true)
+                throw error
+            }
         }
     }
 
@@ -72,12 +92,7 @@ class SafFileRepository(private val context: Context) {
         runCatching {
             val updated = locations().filterNot { it.uri == uri }
             writeLocations(updated)
-            runCatching {
-                resolver.releasePersistableUriPermission(
-                    Uri.parse(uri),
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
-            }
+            releasePersistedPermission(Uri.parse(uri))
             Unit
         }
     }
@@ -141,21 +156,78 @@ class SafFileRepository(private val context: Context) {
 
     private fun document(uri: String): DocumentFile = document(Uri.parse(uri))
 
-    private fun document(uri: Uri): DocumentFile = if (isTreeRootUri(uri)) {
+    private fun document(uri: Uri): DocumentFile = if (usesPersistedTreeAccess(uri)) {
         DocumentFile.fromTreeUri(context, uri)
     } else {
-        DocumentFile.fromSingleUri(context, uri) ?: DocumentFile.fromTreeUri(context, uri)
+        DocumentFile.fromSingleUri(context, uri)
     }
         ?: throw IllegalArgumentException("Dokumentas nepasiekiamas")
 
     /**
-     * ACTION_OPEN_DOCUMENT_TREE returns a tree root URI rather than a regular document URI.
-     * Treating that URI as a single document makes some providers expose a non-navigable item.
-     * Child document URIs contain both `tree` and `document`, so they must stay single-document
-     * handles or they would incorrectly jump back to the granted root.
+     * Both the selected root and every child returned from it retain the original `tree` segment.
+     * DocumentFile 1.1 resolves the active document segment while preserving that tree grant, so
+     * child folders must also remain tree-backed or listing/creation becomes unsupported.
      */
-    private fun isTreeRootUri(uri: Uri): Boolean =
-        DocumentsContract.isTreeUri(uri) && "document" !in uri.pathSegments
+    internal fun usesPersistedTreeAccess(uri: Uri): Boolean = DocumentsContract.isTreeUri(uri)
+
+    /** Distinguishes the originally selected root for labels and navigation boundaries. */
+    internal fun isTreeRootUri(uri: Uri): Boolean {
+        if (!DocumentsContract.isTreeUri(uri)) return false
+        val treeId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+        val documentId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+        return documentId == null || documentId == treeId
+    }
+
+    private fun persistBestAvailablePermission(uri: Uri) {
+        val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val write = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val combined = runCatching { resolver.takePersistableUriPermission(uri, read or write) }
+        if (combined.isSuccess) return
+        runCatching { resolver.takePersistableUriPermission(uri, read) }
+            .getOrElse { throw combined.exceptionOrNull() ?: it }
+    }
+
+    private fun releasePersistedPermission(uri: Uri) {
+        val permission = resolver.persistedUriPermissions.firstOrNull { it.uri == uri } ?: return
+        val flags = (if (permission.isReadPermission) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+            (if (permission.isWritePermission) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+        if (flags != 0) runCatching { resolver.releasePersistableUriPermission(uri, flags) }
+    }
+
+    private fun releasePermissionAddedAfter(uri: Uri, hadRead: Boolean, hadWrite: Boolean) {
+        val permission = resolver.persistedUriPermissions.firstOrNull { it.uri == uri } ?: return
+        val addedFlags = (if (permission.isReadPermission && !hadRead) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+            (if (permission.isWritePermission && !hadWrite) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+        if (addedFlags != 0) runCatching { resolver.releasePersistableUriPermission(uri, addedFlags) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun describeLocation(
+        uri: Uri,
+        storedTitle: String? = null,
+        storedProviderPackage: String? = null,
+        storedProviderLabel: String? = null,
+        storedFolderName: String? = null,
+    ): SafLocation {
+        val provider = uri.authority?.let { authority -> context.packageManager.resolveContentProvider(authority, 0) }
+        val packageName = provider?.packageName ?: storedProviderPackage
+        val providerLabel = provider?.loadLabel(context.packageManager)?.toString()?.takeIf(String::isNotBlank)
+            ?: storedProviderLabel
+        val root = runCatching { DocumentFile.fromTreeUri(context, uri) }.getOrNull()
+        val folderName = root?.name?.takeIf(String::isNotBlank)
+            ?: storedFolderName
+            ?: runCatching { DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':') }
+                .getOrNull()?.takeIf { it.isNotBlank() && it.length <= 120 }
+        val title = providerLabel ?: storedTitle ?: folderName ?: "Android dokumentai"
+        return SafLocation(
+            uri = uri.toString(),
+            title = title,
+            providerPackageName = packageName,
+            providerLabel = providerLabel,
+            folderName = folderName,
+            canWrite = root?.canWrite() == true,
+        )
+    }
 
     private fun toEntry(file: DocumentFile) = SafEntry(
         uri = file.uri.toString(),
@@ -316,7 +388,16 @@ class SafFileRepository(private val context: Context) {
 
     private fun writeLocations(locations: List<SafLocation>) {
         val array = JSONArray()
-        locations.forEach { array.put(JSONObject().put("uri", it.uri).put("title", it.title)) }
+        locations.forEach { location ->
+            array.put(
+                JSONObject()
+                    .put("uri", location.uri)
+                    .put("title", location.title)
+                    .put("providerPackage", location.providerPackageName ?: JSONObject.NULL)
+                    .put("providerLabel", location.providerLabel ?: JSONObject.NULL)
+                    .put("folderName", location.folderName ?: JSONObject.NULL),
+            )
+        }
         check(preferences.edit().putString(KEY_LOCATIONS, array.toString()).commit()) { "Vietos įrašyti nepavyko" }
     }
 
