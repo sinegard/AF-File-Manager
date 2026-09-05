@@ -16,6 +16,62 @@ class LanHttpServerTest {
     @get:Rule
     val temporary = TemporaryFolder()
 
+    @Test fun nearbyManifestRequiresAuthenticationAndPublishesOnlyCommittedKeepBothPaths() {
+        val root = temporary.newFolder("manifest").apply { resolve("photo.txt").writeText("original") }
+        val updates = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678", onUploadProgress = { updates += it }).use { server ->
+            val port = server.start().port
+            val body = NearbyTransferManifest.encode(listOf(TransferFileProgress("photo.txt", 5), TransferFileProgress("empty.txt", 0)))
+                .toString(StandardCharsets.UTF_8)
+            fun manifest(cookie: String) = request(port,
+                "POST /nearby/manifest HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body")
+            assertTrue(manifest("").startsWith("HTTP/1.1 401"))
+            assertTrue(updates.isEmpty())
+            val cookie = login(port)
+            assertTrue(manifest(cookie).startsWith("HTTP/1.1 200"))
+            assertEquals(2, updates.last().files.size)
+            assertTrue(updates.last().files.all { it.localPath == null && it.status == TransferFileStatus.WAITING })
+            val response = request(port,
+                "POST /upload?name=photo.txt&fileCount=2&fileIndex=1&batchBytes=5 HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 5\r\n\r\nhello")
+            assertTrue(response.startsWith("HTTP/1.1 201"))
+            val file = updates.last().files[0]
+            assertEquals(TransferFileStatus.COMPLETED, file.status)
+            assertEquals("hello", java.io.File(requireNotNull(file.localPath)).readText())
+            assertEquals("original", root.resolve("photo.txt").readText())
+            assertTrue(updates.filterNot { it.completed }.flatMap { it.files }.all { it.localPath == null })
+            val mismatched = request(port,
+                "POST /upload?name=wrong.txt&fileCount=2&fileIndex=2 HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 0\r\n\r\n")
+            assertTrue(mismatched.startsWith("HTTP/1.1 400"))
+            assertFalse(root.resolve("wrong.txt").exists())
+        }
+    }
+
+    @Test fun incompleteUploadPublishesFailureButNeverAReadablePartialFile() {
+        val root = temporary.newFolder("interrupted-progress")
+        val updates = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678", onUploadProgress = { updates += it }).use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            Socket(InetAddress.getLoopbackAddress(), port).use { socket ->
+                socket.getOutputStream().write(("POST /upload?name=partial.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 100\r\n\r\nshort").toByteArray())
+                socket.shutdownOutput()
+                socket.getInputStream().readBytes()
+            }
+            assertEquals(TransferFileStatus.FAILED, updates.last().files.single().status)
+            assertTrue(updates.flatMap { it.files }.all { it.localPath == null })
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun readOnlyReceiverRejectsNearbyMetadata() {
+        val root = temporary.newFolder("readonly-manifest")
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678", readOnly = true).use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            assertTrue(request(port, "POST /nearby/manifest HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 2\r\n\r\n{}").startsWith("HTTP/1.1 403"))
+        }
+    }
+
     @Test
     fun loginUsesOneTimeCodeAndAuthenticatedCookie() {
         val root = temporary.newFolder("shared").apply { resolve("visible.txt").writeText("hello") }

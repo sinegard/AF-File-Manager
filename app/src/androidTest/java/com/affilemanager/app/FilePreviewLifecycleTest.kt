@@ -22,6 +22,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.semantics.SemanticsActions
@@ -149,7 +150,17 @@ class FilePreviewLifecycleTest {
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithContentDescription(image.name, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
+            compose.onNodeWithTag("open-with-action").assertDoesNotExist()
+            compose.onNodeWithTag("preview_actions_menu").performClick()
             compose.onNodeWithText("Open with another app").assertIsDisplayed()
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(validationRoot, "preview-header-menu.png").outputStream().use {
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
+                bitmap.recycle()
+            }
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+                .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             compose.onNodeWithTag("image-zoom-viewport").performTouchInput { doubleClick() }
             compose.onNodeWithText("200 %").fetchSemanticsNode()
             compose.onNodeWithTag("image-zoom-viewport").performTouchInput { doubleClick() }
@@ -201,8 +212,9 @@ class FilePreviewLifecycleTest {
                 viewModel.open(LocalFileRepository(application).toEntry(pdf))
             }
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithTag("sign-pdf-action", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithTag("preview_actions_menu", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
+            compose.onNodeWithTag("preview_actions_menu").performClick()
             compose.onNodeWithTag("sign-pdf-action").performClick()
             compose.waitUntil(timeoutMillis = 15_000) {
                 compose.onAllNodesWithTag("signature-pad", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
@@ -297,6 +309,36 @@ class FilePreviewLifecycleTest {
             compose.onNodeWithTag("audio_play_pause").assertIsDisplayed()
         } finally {
             compose.runOnUiThread { viewModel.closePreview() }
+            fixtureRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun backgroundPlaybackCanBeStoppedInsideTheAppAfterClosingPreview() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixtureRoot = File(application.cacheDir, "background-stop-regression").apply { mkdirs() }
+        val audio = File(fixtureRoot, "stop-me.wav")
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            createWaveAudio(audio)
+            compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(audio)) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                runCatching { compose.onNodeWithTag("audio_play_pause").assertIsEnabled(); true }.getOrDefault(false)
+            }
+            compose.onNodeWithText("Play in background").performScrollTo().performClick()
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithTag("background_stop").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("background_stop").assertIsDisplayed().performClick()
+            compose.waitUntil(timeoutMillis = 5_000) {
+                compose.onAllNodesWithTag("background_stop").fetchSemanticsNodes().isEmpty()
+            }
+        } finally {
+            compose.runOnUiThread {
+                com.affilemanager.app.media.BackgroundPlaybackService.stop(application)
+                viewModel.closePreview()
+            }
             fixtureRoot.deleteRecursively()
         }
     }

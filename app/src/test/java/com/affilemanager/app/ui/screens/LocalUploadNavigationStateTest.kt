@@ -25,4 +25,13 @@ class LocalUploadNavigationStateTest {
 
         assertEquals(state, state.navigateTo(state.currentPath))
     }
+
+    @Test
+    fun navigationHistoryKeepsTheMostRecent64Locations() {
+        var state = LocalUploadNavigationState("/first")
+        repeat(100) { index -> state = state.navigateTo("/folder-$index") }
+        assertEquals(64, state.backStack.size)
+        assertEquals("/folder-98", state.navigateBack().currentPath)
+        assertEquals("/folder-35", state.backStack.first())
+    }
 }

@@ -76,6 +76,7 @@ import com.affilemanager.app.IncomingViewRequest
 import com.affilemanager.app.IncomingShareRequest
 import com.affilemanager.app.ui.preview.FilePreviewDialog
 import com.affilemanager.app.ui.components.BatchRenameDialog
+import com.affilemanager.app.ui.components.BackgroundPlaybackBar
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.screens.AnalyzeScreen
@@ -250,18 +251,21 @@ fun AFFileManagerApp(
                 )
             },
             bottomBar = {
-                if (!wideNavigation) {
-                    NavigationBar {
-                        destinations.forEach { destination ->
-                            NavigationBarItem(
-                                selected = section == destination.section,
-                                onClick = { viewModel.setSection(destination.section) },
-                                modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
-                                icon = {
-                                    DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
-                                },
-                                label = { LText(destination.label) },
-                            )
+                Column {
+                    if (preview == null && (!appLockEnabled || unlocked)) BackgroundPlaybackBar()
+                    if (!wideNavigation) {
+                        NavigationBar {
+                            destinations.forEach { destination ->
+                                NavigationBarItem(
+                                    selected = section == destination.section,
+                                    onClick = { viewModel.setSection(destination.section) },
+                                    modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
+                                    icon = {
+                                        DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
+                                    },
+                                    label = { LText(destination.label) },
+                                )
+                            }
                         }
                     }
                 }
@@ -497,10 +501,10 @@ private fun sameNormalizedPath(first: String, second: String): Boolean = runCatc
 }
 
 @Composable
-private fun AppLockOverlay(onUnlock: () -> Unit) {
+internal fun AppLockOverlay(onUnlock: () -> Unit, onCancel: (() -> Unit)? = null, message: String? = null) {
     Dialog(
-        onDismissRequest = {},
-        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, dismissOnClickOutside = false),
+        onDismissRequest = { onCancel?.invoke() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = onCancel != null, dismissOnClickOutside = false),
     ) {
         androidx.compose.material3.Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(
@@ -510,13 +514,15 @@ private fun AppLockOverlay(onUnlock: () -> Unit) {
             ) {
                 Icon(Icons.Rounded.Fingerprint, contentDescription = null, modifier = Modifier.size(84.dp), tint = MaterialTheme.colorScheme.primary)
                 LText("AF File Manager užrakinta", style = MaterialTheme.typography.headlineSmall)
+                message?.let { LText(it, modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
                 Button(onClick = onUnlock, modifier = Modifier.padding(top = 18.dp)) { LText("Atrakinti") }
+                onCancel?.let { TextButton(onClick = it) { LText("Atšaukti") } }
             }
         }
     }
 }
 
-private fun authenticate(
+internal fun authenticate(
     context: android.content.Context,
     title: String,
     onSuccess: () -> Unit,
@@ -549,7 +555,7 @@ private fun authenticate(
     prompt.authenticate(
         BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
-            .setSubtitle("Patvirtinkite tapatybę Android sistemos lange")
+            .setSubtitle(UiTranslator.translate("Patvirtinkite tapatybę Android sistemos lange", context.resources.configuration.locales[0].language))
             .setAllowedAuthenticators(authenticators)
             .build(),
     )

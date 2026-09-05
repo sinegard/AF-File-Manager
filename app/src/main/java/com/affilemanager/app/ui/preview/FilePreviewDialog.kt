@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -86,6 +87,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -157,6 +159,9 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.media.BackgroundPlaybackService
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.affilemanager.app.ui.components.BackgroundPlaybackBar
+import com.affilemanager.app.ui.components.AfActionRow
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryDisplayDefaults
 import com.affilemanager.app.data.DirectoryGridStyle
@@ -351,111 +356,61 @@ fun FilePreviewDialog(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp).testTag("preview_header"),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = navigateBack) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = uiText(if (archivePath.isEmpty()) "Uždaryti" else "Grįžti į ankstesnį archyvo aplanką"),
-                        )
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = uiText(if (archivePath.isEmpty()) "Uždaryti" else "Grįžti į ankstesnį archyvo aplanką"))
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(editSession?.displayName ?: source.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(entrySummary(context, source, summaryDateFormat), style = MaterialTheme.typography.bodySmall)
+                        Text(entrySummary(context, source, summaryDateFormat), style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                }
-                HorizontalDivider()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    FilledTonalButton(
-                        onClick = {
+                    if (hashRunning) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    PreviewActionsMenu(
+                        sourceKey = source.key,
+                        editEnabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifyingPdf != true,
+                        hashRunning = hashRunning,
+                        onOpenWith = {
                             runCatching { openWith(context, actionSource) }
                                 .onFailure { actionError = it.message ?: "Programų pasirinkiklio atidaryti nepavyko" }
                         },
-                        modifier = Modifier.testTag("open-with-action"),
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        LText("Atidaryti su kita programa")
-                    }
-                    if (pdfSigningAvailable) {
-                        FilledTonalButton(
-                            onClick = {
-                                if (editSession == null) {
-                                    launchPdfSignerWhenReady = true
-                                    onPrepareEdit()
-                                } else {
-                                    showPdfSigner = true
-                                }
-                            },
-                            enabled = activeEditState?.preparing != true &&
-                                activeEditState?.saving != true &&
-                                activeEditState?.modifyingPdf != true,
-                            modifier = Modifier.testTag("sign-pdf-action"),
-                        ) {
-                            Icon(Icons.Rounded.Edit, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            LText("Pasirašyti PDF")
-                        }
-                    }
-                    if (externalEditorAvailable) {
-                        FilledTonalButton(
-                            onClick = {
-                                if (editSession == null) {
-                                    launchExternalEditorWhenReady = true
-                                    onPrepareEdit()
-                                } else {
-                                    runCatching {
-                                        externalEditorLauncher.launch(createExternalEditIntent(context, editSession))
-                                    }.onFailure {
-                                        actionError = it.message ?: "Nepavyko atidaryti redaktoriaus pasirinkimo"
-                                    }
-                                }
-                            },
-                            enabled = activeEditState?.preparing != true &&
-                                activeEditState?.saving != true &&
-                                activeEditState?.modifyingPdf != true,
-                            modifier = Modifier.testTag("edit-with-action"),
-                        ) {
-                            Icon(Icons.Rounded.Edit, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            LText("Redaguoti su kita programa")
-                        }
-                    }
-                    TextButton(
-                        onClick = {
+                        onEditWith = if (!externalEditorAvailable) null else ({
+                            if (editSession == null) {
+                                launchExternalEditorWhenReady = true
+                                onPrepareEdit()
+                            } else {
+                                runCatching { externalEditorLauncher.launch(createExternalEditIntent(context, editSession)) }
+                                    .onFailure { actionError = it.message ?: "Nepavyko atidaryti redaktoriaus pasirinkimo" }
+                            }
+                        }),
+                        onSignPdf = if (!pdfSigningAvailable) null else ({
+                            if (editSession == null) {
+                                launchPdfSignerWhenReady = true
+                                onPrepareEdit()
+                            } else showPdfSigner = true
+                        }),
+                        onShare = {
                             runCatching { shareFile(context, actionSource) }
                                 .onFailure { actionError = it.message ?: "Dalijimosi programos atidaryti nepavyko" }
                         },
-                    ) {
-                        Icon(Icons.Rounded.Share, contentDescription = null)
-                        Spacer(Modifier.width(5.dp))
-                        LText("Dalintis")
-                    }
-                    TextButton(
-                        onClick = {
+                        onCalculateHash = {
                             hashRunning = true
                             scope.launch {
-                                val result = withContext(Dispatchers.IO) { runCatching { sha256(context, actionSource) } }
-                                result.onSuccess { hash = it }.onFailure { actionError = it.message ?: "SHA-256 apskaičiuoti nepavyko" }
-                                hashRunning = false
+                                try {
+                                    val result = withContext(Dispatchers.IO) { runCatching { sha256(context, actionSource) } }
+                                    result.onSuccess { hash = it }.onFailure { actionError = it.message ?: "SHA-256 apskaičiuoti nepavyko" }
+                                } finally {
+                                    hashRunning = false
+                                }
                             }
                         },
-                    ) {
-                        if (hashRunning) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Rounded.Calculate, contentDescription = null)
-                        Spacer(Modifier.width(5.dp))
-                        LText("SHA-256")
-                    }
+                    )
                 }
                 HorizontalDivider()
+                BackgroundPlaybackBar()
                 hash?.let {
                     LText("SHA-256  $it", modifier = Modifier.fillMaxWidth().padding(8.dp), style = MaterialTheme.typography.labelSmall)
                 }
@@ -947,6 +902,9 @@ private fun AudioPreview(
     onNextMedia: () -> Unit,
 ) {
     val context = LocalContext.current
+    val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
+    val sourceUri = remember(source.key) { source.uri(context).toString() }
+    val playingInBackground = background?.let { it.active && it.uri == sourceUri } == true
     var player by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
     var playing by remember(source.key) { mutableStateOf(false) }
@@ -1039,7 +997,7 @@ private fun AudioPreview(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        PlaybackControls(
+        if (!playingInBackground) PlaybackControls(
             prefix = "audio",
             prepared = prepared,
             playing = playing,
@@ -1054,6 +1012,7 @@ private fun AudioPreview(
             onToggle = {
                 player?.let { active ->
                     if (playing) active.pause() else {
+                        if (background?.active == true) BackgroundPlaybackService.stop(context)
                         if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
                         runCatching { active.playbackParams = active.playbackParams.setSpeed(playbackSpeed) }
                         active.start()
@@ -1109,6 +1068,9 @@ private fun VideoPreview(
     onNextMedia: () -> Unit,
 ) {
     val context = LocalContext.current
+    val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
+    val sourceUri = remember(source.key) { source.uri(context).toString() }
+    val playingInBackground = background?.let { it.active && it.uri == sourceUri } == true
     var videoView by remember(source.key) { mutableStateOf<VideoView?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
     var playing by remember(source.key) { mutableStateOf(false) }
@@ -1143,8 +1105,10 @@ private fun VideoPreview(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().testTag("video_player")) {
-        Box(modifier = Modifier.fillMaxWidth().weight(1f).background(androidx.compose.ui.graphics.Color.Black)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().testTag("video_player")) {
+    val videoHeight = (maxHeight * 0.55f).coerceIn(120.dp, 480.dp)
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Box(modifier = Modifier.fillMaxWidth().height(videoHeight).background(androidx.compose.ui.graphics.Color.Black)) {
             AndroidView(
                 factory = { viewContext ->
                     VideoView(viewContext).apply {
@@ -1176,7 +1140,7 @@ private fun VideoPreview(
             if (!prepared && !playbackError) CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             if (playbackError) PreviewLoadError(IllegalStateException())
         }
-        PlaybackControls(
+        if (!playingInBackground) PlaybackControls(
             prefix = "video",
             prepared = prepared,
             playing = playing,
@@ -1191,6 +1155,7 @@ private fun VideoPreview(
             onToggle = {
                 videoView?.let { active ->
                     if (playing) active.pause() else {
+                        if (background?.active == true) BackgroundPlaybackService.stop(context)
                         if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
                         preparedPlayer?.let { ready ->
                             runCatching { ready.playbackParams = ready.playbackParams.setSpeed(playbackSpeed) }
@@ -1239,10 +1204,11 @@ private fun VideoPreview(
             MediaPropertyRows(info)
         }
     }
+    }
 }
 
 @Composable
-private fun PlaybackControls(
+internal fun PlaybackControls(
     prefix: String,
     prepared: Boolean,
     playing: Boolean,
@@ -1286,10 +1252,10 @@ private fun PlaybackControls(
                 onClick = { onSeek(MediaPlaybackRules.skippedPosition(positionMillis, durationMillis, -MediaPlaybackRules.SKIP_MILLIS)) },
                 enabled = prepared,
             ) { Icon(Icons.Rounded.Replay10, contentDescription = uiText("Atgal")) }
-            FilledTonalButton(
+            FilledTonalIconButton(
                 onClick = onToggle,
                 enabled = prepared,
-                modifier = Modifier.padding(horizontal = 14.dp).testTag("${prefix}_play_pause"),
+                modifier = Modifier.size(48.dp).testTag("${prefix}_play_pause"),
             ) {
                 Icon(
                     if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
@@ -1304,11 +1270,7 @@ private fun PlaybackControls(
                 Icon(Icons.Rounded.SkipNext, contentDescription = uiText("Kitas failas"))
             }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        AfActionRow(modifier = Modifier.testTag("${prefix}_playback_options")) {
             FilterChip(
                 selected = loopEnabled,
                 onClick = { onLoopChanged(!loopEnabled) },
@@ -1329,7 +1291,7 @@ private fun PlaybackControls(
                     }
                 }
             }
-            OutlinedButton(onClick = onPlayInBackground, enabled = prepared) {
+            OutlinedButton(onClick = onPlayInBackground, enabled = prepared, modifier = Modifier.testTag("${prefix}_background_start")) {
                 Icon(Icons.Rounded.Headphones, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 LText("Groti fone")

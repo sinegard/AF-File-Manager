@@ -114,7 +114,7 @@ fun BatchRenameDialog(viewModel: MainViewModel) {
                                 )
                             }
                             LText("Raidės", style = MaterialTheme.typography.labelLarge)
-                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            AfActionRow {
                                 RenameCaseMode.entries.forEach { mode ->
                                     FilterChip(
                                         selected = spec.caseMode == mode,

@@ -41,6 +41,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Link
@@ -127,6 +128,9 @@ import com.affilemanager.app.sync.SyncActionType
 import com.affilemanager.app.sync.SyncConflictPolicy
 import com.affilemanager.app.sync.SyncMode
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -1151,17 +1155,36 @@ internal fun LocalUploadDialog(
     onCopy: (List<String>) -> Unit,
     title: String = "Kopijuoti į serverį",
     confirmLabel: String = "Kopijuoti",
+    filesOnly: Boolean = false,
+    allowMultiple: Boolean = true,
+    selectionLimit: Int = RemoteCopyEngine.MAX_SELECTED_ROOTS,
+    parentDirectory: (String) -> String? = { File(it).parentFile?.absolutePath },
+    message: String? = null,
+    confirming: Boolean = false,
 ) {
+    val maxSelection = if (allowMultiple) selectionLimit.coerceIn(1, RemoteCopyEngine.MAX_SELECTED_ROOTS) else 1
     var navigation by remember(initialDirectoryPath, remotePath) {
         mutableStateOf(LocalUploadNavigationState(initialDirectoryPath))
     }
     val currentPath = navigation.currentPath
     var entries by remember(initialDirectoryPath, remotePath) { mutableStateOf(initialEntries) }
+    var searchQuery by remember(currentPath) { mutableStateOf("") }
+    var displayedEntries by remember(currentPath) { mutableStateOf(initialEntries) }
+    LaunchedEffect(currentPath, entries, searchQuery) {
+        val source = entries
+        val query = searchQuery.trim().take(200)
+        displayedEntries = withContext(Dispatchers.Default) {
+            if (query.isBlank()) source else source.filter {
+                ensureActive()
+                it.name.contains(query, ignoreCase = true)
+            }
+        }
+    }
     var loading by remember(initialDirectoryPath, remotePath) { mutableStateOf(false) }
     var error by remember(initialDirectoryPath, remotePath) { mutableStateOf<String?>(null) }
     var refreshToken by remember(initialDirectoryPath, remotePath) { mutableStateOf(0) }
     var selected: Set<String> by remember(initialDirectoryPath, remotePath) {
-        mutableStateOf(initiallySelected.take(RemoteCopyEngine.MAX_SELECTED_ROOTS).toCollection(linkedSetOf()))
+        mutableStateOf(initiallySelected.take(maxSelection).toCollection(linkedSetOf()))
     }
 
     LaunchedEffect(currentPath, refreshToken) {
@@ -1181,7 +1204,9 @@ internal fun LocalUploadDialog(
     fun toggle(path: String) {
         selected = if (path in selected) {
             selected - path
-        } else if (selected.size < RemoteCopyEngine.MAX_SELECTED_ROOTS) {
+        } else if (!allowMultiple) {
+            setOf(path)
+        } else if (selected.size < maxSelection) {
             selected + path
         } else {
             selected
@@ -1196,15 +1221,16 @@ internal fun LocalUploadDialog(
         navigation = navigation.navigateBack()
     }
 
-    val parentPath = remember(currentPath) { File(currentPath).parentFile?.absolutePath }
-    val visiblePaths = remember(entries) {
-        entries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS).map(FileEntry::absolutePath)
+    val parentPath = parentDirectory(currentPath)
+    val visiblePaths = remember(displayedEntries, filesOnly, maxSelection) {
+        displayedEntries.asSequence().filter { !filesOnly || !it.isDirectory }
+            .take(maxSelection).map(FileEntry::absolutePath).toList()
     }
     val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(selected::contains)
 
     AlertDialog(
         onDismissRequest = { if (navigation.canNavigateBack) navigateBack() else onDismiss() },
-        icon = { Icon(Icons.Rounded.CloudUpload, contentDescription = null) },
+        icon = { Icon(if (filesOnly) Icons.Rounded.FolderOpen else Icons.Rounded.CloudUpload, contentDescription = null) },
         title = { LText(title) },
         text = {
             AfPullToRefresh(
@@ -1214,7 +1240,7 @@ internal fun LocalUploadDialog(
                 testTag = "pull_to_refresh_local_upload",
             ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().testTag("local_upload_list"),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 item {
@@ -1227,16 +1253,23 @@ internal fun LocalUploadDialog(
                             Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
                         }
                         Text(
-                            currentPath,
+                            currentPath.ifEmpty { uiText("Saugykla") },
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    LText("Iš: $currentPath", style = MaterialTheme.typography.bodySmall)
+                    if (!filesOnly && currentPath.isNotEmpty()) LText("Iš: $currentPath", style = MaterialTheme.typography.bodySmall)
                     if (remotePath.isNotBlank()) LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
-                    LText("Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
+                    LText(if (filesOnly) "Pasirinkite bent vieną failą" else "Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
+                    if (filesOnly) Text("${selected.size} / $maxSelection", style = MaterialTheme.typography.labelSmall)
+                    message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
+                    OutlinedTextField(
+                        value = searchQuery, onValueChange = { searchQuery = it.take(200) },
+                        label = { LText("Ieškoti šiame sąraše") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("local_upload_search"),
+                    )
                 }
                 if (selected.isNotEmpty()) {
                     item {
@@ -1248,8 +1281,9 @@ internal fun LocalUploadDialog(
                                 selected = if (allSelected) {
                                     selected - visiblePaths.toSet()
                                 } else {
-                                    val available = RemoteCopyEngine.MAX_SELECTED_ROOTS - selected.size
-                                    selected + visiblePaths.filterNot(selected::contains).take(available)
+                                    val available = maxSelection - selected.size
+                                    if (!allowMultiple) visiblePaths.take(1).toSet()
+                                    else selected + visiblePaths.filterNot(selected::contains).take(available)
                                 }
                             },
                             modifier = Modifier.testTag("local_upload_selection_bar"),
@@ -1270,10 +1304,10 @@ internal fun LocalUploadDialog(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
-                } else if (entries.isEmpty()) {
-                    item { LText("Katalogas tuščias") }
+                } else if (displayedEntries.isEmpty()) {
+                    item { LText(if (searchQuery.isBlank()) "Katalogas tuščias" else "Atitinkančių failų nėra") }
                 }
-                items(entries, key = FileEntry::absolutePath) { entry ->
+                items(displayedEntries, key = FileEntry::absolutePath) { entry ->
                     val entrySelected = entry.absolutePath in selected
                     val selectionShape = RoundedCornerShape(8.dp)
                     Card(
@@ -1283,13 +1317,13 @@ internal fun LocalUploadDialog(
                             .then(if (entrySelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
                             .combinedClickable(
                                 onClick = {
-                                    if (entry.isDirectory && selected.isEmpty()) {
+                                    if (entry.isDirectory && (filesOnly || selected.isEmpty())) {
                                         navigateTo(entry.absolutePath)
                                     } else {
                                         toggle(entry.absolutePath)
                                     }
                                 },
-                                onLongClick = { toggle(entry.absolutePath) },
+                                onLongClick = { if (!filesOnly || !entry.isDirectory) toggle(entry.absolutePath) },
                             ),
                         shape = selectionShape,
                         colors = CardDefaults.cardColors(
@@ -1300,7 +1334,7 @@ internal fun LocalUploadDialog(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Checkbox(
+                            if (!filesOnly || !entry.isDirectory) Checkbox(
                                 checked = entrySelected,
                                 onCheckedChange = { toggle(entry.absolutePath) },
                             )
@@ -1333,8 +1367,8 @@ internal fun LocalUploadDialog(
         confirmButton = {
             Button(
                 onClick = { onCopy(selected.toList()) },
-                enabled = selected.isNotEmpty(),
-            ) { LText("$confirmLabel (${selected.size})") }
+                enabled = selected.isNotEmpty() && !confirming,
+            ) { Text("${uiText(confirmLabel)} (${selected.size})") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
     )
@@ -1349,7 +1383,7 @@ internal data class LocalUploadNavigationState(
     fun navigateTo(path: String): LocalUploadNavigationState = if (path == currentPath) {
         this
     } else {
-        copy(currentPath = path, backStack = backStack + currentPath)
+        copy(currentPath = path, backStack = (backStack + currentPath).takeLast(64))
     }
 
     fun navigateBack(): LocalUploadNavigationState = backStack.lastOrNull()?.let { previous ->

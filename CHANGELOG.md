@@ -2,6 +2,25 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
+## Unreleased
+
+## [0.33.0] - 2026-09-05
+
+- Background playback has pause, resume and stop controls inside AF, even after closing the file preview, as well as Android media controls. Non-repeating playback now ends cleanly, and failed playback does not leave a player running.
+- Media and common action groups wrap naturally with longer translations and larger text. Video controls remain reachable on short screens, and several German, French and Arabic playback labels were corrected.
+- Other apps can use AF's own local file picker through Android's Get content flow. It supports file-type filters and single or multiple selection, respects the AF lock, and returns read-only access only to the files you select.
+- Added an optional red palette and a custom palette editor for accent, background and card colors. Text contrast is adjusted automatically; the default palette stays unchanged.
+- Device cleanup now shows app icons and clearly labelled settings, uninstall and cache actions. Cache clearing remains in Android's own settings, and the duplicate old-media tab was removed from this dialog.
+- Fixed app uninstall requests that did not open Android's confirmation screen. Returning from app settings refreshes cleanup results, and failed actions stay visible in the dialog.
+- Opening or refreshing a local folder now starts at the actual first item in both list and grid view, even when the folder loads in stages. Going back still restores the previous scroll position.
+- File-preview actions are grouped in the top-right menu, leaving more space for the file itself.
+- Android document-provider create, rename, information and delete dialogs now use the same adaptive layout as the rest of AF.
+- The phone-to-phone sender browses media and apps in pages and searches the whole indexed category. Selections stay with you between pages and searches; the existing 1,000-file limit applies to each transfer, not to browsing.
+- The local folder picker has search, and category sorting now correctly applies descending order to every sort key.
+- Files shared from another app go straight to the pairing screen. Preparing them no longer cancels itself, and private forwarding copies are cleaned up after closing or sending.
+- The sender keeps category tabs in one scrolling row, puts select-all beside sorting and moves Open storage to the footer. Refreshing a page keeps its current files visible.
+- Both phones can show a transfer's file list with individual sizes and progress. Finished files can be previewed without leaving the transfer screen; incomplete received files cannot be opened. The full receiver list needs this update on both phones, while transfers to older AF versions still work.
+
 ## [0.32.1] - 2026-09-05
 
 ### Added

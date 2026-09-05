@@ -1,4 +1,5 @@
 package com.affilemanager.app.ui.editor
+import com.affilemanager.app.ui.components.AfActionRow
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -150,7 +151,7 @@ fun EditSaveAsDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AfActionRow {
                     FilterChip(
                         selected = location == SaveAsLocation.PHONE,
                         onClick = { location = SaveAsLocation.PHONE },

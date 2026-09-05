@@ -944,15 +944,6 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         onGrantUsageAccess = viewModel::openUsageAccessSettings,
         onOpenAppSettings = viewModel::openApplicationSettings,
         onUninstall = viewModel::requestApplicationUninstall,
-        oldMediaScanned = analysisState.analysis != null,
-        oldMediaLoading = analysisState.running,
-        oldMediaCount = analysisState.analysis?.oldMediaFiles?.size ?: 0,
-        onRefreshOldMedia = viewModel::refreshAnalysis,
-        onReviewOldMedia = {
-            viewModel.closeDeviceCleanup()
-            cleanupCategory = CleanupCategory.OLD_MEDIA
-            showCleanupReview = true
-        },
     )
 }
 

@@ -7,6 +7,7 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategoryRepository
 import com.affilemanager.app.model.FileEntry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -63,41 +64,55 @@ class NearbySourcePreparer(
             }
         }
 
-    suspend fun prepareContentUris(uris: Collection<Uri>): Result<PreparedNearbyTransfer> = withContext(Dispatchers.IO) {
-        runCatching {
-            val selected = uris.distinctBy(Uri::toString)
-            require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą" }
-            require(selected.size <= MAX_FILES) { "Vienu kartu galima siųsti iki $MAX_FILES failų" }
-            val stage = newStage()
-            try {
-                val files = selected.mapIndexed { index, uri ->
-                    coroutineContext.ensureActive()
-                    require(uri.scheme == "content") { "Palaikomos tik Android dokumentų nuorodos" }
-                    val name = contentName(uri, index)
-                    val target = uniqueFile(stage, name)
-                    application.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
-                        target.outputStream().buffered().use { output ->
-                            val buffer = ByteArray(BUFFER_SIZE)
-                            var total = 0L
-                            while (true) {
-                                coroutineContext.ensureActive()
-                                val read = input.read(buffer)
-                                if (read < 0) break
-                                total = Math.addExact(total, read.toLong())
-                                require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą" }
-                                output.write(buffer, 0, read)
-                            }
-                            buffer.fill(0)
-                        }
-                    } ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
-                    target
+    suspend fun prepareContentUris(uris: Collection<Uri>): Result<PreparedNearbyTransfer> {
+        var ownedStage: File? = null
+        var delivered = false
+        try {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val selected = uris.distinctBy(Uri::toString)
+                    require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą" }
+                    require(selected.size <= MAX_FILES) { "Vienu kartu galima siųsti iki $MAX_FILES failų" }
+                    val stage = newStage().also { ownedStage = it }
+                    copyContentUris(selected, stage)
                 }
-                validatedFiles(files, files.map(File::getName), emptyList(), stage)
-            } catch (error: Throwable) {
-                stage.deleteRecursively()
-                throw error
             }
+            delivered = result.isSuccess
+            return result
+        } finally {
+            // withContext may discard a completed result on cancellation while
+            // dispatching back to the UI. That result has not acquired an owner.
+            if (!delivered) withContext(NonCancellable + Dispatchers.IO) { ownedStage?.let { safeDeleteStage(it.path) } }
         }
+    }
+
+    private suspend fun copyContentUris(uris: List<Uri>, stage: File): PreparedNearbyTransfer {
+        var batchBytes = 0L
+        val files = uris.mapIndexed { index, uri ->
+            coroutineContext.ensureActive()
+            require(uri.scheme == "content") { "Palaikomos tik Android dokumentų nuorodos" }
+            val target = uniqueFile(stage, contentName(uri, index))
+            application.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
+                target.outputStream().buffered().use { output ->
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    var total = 0L
+                    try {
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            total = Math.addExact(total, read.toLong())
+                            require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą" }
+                            batchBytes = Math.addExact(batchBytes, read.toLong())
+                            require(batchBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
+                            output.write(buffer, 0, read)
+                        }
+                    } finally { buffer.fill(0) }
+                }
+            } ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
+            target
+        }
+        return validatedFiles(files, files.map(File::getName), emptyList(), stage)
     }
 
     suspend fun discard(prepared: PreparedNearbyTransfer) = withContext(Dispatchers.IO) {

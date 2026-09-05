@@ -1,4 +1,5 @@
 package com.affilemanager.app.ui.screens
+import com.affilemanager.app.ui.components.AfActionRow
 
 import android.os.Build
 import androidx.compose.foundation.background
@@ -85,6 +86,7 @@ import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.ui.theme.AppearanceRules
 import com.affilemanager.app.ui.theme.AppearanceSettings
 import com.affilemanager.app.ui.theme.palettePreviewColors
+import com.affilemanager.app.ui.theme.CustomThemeColors
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
 import java.util.Locale
@@ -171,6 +173,7 @@ fun ToolsScreen(
                 onThemeMode = viewModel::setThemeMode,
                 onPalette = viewModel::setColorPalette,
                 onAmoledBlack = viewModel::setAmoledBlack,
+                onCustomColors = viewModel::setCustomColors,
             )
         }
 
@@ -564,12 +567,15 @@ private fun shizukuStatus(managerDetected: Boolean, running: Boolean, permission
 }
 
 @Composable
-private fun AppearanceSettingsCard(
+internal fun AppearanceSettingsCard(
     settings: AppearanceSettings,
     onThemeMode: (AppThemeMode) -> Unit,
     onPalette: (AppColorPalette) -> Unit,
     onAmoledBlack: (Boolean) -> Unit,
+    onCustomColors: (CustomThemeColors) -> Boolean,
 ) {
+    var editCustom by remember { mutableStateOf(false) }
+    if (editCustom) CustomPaletteDialog(settings.customColors, onCustomColors, onDismiss = { editCustom = false })
     Card(
         modifier = Modifier.fillMaxWidth().testTag("appearance_settings"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -580,7 +586,7 @@ private fun AppearanceSettingsCard(
         ) {
             LText("Išvaizda", fontWeight = FontWeight.SemiBold)
             LText("Temos režimas", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            AfActionRow {
                 AppThemeMode.entries.forEach { mode ->
                     val label = when (mode) {
                         AppThemeMode.SYSTEM -> "Sistema"
@@ -603,7 +609,7 @@ private fun AppearanceSettingsCard(
                         val supported = AppearanceRules.paletteSupported(palette, Build.VERSION.SDK_INT)
                         val selected = settings.colorPalette == palette
                         Card(
-                            onClick = { onPalette(palette) },
+                            onClick = { if (palette == AppColorPalette.CUSTOM) editCustom = true else onPalette(palette) },
                             enabled = supported,
                             modifier = Modifier
                                 .weight(1f)
@@ -621,7 +627,7 @@ private fun AppearanceSettingsCard(
                                     modifier = Modifier.fillMaxWidth().height(24.dp),
                                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                                 ) {
-                                    palettePreviewColors(palette).forEach { color ->
+                                    palettePreviewColors(palette, settings.customColors).forEach { color ->
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
@@ -640,6 +646,8 @@ private fun AppearanceSettingsCard(
                                         AppColorPalette.AURA -> "Aura"
                                         AppColorPalette.TOKYO -> "Tokyo"
                                         AppColorPalette.YIN_YANG -> "Yin Yang"
+                                        AppColorPalette.RED -> "Raudona"
+                                        AppColorPalette.CUSTOM -> "Pasirinktinė paletė"
                                     },
                                     style = MaterialTheme.typography.labelLarge,
                                 )
@@ -731,7 +739,7 @@ private fun AppUpdateCard(
                 }
                 is AppUpdateState.Failed -> {
                     LText(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AfActionRow {
                         state.release?.let { release ->
                             Button(onClick = { onDownload(release) }) { LText("Bandyti siųsti dar kartą") }
                         }

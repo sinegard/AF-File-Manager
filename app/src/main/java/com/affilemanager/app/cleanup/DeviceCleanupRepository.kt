@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.Process
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 data class DeviceCleanupApp(
     val packageName: String,
@@ -26,6 +28,8 @@ data class DeviceCleanupSnapshot(
     val cachedApps: List<DeviceCleanupApp>,
     val scannedApps: Int,
     val cacheSizesAvailable: Boolean,
+    val appsTruncated: Boolean = false,
+    val usageHistoryAvailable: Boolean = true,
 )
 
 internal object DeviceCleanupRules {
@@ -48,21 +52,23 @@ class DeviceCleanupRepository(private val application: Application) {
         val granted = hasUsageAccess()
         if (!granted) return@withContext DeviceCleanupSnapshot(false, emptyList(), emptyList(), 0, false)
         val usageManager = application.getSystemService(UsageStatsManager::class.java)
-        val usage = runCatching {
+        val usageResult = runCatching {
             usageManager.queryAndAggregateUsageStats(
                 nowMillis - USAGE_WINDOW_DAYS * DeviceCleanupRules.DAY_MILLIS,
                 nowMillis,
             )
-        }.getOrDefault(emptyMap())
+        }
+        val usage = usageResult.getOrDefault(emptyMap())
         val packageManager = application.packageManager
         val applications = installedApplications(packageManager).asSequence()
             .filterNot { it.packageName == application.packageName }
             .filterNot { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
-            .take(MAX_APPS)
+            .take(MAX_APPS + 1)
             .toList()
         val storage = application.getSystemService(StorageStatsManager::class.java)
         var cacheQueriesSucceeded = 0
-        val items = applications.mapNotNull { info ->
+        val items = applications.take(MAX_APPS).mapNotNull { info ->
+            currentCoroutineContext().ensureActive()
             val packageInfo = runCatching { packageInfo(packageManager, info.packageName) }.getOrNull() ?: return@mapNotNull null
             val cacheBytes = runCatching {
                 storage.queryStatsForPackage(info.storageUuid, info.packageName, Process.myUserHandle()).cacheBytes.coerceAtLeast(0L)
@@ -77,11 +83,13 @@ class DeviceCleanupRepository(private val application: Application) {
         }
         DeviceCleanupSnapshot(
             usageAccessGranted = true,
-            unusedApps = items.filter { DeviceCleanupRules.isUnused(nowMillis, it.lastUsedMillis, it.firstInstalledMillis) }
+            unusedApps = items.filter { usageResult.isSuccess && DeviceCleanupRules.isUnused(nowMillis, it.lastUsedMillis, it.firstInstalledMillis) }
                 .sortedBy { it.lastUsedMillis ?: it.firstInstalledMillis },
-            cachedApps = items.filter { (it.cacheBytes ?: 0L) > 0L }.sortedByDescending { it.cacheBytes },
+            cachedApps = items.filter { it.cacheBytes == null || it.cacheBytes > 0L }.sortedByDescending { it.cacheBytes },
             scannedApps = items.size,
             cacheSizesAvailable = cacheQueriesSucceeded > 0,
+            appsTruncated = applications.size > MAX_APPS,
+            usageHistoryAvailable = usageResult.isSuccess,
         )
     }
 

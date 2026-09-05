@@ -48,6 +48,7 @@ data class LanUploadProgress(
     val receivedBytes: Long,
     val totalBytes: Long,
     val completed: Boolean = false,
+    val files: List<TransferFileProgress> = emptyList(),
 )
 
 internal interface TemporaryLanServer : AutoCloseable {
@@ -67,6 +68,7 @@ class LanHttpServer(
     private val onUploadProgress: (LanUploadProgress) -> Unit = {},
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
+    private val nearbyFiles = NearbyReceiveFiles()
     companion object {
         const val MAX_SESSION_MINUTES = 60
         const val MAX_CONCURRENT_REQUESTS = 4
@@ -206,6 +208,14 @@ class LanHttpServer(
             return
         }
         when {
+            request.method == "POST" && request.path == "/nearby/manifest" && readOnly ->
+                writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
+            request.method == "POST" && request.path == "/nearby/manifest" -> {
+                require(request.contentLength in 1..NearbyTransferManifest.MAX_BYTES.toLong()) { "Siuntimo rinkinio kelių aprašas per didelis" }
+                val files = nearbyFiles.announce(NearbyTransferManifest.decode(readExactly(input, request.contentLength.toInt())))
+                onUploadProgress(LanUploadProgress("", 0, files.size, 0, 0, 0, files.sumOf { it.sizeBytes }, files = files))
+                writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            }
             request.method == "GET" && request.path == "/" -> showDirectory(output, "")
             request.method == "GET" && request.path == "/list" -> showDirectory(output, request.query["path"].orEmpty())
             request.method == "GET" && request.path == "/download" -> download(output, request.query["path"].orEmpty())
@@ -311,30 +321,46 @@ class LanHttpServer(
         val partial = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
         val totalFiles = request.query["fileCount"]?.toIntOrNull()?.coerceIn(1, 1_000) ?: 1
         val fileIndex = request.query["fileIndex"]?.toIntOrNull()?.coerceIn(1, totalFiles) ?: 1
+        val relativePath = directory.relativeTo(root).invariantSeparatorsPath
+            .takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
+        nearbyFiles.validate(fileIndex, relativePath, length)
         val totalBytes = request.query["batchBytes"]?.toLongOrNull()
             ?.coerceIn(length, 5L * 1_024L * 1_024L * 1_024L) ?: length
         val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
         var remaining = length
         var received = 0L
         var lastProgressAt = 0L
-        fun publishProgress(completed: Boolean = false) {
+        fun publishProgress(completed: Boolean = false, failed: Boolean = false) {
             val now = System.nanoTime()
-            if (!completed && received > 0L && now - lastProgressAt < 150_000_000L) return
+            if (!completed && !failed && received > 0L && now - lastProgressAt < 150_000_000L) return
             lastProgressAt = now
+            val files = nearbyFiles.update(fileIndex, TransferFileProgress(
+                relativePath = relativePath, sizeBytes = length, transferredBytes = received,
+                status = when {
+                    completed -> TransferFileStatus.COMPLETED
+                    failed -> TransferFileStatus.FAILED
+                    else -> TransferFileStatus.TRANSFERRING
+                },
+                localPath = if (completed) target.absolutePath else null,
+                modifiedAtMillis = if (completed) target.lastModified() else 0,
+            ))
+            val announced = nearbyFiles.hasManifest()
             onUploadProgress(
                 LanUploadProgress(
                     currentFile = name,
                     currentFileIndex = fileIndex,
-                    totalFiles = totalFiles,
+                    totalFiles = if (announced) files.size else totalFiles,
                     currentFileBytes = received,
                     currentFileSize = length,
-                    receivedBytes = (batchOffset + received).coerceAtMost(totalBytes),
-                    totalBytes = totalBytes,
+                    receivedBytes = if (announced) files.sumOf { it.transferredBytes } else (batchOffset + received).coerceAtMost(totalBytes),
+                    totalBytes = if (announced) files.sumOf { it.sizeBytes } else totalBytes,
                     completed = completed,
+                    files = files,
                 ),
             )
         }
         publishProgress()
+        var committed = false
         try {
             FileOutputStream(partial).use { fileOutput ->
                 val buffer = ByteArray(256 * 1_024)
@@ -351,8 +377,13 @@ class LanHttpServer(
             }
             require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
             require(partial.renameTo(target)) { "Įkėlimo užbaigti nepavyko" }
+            committed = true
             publishProgress(completed = true)
             writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
+        } catch (failure: Exception) {
+            // A response write can fail after commit; that file is still complete.
+            if (!committed) publishProgress(failed = true)
+            throw failure
         } finally {
             if (partial.exists()) partial.delete()
         }

@@ -43,6 +43,26 @@ class ConnectionsComponentsTest {
     val compose = createComposeRule()
 
     @Test
+    fun localPickerSearchKeepsSelectionAndFolderNavigation() {
+        val folder = localEntry("folder", EntryKind.DIRECTORY)
+        val first = localEntry("first.txt", EntryKind.DOCUMENT)
+        val later = localEntry("folder/second.txt", EntryKind.DOCUMENT)
+        var copied = emptyList<String>()
+        compose.setContent { MaterialTheme {
+            LocalUploadDialog("/local", "", emptyList(), emptySet(),
+                { path -> Result.success(if (path == folder.absolutePath) listOf(later) else listOf(folder, first)) }, {}, { copied = it })
+        } }
+        compose.onNodeWithTag("local_upload_search").performTextInput("first")
+        compose.onNodeWithText("first.txt").performScrollTo().performClick()
+        compose.onAllNodesWithText("folder").assertCountEquals(0)
+        compose.onNodeWithTag("local_upload_search").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("local_upload_open_${folder.absolutePath}").performScrollTo().performClick()
+        compose.onNodeWithText("second.txt").performScrollTo().performClick()
+        compose.onNodeWithText("Copy (2)").performClick()
+        compose.runOnIdle { assertEquals(listOf(first.absolutePath, later.absolutePath), copied) }
+    }
+
+    @Test
     fun connectedBrowserExposesCopyActionsInBothDirectionsIncludingFolders() {
         val folder = RemoteEntry("remote-folder", "/remote-folder", true, 0, null)
         val file = RemoteEntry("remote.txt", "/remote.txt", false, 12, null)

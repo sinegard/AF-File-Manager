@@ -1307,7 +1307,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit) {
 }
 
 @Composable
-private fun FileList(
+internal fun FileList(
     panel: PanelId,
     state: PanelUiState,
     tagsByPath: Map<String, TaggedFileRecord>,
@@ -1341,20 +1341,24 @@ private fun FileList(
     val listState = key(scrollKey) {
         rememberLazyListState()
     }
+    var handledTopRequest by remember(scrollKey) { mutableStateOf(state.scrollToTopRequest) }
     LaunchedEffect(scrollKey, state.scrollToTopRequest) {
-        if (state.scrollToTopRequest > 0L) {
+        if (state.scrollToTopRequest != handledTopRequest) {
+            handledTopRequest = state.scrollToTopRequest
             restoringPosition = false
-            pinInitialTop = false
-            listState.scrollToItem(0)
+            pinInitialTop = true
+            listState.requestScrollToItem(0)
         }
     }
     val userDragging by listState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(scrollKey, userDragging) {
         if (userDragging) pinInitialTop = false
     }
-    LaunchedEffect(scrollKey, state.entries.size, state.loading, pinInitialTop) {
+    LaunchedEffect(scrollKey, state.entries.size, state.entries.firstOrNull()?.absolutePath, state.loading, pinInitialTop) {
         if (pinInitialTop && state.entries.isNotEmpty()) {
-            listState.scrollToItem(0)
+            // Apply at the next measure so stable item keys cannot anchor an
+            // early partial result (such as Android) above the final first item.
+            listState.requestScrollToItem(0)
             if (!state.loading) pinInitialTop = false
         } else if (restoringPosition && state.entries.isNotEmpty() &&
             (state.entries.size > initialPosition.firstVisibleItemIndex || !state.loading)
@@ -1465,7 +1469,7 @@ private fun FileList(
 }
 
 @Composable
-private fun FileGrid(
+internal fun FileGrid(
     panel: PanelId,
     state: PanelUiState,
     tagsByPath: Map<String, TaggedFileRecord>,
@@ -1500,20 +1504,24 @@ private fun FileGrid(
     val gridState = key(scrollKey) {
         rememberLazyGridState()
     }
+    var handledTopRequest by remember(scrollKey) { mutableStateOf(state.scrollToTopRequest) }
     LaunchedEffect(scrollKey, state.scrollToTopRequest) {
-        if (state.scrollToTopRequest > 0L) {
+        if (state.scrollToTopRequest != handledTopRequest) {
+            handledTopRequest = state.scrollToTopRequest
             restoringPosition = false
-            pinInitialTop = false
-            gridState.scrollToItem(0)
+            pinInitialTop = true
+            gridState.requestScrollToItem(0)
         }
     }
     val userDragging by gridState.interactionSource.collectIsDraggedAsState()
     LaunchedEffect(scrollKey, userDragging) {
         if (userDragging) pinInitialTop = false
     }
-    LaunchedEffect(scrollKey, state.entries.size, state.loading, pinInitialTop) {
+    LaunchedEffect(scrollKey, state.entries.size, state.entries.firstOrNull()?.absolutePath, state.loading, pinInitialTop) {
         if (pinInitialTop && state.entries.isNotEmpty()) {
-            gridState.scrollToItem(0)
+            // Apply at the next measure so stable item keys cannot anchor an
+            // early partial result (such as Android) above the final first item.
+            gridState.requestScrollToItem(0)
             if (!state.loading) pinInitialTop = false
         } else if (restoringPosition && state.entries.isNotEmpty() &&
             (state.entries.size > initialPosition.firstVisibleItemIndex || !state.loading)

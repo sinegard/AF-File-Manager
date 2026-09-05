@@ -11,6 +11,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -240,7 +241,7 @@ private val YinYangLightColors = lightColorScheme(
     onSurfaceVariant = Color(0xFF484646),
 )
 
-fun palettePreviewColors(palette: AppColorPalette): List<Color> = when (palette) {
+fun palettePreviewColors(palette: AppColorPalette, custom: CustomThemeColors = CustomThemeColors()): List<Color> = when (palette) {
     AppColorPalette.DEFAULT -> listOf(Color(0xFF006B5D), Color(0xFF5DD6C0), Color(0xFF9DC9FF))
     AppColorPalette.DYNAMIC -> listOf(Color(0xFF4866A8), Color(0xFFA9C7FF), Color(0xFFD6B9FF))
     AppColorPalette.CATPPUCCIN -> listOf(Color(0xFFCBA6F7), Color(0xFF89B4FA), Color(0xFFFAB387))
@@ -249,6 +250,8 @@ fun palettePreviewColors(palette: AppColorPalette): List<Color> = when (palette)
     AppColorPalette.AURA -> listOf(Color(0xFF355FAD), Color(0xFF8ADCD2), Color(0xFFD0BCFF))
     AppColorPalette.TOKYO -> listOf(Color(0xFF3D5F8F), Color(0xFF8BD5CA), Color(0xFFC4A7E7))
     AppColorPalette.YIN_YANG -> listOf(Color(0xFF454747), Color(0xFFC8C6C5), Color(0xFFF5F5F5))
+    AppColorPalette.RED -> listOf(Color(0xFFB3261E), Color(0xFFFFB4AB), Color(0xFF8F4A45))
+    AppColorPalette.CUSTOM -> listOf(Color(custom.primary), Color(custom.secondary), Color(custom.tertiary))
 }
 
 @Composable
@@ -259,7 +262,7 @@ fun AFFileManagerTheme(
     val systemDark = isSystemInDarkTheme()
     val darkTheme = AppearanceRules.useDarkTheme(settings.themeMode, systemDark)
     val context = LocalContext.current
-    val baseColors = when (settings.colorPalette) {
+    val baseColors = remember(settings, darkTheme, context) { when (settings.colorPalette) {
         AppColorPalette.DYNAMIC -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         } else {
@@ -271,20 +274,28 @@ fun AFFileManagerTheme(
         AppColorPalette.AURA -> if (darkTheme) AuraDarkColors else AuraLightColors
         AppColorPalette.TOKYO -> if (darkTheme) TokyoDarkColors else TokyoLightColors
         AppColorPalette.YIN_YANG -> if (darkTheme) YinYangDarkColors else YinYangLightColors
+        AppColorPalette.RED -> customColorScheme(if (darkTheme) {
+            CustomThemeColors(0xFFFFB4AB.toInt(), 0xFFE6BDB9.toInt(), 0xFFF3BF8F.toInt(), 0xFF1A1110.toInt(), 0xFF211716.toInt())
+        } else {
+            CustomThemeColors(0xFFB3261E.toInt(), 0xFF775653.toInt(), 0xFF795831.toInt(), 0xFFFFF8F7.toInt(), 0xFFFFF8F7.toInt())
+        })
+        AppColorPalette.CUSTOM -> customColorScheme(if (settings.amoledBlack && darkTheme) {
+            settings.customColors.copy(background = 0xFF000000.toInt(), surface = 0xFF000000.toInt())
+        } else settings.customColors)
         AppColorPalette.DEFAULT -> if (darkTheme) DefaultDarkColors else DefaultLightColors
-    }
+    } }
     val colors = if (settings.amoledBlack && darkTheme) baseColors.withAmoledBackground() else baseColors
 
     MaterialTheme(
         colorScheme = colors,
     ) {
-        SystemBarsTheme(colors = colors, darkTheme = darkTheme)
+        SystemBarsTheme(colors = colors)
         content()
     }
 }
 
 @Composable
-private fun SystemBarsTheme(colors: ColorScheme, darkTheme: Boolean) {
+private fun SystemBarsTheme(colors: ColorScheme) {
     val view = LocalView.current
     if (view.isInEditMode) return
     SideEffect {
@@ -297,8 +308,8 @@ private fun SystemBarsTheme(colors: ColorScheme, darkTheme: Boolean) {
             window.isNavigationBarContrastEnforced = false
         }
         WindowCompat.getInsetsController(window, view).apply {
-            isAppearanceLightStatusBars = !darkTheme
-            isAppearanceLightNavigationBars = !darkTheme
+            isAppearanceLightStatusBars = CustomThemeRules.foreground(colors.surface) == Color.Black
+            isAppearanceLightNavigationBars = CustomThemeRules.foreground(colors.surfaceContainer) == Color.Black
         }
     }
 }

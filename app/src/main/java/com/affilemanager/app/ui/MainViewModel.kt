@@ -619,6 +619,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val cleanupRequested: StateFlow<Boolean> = _cleanupRequested.asStateFlow()
 
     private val _deviceCleanup = MutableStateFlow(DeviceCleanupUiState())
+    private var deviceCleanupJob: Job? = null
     val deviceCleanup: StateFlow<DeviceCleanupUiState> = _deviceCleanup.asStateFlow()
 
     private val _clipboard = MutableStateFlow<ClipboardState?>(null)
@@ -1356,6 +1357,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeCustomization { HomeCustomizationRules.setShortcutVisible(it, id, visible) }
     }
 
+    fun setCustomColors(colors: com.affilemanager.app.ui.theme.CustomThemeColors): Boolean =
+        runCatching { graph.appearance.setCustomColors(colors) }
+            .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }.isSuccess
+
     fun beginIncomingShare(uris: List<Uri>) {
         val accepted = uris.asSequence().distinctBy(Uri::toString).take(1_000).toList()
         if (accepted.isEmpty()) return
@@ -1549,15 +1554,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshPanel(panel: PanelId, scrollToTop: Boolean = false) {
         val flow = panelFlow(panel)
-        if (scrollToTop) {
-            flow.update { it.copy(scrollToTopRequest = it.scrollToTopRequest + 1L) }
-        }
         val snapshot = flow.value
         panelRefreshJob(panel)?.cancel()
         val job = viewModelScope.launch {
             flow.update {
                 it.copy(
                     loading = true,
+                    scrollToTopRequest = it.scrollToTopRequest + if (scrollToTop) 1L else 0L,
                     listingScannedEntries = 0,
                     listingMetadataEntries = 0,
                     listingTruncated = false,
@@ -2136,30 +2139,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun loadNearbyTransferCategory(
+    suspend fun loadNearbyTransferCategoryPage(
         category: FileCategory,
+        offset: Int,
         sortMode: SortMode = SortMode.NAME,
         sortDirection: SortDirection = SortDirection.ASCENDING,
-    ): Result<List<FileEntry>> =
+        query: String = "",
+        forceRefresh: Boolean = false,
+    ): Result<com.affilemanager.app.data.FileCategoryPage> =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val entries = ArrayList<FileEntry>()
-                var offset: Int? = 0
-                var refresh = true
-                while (offset != null && entries.size < com.affilemanager.app.data.FileCategoryRepository.MAX_RESULTS) {
-                    val page = graph.fileCategories.loadPage(
-                        category = category,
-                        offset = offset,
-                        sortMode = sortMode,
-                        sortDirection = sortDirection,
-                        forceRefresh = refresh,
-                    )
-                    refresh = false
-                    entries += page.entries
-                    offset = page.nextOffset
-                }
-                entries.distinctBy(FileEntry::absolutePath)
-                    .take(com.affilemanager.app.data.FileCategoryRepository.MAX_RESULTS)
+            try {
+                Result.success(graph.fileCategories.loadBrowsePage(
+                    category = category,
+                    offset = offset,
+                    sortMode = sortMode,
+                    sortDirection = sortDirection,
+                    query = query,
+                    forceRefresh = forceRefresh,
+                ))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Result.failure(failure)
             }
         }
 
@@ -2288,16 +2289,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeDeviceCleanup() {
-        _deviceCleanup.update { it.copy(open = false) }
+        deviceCleanupJob?.cancel()
+        deviceCleanupJob = null
+        _deviceCleanup.update { it.copy(open = false, loading = false) }
     }
 
     fun refreshDeviceCleanup() {
         if (_deviceCleanup.value.loading) return
         _deviceCleanup.update { it.copy(loading = true, error = null) }
-        viewModelScope.launch {
+        deviceCleanupJob = viewModelScope.launch {
             runCatching { graph.deviceCleanup.scan() }.fold(
                 onSuccess = { snapshot -> _deviceCleanup.update { it.copy(loading = false, snapshot = snapshot) } },
-                onFailure = { error -> _deviceCleanup.update { it.copy(loading = false, error = error.message) } },
+                onFailure = { error ->
+                    if (error is CancellationException) throw error
+                    _deviceCleanup.update { it.copy(loading = false, error = error.message ?: "Programų nuskaityti nepavyko") }
+                },
             )
         }
     }
@@ -2313,19 +2319,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun openApplicationSettings(packageName: String) {
         runCatching {
             getApplication<Application>().startActivity(
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                com.affilemanager.app.cleanup.ApplicationActions.settingsIntent(packageName),
             )
-        }.onFailure { message(it.message ?: "Programos nustatymų atidaryti nepavyko", true) }
+        }.onFailure { applicationActionError("Programos nustatymų atidaryti nepavyko") }
     }
 
     fun requestApplicationUninstall(packageName: String) {
         runCatching {
             getApplication<Application>().startActivity(
-                Intent(Intent.ACTION_UNINSTALL_PACKAGE, Uri.parse("package:$packageName"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                com.affilemanager.app.cleanup.ApplicationActions.uninstallIntent(packageName),
             )
-        }.onFailure { message(it.message ?: "Programos šalinimo lango atidaryti nepavyko", true) }
+        }.onFailure { applicationActionError("Programos šalinimo lango atidaryti nepavyko") }
+    }
+
+    private fun applicationActionError(text: String) {
+        if (_deviceCleanup.value.open) _deviceCleanup.update { it.copy(error = text) }
+        else message(text, true)
     }
 
     fun openTagFromHome(tag: String) {
@@ -2386,8 +2395,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         runCatching {
             getApplication<Application>().startActivity(
-                Intent(Intent.ACTION_UNINSTALL_PACKAGE, Uri.parse("package:$packageName"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                com.affilemanager.app.cleanup.ApplicationActions.uninstallIntent(packageName),
             )
         }.onSuccess {
             clearFileCategorySelection()

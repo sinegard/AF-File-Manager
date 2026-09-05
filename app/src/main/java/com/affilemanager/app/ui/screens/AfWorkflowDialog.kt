@@ -75,6 +75,7 @@ import com.affilemanager.app.operations.TransferVerification
 import com.affilemanager.app.ui.AfWorkflowTab
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.ui.components.AfActionRow
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.workflow.AfAutomationRule
@@ -139,9 +140,8 @@ fun AfWorkflowDialog(viewModel: MainViewModel) {
                 },
             ) { padding ->
                 Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                    Row(
+                    AfActionRow(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         WorkflowTabChip(ui.tab == AfWorkflowTab.PLANS, "Planai", Icons.Rounded.AutoAwesomeMotion) {
                             viewModel.setAfWorkflowTab(AfWorkflowTab.PLANS)

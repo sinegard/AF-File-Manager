@@ -1,4 +1,5 @@
 package com.affilemanager.app.ui.screens
+import com.affilemanager.app.ui.components.AfActionRow
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -156,15 +157,14 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             Text(sharedPath, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AfActionRow {
                         OutlinedButton(
                             onClick = { viewModel.updateShareScreenPreferences { it.copy(sharedPath = activePath) } },
                             enabled = !running,
-                            modifier = Modifier.weight(1f),
                         ) {
                             LText("Naudoti aktyvų aplanką")
                         }
-                        OutlinedButton(onClick = { pickerStartPath = sharedPath }, enabled = !running, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { pickerStartPath = sharedPath }, enabled = !running) {
                             LText("Naršyti aplankus")
                         }
                     }
@@ -431,7 +431,7 @@ private fun RunningShareCard(context: Context, state: com.affilemanager.app.tran
             state.code?.let { LText("Kodas: $it", fontWeight = FontWeight.Bold) }
             if (state.readOnly) LText("Tik skaityti", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             Text(state.rootPath.orEmpty(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AfActionRow {
                 OutlinedButton(onClick = {
                     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("AF File Manager", details))
                     Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()

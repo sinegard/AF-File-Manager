@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
 import com.affilemanager.app.terminal.PrivilegedTerminalRuntimeVerifier;
+import com.affilemanager.app.media.BackgroundPlaybackRuntimeVerifier;
 
 import java.util.Arrays;
 
@@ -26,7 +27,10 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
         char[] password = new char[0];
         try {
             boolean verified;
-            if ("webdav".equals(suite)) {
+            if ("background-playback".equals(suite)) {
+                launchTargetActivity();
+                verified = BackgroundPlaybackRuntimeVerifier.verify(this);
+            } else if ("webdav".equals(suite)) {
                 password = required("afWebDavPassword").toCharArray();
                 verified = WebDavRuntimeVerifier.verify(
                         required("afWebDavHost"), Integer.parseInt(required("afWebDavPort")),

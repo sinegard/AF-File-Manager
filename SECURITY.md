@@ -44,6 +44,7 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 
 ## Security boundaries
 
+- The optional Get content picker returns temporary read access only to files explicitly selected by the user. It respects the AF app lock and Android storage permissions. It does not expose saved servers, privileged roots, app-private storage, directory grants, or write access to the requesting app.
 - Android and device-vendor restrictions take precedence over the app. Ordinary access to `Android/data` and `Android/obb` remains restricted; the optional advanced mode works only when a separately installed and configured Shizuku or compatible root service actually grants access.
 - Release APKs are signed with a separate distribution key stored as GitHub Actions secrets. The private key and passwords are not present in this repository. Losing that key prevents compatible updates.
 - Every real server type should be validated against the owner's infrastructure and certificate or SSH-fingerprint policy before production use.

@@ -21,12 +21,15 @@ enum class AppColorPalette {
     AURA,
     TOKYO,
     YIN_YANG,
+    RED,
+    CUSTOM,
 }
 
 data class AppearanceSettings(
     val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     val colorPalette: AppColorPalette = AppColorPalette.DEFAULT,
     val amoledBlack: Boolean = false,
+    val customColors: CustomThemeColors = CustomThemeColors(),
 )
 
 object AppearanceRules {
@@ -58,6 +61,11 @@ class AppearanceRepository(context: Context) {
 
     fun setAmoledBlack(enabled: Boolean) = update { it.copy(amoledBlack = enabled) }
 
+    fun setCustomColors(colors: CustomThemeColors) = update {
+        require(colors.values().all { color -> color ushr 24 == 255 }) { "Use opaque RGB colors" }
+        it.copy(colorPalette = AppColorPalette.CUSTOM, customColors = colors)
+    }
+
     @Synchronized
     private fun update(transform: (AppearanceSettings) -> AppearanceSettings) {
         val updated = transform(mutableSettings.value)
@@ -67,6 +75,7 @@ class AppearanceRepository(context: Context) {
                 .putString(KEY_THEME_MODE, updated.themeMode.name)
                 .putString(KEY_COLOR_PALETTE, updated.colorPalette.name)
                 .putBoolean(KEY_AMOLED_BLACK, updated.amoledBlack)
+                .putString("custom_colors_v1", updated.customColors.values().joinToString(",", transform = CustomThemeRules::hex))
                 .commit(),
         ) { "Appearance settings could not be saved" }
         mutableSettings.value = updated
@@ -80,5 +89,6 @@ class AppearanceRepository(context: Context) {
             ?.let { stored -> AppColorPalette.entries.firstOrNull { it.name == stored } }
             ?: AppColorPalette.DEFAULT,
         amoledBlack = preferences.getBoolean(KEY_AMOLED_BLACK, false),
+        customColors = CustomThemeRules.parseStored(preferences.getString("custom_colors_v1", null)),
     )
 }

@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -34,7 +36,6 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +59,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,6 +82,7 @@ import com.affilemanager.app.ui.components.SafFileVisual
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.AfPullToRefresh
+import com.affilemanager.app.ui.components.AfModalDialog
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -281,15 +284,21 @@ fun SafBrowserDialog(
         SafInfoDialog(entry = entry, onDismiss = { info = null })
     }
     delete?.let { entry ->
-        AlertDialog(
+        AfModalDialog(
             onDismissRequest = { delete = null },
-            title = { LText("Ištrinti visam laikui?") },
-            text = { LText("„${entry.name}“ bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę.") },
-            confirmButton = {
+            title = "Ištrinti visam laikui?",
+            icon = Icons.Rounded.Delete,
+            modifier = Modifier.testTag("saf_delete_dialog"),
+            actions = {
+                TextButton(onClick = { delete = null }) { LText("Atšaukti") }
                 Button(onClick = { viewModel.deleteSafEntry(entry); delete = null }) { LText("Ištrinti") }
             },
-            dismissButton = { TextButton(onClick = { delete = null }) { LText("Atšaukti") } },
-        )
+        ) {
+            LText(
+                "„${entry.name}“ bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę.",
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(18.dp),
+            )
+        }
     }
     if (showDisplaySettings) {
         DirectoryDisplaySettingsDialog(
@@ -488,22 +497,24 @@ private fun orderSafEntries(
 }
 
 @Composable
-private fun SafInfoDialog(entry: SafEntry, onDismiss: () -> Unit) {
+internal fun SafInfoDialog(entry: SafEntry, onDismiss: () -> Unit) {
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
-    AlertDialog(
+    AfModalDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-        title = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LText(if (entry.directory) "Aplankas" else entry.mimeType ?: "Failas")
-                if (!entry.directory) SafInfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
-                entry.modifiedAtMillis.takeIf { it > 0L }?.let { SafInfoLine("Pakeista", dateFormat.format(Date(it))) }
-                Text(entry.uri, style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
-    )
+        icon = Icons.Rounded.Info,
+        title = entry.name,
+        translateTitle = false,
+        showFooter = false,
+        modifier = Modifier.testTag("saf_info_dialog"),
+        actions = {},
+    ) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LText(if (entry.directory) "Aplankas" else entry.mimeType ?: "Failas")
+            if (!entry.directory) SafInfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
+            entry.modifiedAtMillis.takeIf { it > 0L }?.let { SafInfoLine("Pakeista", dateFormat.format(Date(it))) }
+            Text(entry.uri, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
 
 @Composable
@@ -515,25 +526,28 @@ private fun SafInfoLine(label: String, value: String) {
 }
 
 @Composable
-private fun SafCreateDialog(onDismiss: () -> Unit, onFolder: (String) -> Unit, onFile: (String) -> Unit) {
+internal fun SafCreateDialog(onDismiss: () -> Unit, onFolder: (String) -> Unit, onFile: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
-    AlertDialog(
+    AfModalDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null) },
-        title = { LText("Sukurti") },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true) },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onFile(name) }, enabled = name.isNotBlank()) { LText("Failą") }
-                Button(onClick = { onFolder(name) }, enabled = name.isNotBlank()) { LText("Aplanką") }
-            }
+        icon = Icons.Rounded.CreateNewFolder,
+        title = "Sukurti",
+        modifier = Modifier.testTag("saf_create_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            OutlinedButton(onClick = { onFile(name) }, enabled = name.isNotBlank()) { LText("Failą") }
+            Button(onClick = { onFolder(name) }, enabled = name.isNotBlank()) { LText("Aplanką") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+    ) {
+        OutlinedTextField(
+            value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
+        )
+    }
 }
 
 @Composable
-private fun SafNameDialog(
+internal fun SafNameDialog(
     title: String,
     initial: String,
     confirm: String,
@@ -541,11 +555,19 @@ private fun SafNameDialog(
     onConfirm: (String) -> Unit,
 ) {
     var name by remember(initial) { mutableStateOf(initial) }
-    AlertDialog(
+    AfModalDialog(
         onDismissRequest = onDismiss,
-        title = { LText(title) },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true) },
-        confirmButton = { Button(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { LText(confirm) } },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+        title = title,
+        icon = Icons.Rounded.Edit,
+        modifier = Modifier.testTag("saf_name_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { LText(confirm) }
+        },
+    ) {
+        OutlinedTextField(
+            value = name, onValueChange = { name = it }, label = { LText("Pavadinimas") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
+        )
+    }
 }

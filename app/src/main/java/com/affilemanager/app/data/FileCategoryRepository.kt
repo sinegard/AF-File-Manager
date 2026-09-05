@@ -20,7 +20,7 @@ import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.job
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.BufferedOutputStream
@@ -33,6 +33,14 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
+
+/** Keep cancellation wired until both the query and lazy cursor reads have finished. */
+internal suspend fun <T> withMediaQueryCancellation(block: (CancellationSignal) -> T): T =
+    suspendCancellableCoroutine { continuation ->
+        val signal = CancellationSignal()
+        continuation.invokeOnCancellation { signal.cancel() }
+        continuation.resumeWith(runCatching { signal.throwIfCanceled(); block(signal) })
+    }
 
 enum class FileCategory(val kind: EntryKind) {
     IMAGES(EntryKind.IMAGE),
@@ -88,6 +96,10 @@ internal object FileCategoryPagingRules {
     const val FIRST_PAGE_RESULTS = 160
     const val NEXT_PAGE_RESULTS = 240
     const val MAX_SCANNED_ROWS_PER_PAGE = 640
+    const val BROWSE_PAGE_ROWS = 240
+
+    fun literalSearchPattern(query: String): String = "%" + query.trim().take(200)
+        .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
     fun resultLimit(offset: Int): Int = if (offset == 0) FIRST_PAGE_RESULTS else NEXT_PAGE_RESULTS
 
@@ -124,6 +136,8 @@ class FileCategoryRepository(
         val sortMode: SortMode,
         val sortDirection: SortDirection,
         val showSystemApps: Boolean,
+        val browseAll: Boolean = false,
+        val query: String = "",
     )
 
     private data class CachedPage(val page: FileCategoryPage, val createdAtNanos: Long)
@@ -187,6 +201,27 @@ class FileCategoryRepository(
 
     fun invalidate(category: FileCategory) {
         synchronized(cacheLock) { cache.keys.removeAll { it.category == category } }
+    }
+
+    /** A bounded window into the complete index; callers replace, rather than append, pages. */
+    suspend fun loadBrowsePage(
+        category: FileCategory,
+        offset: Int,
+        sortMode: SortMode,
+        sortDirection: SortDirection,
+        query: String = "",
+        forceRefresh: Boolean = false,
+        showSystemApps: Boolean = false,
+    ): FileCategoryPage = withContext(Dispatchers.IO) {
+        require(offset >= 0 && offset % FileCategoryPagingRules.BROWSE_PAGE_ROWS == 0) { "Invalid category page offset" }
+        val normalizedQuery = query.trim().take(200)
+        if (forceRefresh) invalidate(category)
+        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, true, normalizedQuery)
+        cached(key)?.let { return@withContext it }
+        val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps, browseAll = true, search = normalizedQuery)
+        coroutineContext.ensureActive()
+        synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
+        page
     }
 
     /**
@@ -253,53 +288,67 @@ class FileCategoryRepository(
         sortMode: SortMode,
         sortDirection: SortDirection,
         showSystemApps: Boolean,
+        browseAll: Boolean = false,
+        search: String = "",
     ): FileCategoryPage {
-        val resultLimit = FileCategoryPagingRules.resultLimit(offset)
+        val resultLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.resultLimit(offset)
+        val rowLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE
+        val maxQueryRows = if (browseAll) Int.MAX_VALUE else MAX_QUERY_ROWS
         if (category == FileCategory.INSTALLED_APPS) {
-            val allEntries = FileEntryOrdering.order(queryInstalledApps(MAX_RESULTS, showSystemApps), sortMode, sortDirection)
-            val entries = allEntries.drop(offset).take(resultLimit)
-            val nextOffset = (offset + entries.size).takeIf { it < allEntries.size && it < MAX_RESULTS }
+            val candidates = queryInstalledApps(resultLimit + 1, showSystemApps, offset, sortMode, sortDirection, search)
+            val entries = candidates.take(resultLimit)
+            val hasMore = candidates.size > resultLimit
+            val nextOffset = FileCategoryPagingRules.nextOffset(offset, entries.size, hasMore, if (browseAll) Int.MAX_VALUE else MAX_RESULTS)
             return FileCategoryPage(
                 entries = entries,
                 scannedRows = entries.size,
                 nextOffset = nextOffset,
-                truncated = allEntries.size > MAX_RESULTS,
+                truncated = hasMore && nextOffset == null,
             )
         }
-        val projection = arrayOf(
-            MediaStore.MediaColumns.DATA,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.DATE_MODIFIED,
-            MediaStore.MediaColumns.MIME_TYPE,
-        )
-        val query = categoryQuery(category)
-        val queryArgs = Bundle().apply {
-            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, query.selection)
-            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, query.arguments)
-            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, mediaStoreSortColumns(sortMode))
-            putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, sortDirection.toQueryDirection())
-            putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
-            putInt(ContentResolver.QUERY_ARG_LIMIT, FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE)
-        }
-        val entries = ArrayList<FileEntry>(resultLimit)
-        var scanned = 0
-        var moreRowsAvailable = false
-        val cancellationSignal = CancellationSignal()
-        val cancellationHandle = coroutineContext.job.invokeOnCompletion { cancellationSignal.cancel() }
-        try {
-            resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, cancellationSignal)?.use { cursor ->
+        val workContext = coroutineContext
+        return withMediaQueryCancellation { cancellationSignal ->
+            val projection = arrayOf(
+                BaseColumns._ID,
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.MIME_TYPE,
+            )
+            val baseQuery = categoryQuery(category)
+            val query = if (search.isBlank()) baseQuery else CategoryQuery(
+                "(${baseQuery.selection}) AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? ESCAPE '\\'",
+                baseQuery.arguments + FileCategoryPagingRules.literalSearchPattern(search),
+            )
+            val queryArgs = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, query.selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, query.arguments)
+                // Framework structured-sort synthesis can append DESC only to the
+                // final column. Each allowlisted column needs its own direction.
+                val direction = if (sortDirection == SortDirection.ASCENDING) "ASC" else "DESC"
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                    mediaStoreSortColumns(sortMode).joinToString(", ") { "$it $direction" })
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, rowLimit + if (browseAll) 1 else 0)
+            }
+            val entries = ArrayList<FileEntry>(resultLimit)
+            var scanned = 0
+            val moreRowsAvailable: Boolean
+            val cursor = resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, cancellationSignal)
+                ?: throw java.io.IOException("Failų sąrašo įkelti nepavyko")
+            cursor.use {
                 val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
                 val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
                 val modifiedIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
                 val mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
                 while (
-                    scanned < FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE &&
+                    scanned < rowLimit &&
                     entries.size < resultLimit &&
                     cursor.moveToNext()
                 ) {
-                    coroutineContext.ensureActive()
+                    workContext.ensureActive()
                     scanned += 1
                     val path = cursor.getString(pathIndex)?.takeIf(String::isNotBlank) ?: continue
                     val file = File(path)
@@ -318,24 +367,21 @@ class FileCategoryRepository(
                         isWritable = file.canWrite(),
                     )
                 }
-                moreRowsAvailable = cursor.position + 1 < cursor.count ||
-                    cursor.count >= FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE
+                moreRowsAvailable = cursor.position + 1 < cursor.count || (!browseAll && cursor.count >= rowLimit)
             }
-        } finally {
-            cancellationHandle.dispose()
+            val nextOffset = FileCategoryPagingRules.nextOffset(
+                offset = offset,
+                scannedRows = scanned,
+                moreRowsAvailable = moreRowsAvailable,
+                maxQueryRows = maxQueryRows,
+            )
+            FileCategoryPage(
+                entries = entries.distinctBy(FileEntry::absolutePath),
+                scannedRows = scanned,
+                nextOffset = nextOffset,
+                truncated = moreRowsAvailable && nextOffset == null,
+            )
         }
-        val nextOffset = FileCategoryPagingRules.nextOffset(
-            offset = offset,
-            scannedRows = scanned,
-            moreRowsAvailable = moreRowsAvailable,
-            maxQueryRows = MAX_QUERY_ROWS,
-        )
-        return FileCategoryPage(
-            entries = entries.distinctBy(FileEntry::absolutePath),
-            scannedRows = scanned,
-            nextOffset = nextOffset,
-            truncated = moreRowsAvailable && nextOffset == null,
-        )
     }
 
     private fun cached(key: PageKey): FileCategoryPage? = synchronized(cacheLock) {
@@ -349,12 +395,6 @@ class FileCategoryRepository(
         SortMode.SIZE -> arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
         SortMode.MODIFIED -> arrayOf(MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
         SortMode.TYPE -> arrayOf(MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DISPLAY_NAME, BaseColumns._ID)
-    }
-
-    private fun SortDirection.toQueryDirection(): Int = if (this == SortDirection.ASCENDING) {
-        ContentResolver.QUERY_SORT_DIRECTION_ASCENDING
-    } else {
-        ContentResolver.QUERY_SORT_DIRECTION_DESCENDING
     }
 
     private fun categoryQuery(category: FileCategory): CategoryQuery = when (category) {
@@ -470,44 +510,53 @@ class FileCategoryRepository(
         InstalledAppExportResult(exportedApps = exported, failedApps = failed)
     }
 
+    private data class InstalledAppRecord(
+        val info: ApplicationInfo, val source: File, val label: String, val bytes: Long, val modified: Long,
+    )
+
     @Suppress("DEPRECATION")
-    private fun queryInstalledApps(limit: Int, showSystemApps: Boolean): List<FileEntry> {
+    private suspend fun queryInstalledApps(
+        limit: Int, showSystemApps: Boolean, offset: Int, sortMode: SortMode, sortDirection: SortDirection, search: String,
+    ): List<FileEntry> {
+        val workContext = coroutineContext
         val packageManager = applicationContext.packageManager
+        // Android exposes its finite installed-package inventory in one call. Retain only
+        // lightweight sort keys here; package-version lookup and FileEntry construction are paged.
         val applications = if (Build.VERSION.SDK_INT >= 33) {
             packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-        } else {
-            packageManager.getInstalledApplications(0)
-        }
-        return applications.asSequence()
-            .filter { info -> showSystemApps || !info.isSystemApplication() }
-            .mapNotNull { applicationInfo ->
-                val file = File(applicationInfo.sourceDir ?: return@mapNotNull null)
-                if (!file.isFile || !file.canRead()) return@mapNotNull null
-                val label = applicationInfo.loadLabel(packageManager).toString().trim()
-                val installedBytes = buildList {
-                    add(file)
-                    applicationInfo.splitSourceDirs.orEmpty().forEach { add(File(it)) }
-                }.fold(0L) { total, source ->
-                    runCatching { Math.addExact(total, source.length().coerceAtLeast(0L)) }.getOrDefault(Long.MAX_VALUE)
+        } else packageManager.getInstalledApplications(0)
+        val records = applications.asSequence()
+            .filter { showSystemApps || !it.isSystemApplication() }
+            .mapNotNull { info ->
+                workContext.ensureActive()
+                val source = File(info.sourceDir ?: return@mapNotNull null)
+                if (!source.isFile || !source.canRead()) return@mapNotNull null
+                val label = info.loadLabel(packageManager).toString().trim().ifBlank { info.packageName }
+                if (search.isNotBlank() && !label.contains(search, ignoreCase = true)) return@mapNotNull null
+                val bytes = info.splitSourceDirs.orEmpty().fold(source.length().coerceAtLeast(0L)) { total, path ->
+                    runCatching { Math.addExact(total, File(path).length().coerceAtLeast(0L)) }.getOrDefault(Long.MAX_VALUE)
                 }
-                val versionName = runCatching {
+                InstalledAppRecord(info, source, label, bytes, source.lastModified())
+            }.toList()
+        val byName = compareBy<InstalledAppRecord> { it.label.lowercase(Locale.ROOT) }.thenBy { it.info.packageName }
+        val ascending = when (sortMode) {
+            SortMode.NAME, SortMode.TYPE -> byName
+            SortMode.SIZE -> compareBy<InstalledAppRecord> { it.bytes }.then(byName)
+            SortMode.MODIFIED -> compareBy<InstalledAppRecord> { it.modified }.then(byName)
+        }
+        return records.sortedWith(if (sortDirection == SortDirection.ASCENDING) ascending else ascending.reversed())
+            .asSequence().drop(offset).take(limit).map { record ->
+                workContext.ensureActive()
+                val version = runCatching {
                     if (Build.VERSION.SDK_INT >= 33) {
-                        packageManager.getPackageInfo(applicationInfo.packageName, PackageManager.PackageInfoFlags.of(0)).versionName
-                    } else {
-                        packageManager.getPackageInfo(applicationInfo.packageName, 0).versionName
-                    }
+                        packageManager.getPackageInfo(record.info.packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+                    } else packageManager.getPackageInfo(record.info.packageName, 0).versionName
                 }.getOrNull()
-                localFiles.toEntry(file).copy(
-                    name = label.ifBlank { applicationInfo.packageName },
-                    sizeBytes = installedBytes,
-                    packageName = applicationInfo.packageName,
-                    appVersionName = versionName,
-                    isSystemApp = applicationInfo.isSystemApplication(),
+                localFiles.toEntry(record.source).copy(
+                    name = record.label, sizeBytes = record.bytes, packageName = record.info.packageName,
+                    appVersionName = version, isSystemApp = record.info.isSystemApplication(),
                 )
-            }
-            .distinctBy(FileEntry::packageName)
-            .take(limit.coerceIn(0, MAX_RESULTS))
-            .toList()
+            }.toList()
     }
 
     @Suppress("DEPRECATION")

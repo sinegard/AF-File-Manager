@@ -51,6 +51,7 @@ data class NearbyTransferState(
     val sentBytes: Long = 0,
     val currentFile: String? = null,
     val message: String? = null,
+    val files: List<TransferFileProgress> = emptyList(),
 )
 
 object NearbyTransferController {
@@ -66,15 +67,15 @@ object NearbyTransferController {
         ) {
             "Netinkamas siunčiamų failų skaičius"
         }
+        check(_state.value.status !in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) { "Ruošiamas siuntimas" }
         require(prepared.relativePaths.size == prepared.paths.size) { "Siuntimo rinkinio keliai nesutampa" }
-        publish(
+        val starting =
             NearbyTransferState(
                 status = NearbyTransferStatus.STARTING,
                 receiverName = validatedPairing.receiverName,
                 fileCount = prepared.paths.size,
                 message = "Ruošiamas tiesioginis vietinis siuntimas",
-            ),
-        )
+            )
         val intent = Intent(context, NearbyTransferService::class.java)
             .setAction(NearbyTransferService.ACTION_START)
             .putExtra(NearbyTransferService.EXTRA_PAIRING, validatedPairing.encoded())
@@ -82,7 +83,14 @@ object NearbyTransferController {
             .putStringArrayListExtra(NearbyTransferService.EXTRA_RELATIVE_PATHS, ArrayList(prepared.relativePaths))
             .putStringArrayListExtra(NearbyTransferService.EXTRA_DIRECTORIES, ArrayList(prepared.directories))
             .putExtra(NearbyTransferService.EXTRA_CLEANUP_ROOT, prepared.cleanupRootPath)
-        ContextCompat.startForegroundService(context, intent)
+        val previous = _state.value
+        publish(starting)
+        try {
+            ContextCompat.startForegroundService(context, intent)
+        } catch (failure: Exception) {
+            publish(previous)
+            throw failure
+        }
     }
 
     fun cancel(context: Context) {
@@ -177,6 +185,8 @@ class NearbyTransferService : Service() {
                 "Siunčiamame rinkinyje per daug aplankų"
             }
             val files = validateFiles(paths, relativePaths, allowEmpty = validatedDirectories.isNotEmpty())
+            var details = files.map { TransferFileProgress(it.relativePath, it.file.length(),
+                localPath = it.file.absolutePath, modifiedAtMillis = it.file.lastModified()) }
             val totalBytes = files.sumOf { it.file.length() }
             var completedBytes = 0L
             var completedFiles = 0
@@ -187,9 +197,11 @@ class NearbyTransferService : Service() {
                     fileCount = files.size,
                     totalBytes = totalBytes,
                     message = "Siunčiama tame pačiame privačiame tinkle",
+                    files = details,
                 ),
             )
             val cookie = login(pairing)
+            announceFiles(pairing, cookie, details)
             validatedDirectories.sortedBy { it.count { char -> char == '/' } }
                 .forEach { relative -> createRemoteDirectory(pairing, cookie, relative) }
             files.forEachIndexed { index, transferFile ->
@@ -209,6 +221,9 @@ class NearbyTransferService : Service() {
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastPublished >= PROGRESS_INTERVAL_MILLIS || fileBytes == file.length()) {
                         lastPublished = now
+                        details = details.toMutableList().apply {
+                            this[index] = this[index].copy(transferredBytes = fileBytes, status = TransferFileStatus.TRANSFERRING)
+                        }
                         publish(
                             NearbyTransferState(
                                 status = NearbyTransferStatus.RUNNING,
@@ -219,12 +234,19 @@ class NearbyTransferService : Service() {
                                 sentBytes = (completedBytes + fileBytes).coerceAtMost(totalBytes),
                                 currentFile = file.name,
                                 message = "Siunčiama tame pačiame privačiame tinkle",
+                                files = details,
                             ),
                         )
                     }
                 }
                 completedBytes = Math.addExact(completedBytes, file.length())
                 completedFiles += 1
+                details = details.toMutableList().apply {
+                    this[index] = this[index].copy(transferredBytes = file.length(), status = TransferFileStatus.COMPLETED)
+                }
+                publish(NearbyTransferController.state.value.copy(
+                    completedFiles = completedFiles, sentBytes = completedBytes, files = details,
+                ))
             }
             val completed = NearbyTransferState(
                 status = NearbyTransferStatus.COMPLETED,
@@ -234,6 +256,7 @@ class NearbyTransferService : Service() {
                 totalBytes = totalBytes,
                 sentBytes = totalBytes,
                 message = "Siuntimas baigtas",
+                files = details,
             )
             publish(completed)
             finishForeground()
@@ -241,6 +264,7 @@ class NearbyTransferService : Service() {
             val state = NearbyTransferController.state.value.copy(
                 status = NearbyTransferStatus.CANCELLED,
                 message = "Siuntimas atšauktas",
+                files = stoppedFiles(TransferFileStatus.CANCELLED),
             )
             publish(state)
             finishForeground()
@@ -248,14 +272,38 @@ class NearbyTransferService : Service() {
             val state = NearbyTransferController.state.value.copy(
                 status = if (cancelledByUser) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.ERROR,
                 message = if (cancelledByUser) "Siuntimas atšauktas" else (error.message ?: "Siuntimas nepavyko").take(240),
+                files = stoppedFiles(if (cancelledByUser) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED),
             )
             publish(state)
             finishForeground()
         } finally {
             activeCall = null
+            if (cleanupRoot != null) {
+                // The private forwarding copy is deliberately not retained as history.
+                val state = NearbyTransferController.state.value
+                NearbyTransferController.publish(state.copy(files = state.files.map { it.copy(localPath = null) }))
+            }
             cleanupRoot?.let(::safeDeleteStage)
             transferJob = null
             stopSelf()
+        }
+    }
+
+    private fun stoppedFiles(status: TransferFileStatus): List<TransferFileProgress> =
+        NearbyTransferController.state.value.files.map {
+            if (it.status == TransferFileStatus.COMPLETED) it else it.copy(status = status)
+        }
+
+    private fun announceFiles(pairing: NearbyPairing, cookie: String, files: List<TransferFileProgress>) {
+        val url = "http://${pairing.host}:${pairing.port}/nearby/manifest".toHttpUrl()
+        val request = Request.Builder().url(url)
+            .post(NearbyTransferManifest.encode(files).toRequestBody("application/json".toMediaType()))
+            .header("Cookie", cookie).build()
+        val call = client.newCall(request)
+        activeCall = call
+        call.execute().use { response ->
+            // Older AF receivers do not support metadata but still accept files.
+            require(response.isSuccessful || response.code == 404) { "Siuntimo rinkinio keliai nesutampa" }
         }
     }
 

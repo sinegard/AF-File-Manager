@@ -13,12 +13,16 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.uiText
 
 /**
  * AF's adaptive dialog structure. Short forms wrap their content while long lists and forms use
@@ -55,6 +60,7 @@ fun AfModalDialog(
         // an outside tap; a full-screen wrapper consumes that tap as dialog content.
         BoxWithConstraints(modifier = Modifier.imePadding(), contentAlignment = Alignment.Center) {
             val maximumDialogHeight = maxHeight * 0.92f
+            val compactHeight = maximumDialogHeight < 300.dp
             Surface(
                 modifier = Modifier
                     .widthIn(max = 760.dp)
@@ -67,7 +73,10 @@ fun AfModalDialog(
                 shape = MaterialTheme.shapes.extraLarge,
                 tonalElevation = 6.dp,
             ) {
-                Column {
+                // A landscape keyboard can leave less room than the header and footer
+                // together. Let the whole short dialog scroll instead of clipping actions.
+                // Keep the content slot bounded so nested lists still receive finite height.
+                Column(modifier = if (compactHeight) Modifier.verticalScroll(rememberScrollState()) else Modifier) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -102,11 +111,16 @@ fun AfModalDialog(
                                 )
                             }
                         }
-                        TextButton(onClick = onDismissRequest) { LText("Uždaryti") }
+                        IconButton(onClick = onDismissRequest) {
+                            Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti"))
+                        }
                     }
                     HorizontalDivider()
                     Box(
-                        modifier = Modifier.fillMaxWidth().weight(1f, fill = expandedContent),
+                        modifier = Modifier.fillMaxWidth().then(
+                            if (compactHeight) Modifier.heightIn(max = 300.dp)
+                            else Modifier.weight(1f, fill = expandedContent),
+                        ),
                         content = content,
                     )
                     if (showFooter) {

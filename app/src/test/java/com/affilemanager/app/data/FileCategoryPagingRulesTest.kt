@@ -5,6 +5,13 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class FileCategoryPagingRulesTest {
+    @Test fun completeBrowserAdvancesPastOldLimitsWithoutIncreasingPageSize() {
+        assertEquals(240, FileCategoryPagingRules.BROWSE_PAGE_ROWS)
+        assertEquals(10_320, FileCategoryPagingRules.nextOffset(10_080, 240, true, Int.MAX_VALUE))
+        assertNull(FileCategoryPagingRules.nextOffset(Int.MAX_VALUE - 100, 240, true, Int.MAX_VALUE))
+        assertEquals("%a\\%\\_\\\\b%", FileCategoryPagingRules.literalSearchPattern(" a%_\\b "))
+    }
+
     @Test
     fun firstPageIsSmallerThanFollowingPages() {
         assertEquals(160, FileCategoryPagingRules.resultLimit(offset = 0))
