@@ -5921,6 +5921,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         workspaceSaveRequests.trySend(currentWorkspace())
         workspaceSaveRequests.close()
+        // Let queued writes finish, then release the workers' reference to this screen.
+        sharePreferenceSaveRequests.close()
+        searchDraftSaveRequests.close()
         recentFilesJob?.cancel()
         recentFilesJob = null
         cancelRemoteFileOpen()

@@ -2,7 +2,7 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
-## [0.32.0] - 2026-09-05
+## [0.32.1] - 2026-09-05
 
 ### Added
 
@@ -22,6 +22,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 ### Fixed
 
+- Closing a browser screen now finishes its settings-saving workers, preventing old file lists from building up in memory when the screen is reopened.
 - Android document-provider and cloud folders retain their tree permission while navigating into child folders; failed additions roll back only newly acquired permissions, and a stale slow response cannot replace the currently open folder.
 - Cancelling duplicate analysis now interrupts checksum work instead of being swallowed as a failed hash.
 - Selected symbolic links cannot bypass phone-transfer safety checks through early path canonicalization.
