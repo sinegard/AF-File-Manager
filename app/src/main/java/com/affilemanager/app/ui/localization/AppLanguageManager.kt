@@ -30,7 +30,14 @@ object AppLanguageManager {
     /** AF File Manager deliberately starts in English instead of inheriting the device locale. */
     fun ensureEnglishDefault(context: Context) {
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (preferences.getBoolean(INITIALIZED, false)) return
+        if (preferences.getBoolean(INITIALIZED, false)) {
+            // Android's resource matcher uses Filipino's canonical BCP-47 tag.
+            // Migrate the formerly saved Tagalog alias without changing the choice.
+            if (AppCompatDelegate.getApplicationLocales()[0]?.language == "tl") {
+                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("fil"))
+            }
+            return
+        }
         preferences.edit().putBoolean(INITIALIZED, true).apply()
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(ENGLISH))
     }
@@ -42,7 +49,7 @@ object AppLanguageManager {
             .edit()
             .putBoolean(INITIALIZED, true)
             .apply()
-        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(normalized))
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(platformLanguageTag(normalized)))
     }
 
     fun isSupported(languageTag: String): Boolean = normalizeLanguageTag(languageTag) in supportedLanguages
@@ -53,8 +60,12 @@ object AppLanguageManager {
         // Older Android releases can expose the legacy Java language aliases.
         "iw" -> "he"
         "in" -> "id"
+        "fil" -> "tl"
         else -> languageTag.substringBefore('-').lowercase(Locale.ROOT)
     }
+
+    fun platformLanguageTag(languageTag: String): String =
+        normalizeLanguageTag(languageTag).let { if (it == "tl") "fil" else it }
 
     fun languageOptions(displayLocale: Locale): List<AppLanguageOption> = SUPPORTED_LANGUAGE_TAGS
         .map { tag ->

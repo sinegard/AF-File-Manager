@@ -7,6 +7,20 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class NearbyTransferManifestTest {
+    @Test fun newBatchDoesNotResetAnActiveUploadAndStaleRetriesCannotMutateIt() {
+        val tracker = NearbyReceiveFiles()
+        val first = java.util.UUID.randomUUID().toString()
+        val second = java.util.UUID.randomUUID().toString()
+        val file = TransferFileProgress("first.txt", 3)
+        tracker.announce(listOf(file), first)
+        tracker.validate(1, file.relativePath, 3, first)
+        assertThrows(IllegalArgumentException::class.java) { tracker.announce(listOf(file), second) }
+        tracker.update(1, file.copy(status = TransferFileStatus.COMPLETED), first)
+        tracker.announce(listOf(TransferFileProgress("second.txt", 2)), second)
+        assertThrows(IllegalArgumentException::class.java) { tracker.validate(1, "first.txt", 3, first) }
+        assertThrows(IllegalArgumentException::class.java) { tracker.announce(listOf(file), first) }
+        tracker.validate(1, "second.txt", 2, second)
+    }
     @Test fun roundTripOnlyExposesRelativeNamesAndSizes() {
         val wire = NearbyTransferManifest.encode(listOf(TransferFileProgress("album/été.jpg", 123, localPath = "/private/source.jpg")))
         assertFalse(wire.toString(Charsets.UTF_8).contains("/private"))

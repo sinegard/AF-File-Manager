@@ -12,6 +12,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -58,6 +61,7 @@ class SafDialogLayoutTest {
 
     @Test fun shortDialogKeepsNestedListBoundedAndFooterReachable() {
         var dismissed = false
+        lateinit var dialogView: android.view.View
         compose.setContent { MaterialTheme {
             AfModalDialog(
                 title = "List", translateTitle = false, icon = Icons.Rounded.Folder,
@@ -65,6 +69,7 @@ class SafDialogLayoutTest {
                 modifier = Modifier.testTag("bounded_dialog"),
                 actions = { TextButton(onClick = { dismissed = true }) { Text("Done") } },
             ) {
+                dialogView = LocalView.current
                 LazyColumn(Modifier.fillMaxSize().testTag("bounded_dialog_list")) {
                     item { OutlinedTextField("", {}, label = { Text("List filter") }, singleLine = true) }
                     items(50) { Text("Row $it") }
@@ -72,6 +77,12 @@ class SafDialogLayoutTest {
             }
         } }
         compose.onNodeWithText("List filter").performClick()
+        // IME opening can bring the focused first row back into view. Scroll only
+        // after the keyboard is visible, as a person scrolling this dialog would.
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        compose.waitForIdle()
         compose.onNodeWithTag("bounded_dialog_list").performScrollToIndex(50)
         // Scroll the outer short-dialog viewport as well as the nested lazy list.
         reachable(compose.onNodeWithText("Done"))

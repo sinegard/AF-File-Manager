@@ -26,6 +26,7 @@ import com.affilemanager.app.media.BackgroundPlaybackState
 import com.affilemanager.app.ui.components.AfActionRow
 import com.affilemanager.app.ui.components.BackgroundPlaybackControls
 import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.AppLanguageManager
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -47,13 +48,14 @@ class TranslatedPlaybackLayoutTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalConfiguration provides config,
                 LocalDensity provides Density(density.density, fontScale.floatValue),
-                LocalLayoutDirection provides if (language.value == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr) {
+                LocalLayoutDirection provides if (android.text.TextUtils.getLayoutDirectionFromLocale(Locale.forLanguageTag(language.value)) == android.view.View.LAYOUT_DIRECTION_RTL) LayoutDirection.Rtl else LayoutDirection.Ltr) {
                 MaterialTheme {
                     Surface(Modifier.width(320.dp).testTag("translated_controls_root")) {
                         Column(Modifier.verticalScroll(rememberScrollState())) {
                             PlaybackControls("test", true, false, 0L, 5000L, true, false, 1f, 1f,
                                 {}, {}, { plays++ }, {}, {}, {}, {}, { backgrounds++ })
-                            BackgroundPlaybackControls(BackgroundPlaybackState("file:///fixture.wav", "fixture.wav", BackgroundPlaybackPhase.PLAYING), {}, { stops++ })
+                            BackgroundPlaybackControls(BackgroundPlaybackState("file:///fixture.wav", "fixture.wav", BackgroundPlaybackPhase.PLAYING, canSkip = true), {}, { stops++ })
+                            com.affilemanager.app.ui.screens.WallpaperSettings(com.affilemanager.app.ui.theme.AppearanceSettings(wallpaperRevision = 1L), {}, {})
                             AfActionRow {
                                 OutlinedButton(onClick = {}) { LText("Kopijuoti duomenis") }
                                 Button(onClick = {}) { LText("Sustabdyti") }
@@ -63,8 +65,8 @@ class TranslatedPlaybackLayoutTest {
                 }
             }
         }
-        listOf("en", "lt", "de", "fr", "ar").forEach { tag ->
-            listOf(1f, 1.5f).forEach { scale ->
+        AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.forEach { tag ->
+            listOf(1f, 1.5f, 2f).forEach { scale ->
                 compose.runOnIdle { language.value = tag; fontScale.floatValue = scale }
                 compose.waitForIdle()
                 val parent = compose.onNodeWithTag("test_playback_options").fetchSemanticsNode().boundsInRoot
@@ -95,6 +97,7 @@ class TranslatedPlaybackLayoutTest {
                 }
             }
         }
-        compose.runOnIdle { assertEquals(10, plays); assertEquals(10, backgrounds); assertEquals(10, stops) }
+        val expected = AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.size * 3
+        compose.runOnIdle { assertEquals(expected, plays); assertEquals(expected, backgrounds); assertEquals(expected, stops) }
     }
 }

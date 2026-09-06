@@ -28,6 +28,22 @@ class UiPreferenceRepositoryTest {
     }
 
     @Test
+    fun oldSharedDirectoryMigratesWithoutChangingAnyDestinationAndNewChoicesStayIndependent() {
+        val prefs = context.getSharedPreferences(PREFERENCES_NAME, android.content.Context.MODE_PRIVATE)
+        check(prefs.edit().putString("share", """{"sharedPath":"/legacy","protocol":"FTP"}""").commit())
+        val migrated = repository.loadShare("/default", "Phone")
+        LanTransferProtocol.entries.forEach { assertEquals("/legacy", migrated.pathFor(it)) }
+        assertEquals("/legacy", migrated.nearbyReceivePath)
+        val changed = migrated.withPathFor(LanTransferProtocol.FTP, "/ftp")
+            .withPathFor(LanTransferProtocol.WEB, "/web")
+            .withPathFor(LanTransferProtocol.WEBDAV, "/dav")
+            .copy(nearbyReceivePath = "/receive")
+        repository.saveShare(changed, "/default", "Phone")
+        assertEquals(changed, UiPreferenceRepository(context).loadShare("/default", "Phone"))
+        assertEquals(changed, UiPreferenceRepository(context).loadShare("/other-default", "Other phone"))
+    }
+
+    @Test
     fun nonSecretShareAndSearchChoicesSurviveRepositoryRecreation() {
         repository.saveShare(
             ShareScreenPreferences(

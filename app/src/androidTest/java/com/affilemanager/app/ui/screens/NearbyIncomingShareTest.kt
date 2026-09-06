@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -63,6 +64,8 @@ class NearbyIncomingShareTest {
             }
         } finally {
             compose.runOnUiThread { store.clear() }
+            com.affilemanager.app.transfer.LanTransferController.stop(app)
+            com.affilemanager.app.transfer.NearbyTransferController.connection.clear()
             com.affilemanager.app.transfer.NearbyTransferController.clearFinished()
             source.delete()
             destination.deleteRecursively()
@@ -110,7 +113,7 @@ class NearbyIncomingShareTest {
             compose.onNodeWithText("Start transfer").assertIsNotEnabled()
             compose.runOnIdle { assertEquals(1, consumed) }
             assertEquals("shared fixture", source.readText())
-            compose.onNodeWithText("Close").performClick()
+            compose.onNodeWithContentDescription("Close").assertIsDisplayed().performClick()
             compose.waitUntil(10_000) { stageRoot.listFiles().orEmpty().all { it.name in before } }
             assertTrue(source.isFile)
         } finally {

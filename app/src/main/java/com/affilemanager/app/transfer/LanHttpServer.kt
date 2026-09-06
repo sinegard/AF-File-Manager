@@ -66,6 +66,7 @@ class LanHttpServer(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val language: String = AppLanguageManager.ENGLISH,
     private val onUploadProgress: (LanUploadProgress) -> Unit = {},
+    private val onNearbyPeer: (NearbyPairing, Long) -> Unit = { _, _ -> },
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
     private val nearbyFiles = NearbyReceiveFiles()
@@ -173,7 +174,7 @@ class LanHttpServer(
         val input = BufferedInputStream(socket.getInputStream(), 64 * 1_024)
         val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1_024)
         try {
-            handleRequest(input, output)
+            handleRequest(input, output, socket.inetAddress.hostAddress.orEmpty())
         } catch (error: Throwable) {
             val clientError = error is IllegalArgumentException || error is SecurityException
             runCatching {
@@ -187,7 +188,7 @@ class LanHttpServer(
         }
     }
 
-    private fun handleRequest(input: BufferedInputStream, output: BufferedOutputStream) {
+    private fun handleRequest(input: BufferedInputStream, output: BufferedOutputStream, remoteAddress: String) {
         val request = readRequest(input)
         if (request == null) {
             writeText(output, 400, t("Bloga užklausa"), "text/plain; charset=utf-8")
@@ -208,11 +209,19 @@ class LanHttpServer(
             return
         }
         when {
+            request.method == "POST" && request.path == "/nearby/peer" -> {
+                require(!readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) { "Užklausa atmesta" }
+                val peer = NearbyPairing.parse(readExactly(input, request.contentLength.toInt()).toString(StandardCharsets.UTF_8))
+                require(peer.host == remoteAddress) { "Užklausa atmesta" }
+                // Record only. The recipient must select files and explicitly start the reverse send.
+                onNearbyPeer(peer, active.expiresAtMillis)
+                writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            }
             request.method == "POST" && request.path == "/nearby/manifest" && readOnly ->
                 writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
             request.method == "POST" && request.path == "/nearby/manifest" -> {
                 require(request.contentLength in 1..NearbyTransferManifest.MAX_BYTES.toLong()) { "Siuntimo rinkinio kelių aprašas per didelis" }
-                val files = nearbyFiles.announce(NearbyTransferManifest.decode(readExactly(input, request.contentLength.toInt())))
+                val files = nearbyFiles.announce(NearbyTransferManifest.decode(readExactly(input, request.contentLength.toInt())), request.headers["x-af-batch-id"])
                 onUploadProgress(LanUploadProgress("", 0, files.size, 0, 0, 0, files.sumOf { it.sizeBytes }, files = files))
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
             }
@@ -223,7 +232,10 @@ class LanHttpServer(
                 writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
             request.method == "POST" && request.path == "/mkdir" && readOnly ->
                 writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
-            request.method == "POST" && request.path == "/mkdir" -> createDirectory(request, output)
+            request.method == "POST" && request.path == "/mkdir" -> {
+                nearbyFiles.requireBatch(request.headers["x-af-batch-id"])
+                createDirectory(request, output)
+            }
             request.method == "POST" && request.path == "/upload" -> upload(request, input, output)
             else -> writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
         }
@@ -246,14 +258,18 @@ class LanHttpServer(
             writeText(output, 403, loginPage(active, t("Neteisingas kodas")), "text/html; charset=utf-8")
             return
         }
-        codeConsumed.set(true)
+        if (!codeConsumed.compareAndSet(false, true)) {
+            writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
+            return
+        }
         val page = "<html lang='${html(language)}'><head><meta http-equiv='refresh' content='0;url=/'></head><body>${html(t("Prisijungta"))}.</body></html>"
         writeText(
             output,
             200,
             page,
             "text/html; charset=utf-8",
-            extraHeaders = listOf("Set-Cookie: af_session=$cookieToken; HttpOnly; SameSite=Strict; Path=/"),
+            extraHeaders = listOf("Set-Cookie: af_session=$cookieToken; HttpOnly; SameSite=Strict; Path=/",
+                "X-AF-Session-Expires: ${active.expiresAtMillis}"),
         )
     }
 
@@ -323,7 +339,8 @@ class LanHttpServer(
         val fileIndex = request.query["fileIndex"]?.toIntOrNull()?.coerceIn(1, totalFiles) ?: 1
         val relativePath = directory.relativeTo(root).invariantSeparatorsPath
             .takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
-        nearbyFiles.validate(fileIndex, relativePath, length)
+        val batchId = request.headers["x-af-batch-id"]
+        nearbyFiles.validate(fileIndex, relativePath, length, batchId)
         val totalBytes = request.query["batchBytes"]?.toLongOrNull()
             ?.coerceIn(length, 5L * 1_024L * 1_024L * 1_024L) ?: length
         val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
@@ -343,7 +360,7 @@ class LanHttpServer(
                 },
                 localPath = if (completed) target.absolutePath else null,
                 modifiedAtMillis = if (completed) target.lastModified() else 0,
-            ))
+            ), batchId)
             val announced = nearbyFiles.hasManifest()
             onUploadProgress(
                 LanUploadProgress(
@@ -376,7 +393,8 @@ class LanHttpServer(
                 buffer.fill(0)
             }
             require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
-            require(partial.renameTo(target)) { "Įkėlimo užbaigti nepavyko" }
+            // A file created after keep-both planning must never be silently replaced.
+            java.nio.file.Files.move(partial.toPath(), target.toPath())
             committed = true
             publishProgress(completed = true)
             writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")

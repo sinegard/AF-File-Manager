@@ -138,6 +138,7 @@ import com.affilemanager.app.ui.theme.AppColorPalette
 import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.search.AnalysisProgress
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -1360,6 +1361,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setCustomColors(colors: com.affilemanager.app.ui.theme.CustomThemeColors): Boolean =
         runCatching { graph.appearance.setCustomColors(colors) }
             .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }.isSuccess
+
+    private var wallpaperJob: kotlinx.coroutines.Job? = null
+
+    fun setWallpaper(uri: Uri?) {
+        if (wallpaperJob?.isActive == true) return
+        wallpaperJob = viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val old = graph.appearance.settings.value.wallpaperRevision
+            var revision = 0L
+              runCatching {
+                  com.affilemanager.app.ui.theme.AppearanceWallpaper.cleanup(context, old)
+                  if (uri != null) revision = com.affilemanager.app.ui.theme.AppearanceWallpaper.import(context, uri) { coroutineContext.ensureActive() }
+                  coroutineContext.ensureActive()
+                  graph.appearance.setWallpaperRevision(revision)
+              }.onSuccess {
+                  com.affilemanager.app.ui.theme.AppearanceWallpaper.cleanup(context, revision)
+              }.onFailure {
+                  if (revision != 0L) com.affilemanager.app.ui.theme.AppearanceWallpaper.file(context, revision).delete()
+                  if (it is kotlinx.coroutines.CancellationException) throw it
+                message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true)
+            }
+        }
+    }
+
+    fun setCardTransparency(percent: Int) {
+        runCatching { graph.appearance.setCardTransparency(percent) }
+            .onFailure { message("Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
 
     fun beginIncomingShare(uris: List<Uri>) {
         val accepted = uris.asSequence().distinctBy(Uri::toString).take(1_000).toList()
@@ -2599,6 +2628,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else -> false
     }
 
+    fun backgroundMediaPlaylist(target: PreviewTarget): List<com.affilemanager.app.media.BackgroundMediaItem> {
+        if (target !is PreviewTarget.LocalFile || target.entry.kind !in setOf(EntryKind.AUDIO, EntryKind.VIDEO)) return emptyList()
+        val entries = localMediaCandidates(target.entry)
+        if (entries.size > 256) return emptyList()
+        val items = entries.map { com.affilemanager.app.media.BackgroundMediaItem(Uri.fromFile(it.file).toString(), it.name.take(512)) }
+        return items.takeIf { values -> values.sumOf { it.uri.length + it.title.length } <= 128 * 1024 }.orEmpty()
+    }
+
     fun navigatePreviewMedia(delta: Int) {
         if (delta == 0) return
         if (_fileEditState.value.hasUnsavedChanges || _fileEditState.value.saving || _fileEditState.value.modifyingPdf) {
@@ -2636,13 +2673,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             panelFlow(_activePanel.value).value.entries
         }
         return source.filter { entry ->
-            !entry.isDirectory && entry.kind == current.kind && entry.kind in setOf(EntryKind.AUDIO, EntryKind.VIDEO)
+            !entry.isDirectory && entry.kind == current.kind && entry.kind in setOf(EntryKind.IMAGE, EntryKind.AUDIO, EntryKind.VIDEO)
         }
     }
 
     private fun remoteMediaCandidates(current: RemoteEntry): List<RemoteEntry> {
         val kind = FileSystemRules.detectKind(current.name, mimeType = null, isDirectory = false)
-        if (kind !in setOf(EntryKind.AUDIO, EntryKind.VIDEO)) return emptyList()
+        if (kind !in setOf(EntryKind.IMAGE, EntryKind.AUDIO, EntryKind.VIDEO)) return emptyList()
         return visibleRemoteEntries(_networkState.value).filter { entry ->
             !entry.directory && FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = false) == kind
         }

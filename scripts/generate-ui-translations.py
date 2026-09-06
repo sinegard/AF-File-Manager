@@ -358,9 +358,13 @@ def write_android_strings(language: str, source: CatalogSource, translated_exact
         translated = "AF File Manager" if name == "app_name" else translations.get(english, english)
         lines.append(f'    <string name="{name}">{android_escape(translated)}</string>')
     lines.append("</resources>")
-    directory = RESOURCE_DIRECTORY / f"values-{language}"
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / "strings.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Keep the legacy alias for Android/library resource compatibility as well
+    # as the canonical Filipino tag used by the per-app language selector.
+    qualifiers = ("tl", "b+fil") if language == "tl" else (language,)
+    for qualifier in qualifiers:
+        directory = RESOURCE_DIRECTORY / f"values-{qualifier}"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "strings.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def validate_pack(source: CatalogSource, language: str, exact: list[str], templates: list[str]) -> None:

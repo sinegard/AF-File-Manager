@@ -1228,15 +1228,25 @@ internal fun LocalUploadDialog(
     }
     val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(selected::contains)
 
-    AlertDialog(
+    com.affilemanager.app.ui.components.AfModalDialog(
         onDismissRequest = { if (navigation.canNavigateBack) navigateBack() else onDismiss() },
-        icon = { Icon(if (filesOnly) Icons.Rounded.FolderOpen else Icons.Rounded.CloudUpload, contentDescription = null) },
-        title = { LText(title) },
-        text = {
+        onClose = onDismiss,
+        icon = if (filesOnly) Icons.Rounded.FolderOpen else Icons.Rounded.CloudUpload,
+        title = title,
+        expandedContent = true,
+        modifier = Modifier.testTag("local_upload_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(
+                onClick = { onCopy(selected.toList()) },
+                enabled = selected.isNotEmpty() && !confirming,
+            ) { Text("${uiText(confirmLabel)} (${selected.size})") }
+        },
+    ) {
             AfPullToRefresh(
                 isRefreshing = loading,
                 onRefresh = { refreshToken += 1 },
-                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp),
                 testTag = "pull_to_refresh_local_upload",
             ) {
             LazyColumn(
@@ -1260,7 +1270,6 @@ internal fun LocalUploadDialog(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (!filesOnly && currentPath.isNotEmpty()) LText("Iš: $currentPath", style = MaterialTheme.typography.bodySmall)
                     if (remotePath.isNotBlank()) LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
                     LText(if (filesOnly) "Pasirinkite bent vieną failą" else "Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
                     if (filesOnly) Text("${selected.size} / $maxSelection", style = MaterialTheme.typography.labelSmall)
@@ -1309,12 +1318,14 @@ internal fun LocalUploadDialog(
                 }
                 items(displayedEntries, key = FileEntry::absolutePath) { entry ->
                     val entrySelected = entry.absolutePath in selected
-                    val selectionShape = RoundedCornerShape(8.dp)
+                    val selectionShape = MaterialTheme.shapes.medium
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("local_upload_entry_${entry.absolutePath}")
-                            .then(if (entrySelected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape) else Modifier)
+                            .border(if (entrySelected) 1.5.dp else 1.dp,
+                                if (entrySelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                selectionShape)
                             .combinedClickable(
                                 onClick = {
                                     if (entry.isDirectory && (filesOnly || selected.isEmpty())) {
@@ -1363,15 +1374,7 @@ internal fun LocalUploadDialog(
                 }
             }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onCopy(selected.toList()) },
-                enabled = selected.isNotEmpty() && !confirming,
-            ) { Text("${uiText(confirmLabel)} (${selected.size})") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
-    )
+    }
 }
 
 internal data class LocalUploadNavigationState(

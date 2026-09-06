@@ -2,7 +2,17 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
-## Unreleased
+## [0.34.0] - 2026-09-06
+
+- Copying keeps the originals. Cut and paste removes a source only after its destination has been checked; skipped files and files changed during the operation stay at the source. Interrupted operations recover more safely, and a file created at the destination during copying or Save as is no longer silently overwritten.
+- Web, FTP, WebDAV and phone-to-phone receiving now remember their own folders.
+- Send another batch, or send files back, without pairing the phones again during the active session. Each transfer still starts only after choosing files and pressing Start.
+- Upload uses the same roomy file picker as the rest of AF. Opening storage no longer stacks two dialogs on top of each other.
+- Choose a private wallpaper from your gallery and adjust card transparency. Aura and Tokyo use more consistent colors, and dark-theme headings remain readable over a wallpaper. Several German home labels were corrected.
+- Compatible APKS, APKM and XAPK bundles can show their app icon, open Android's installer for selected original parts, or extract those parts to a folder you choose. AF does not merge or re-sign apps, and extra OBB data is not installed automatically.
+- Photo, music and video details live in the preview menu. Swipe an unzoomed photo left or right to change images, or swipe music artwork down to keep playing in the background. Video controls hide after seven seconds of inactivity; tap to bring them back, or swipe the edges to adjust volume and this window's brightness.
+- The mini-player shows artwork, a progress ring and previous/next controls for supported local queues. Hold play/pause to stop playback, or use the visible Stop button. The controls wrap on narrow screens and with larger text.
+- Fixed Filipino language selection and improved large-text headings, navigation labels and language settings on phones and tablets.
 
 ## [0.33.0] - 2026-09-05
 

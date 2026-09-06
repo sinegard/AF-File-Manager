@@ -10,9 +10,11 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -134,10 +136,10 @@ private val AuraDarkColors = darkColorScheme(
     onPrimary = Color(0xFF002E69),
     primaryContainer = Color(0xFF234777),
     onPrimaryContainer = Color(0xFFD8E2FF),
-    secondary = Color(0xFF8ADCD2),
-    onSecondary = Color(0xFF003733),
-    secondaryContainer = Color(0xFF00504A),
-    onSecondaryContainer = Color(0xFFA6F3E9),
+    secondary = Color(0xFFB1BDD7),
+    onSecondary = Color(0xFF243047),
+    secondaryContainer = Color(0xFF303E58),
+    onSecondaryContainer = Color(0xFFD9E3FC),
     tertiary = Color(0xFFD0BCFF),
     onTertiary = Color(0xFF381E72),
     background = Color(0xFF0B0E14),
@@ -153,10 +155,10 @@ private val AuraLightColors = lightColorScheme(
     onPrimary = Color.White,
     primaryContainer = Color(0xFFD9E2FF),
     onPrimaryContainer = Color(0xFF001A41),
-    secondary = Color(0xFF246B64),
+    secondary = Color(0xFF53627F),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFA8F2E8),
-    onSecondaryContainer = Color(0xFF00201D),
+    secondaryContainer = Color(0xFFDCE5FA),
+    onSecondaryContainer = Color(0xFF15233D),
     tertiary = Color(0xFF66558E),
     onTertiary = Color.White,
     background = Color(0xFFF8F9FF),
@@ -172,10 +174,10 @@ private val TokyoDarkColors = darkColorScheme(
     onPrimary = Color(0xFF08315E),
     primaryContainer = Color(0xFF27496F),
     onPrimaryContainer = Color(0xFFD2E4FF),
-    secondary = Color(0xFF8BD5CA),
-    onSecondary = Color(0xFF003733),
-    secondaryContainer = Color(0xFF164E4A),
-    onSecondaryContainer = Color(0xFFA6F2E8),
+    secondary = Color(0xFFAFB4D9),
+    onSecondary = Color(0xFF292E50),
+    secondaryContainer = Color(0xFF373E61),
+    onSecondaryContainer = Color(0xFFDFE3FF),
     tertiary = Color(0xFFC4A7E7),
     onTertiary = Color(0xFF3B2755),
     background = Color(0xFF16161E),
@@ -191,10 +193,10 @@ private val TokyoLightColors = lightColorScheme(
     onPrimary = Color.White,
     primaryContainer = Color(0xFFD5E3FF),
     onPrimaryContainer = Color(0xFF001C3B),
-    secondary = Color(0xFF366B65),
+    secondary = Color(0xFF5A6385),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFB9F1E8),
-    onSecondaryContainer = Color(0xFF00201D),
+    secondaryContainer = Color(0xFFDFE4F9),
+    onSecondaryContainer = Color(0xFF1A2442),
     tertiary = Color(0xFF72558F),
     onTertiary = Color.White,
     background = Color(0xFFF7F8FC),
@@ -247,8 +249,8 @@ fun palettePreviewColors(palette: AppColorPalette, custom: CustomThemeColors = C
     AppColorPalette.CATPPUCCIN -> listOf(Color(0xFFCBA6F7), Color(0xFF89B4FA), Color(0xFFFAB387))
     AppColorPalette.ORANGE -> listOf(Color(0xFF9A4600), Color(0xFFFFB86B), Color(0xFFFFDDB8))
     AppColorPalette.MATERIAL_BLUE -> listOf(Color(0xFF415F91), Color(0xFFAEC6FF), Color(0xFFD9BDE4))
-    AppColorPalette.AURA -> listOf(Color(0xFF355FAD), Color(0xFF8ADCD2), Color(0xFFD0BCFF))
-    AppColorPalette.TOKYO -> listOf(Color(0xFF3D5F8F), Color(0xFF8BD5CA), Color(0xFFC4A7E7))
+    AppColorPalette.AURA -> listOf(Color(0xFF355FAD), Color(0xFFB1BDD7), Color(0xFFD0BCFF))
+    AppColorPalette.TOKYO -> listOf(Color(0xFF3D5F8F), Color(0xFFAFB4D9), Color(0xFFC4A7E7))
     AppColorPalette.YIN_YANG -> listOf(Color(0xFF454747), Color(0xFFC8C6C5), Color(0xFFF5F5F5))
     AppColorPalette.RED -> listOf(Color(0xFFB3261E), Color(0xFFFFB4AB), Color(0xFF8F4A45))
     AppColorPalette.CUSTOM -> listOf(Color(custom.primary), Color(custom.secondary), Color(custom.tertiary))
@@ -284,13 +286,23 @@ fun AFFileManagerTheme(
         } else settings.customColors)
         AppColorPalette.DEFAULT -> if (darkTheme) DefaultDarkColors else DefaultLightColors
     } }
-    val colors = if (settings.amoledBlack && darkTheme) baseColors.withAmoledBackground() else baseColors
+    val completeColors = if (settings.colorPalette in setOf(AppColorPalette.DYNAMIC, AppColorPalette.CUSTOM, AppColorPalette.RED)) {
+        baseColors
+    } else baseColors.withPaletteSurfaces()
+    val opaqueColors = if (settings.amoledBlack && darkTheme) completeColors.withAmoledBackground() else completeColors
+    val alpha = 1f - settings.cardTransparency.coerceIn(0, 100) / 100f
+    val colors = opaqueColors.copy(
+        surfaceContainerLow = opaqueColors.surfaceContainerLow.copy(alpha = alpha),
+        surfaceContainer = opaqueColors.surfaceContainer.copy(alpha = alpha),
+        surfaceContainerHigh = opaqueColors.surfaceContainerHigh.copy(alpha = alpha),
+        surfaceContainerHighest = opaqueColors.surfaceContainerHighest.copy(alpha = alpha),
+    )
 
     MaterialTheme(
         colorScheme = colors,
     ) {
-        SystemBarsTheme(colors = colors)
-        content()
+        SystemBarsTheme(colors = opaqueColors)
+        CompositionLocalProvider(LocalAppearanceSettings provides settings) { content() }
     }
 }
 
@@ -314,13 +326,32 @@ private fun SystemBarsTheme(colors: ColorScheme) {
     }
 }
 
-private fun ColorScheme.withAmoledBackground(): ColorScheme = copy(
+/** Material's unspecified surface roles otherwise retain its unrelated default purple palette. */
+internal fun ColorScheme.withPaletteSurfaces(): ColorScheme {
+    val low = lerp(surface, secondary, .04f)
+    val middle = lerp(surface, secondary, .08f)
+    val high = lerp(surface, secondary, .12f)
+    val highest = lerp(surface, secondary, .16f)
+    val secondaryFill = lerp(surface, secondary, .20f)
+    val tertiaryFill = lerp(surface, tertiary, .20f)
+    return copy(
+        onSecondary = CustomThemeRules.foreground(secondary), onTertiary = CustomThemeRules.foreground(tertiary),
+        secondaryContainer = secondaryFill, onSecondaryContainer = CustomThemeRules.foreground(secondaryFill),
+        tertiaryContainer = tertiaryFill, onTertiaryContainer = CustomThemeRules.foreground(tertiaryFill),
+        surfaceTint = primary, surfaceDim = surface, surfaceBright = highest,
+        surfaceContainerLowest = surface, surfaceContainerLow = low, surfaceContainer = middle,
+        surfaceContainerHigh = high, surfaceContainerHighest = highest,
+        outline = lerp(surface, onSurface, .65f), outlineVariant = lerp(surface, onSurface, .30f),
+    )
+}
+
+internal fun ColorScheme.withAmoledBackground(): ColorScheme = copy(
     background = Color.Black,
     surface = Color.Black,
     surfaceDim = Color.Black,
     surfaceContainerLowest = Color.Black,
     surfaceContainerLow = Color.Black,
-    surfaceContainer = Color(0xFF050505),
-    surfaceContainerHigh = Color(0xFF0A0A0A),
-    surfaceContainerHighest = Color(0xFF121212),
+    surfaceContainer = lerp(Color.Black, secondary, .05f),
+    surfaceContainerHigh = lerp(Color.Black, secondary, .09f),
+    surfaceContainerHighest = lerp(Color.Black, secondary, .14f),
 )

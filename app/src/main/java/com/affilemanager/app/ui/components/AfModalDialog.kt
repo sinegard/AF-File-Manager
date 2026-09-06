@@ -44,6 +44,7 @@ fun AfModalDialog(
     title: String,
     icon: ImageVector,
     onDismissRequest: () -> Unit,
+    onClose: () -> Unit = onDismissRequest,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     translateTitle: Boolean = true,
@@ -111,7 +112,7 @@ fun AfModalDialog(
                                 )
                             }
                         }
-                        IconButton(onClick = onDismissRequest) {
+                        IconButton(onClick = onClose) {
                             Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti"))
                         }
                     }

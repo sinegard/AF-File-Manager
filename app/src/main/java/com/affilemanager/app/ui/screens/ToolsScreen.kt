@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -143,16 +144,22 @@ fun ToolsScreen(
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Language, contentDescription = null)
-                        Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                            LText("Kalba", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                text = currentLanguage.nativeName,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Language, contentDescription = null)
+                            Column(modifier = Modifier.padding(horizontal = 10.dp)) {
+                                LText("Kalba", fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("language_setting_title"))
+                                Text(
+                                    text = currentLanguage.nativeName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.testTag("language_setting_current"),
+                                )
+                            }
                         }
                         FilledTonalButton(
                             onClick = { showLanguagePicker = true },
@@ -174,6 +181,8 @@ fun ToolsScreen(
                 onPalette = viewModel::setColorPalette,
                 onAmoledBlack = viewModel::setAmoledBlack,
                 onCustomColors = viewModel::setCustomColors,
+                onWallpaper = viewModel::setWallpaper,
+                onCardTransparency = viewModel::setCardTransparency,
             )
         }
 
@@ -573,6 +582,8 @@ internal fun AppearanceSettingsCard(
     onPalette: (AppColorPalette) -> Unit,
     onAmoledBlack: (Boolean) -> Unit,
     onCustomColors: (CustomThemeColors) -> Boolean,
+    onWallpaper: (android.net.Uri?) -> Unit = {},
+    onCardTransparency: (Int) -> Unit = {},
 ) {
     var editCustom by remember { mutableStateOf(false) }
     if (editCustom) CustomPaletteDialog(settings.customColors, onCustomColors, onDismiss = { editCustom = false })
@@ -585,6 +596,7 @@ internal fun AppearanceSettingsCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             LText("Išvaizda", fontWeight = FontWeight.SemiBold)
+            WallpaperSettings(settings, onWallpaper, onCardTransparency)
             LText("Temos režimas", style = MaterialTheme.typography.labelLarge)
             AfActionRow {
                 AppThemeMode.entries.forEach { mode ->

@@ -424,7 +424,7 @@ class FileCategoryRepository(
         )
         FileCategory.APPS -> mimeAndExtensionQuery(
             mimeTypes = listOf("application/vnd.android.package-archive"),
-            extensions = listOf("apk", "apks", "xapk"),
+            extensions = listOf("apk", "apks", "apkm", "xapk"),
         )
         FileCategory.INSTALLED_APPS -> error("Installed applications are obtained from PackageManager")
     }

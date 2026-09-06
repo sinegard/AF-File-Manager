@@ -20,8 +20,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Folder
@@ -34,6 +37,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -58,10 +62,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
@@ -242,8 +251,12 @@ fun AFFileManagerApp(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
+        com.affilemanager.app.ui.theme.AppearanceBackground()
         val wideNavigation = maxWidth >= 900.dp
+        val railLabelWidth = (80.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).coerceAtMost(maxWidth / 4)
         Scaffold(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onBackground,
             snackbarHost = {
                 SnackbarHost(
                     hostState = snackbarHostState,
@@ -261,9 +274,11 @@ fun AFFileManagerApp(
                                     onClick = { viewModel.setSection(destination.section) },
                                     modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
                                     icon = {
-                                        DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
+                                        Box(Modifier.testTag("nav_icon_${destination.section.name.lowercase()}")) {
+                                            DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
+                                        }
                                     },
-                                    label = { LText(destination.label) },
+                                    label = { NavigationLabel(destination.label) },
                                 )
                             }
                         }
@@ -280,9 +295,11 @@ fun AFFileManagerApp(
                                 onClick = { viewModel.setSection(destination.section) },
                                 modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
                                 icon = {
-                                    DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
+                                    Box(Modifier.testTag("nav_icon_${destination.section.name.lowercase()}")) {
+                                        DestinationIcon(destination.icon, activeOperations.takeIf { destination.section == AppSection.TOOLS })
+                                    }
                                 },
-                                label = { LText(destination.label) },
+                                label = { NavigationLabel(destination.label, Modifier.width(railLabelWidth)) },
                             )
                         }
                     }
@@ -413,6 +430,7 @@ fun AFFileManagerApp(
             loadArchiveThumbnail = viewModel::materializeArchiveThumbnail,
             onExtract = { file, destination, password -> viewModel.extractArchive(file, destination, password) },
             canNavigateMedia = viewModel.canNavigatePreviewMedia(target),
+            backgroundPlaylist = viewModel.backgroundMediaPlaylist(target),
             onPreviousMedia = { viewModel.navigatePreviewMedia(-1) },
             onNextMedia = { viewModel.navigatePreviewMedia(1) },
             onDecrypt = { file, password -> viewModel.decryptVault(file, password) },
@@ -559,6 +577,32 @@ internal fun authenticate(
             .setAllowedAuthenticators(authenticators)
             .build(),
     )
+}
+
+@Composable
+private fun NavigationLabel(label: String, modifier: Modifier = Modifier) {
+    val language = LocalConfiguration.current.locales[0].language
+    val labels = remember(language) { destinations.map { UiTranslator.translate(it.label, language) } }
+    val density = LocalDensity.current
+    val style = LocalTextStyle.current.copy(
+        platformStyle = PlatformTextStyle(includeFontPadding = true),
+        textAlign = TextAlign.Center,
+    )
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier) {
+        val width = with(density) { (maxWidth - 4.dp).roundToPx().coerceAtLeast(1) }
+        // Reserve the tallest translated label for every item. Icons keep one
+        // baseline even when only one label wraps; no font scaling is disabled.
+        val height = remember(labels, style, width, density) {
+            labels.maxOf { measurer.measure(it, style, constraints = Constraints(maxWidth = width)).size.height }
+        }
+        Box(
+            Modifier.fillMaxWidth().padding(horizontal = 2.dp).height(with(density) { height.toDp() }),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            LText(label, modifier = Modifier.fillMaxWidth(), style = style)
+        }
+    }
 }
 
 @Composable

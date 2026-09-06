@@ -9,6 +9,21 @@ import org.junit.Test
 
 class UiPreferenceRulesTest {
     @Test
+    fun shareDirectoriesChangeOnlyForTheirSelectedDestination() {
+        val original = ShareScreenPreferences("/legacy")
+        val changed = original.withPathFor(LanTransferProtocol.FTP, "/ftp")
+            .withPathFor(LanTransferProtocol.WEBDAV, "/dav")
+            .withPathFor(LanTransferProtocol.WEB, "/web")
+            .copy(nearbyReceivePath = "/phone")
+        assertEquals("/web", changed.pathFor(LanTransferProtocol.WEB))
+        assertEquals("/ftp", changed.pathFor(LanTransferProtocol.FTP))
+        assertEquals("/dav", changed.pathFor(LanTransferProtocol.WEBDAV))
+        assertEquals("/phone", changed.nearbyReceivePath)
+        LanTransferProtocol.entries.forEach { assertEquals("/legacy", original.pathFor(it)) }
+        assertEquals("/legacy", original.nearbyReceivePath)
+    }
+
+    @Test
     fun shareChoicesAreBoundedAndSecretsHaveNoPersistedField() {
         val normalized = UiPreferenceRules.normalizeShare(
             ShareScreenPreferences(

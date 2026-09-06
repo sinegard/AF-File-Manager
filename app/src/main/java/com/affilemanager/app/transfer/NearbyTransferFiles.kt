@@ -77,13 +77,25 @@ internal object NearbyTransferManifest {
     }
 }
 
-/** At most one announced batch in the one-time authenticated receiver session. */
+/** One active batch; a bounded ID history separates a new explicit send from an HTTP retry. */
 internal class NearbyReceiveFiles {
     private var announced: List<TransferFileProgress>? = null
+    private var batchId: String? = null
+    private val seenBatches = mutableSetOf<String>()
     @Synchronized fun hasManifest(): Boolean = announced != null
 
-    @Synchronized fun announce(files: List<TransferFileProgress>): List<TransferFileProgress> {
+    @Synchronized fun announce(files: List<TransferFileProgress>, id: String? = null): List<TransferFileProgress> {
+        if (id != null) require(id.length == 36 && runCatching { java.util.UUID.fromString(id).toString() == id }.getOrDefault(false)) { "Gavimo sesija nepatvirtinta" }
         announced?.let { current ->
+            if (id != null && id != batchId) {
+                require(current.none { it.status == TransferFileStatus.TRANSFERRING } && id !in seenBatches && seenBatches.size < 128) {
+                    "Gavimo sesija nepatvirtinta"
+                }
+                batchId = id
+                seenBatches += id
+                announced = files
+                return files
+            }
             // An HTTP retry after a lost acknowledgement must not reset progress.
             require(current.map { it.relativePath to it.sizeBytes } == files.map { it.relativePath to it.sizeBytes }) {
                 "Gavimo sesija nepatvirtinta"
@@ -91,10 +103,17 @@ internal class NearbyReceiveFiles {
             return current
         }
         announced = files
+        batchId = id
+        if (id != null) seenBatches += id
         return files
     }
 
-    @Synchronized fun validate(index: Int, path: String, size: Long) {
+    @Synchronized fun requireBatch(id: String?) {
+        require(batchId == id) { "Siuntimo rinkinio keliai nesutampa" }
+    }
+
+    @Synchronized fun validate(index: Int, path: String, size: Long, id: String? = null) {
+        requireBatch(id)
         val files = announced ?: return // Older senders have no manifest.
         val item = files.getOrNull(index - 1)
         require(item != null && item.relativePath == path && item.sizeBytes == size &&
@@ -104,7 +123,8 @@ internal class NearbyReceiveFiles {
         announced = files.toMutableList().apply { this[index - 1] = item.copy(status = TransferFileStatus.TRANSFERRING) }
     }
 
-    @Synchronized fun update(index: Int, item: TransferFileProgress): List<TransferFileProgress> {
+    @Synchronized fun update(index: Int, item: TransferFileProgress, id: String? = null): List<TransferFileProgress> {
+        requireBatch(id)
         val files = announced ?: return listOf(item)
         val changed = files.toMutableList()
         changed[index - 1] = item

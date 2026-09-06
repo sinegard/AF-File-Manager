@@ -301,6 +301,7 @@ class FileNavigationUiTest {
 
         try {
             connectRootBackend(viewModel)
+            assertTrue(com.affilemanager.app.terminal.PrivilegedTerminalRuntimeVerifier.verifyAuthorizedBackend(compose.activity, 0))
             compose.runOnUiThread { viewModel.openAdvancedBrowser("/") }
             compose.waitUntil(timeoutMillis = 10_000) {
                 val state = viewModel.advancedBrowser.value

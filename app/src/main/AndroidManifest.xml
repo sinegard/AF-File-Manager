@@ -51,6 +51,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AFFileManager">
 
+        <activity android:name=".apk.SplitApkInstallActivity" android:exported="false" android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|locale|layoutDirection|fontScale" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

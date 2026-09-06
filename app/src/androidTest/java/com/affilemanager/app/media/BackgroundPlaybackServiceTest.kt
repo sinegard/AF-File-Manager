@@ -11,6 +11,8 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
 import com.affilemanager.app.MainActivity
@@ -109,6 +111,23 @@ class BackgroundPlaybackServiceTest {
         compose.waitUntil(5_000) { BackgroundPlaybackService.state.value?.title == second.name &&
             BackgroundPlaybackService.state.value?.phase == BackgroundPlaybackPhase.PLAYING }
         compose.runOnUiThread { repeat(3) { BackgroundPlaybackService.stop(context) } }
+        waitForStopped()
+    }
+
+    @Test fun miniPlayerSkipsBothWaysPublishesProgressAndLongPressStopsTheSession() {
+        val first = wave("queue-first.wav")
+        val second = wave("queue-second.wav")
+        compose.runOnUiThread {
+            BackgroundPlaybackService.play(context, Uri.fromFile(first), first.name, 0L, true, 1f, 0f,
+                listOf(first, second).map { BackgroundMediaItem(Uri.fromFile(it).toString(), it.name) })
+        }
+        waitFor(BackgroundPlaybackPhase.PLAYING)
+        compose.waitUntil(5_000) { (BackgroundPlaybackService.state.value?.positionMillis ?: 0L) > 0L }
+        compose.onNodeWithTag("background_next").assertIsDisplayed().performClick()
+        compose.waitUntil(5_000) { BackgroundPlaybackService.state.value?.title == second.name && BackgroundPlaybackService.state.value?.phase == BackgroundPlaybackPhase.PLAYING }
+        compose.onNodeWithTag("background_previous").performClick()
+        compose.waitUntil(5_000) { BackgroundPlaybackService.state.value?.title == first.name && BackgroundPlaybackService.state.value?.phase == BackgroundPlaybackPhase.PLAYING }
+        compose.onNodeWithTag("background_toggle").performTouchInput { longClick() }
         waitForStopped()
     }
 

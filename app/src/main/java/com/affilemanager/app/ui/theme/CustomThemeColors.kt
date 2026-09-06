@@ -64,7 +64,7 @@ internal fun customColorScheme(colors: CustomThemeColors): ColorScheme {
     val primaryContainer = lerp(surface, primary, .18f)
     val secondaryContainer = lerp(surface, secondary, .18f)
     val tertiaryContainer = lerp(surface, tertiary, .18f)
-    val variant = lerp(surface, foreground, .10f)
+    val variant = lerp(surface, secondary, .12f)
     val error = CustomThemeRules.readableAccent(Color(0xFFBA1A1A), surface)
     val errorContainer = lerp(surface, error, .18f)
     return lightColorScheme(
@@ -83,7 +83,7 @@ internal fun customColorScheme(colors: CustomThemeColors): ColorScheme {
         inverseSurface = foreground, inverseOnSurface = CustomThemeRules.foreground(foreground),
         inversePrimary = CustomThemeRules.readableAccent(primary, foreground),
         surfaceDim = surface, surfaceBright = variant, surfaceContainerLowest = surface,
-        surfaceContainerLow = lerp(surface, foreground, .02f), surfaceContainer = lerp(surface, foreground, .04f),
-        surfaceContainerHigh = lerp(surface, foreground, .06f), surfaceContainerHighest = lerp(surface, foreground, .08f),
+        surfaceContainerLow = lerp(surface, secondary, .04f), surfaceContainer = lerp(surface, secondary, .08f),
+        surfaceContainerHigh = lerp(surface, secondary, .12f), surfaceContainerHighest = lerp(surface, secondary, .16f),
     )
 }

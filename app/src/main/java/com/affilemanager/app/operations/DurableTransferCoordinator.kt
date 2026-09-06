@@ -3,6 +3,7 @@ package com.affilemanager.app.operations
 import com.affilemanager.app.model.ConflictPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 class DurableTransferCoordinator(
@@ -77,14 +78,19 @@ class DurableTransferCoordinator(
                 engine.execute(plan, latest, repository, this)
             } catch (cancelled: CancellationException) {
                 val latest = runCatching { repository.load(plan.id).state }.getOrDefault(queued)
-                runCatching { engine.restoreBackupsAfterCopyCancellation(plan, latest) }
-                repository.saveState(
-                    latest.copy(
-                        status = DurableTransferStatus.CANCELLED,
-                        lastMessage = "Atšaukta naudotojo; užbaigtos kopijos gali likti paskirties vietoje",
-                        updatedAtMillis = System.currentTimeMillis(),
-                    ),
-                )
+                withContext(NonCancellable + Dispatchers.IO) {
+                    try {
+                        engine.restoreBackupsAfterCopyCancellation(plan, latest, repository)
+                    } catch (recoveryError: Throwable) {
+                        val checkpoint = repository.load(plan.id).state
+                        repository.saveState(checkpoint.copy(
+                            status = DurableTransferStatus.FAILED,
+                            lastMessage = (recoveryError.message ?: recoveryError::class.java.simpleName).take(500),
+                            updatedAtMillis = System.currentTimeMillis(),
+                        ))
+                        throw recoveryError
+                    }
+                }
                 throw cancelled
             } catch (error: Throwable) {
                 val latest = runCatching { repository.load(plan.id).state }.getOrDefault(queued)

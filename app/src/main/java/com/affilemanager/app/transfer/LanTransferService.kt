@@ -50,6 +50,7 @@ object LanTransferController {
         durationMinutes: Int = 15,
         protocol: LanTransferProtocol = LanTransferProtocol.WEB,
         options: LanTransferOptions = LanTransferOptions(),
+        bindAddress: String? = null,
     ) {
         val validatedOptions = options.validated(protocol)
         val intent = Intent(context, LanTransferService::class.java)
@@ -61,6 +62,7 @@ object LanTransferController {
             .putExtra(LanTransferService.EXTRA_USERNAME, validatedOptions.username)
             .putExtra(LanTransferService.EXTRA_PASSWORD, validatedOptions.password)
             .putExtra(LanTransferService.EXTRA_READ_ONLY, validatedOptions.readOnly)
+            .putExtra("bind_address", bindAddress)
         ContextCompat.startForegroundService(context, intent)
     }
 
@@ -148,8 +150,16 @@ class LanTransferService : Service() {
         runCatching {
             val root = File(rootPath).canonicalFile
             require(root.isDirectory && root.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
-            val address = privateLanAddress() ?: throw IllegalStateException("Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas")
+            val preferred = intent.getStringExtra("bind_address")
+            val address = if (preferred == null) privateLanAddress() else {
+                require(NearbyPairing.isPrivateIpv4(preferred)) { "Gavimo adresas turi būti privatus IPv4 adresas" }
+                val requested = InetAddress.getByName(preferred)
+                require(NetworkInterface.getByInetAddress(requested)?.isUp == true) { "Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas" }
+                requested
+            }
+            requireNotNull(address) { "Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas" }
             val stopped: (String) -> Unit = { reason ->
+                NearbyTransferController.connection.clear()
                 LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
                 stopSelf()
             }
@@ -162,6 +172,7 @@ class LanTransferService : Service() {
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
                     language = resources.configuration.locales[0].language,
+                    onNearbyPeer = { peer, expiry -> NearbyTransferController.connection.remember(peer, expires = expiry) },
                     onUploadProgress = { progress ->
                         val current = LanTransferController.state.value
                         if (current.status == LanTransferStatus.RUNNING) {

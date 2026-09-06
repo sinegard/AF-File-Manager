@@ -176,6 +176,9 @@ internal fun NearbyPhoneTransferCard(
             if (nearbyState.status != NearbyTransferStatus.IDLE) {
                 TextButton(onClick = { detailsSide = NearbyDetailsSide.SEND }, modifier = Modifier.testTag("nearby_send_details")) { LText("Failai") }
             }
+            if (NearbyTransferController.connectedPairing() != null) {
+                TextButton(onClick = { NearbyTransferController.disconnect(context) }) { LText("Atsijungti") }
+            }
         }
     }
 
@@ -186,6 +189,7 @@ internal fun NearbyPhoneTransferCard(
             onIncomingShareConsumed = onIncomingShareConsumed,
             onDismiss = { showSender = false },
             onTransferStarted = { detailsSide = NearbyDetailsSide.SEND },
+            connectedPairing = NearbyTransferController.connectedPairing(),
         )
     }
     if (showReceiver) {
@@ -209,6 +213,9 @@ internal fun NearbyPhoneTransferCard(
             onPreview = viewModel::open, onDismiss = { detailsSide = null },
             onCancel = if (nearbyState.isActive()) ({ NearbyTransferController.cancel(context) }) else null,
             message = nearbyState.message,
+            onSendMore = if (!nearbyState.isActive() && NearbyTransferController.connectedPairing() != null) ({
+                detailsSide = null; showSender = true
+            }) else null,
         )
         NearbyDetailsSide.RECEIVE -> lanState.incomingUpload?.let { progress ->
             NearbyTransferDetails(progress.files, progress.receivedBytes, progress.totalBytes, progress.totalFiles,
@@ -216,7 +223,10 @@ internal fun NearbyPhoneTransferCard(
                 onCancel = if (lanState.status == LanTransferStatus.RUNNING) ({
                     LanTransferController.stop(context)
                     detailsSide = null
-                }) else null, cancelLabel = "Sustabdyti gavimą")
+                }) else null, cancelLabel = "Sustabdyti gavimą",
+                onSendMore = if (!nearbyState.isActive() && NearbyTransferController.connectedPairing() != null) ({
+                    detailsSide = null; showSender = true
+                }) else null)
         }
         null -> Unit
     }
@@ -419,6 +429,7 @@ internal fun NearbySendDialog(
     onIncomingShareConsumed: (Long) -> Unit,
     onDismiss: () -> Unit,
     onTransferStarted: () -> Unit = {},
+    connectedPairing: NearbyPairing? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -441,8 +452,9 @@ internal fun NearbySendDialog(
     val pageListState = rememberLazyListState()
     var openStorage by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var pairingPayload by remember { mutableStateOf("") }
+    var pairingPayload by remember { mutableStateOf(connectedPairing?.encoded().orEmpty()) }
     var prepared by remember { mutableStateOf<PreparedNearbyTransfer?>(null) }
+    var startAfterPreparation by remember { mutableStateOf(false) }
     var qrCaptureFile by remember { mutableStateOf<File?>(null) }
     val latestPrepared by rememberUpdatedState(prepared)
     val latestCapture by rememberUpdatedState(qrCaptureFile)
@@ -533,6 +545,30 @@ internal fun NearbySendDialog(
     val parsedPairing = remember(pairingPayload) {
         pairingPayload.takeIf(String::isNotBlank)?.let { runCatching { NearbyPairing.parse(it) } }
     }
+    suspend fun startPreparedTransfer(pairing: NearbyPairing, sources: PreparedNearbyTransfer) {
+        loading = true
+        try {
+            val preferences = viewModel.shareScreenPreferences.value
+            val returnPairing = NearbyTransferController.prepareReturnPairing(context, preferences.nearbyReceivePath, preferences.receiverName, pairing)
+            NearbyTransferController.start(context, pairing, sources, returnPairing)
+            transferredOwnership.set(true)
+            prepared = null
+            onTransferStarted()
+            onDismiss()
+        } catch (failure: Exception) {
+            if (failure is kotlinx.coroutines.CancellationException) throw failure
+            error = failure.message ?: "Siuntimo pradėti nepavyko"
+        } finally { loading = false }
+    }
+    LaunchedEffect(prepared, connectedPairing, loading) {
+        val pairing = connectedPairing ?: return@LaunchedEffect
+        val sources = prepared ?: return@LaunchedEffect
+        if (startAfterPreparation && !loading && error == null) {
+            startAfterPreparation = false
+            // Only an explicit Start action on the picker submits another batch.
+            scope.launch { startPreparedTransfer(pairing, sources) }
+        }
+    }
     val visibleEntries = entries
     val selectablePaths = remember(visibleEntries) {
         visibleEntries.asSequence().map(FileEntry::absolutePath).distinct()
@@ -560,7 +596,7 @@ internal fun NearbySendDialog(
         }
     }
 
-    AfModalDialog(
+    if (!openStorage) AfModalDialog(
         title = if (step == NearbySendStep.PICK) "Pasirinkti siunčiamus failus" else "Susieti gaunantį telefoną",
         icon = if (step == NearbySendStep.PICK) Icons.AutoMirrored.Rounded.Send else Icons.Rounded.QrCodeScanner,
         onDismissRequest = ::discardAndDismiss,
@@ -585,6 +621,7 @@ internal fun NearbySendDialog(
                 Button(
                     onClick = {
                         val chosen = selectedEntries.values.toList()
+                        startAfterPreparation = connectedPairing != null
                         scope.launch {
                             loading = true
                             error = null
@@ -599,16 +636,17 @@ internal fun NearbySendDialog(
                         }
                     },
                     enabled = selectedPaths.isNotEmpty() && !loading && !pageLoading,
-                ) { LText("Toliau (${selectedPaths.size})") }
+                ) {
+                    if (connectedPairing != null) { LText("Pradėti siuntimą"); Text(" (${selectedPaths.size})") }
+                    else LText("Toliau (${selectedPaths.size})")
+                }
             }
             if (step == NearbySendStep.PAIR) {
                 Button(
                     onClick = {
                         val pairing = parsedPairing?.getOrNull() ?: return@Button
                         val sources = prepared ?: return@Button
-                        runCatching { NearbyTransferController.start(context, pairing, sources) }
-                            .onSuccess { transferredOwnership.set(true); prepared = null; onTransferStarted(); onDismiss() }
-                            .onFailure { failure -> error = failure.message ?: "Siuntimo pradėti nepavyko" }
+                        scope.launch { startPreparedTransfer(pairing, sources) }
                     },
                     enabled = parsedPairing?.isSuccess == true && prepared != null && !loading,
                 ) { LText("Pradėti siuntimą") }
@@ -769,7 +807,9 @@ internal fun NearbySendDialog(
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().testTag("nearby_preparing"))
                     LText("Ruošiamas siuntimas")
                 }
+                if (connectedPairing == null) {
                 LText("Gaunančiame telefone atverkite „Gauti“, tada nuskaitykite rodomą QR kodą.")
+                LText("Gavimas atgal į pasirinktą aplanką veiks 15 minučių. Atsijungti galima bendrinimo lange.", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = scanQr, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
                     LText("Nuskaityti QR kodą", modifier = Modifier.padding(start = 7.dp))
@@ -788,6 +828,7 @@ internal fun NearbySendDialog(
                     isError = pairingPayload.isNotBlank() && parsedPairing?.isFailure == true,
                 )
                 parsedPairing?.exceptionOrNull()?.message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
+                }
                 parsedPairing?.getOrNull()?.let { pairing ->
                     LText("Gavėjas: ${pairing.receiverName}", fontWeight = FontWeight.SemiBold)
                     LText("Privatus adresas: ${pairing.host}:${pairing.port}", style = MaterialTheme.typography.bodySmall)
@@ -808,6 +849,7 @@ internal fun NearbySendDialog(
             onDismiss = { openStorage = false },
             onCopy = { paths ->
                 openStorage = false
+                startAfterPreparation = connectedPairing != null
                 scope.launch {
                     loading = true
                     error = null
@@ -819,7 +861,7 @@ internal fun NearbySendDialog(
                 }
             },
             title = "Pasirinkti siunčiamus failus ir aplankus",
-            confirmLabel = "Paruošti",
+            confirmLabel = if (connectedPairing != null) "Pradėti siuntimą" else "Paruošti",
         )
     }
 }

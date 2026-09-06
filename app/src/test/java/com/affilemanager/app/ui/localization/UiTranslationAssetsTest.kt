@@ -80,16 +80,26 @@ class UiTranslationAssetsTest {
             .findAll(localeConfig)
             .map { it.groupValues[1] }
             .toList()
-        assertEquals(AppLanguageManager.SUPPORTED_LANGUAGE_TAGS, configured)
+        assertEquals(AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.map(AppLanguageManager::platformLanguageTag), configured)
 
         val defaultKeys = stringResourceKeys(File(root, "app/src/main/res/values/strings.xml"))
         AppLanguageManager.SUPPORTED_LANGUAGE_TAGS
             .filterNot { it == AppLanguageManager.ENGLISH || it == AppLanguageManager.LITHUANIAN }
             .forEach { language ->
-                val strings = File(root, "app/src/main/res/values-$language/strings.xml")
+                val qualifier = if (language == "tl") "b+fil" else language
+                val strings = File(root, "app/src/main/res/values-$qualifier/strings.xml")
                 assertTrue("Missing Android strings for $language", strings.isFile)
                 assertEquals("Android string keys for $language", defaultKeys, stringResourceKeys(strings))
+                if (language == "tl") {
+                    assertEquals(strings.readText(), File(root, "app/src/main/res/values-tl/strings.xml").readText())
+                }
             }
+    }
+
+    @Test fun filipinoPlatformAliasKeepsTheExistingOfflinePackAndSelection() {
+        assertEquals("tl", AppLanguageManager.normalizeLanguageTag("fil-PH"))
+        assertEquals("fil", AppLanguageManager.platformLanguageTag("tl"))
+        assertTrue(AppLanguageManager.isSupported("fil"))
     }
 
     private fun projectRoot(): File = sequenceOf(File("."), File(".."))

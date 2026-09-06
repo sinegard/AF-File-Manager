@@ -466,11 +466,9 @@ class EditSessionStore(cacheDirectory: File) {
                 output.fd.sync()
             }
             return try {
-                try {
-                    Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
-                } catch (_: AtomicMoveNotSupportedException) {
-                    Files.move(temporary.toPath(), target.toPath())
-                }
+                // ATOMIC_MOVE is allowed to replace an existing target. Save as
+                // must instead report a conflict if another writer got here first.
+                Files.move(temporary.toPath(), target.toPath())
                 true
             } catch (_: FileAlreadyExistsException) {
                 false

@@ -11,6 +11,10 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.doubleClick
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -53,6 +57,72 @@ import java.util.zip.ZipOutputStream
 class FilePreviewLifecycleTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun imageSwipeNavigatesAtFitButZoomedDragOnlyPans() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.getExternalFilesDir("preview-gestures"), "images").apply { mkdirs() }
+        val model = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            val first = File(root, "a.png").also(::createImage)
+            val second = File(root, "b.png").also(::createImage)
+            val entry = LocalFileRepository(app).toEntry(first)
+            compose.runOnUiThread { model.navigate(com.affilemanager.app.ui.PanelId.LEFT, root.path) }
+            compose.waitUntil(10_000) { model.leftPanel.value.entries.size == 2 && !model.leftPanel.value.loading }
+            compose.runOnUiThread { model.open(entry) }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("image-zoom-viewport").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("image-zoom-viewport").performTouchInput { swipeLeft() }
+            compose.waitUntil(5_000) { (model.preview.value as? com.affilemanager.app.ui.PreviewTarget.LocalFile)?.entry?.name == second.name }
+            compose.onNodeWithTag("image-zoom-viewport").performTouchInput { swipeRight() }
+            compose.waitUntil(5_000) { (model.preview.value as? com.affilemanager.app.ui.PreviewTarget.LocalFile)?.entry?.name == first.name }
+            compose.onNodeWithTag("image-zoom-viewport").performTouchInput { doubleClick() }
+            compose.onNodeWithText("200 %").assertIsDisplayed()
+            compose.onNodeWithTag("image-zoom-viewport").performTouchInput { swipeLeft() }
+            compose.runOnIdle { assertEquals(first.name, (model.preview.value as com.affilemanager.app.ui.PreviewTarget.LocalFile).entry.name) }
+        } finally {
+            compose.runOnUiThread { model.closePreview() }
+            root.deleteRecursively()
+        }
+    }
+
+    @Test fun downwardArtworkGestureMinimizesOnlyAfterRealBackgroundPlayerStarts() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.getExternalFilesDir("preview-gestures"), "audio").apply { mkdirs() }
+        val model = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            val audio = File(root, "gesture.wav").also(::createWaveAudio)
+            compose.runOnUiThread { model.open(LocalFileRepository(app).toEntry(audio)) }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("audio_artwork").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("audio_artwork").performTouchInput { swipeDown() }
+            compose.waitUntil(8_000) { model.preview.value == null &&
+                com.affilemanager.app.media.BackgroundPlaybackService.state.value?.phase == com.affilemanager.app.media.BackgroundPlaybackPhase.PLAYING }
+            compose.onNodeWithTag("background_stop").assertIsDisplayed().performClick()
+            compose.waitUntil(5_000) { com.affilemanager.app.media.BackgroundPlaybackService.state.value == null }
+        } finally {
+            compose.runOnUiThread { model.closePreview(); com.affilemanager.app.media.BackgroundPlaybackService.stop(app) }
+            root.deleteRecursively()
+        }
+    }
+
+    @Test fun videoControlsHideAfterSevenSecondsAndTapRestoresWithoutRestartingPlayback() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val video = File(app.getExternalFilesDir("validation"), "video-gesture.mp4")
+        check(video.isFile) { "Push the documented platform MP4 test fixture to the disposable emulator first" }
+        val model = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            compose.runOnUiThread { model.open(LocalFileRepository(app).toEntry(video)) }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("video_play_pause").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("video_play_pause").performScrollTo().assertIsEnabled().performClick()
+            compose.onNodeWithContentDescription("Pause").assertIsDisplayed()
+            // The Compose dispatcher owns this timer; native MediaPlayer uses real time.
+            compose.mainClock.advanceTimeBy(6_000)
+            compose.onNodeWithTag("video_play_pause").assertIsDisplayed()
+            compose.mainClock.advanceTimeBy(1_100)
+            compose.onNodeWithTag("video_play_pause").assertDoesNotExist()
+            compose.onNodeWithTag("video_gesture_surface").performTouchInput { click() }
+            compose.onNodeWithTag("video_play_pause").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Pause").assertIsDisplayed()
+        } finally { compose.runOnUiThread { model.closePreview() } }
+    }
 
     @Test
     fun pngAndPdfCanBeOpenedAndClosedRepeatedlyWithoutRecycledBitmapCrash() {
@@ -101,6 +171,10 @@ class FilePreviewLifecycleTest {
             val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
             val entry = LocalFileRepository(application).toEntry(image)
             compose.runOnUiThread { viewModel.open(entry) }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("preview_actions_menu").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Manufacturer").assertDoesNotExist()
+            compose.onNodeWithTag("preview_actions_menu").performClick()
+            compose.onNodeWithTag("preview_details_action").performClick()
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithText("Manufacturer").fetchSemanticsNodes().isNotEmpty() &&
                     compose.onAllNodesWithText("Taken").fetchSemanticsNodes().isNotEmpty()
@@ -113,6 +187,11 @@ class FilePreviewLifecycleTest {
 
             compose.runOnUiThread {
                 AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.LITHUANIAN)
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("preview_actions_menu").fetchSemanticsNodes().isNotEmpty() }
+            if (compose.onAllNodesWithTag("preview_details_dialog").fetchSemanticsNodes().isEmpty()) {
+                compose.onNodeWithTag("preview_actions_menu").performClick()
+                compose.onNodeWithTag("preview_details_action").performClick()
             }
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithText("Gamintojas").fetchSemanticsNodes().isNotEmpty() &&

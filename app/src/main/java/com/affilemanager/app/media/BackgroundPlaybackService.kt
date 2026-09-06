@@ -31,8 +31,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 enum class BackgroundPlaybackPhase { PREPARING, PLAYING, PAUSED, ERROR }
+data class BackgroundMediaItem(val uri: String, val title: String)
 
-data class BackgroundPlaybackState(val uri: String, val title: String, val phase: BackgroundPlaybackPhase) {
+data class BackgroundPlaybackState(val uri: String, val title: String, val phase: BackgroundPlaybackPhase,
+    val positionMillis: Long = 0L, val durationMillis: Long = 0L, val canSkip: Boolean = false) {
     val active: Boolean get() = phase != BackgroundPlaybackPhase.ERROR
 }
 
@@ -42,19 +44,24 @@ class BackgroundPlaybackService : Service() {
         private const val ACTION_PLAY = "com.affilemanager.app.action.PLAY_IN_BACKGROUND"
         private const val ACTION_STOP = "com.affilemanager.app.action.STOP_BACKGROUND_PLAYBACK"
         private const val ACTION_TOGGLE = "com.affilemanager.app.action.TOGGLE_BACKGROUND_PLAYBACK"
+        private const val ACTION_SKIP = "com.affilemanager.app.action.SKIP_BACKGROUND_PLAYBACK"
         private const val CHANNEL_ID = "background_media"
         internal const val NOTIFICATION_ID = 44
         private const val PREPARE_TIMEOUT_MILLIS = 30_000L
         private val current = MutableStateFlow<BackgroundPlaybackState?>(null)
         val state = current.asStateFlow()
 
-        fun play(context: Context, uri: Uri, title: String, positionMillis: Long, loop: Boolean, speed: Float, volume: Float) {
+        fun play(context: Context, uri: Uri, title: String, positionMillis: Long, loop: Boolean, speed: Float, volume: Float,
+            playlist: List<BackgroundMediaItem> = emptyList()) {
             require(uri.scheme in setOf("content", "file") && uri.toString().length <= 16_384)
             require(speed.isFinite() && volume.isFinite())
+            require(playlist.size <= 256 && playlist.sumOf { it.uri.length + it.title.length } <= 128 * 1024)
             ContextCompat.startForegroundService(context, Intent(context, BackgroundPlaybackService::class.java)
                 .setAction(ACTION_PLAY)
                 .putExtra("uri", uri.toString())
                 .putExtra("title", title.take(512))
+                .putStringArrayListExtra("queue_uris", ArrayList(playlist.map { it.uri }))
+                .putStringArrayListExtra("queue_titles", ArrayList(playlist.map { it.title.take(512) }))
                 .putExtra("position", positionMillis.coerceAtLeast(0L))
                 .putExtra("loop", loop)
                 .putExtra("speed", speed.coerceIn(0.5f, 2f))
@@ -68,13 +75,28 @@ class BackgroundPlaybackService : Service() {
         fun toggle(context: Context) {
             context.startService(Intent(context, BackgroundPlaybackService::class.java).setAction(ACTION_TOGGLE))
         }
+        fun skip(context: Context, delta: Int) {
+            context.startService(Intent(context, BackgroundPlaybackService::class.java).setAction(ACTION_SKIP).putExtra("delta", delta))
+        }
     }
 
     private var player: MediaPlayer? = null
+    private var playlist = emptyList<BackgroundMediaItem>()
+    private var loop = true
+    private var speed = 1f
+    private var volume = 1f
     private lateinit var session: MediaSession
     private lateinit var audioManager: AudioManager
     private lateinit var focusRequest: AudioFocusRequest
     private val handler = Handler(Looper.getMainLooper())
+    private val progressTick = object : Runnable {
+        override fun run() {
+            if (current.value?.phase != BackgroundPlaybackPhase.PLAYING) return
+            runCatching { player?.let { ready -> current.value = current.value?.copy(
+                positionMillis = ready.currentPosition.toLong(), durationMillis = ready.duration.toLong()) } }
+            handler.postDelayed(this, 1_000L)
+        }
+    }
     private val prepareTimeout = Runnable { if (current.value?.phase == BackgroundPlaybackPhase.PREPARING) finishPlayback(failed = true) }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -94,6 +116,8 @@ class BackgroundPlaybackService : Service() {
                 override fun onStop() = finishPlayback()
                 override fun onPause() = pausePlayback()
                 override fun onPlay() = resumePlayback()
+                override fun onSkipToNext() = skipPlayback(1)
+                override fun onSkipToPrevious() = skipPlayback(-1)
                 override fun onCustomAction(action: String, extras: Bundle?) {
                     if (action == ACTION_STOP) finishPlayback()
                 }
@@ -105,6 +129,7 @@ class BackgroundPlaybackService : Service() {
         when (intent?.action) {
             ACTION_PLAY -> startPlayback(intent)
             ACTION_STOP -> finishPlayback()
+            ACTION_SKIP -> skipPlayback(intent.getIntExtra("delta", 0))
             ACTION_TOGGLE -> when (current.value?.phase) {
                 BackgroundPlaybackPhase.PLAYING -> pausePlayback()
                 BackgroundPlaybackPhase.PAUSED -> resumePlayback()
@@ -124,18 +149,25 @@ class BackgroundPlaybackService : Service() {
             return
         }
         releasePlayer()
+        val uris = intent.getStringArrayListExtra("queue_uris").orEmpty()
+        val titles = intent.getStringArrayListExtra("queue_titles").orEmpty()
+        playlist = if (uris.size in 1..256 && uris.size == titles.size && uris.sumOf(String::length) + titles.sumOf(String::length) <= 128 * 1024 &&
+            uriText in uris && uris.all { it.length <= 16_384 && Uri.parse(it).scheme in setOf("content", "file") }) {
+            uris.zip(titles).map { BackgroundMediaItem(it.first, it.second.take(512)) }.distinctBy { it.uri }
+        } else listOf(BackgroundMediaItem(uriText, intent.getStringExtra("title").orEmpty().take(512)))
         current.value = BackgroundPlaybackState(uriText, intent.getStringExtra("title").orEmpty().take(512)
-            .ifBlank { "AF File Manager" }, BackgroundPlaybackPhase.PREPARING)
+            .ifBlank { "AF File Manager" }, BackgroundPlaybackPhase.PREPARING, canSkip = playlist.size > 1)
         val position = intent.getLongExtra("position", 0L).coerceAtLeast(0L)
-        val speed = intent.getFloatExtra("speed", 1f).takeIf(Float::isFinite)?.coerceIn(0.5f, 2f) ?: 1f
-        val volume = intent.getFloatExtra("volume", 1f).takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 1f
+        speed = intent.getFloatExtra("speed", 1f).takeIf(Float::isFinite)?.coerceIn(0.5f, 2f) ?: 1f
+        volume = intent.getFloatExtra("volume", 1f).takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 1f
+        loop = intent.getBooleanExtra("loop", true)
         runCatching {
             updateControls()
             val created = MediaPlayer()
             player = created
             created.setAudioAttributes(mediaAttributes())
             created.setDataSource(this, uri)
-            created.isLooping = intent.getBooleanExtra("loop", true)
+            created.isLooping = loop
             created.setVolume(volume, volume)
             created.setOnPreparedListener { ready ->
                 if (player !== ready) return@setOnPreparedListener
@@ -147,6 +179,7 @@ class BackgroundPlaybackService : Service() {
                     if (position > 0L) ready.seekTo(position.coerceAtMost(ready.duration.toLong()).toInt())
                     ready.start()
                     current.value = current.value?.copy(phase = BackgroundPlaybackPhase.PLAYING)
+                    handler.post(progressTick)
                     updateControls()
                 }.onFailure { finishPlayback(failed = true) }
             }
@@ -166,6 +199,7 @@ class BackgroundPlaybackService : Service() {
             player?.pause()
             audioManager.abandonAudioFocusRequest(focusRequest)
             current.value = current.value?.copy(phase = BackgroundPlaybackPhase.PAUSED)
+            handler.removeCallbacks(progressTick)
             updateControls()
         }.onFailure { finishPlayback(failed = true) }
     }
@@ -176,19 +210,34 @@ class BackgroundPlaybackService : Service() {
             check(audioManager.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
             requireNotNull(player).start()
             current.value = current.value?.copy(phase = BackgroundPlaybackPhase.PLAYING)
+            handler.removeCallbacks(progressTick)
+            handler.post(progressTick)
             updateControls()
         }.onFailure { finishPlayback(failed = true) }
     }
 
     private fun finishPlayback(failed: Boolean = false) {
         releasePlayer()
+        playlist = emptyList()
         session.isActive = false
         current.value = if (failed) current.value?.copy(phase = BackgroundPlaybackPhase.ERROR) else null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
+    private fun skipPlayback(delta: Int) {
+        val now = current.value ?: return
+        if (playlist.size < 2 || delta == 0) return
+        val index = playlist.indexOfFirst { it.uri == now.uri }.coerceAtLeast(0)
+        val next = playlist[Math.floorMod(index + delta.coerceIn(-1, 1), playlist.size)]
+        startPlayback(Intent().putExtra("uri", next.uri).putExtra("title", next.title)
+            .putExtra("speed", speed).putExtra("volume", volume).putExtra("loop", loop)
+            .putStringArrayListExtra("queue_uris", ArrayList(playlist.map { it.uri }))
+            .putStringArrayListExtra("queue_titles", ArrayList(playlist.map { it.title })))
+    }
+
     private fun releasePlayer() {
+        handler.removeCallbacks(progressTick)
         handler.removeCallbacks(prepareTimeout)
         val old = player
         player = null // Late callbacks cannot restart a stopped or replaced session.
@@ -220,7 +269,8 @@ class BackgroundPlaybackService : Service() {
                 else -> PlaybackState.STATE_BUFFERING
             }, runCatching { player?.currentPosition?.toLong() ?: 0L }.getOrDefault(0L), if (playing) 1f else 0f)
             .setActions(PlaybackState.ACTION_STOP or if (preparing) 0L else
-                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE)
+                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                if (now.canSkip) PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS else 0L)
             .addCustomAction(ACTION_STOP, localized("Sustabdyti"), android.R.drawable.ic_menu_close_clear_cancel)
             .build())
         session.isActive = true

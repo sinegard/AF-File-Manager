@@ -15,6 +15,25 @@ class EditSessionStoreTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun saveAsPublicationNeverReplacesAFileCreatedDuringWriting() {
+        val store = EditSessionStore(temporaryFolder.newFolder("cache-race"))
+        val destination = temporaryFolder.newFolder("destination-race")
+        val target = File(destination, "new.txt")
+        // Exercise the publication boundary deterministically: another writer
+        // creates the destination after validation but before final publication.
+        val publish = EditSessionStore::class.java.getDeclaredMethod(
+            "atomicCreate", File::class.java, Function1::class.java,
+        ).apply { isAccessible = true }
+        val writer: (java.io.OutputStream) -> Unit = { output ->
+            output.write("edited copy".toByteArray())
+            target.writeText("created by someone else")
+        }
+        assertEquals(false, publish.invoke(store, target, writer))
+        assertEquals("created by someone else", target.readText())
+        assertEquals(listOf("new.txt"), destination.list()!!.toList())
+    }
+
+    @Test
     fun editingUsesPrivateCopyAndDoesNotTouchOriginalBeforeSave() {
         val cache = temporaryFolder.newFolder("cache")
         val source = temporaryFolder.newFile("notes.txt").apply { writeText("original") }

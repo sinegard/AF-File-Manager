@@ -8,6 +8,7 @@ import androidx.compose.material.icons.rounded.Calculate
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -35,6 +36,7 @@ internal fun PreviewActionsMenu(
     onSignPdf: (() -> Unit)?,
     onShare: () -> Unit,
     onCalculateHash: () -> Unit,
+    onDetails: (() -> Unit)? = null,
 ) {
     var expanded by remember(sourceKey) { mutableStateOf(false) }
     fun invoke(action: () -> Unit) { expanded = false; action() }
@@ -43,6 +45,11 @@ internal fun PreviewActionsMenu(
             Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai"))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            onDetails?.let { action ->
+                DropdownMenuItem(text = { LText("Informacija") },
+                    leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                    onClick = { invoke(action) }, modifier = Modifier.testTag("preview_details_action"))
+            }
             DropdownMenuItem(
                 text = { LText("Atidaryti su kita programa") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null) },

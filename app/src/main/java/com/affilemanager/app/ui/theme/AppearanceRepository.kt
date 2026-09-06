@@ -30,6 +30,8 @@ data class AppearanceSettings(
     val colorPalette: AppColorPalette = AppColorPalette.DEFAULT,
     val amoledBlack: Boolean = false,
     val customColors: CustomThemeColors = CustomThemeColors(),
+    val wallpaperRevision: Long = 0L,
+    val cardTransparency: Int = 0,
 )
 
 object AppearanceRules {
@@ -61,6 +63,10 @@ class AppearanceRepository(context: Context) {
 
     fun setAmoledBlack(enabled: Boolean) = update { it.copy(amoledBlack = enabled) }
 
+    fun setWallpaperRevision(revision: Long) = update { it.copy(wallpaperRevision = revision.coerceAtLeast(0L)) }
+
+    fun setCardTransparency(percent: Int) = update { it.copy(cardTransparency = percent.coerceIn(0, 100)) }
+
     fun setCustomColors(colors: CustomThemeColors) = update {
         require(colors.values().all { color -> color ushr 24 == 255 }) { "Use opaque RGB colors" }
         it.copy(colorPalette = AppColorPalette.CUSTOM, customColors = colors)
@@ -75,6 +81,8 @@ class AppearanceRepository(context: Context) {
                 .putString(KEY_THEME_MODE, updated.themeMode.name)
                 .putString(KEY_COLOR_PALETTE, updated.colorPalette.name)
                 .putBoolean(KEY_AMOLED_BLACK, updated.amoledBlack)
+                .putLong("wallpaper_revision", updated.wallpaperRevision)
+                .putInt("card_transparency", updated.cardTransparency)
                 .putString("custom_colors_v1", updated.customColors.values().joinToString(",", transform = CustomThemeRules::hex))
                 .commit(),
         ) { "Appearance settings could not be saved" }
@@ -90,5 +98,7 @@ class AppearanceRepository(context: Context) {
             ?: AppColorPalette.DEFAULT,
         amoledBlack = preferences.getBoolean(KEY_AMOLED_BLACK, false),
         customColors = CustomThemeRules.parseStored(preferences.getString("custom_colors_v1", null)),
+        wallpaperRevision = preferences.getLong("wallpaper_revision", 0L).coerceAtLeast(0L),
+        cardTransparency = preferences.getInt("card_transparency", 0).coerceIn(0, 100),
     )
 }

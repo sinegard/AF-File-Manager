@@ -14,7 +14,22 @@ data class ShareScreenPreferences(
     val username: String = "",
     val readOnly: Boolean = false,
     val receiverName: String = "Android phone",
-)
+    val ftpPath: String = sharedPath,
+    val webDavPath: String = sharedPath,
+    val nearbyReceivePath: String = sharedPath,
+) {
+    fun pathFor(protocol: LanTransferProtocol): String = when (protocol) {
+        LanTransferProtocol.WEB -> sharedPath
+        LanTransferProtocol.FTP -> ftpPath
+        LanTransferProtocol.WEBDAV -> webDavPath
+    }
+
+    fun withPathFor(protocol: LanTransferProtocol, path: String): ShareScreenPreferences = when (protocol) {
+        LanTransferProtocol.WEB -> copy(sharedPath = path)
+        LanTransferProtocol.FTP -> copy(ftpPath = path)
+        LanTransferProtocol.WEBDAV -> copy(webDavPath = path)
+    }
+}
 
 enum class SearchScopePreference { CURRENT_FOLDER, ALL_STORAGE, SELECTED_STORAGE }
 
@@ -47,6 +62,9 @@ class UiPreferenceRepository(context: Context) {
                 username = json.optString("username"),
                 readOnly = json.optBoolean("readOnly"),
                 receiverName = json.optString("receiverName", defaultReceiverName),
+                ftpPath = json.optString("ftpPath", json.optString("sharedPath", defaultPath)),
+                webDavPath = json.optString("webDavPath", json.optString("sharedPath", defaultPath)),
+                nearbyReceivePath = json.optString("nearbyReceivePath", json.optString("sharedPath", defaultPath)),
             ),
             defaultPath = defaultPath,
             defaultReceiverName = defaultReceiverName,
@@ -56,7 +74,11 @@ class UiPreferenceRepository(context: Context) {
     fun saveShare(value: ShareScreenPreferences, defaultPath: String, defaultReceiverName: String) {
         val normalized = UiPreferenceRules.normalizeShare(value, defaultPath, defaultReceiverName)
         val json = JSONObject()
+            .put("version", 2)
             .put("sharedPath", normalized.sharedPath)
+            .put("ftpPath", normalized.ftpPath)
+            .put("webDavPath", normalized.webDavPath)
+            .put("nearbyReceivePath", normalized.nearbyReceivePath)
             .put("protocol", normalized.protocol.name)
             .put("durationMinutes", normalized.durationMinutes)
             .put("portText", normalized.portText)
@@ -158,6 +180,9 @@ internal object UiPreferenceRules {
         val safeDefaultName = cleanSingleLine(defaultReceiverName, MAX_RECEIVER_NAME_LENGTH).ifBlank { "Android phone" }
         return value.copy(
             sharedPath = cleanSingleLine(value.sharedPath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
+            ftpPath = cleanSingleLine(value.ftpPath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
+            webDavPath = cleanSingleLine(value.webDavPath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
+            nearbyReceivePath = cleanSingleLine(value.nearbyReceivePath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
             durationMinutes = value.durationMinutes.coerceIn(5, 60),
             portText = value.portText.filter(Char::isDigit).take(5),
             username = cleanSingleLine(value.username, MAX_USERNAME_LENGTH),

@@ -211,7 +211,8 @@ class MainActivityTest {
             compose.onNodeWithTag("open_favorites_LEFT").performClick()
             compose.onNodeWithTag("favorite_locations_dialog").assertIsDisplayed()
             compose.onNodeWithTag("favorite_location_${directory.absolutePath.hashCode()}").assertIsDisplayed()
-            compose.onNodeWithText("Close").performClick()
+            compose.onNodeWithContentDescription("Close").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("favorite_locations_dialog").assertDoesNotExist()
         } finally {
             compose.runOnUiThread {
                 if (directory.absolutePath in viewModel.favorites.value) viewModel.toggleFavorite(directory.absolutePath)
@@ -309,12 +310,14 @@ class MainActivityTest {
             assertTrue(bounds.width in (maxWidth * 0.90f)..maxWidth)
             assertTrue(bounds.height in (180f * metrics.density)..(metrics.heightPixels * 0.80f))
             compose.onNodeWithText("Create").assertIsDisplayed()
-            compose.onNodeWithText("Close").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Close").assertIsDisplayed()
+            compose.onNodeWithText("Cancel").assertIsDisplayed()
             val artifact = File(requireNotNull(compose.activity.getExternalFilesDir("validation")), "issue-106-create-dialog.png")
             artifact.outputStream().use { output ->
                 assertTrue(dialog.captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output))
             }
-            compose.onNodeWithText("Close").performClick()
+            compose.onNodeWithContentDescription("Close").performClick()
+            compose.onNodeWithTag("create_item_dialog").assertDoesNotExist()
         } finally {
             directory.deleteRecursively()
         }
@@ -1047,7 +1050,7 @@ class MainActivityTest {
             }
             compose.runOnUiThread { viewModel.selectPaths(PanelId.LEFT, listOf(file.absolutePath)) }
 
-            compose.onNodeWithTag("analyze_selection_local").performClick()
+            compose.onNodeWithTag("analyze_selection_local").performScrollTo().assertIsDisplayed().performClick()
             compose.waitUntil(timeoutMillis = 15_000) {
                 viewModel.section.value == AppSection.ANALYZE && !viewModel.analysisState.value.running
             }
@@ -1119,7 +1122,7 @@ class MainActivityTest {
                 viewModel.setThemeMode(AppThemeMode.LIGHT)
                 viewModel.setColorPalette(AppColorPalette.DYNAMIC)
             }
-            val expectedLight = dynamicLightColorScheme(compose.activity).surface.toArgb()
+            val expectedLight = dynamicLightColorScheme(compose.activity).surfaceContainer.toArgb()
             compose.waitUntil(timeoutMillis = 5_000) {
                 val settings = viewModel.appearanceSettings.value
                 settings.themeMode == AppThemeMode.LIGHT && settings.colorPalette == AppColorPalette.DYNAMIC
@@ -1136,7 +1139,7 @@ class MainActivityTest {
             )
 
             compose.runOnUiThread { viewModel.setThemeMode(AppThemeMode.DARK) }
-            val expectedDark = dynamicDarkColorScheme(compose.activity).surface.toArgb()
+            val expectedDark = dynamicDarkColorScheme(compose.activity).surfaceContainer.toArgb()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.appearanceSettings.value.themeMode == AppThemeMode.DARK
             }

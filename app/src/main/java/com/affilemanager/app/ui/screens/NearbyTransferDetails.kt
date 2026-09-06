@@ -45,12 +45,14 @@ internal fun NearbyTransferDetails(
     onCancel: (() -> Unit)? = null,
     message: String? = null,
     cancelLabel: String = "Atšaukti",
+    onSendMore: (() -> Unit)? = null,
 ) {
     AfModalDialog(
         title = "Perdavimas tarp telefonų", icon = Icons.Rounded.PhoneAndroid,
         onDismissRequest = onDismiss, expandedContent = true,
         modifier = Modifier.testTag("nearby_transfer_details"),
         actions = {
+            onSendMore?.let { send -> TextButton(onClick = send, modifier = Modifier.testTag("nearby_send_more")) { LText("Siųsti daugiau") } }
             onCancel?.let { cancel -> TextButton(onClick = cancel) { LText(cancelLabel) } }
             TextButton(onClick = onDismiss) { LText("Uždaryti") }
         },

@@ -788,6 +788,16 @@ internal object FileVisualLoader {
 
     @Suppress("DEPRECATION")
     private fun apkIcon(context: Context, file: File, widthPx: Int, heightPx: Int): Bitmap? {
+        if (com.affilemanager.app.apk.SplitApkArchive.isBundle(file)) {
+            val plan = com.affilemanager.app.apk.SplitApkArchive.plan(file)
+            if (plan.base.bytes > 64L * 1024 * 1024) return null
+            val directory = File(context.cacheDir, "apk-icons").apply { if (!isDirectory && !mkdirs()) return null }
+            val temporary = File.createTempFile("base-", ".apk", directory)
+            return try {
+                com.affilemanager.app.apk.SplitApkArchive.copyPart(file, plan.base, temporary, 64L * 1024 * 1024)
+                apkIcon(context, temporary, widthPx, heightPx)
+            } finally { temporary.delete() }
+        }
         val manager = context.packageManager
         val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             manager.getPackageArchiveInfo(file.absolutePath, PackageManager.PackageInfoFlags.of(0))

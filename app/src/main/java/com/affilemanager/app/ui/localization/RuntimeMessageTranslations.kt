@@ -3,6 +3,22 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "Fono paveikslėlis" to "Wallpaper",
+        "Kortelių skaidrumas" to "Card transparency",
+        "Pasirinkite paveikslėlį" to "Select an image",
+        "Siųsti daugiau" to "Send more",
+        "Atsijungti" to "Disconnect",
+        "APK rinkinys" to "APK bundle",
+        "Netinkamas APK rinkinys" to "Invalid APK bundle",
+        "APK rinkinys per didelis" to "The APK bundle exceeds the size or part limit",
+        "Šiame rinkinyje yra keli diegimo variantai arba nėra pagrindinio APK. Išpakuokite originalias dalis." to "This bundle has multiple installation variants or no base APK. Extract the original parts.",
+        "Diegiamos originalios pasirašytos dalys. Jų jungimas į vieną APK pakeistų parašą." to "Installs the original signed parts. Merging them into one APK would change the signature.",
+        "Išpakuoti originalias dalis" to "Extract original parts",
+        "Papildomi OBB duomenys automatiškai nediegiami. Juos galima išpakuoti atskirai." to "Additional OBB data is not installed automatically. You can extract it separately.",
+        "Diegti nepavyko" to "Installation failed",
+        "Pirmiausia sustabdykite kitą bendrinimo sesiją" to "Stop the other sharing session first",
+        "Gavimas atgal į pasirinktą aplanką veiks 15 minučių. Atsijungti galima bendrinimo lange." to "This phone will receive files in your selected folder for 15 minutes. You can disconnect on the sharing screen.",
+        "Šaltinis ir paskirtis yra tas pats failas" to "Source and destination are the same file",
         "Pasirinkite bent vieną elementą" to "Select at least one item",
         "Vienu kartu bendrinama per daug elementų" to "Too many items selected for sharing at once",
         "Kai kurie pasirinkti elementai nepasiekiami" to "Some selected items are unavailable",

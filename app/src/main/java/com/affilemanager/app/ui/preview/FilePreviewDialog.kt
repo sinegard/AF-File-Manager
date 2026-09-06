@@ -26,6 +26,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -80,6 +83,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAs
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -162,6 +166,7 @@ import com.affilemanager.app.media.BackgroundPlaybackService
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.ui.components.BackgroundPlaybackBar
 import com.affilemanager.app.ui.components.AfActionRow
+import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryDisplayDefaults
 import com.affilemanager.app.data.DirectoryGridStyle
@@ -248,6 +253,7 @@ fun FilePreviewDialog(
     canNavigateMedia: Boolean,
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
+    backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem> = emptyList(),
 ) {
     val context = LocalContext.current
     val summaryDateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
@@ -261,6 +267,8 @@ fun FilePreviewDialog(
     var showPdfSigner by remember(source.key) { mutableStateOf(false) }
     var pdfApplyBaseline by remember(source.key) { mutableStateOf<String?>(null) }
     var showSaveAs by remember(source.key) { mutableStateOf(false) }
+    var showDetails by remember(source.key) { mutableStateOf(false) }
+    var showSplitExtract by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val archiveMaterializedEntry = target is PreviewTarget.ArchiveEntry
     val internalEditor = !archiveMaterializedEntry && EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
@@ -373,6 +381,7 @@ fun FilePreviewDialog(
                         sourceKey = source.key,
                         editEnabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifyingPdf != true,
                         hashRunning = hashRunning,
+                        onDetails = if (source.kind in setOf(EntryKind.IMAGE, EntryKind.AUDIO, EntryKind.VIDEO)) ({ showDetails = true }) else null,
                         onOpenWith = {
                             runCatching { openWith(context, actionSource) }
                                 .onFailure { actionError = it.message ?: "Programų pasirinkiklio atidaryti nepavyko" }
@@ -410,7 +419,7 @@ fun FilePreviewDialog(
                     )
                 }
                 HorizontalDivider()
-                BackgroundPlaybackBar()
+                BackgroundPlaybackBar(stopOnly = true)
                 hash?.let {
                     LText("SHA-256  $it", modifier = Modifier.fillMaxWidth().padding(8.dp), style = MaterialTheme.typography.labelSmall)
                 }
@@ -489,10 +498,28 @@ fun FilePreviewDialog(
                         canNavigateMedia = canNavigateMedia,
                         onPreviousMedia = onPreviousMedia,
                         onNextMedia = onNextMedia,
+                        onMinimizeMedia = onClose,
+                        onExtractSplitApk = { showSplitExtract = true },
+                        backgroundPlaylist = backgroundPlaylist,
                     )
                 }
             }
         }
+    }
+
+    if (showDetails) MediaDetailsDialog(source, onDismiss = { showDetails = false })
+    if (showSplitExtract) {
+        val file = source.localFile
+        if (file != null) ArchiveExtractionDialog(
+            archiveName = source.name, selection = null, initialDirectory = initialLocalSavePath,
+            loadDirectory = loadLocalSaveDirectory,
+            onDismiss = { showSplitExtract = false },
+            onConfirm = { directory, password ->
+                showSplitExtract = false
+                onExtract(FileEntry(file.path, source.name, EntryKind.APK, source.sizeBytes ?: 0L,
+                    source.modifiedAtMillis ?: 0L, false, source.isReadable, source.isWritable), directory, password)
+            },
+        )
     }
 
     activeEditState?.conflict?.let { conflict ->
@@ -599,6 +626,9 @@ private fun FileContentPreview(
     canNavigateMedia: Boolean,
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
+    onMinimizeMedia: () -> Unit,
+    onExtractSplitApk: () -> Unit,
+    backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
 ) {
     val context = LocalContext.current
     val displayedSource = editState?.session
@@ -607,15 +637,21 @@ private fun FileContentPreview(
         ?: source
     when {
         source.extension == "afvault" -> PropertiesPreview(source, "Šifruotas AF File Manager failas. Jį galima iššifruoti tik atidarius iš vietinės saugyklos.")
-        source.kind == EntryKind.IMAGE -> ImagePreview(displayedSource)
+        source.kind == EntryKind.IMAGE -> ImagePreview(displayedSource, canNavigateMedia, onPreviousMedia, onNextMedia)
         source.extension == "pdf" || source.mimeType(context) == "application/pdf" -> PdfPreview(displayedSource)
         source.kind == EntryKind.VIDEO || source.kind == EntryKind.AUDIO -> MediaPreview(
             displayedSource,
             canNavigateMedia,
             onPreviousMedia,
             onNextMedia,
+            onMinimizeMedia,
+            backgroundPlaylist,
         )
-        source.kind == EntryKind.APK && source.localFile != null -> ApkPreview(requireNotNull(source.localFile))
+        source.kind == EntryKind.APK && source.localFile != null -> {
+            val file = requireNotNull(source.localFile)
+            if (com.affilemanager.app.apk.SplitApkArchive.isBundle(file)) SplitApkPreview(file, onExtractSplitApk)
+            else ApkPreview(file)
+        }
         EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind) -> TextPreview(
             state = editState,
             onPrepareEdit = onPrepareEdit,
@@ -630,14 +666,10 @@ private fun FileContentPreview(
 }
 
 @Composable
-private fun ImagePreview(source: PreviewSource) {
+private fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPrevious: () -> Unit, onNext: () -> Unit) {
     val context = LocalContext.current
-    val locale = LocalConfiguration.current.locales[0]
     val result by produceState<Result<Bitmap>?>(initialValue = null, source.key) {
         value = withContext(Dispatchers.IO) { runCatching { decodeBoundedBitmap(context, source) } }
-    }
-    val metadata by produceState(initialValue = emptyList<Pair<String, String>>(), source.key, locale) {
-        value = withContext(Dispatchers.IO) { runCatching { imageMetadata(context, source, locale) }.getOrDefault(emptyList()) }
     }
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     var offset by remember(source.key) { mutableStateOf(Offset.Zero) }
@@ -670,6 +702,28 @@ private fun ImagePreview(source: PreviewSource) {
                             .background(MaterialTheme.colorScheme.surfaceContainer)
                             .testTag("image-zoom-viewport")
                             .onSizeChanged { viewportSize = it }
+                            .pointerInput(source.key, canNavigate) {
+                                awaitEachGesture {
+                                    val first = awaitFirstDown(requireUnconsumed = false)
+                                    var last = first.position
+                                    var single = true
+                                    var unconsumed = true
+                                    do {
+                                        val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final)
+                                        if (event.changes.size != 1) single = false
+                                        // Tap/double-tap consumes release even for an abandoned tap.
+                                        // Only consumed movement belongs to another pan/zoom gesture.
+                                        if (event.changes.any { it.pressed && it.position != it.previousPosition && it.isConsumed }) unconsumed = false
+                                        event.changes.firstOrNull { it.id == first.id }?.let { last = it.position }
+                                    } while (event.changes.any { it.pressed })
+                                    val movement = last - first.position
+                                    if (canNavigate && single && unconsumed && currentScale <= PreviewZoomRules.MIN_SCALE &&
+                                        kotlin.math.abs(movement.x) > maxOf(48.dp.toPx(), size.width * .18f) &&
+                                        kotlin.math.abs(movement.y) < kotlin.math.abs(movement.x) * .6f) {
+                                        if (movement.x < 0) onNext() else onPrevious()
+                                    }
+                                }
+                            }
                             .pointerInput(source.key) {
                                 detectTapGestures(
                                     onDoubleTap = {
@@ -697,13 +751,11 @@ private fun ImagePreview(source: PreviewSource) {
                             contentScale = ContentScale.Fit,
                         )
                     }
-                    LText("${bitmap.width} × ${bitmap.height} px", modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
                 } else {
                     PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
                 }
             }
         }
-        metadata.forEach { (label, value) -> PropertyRow(label, value) }
     }
 }
 
@@ -873,6 +925,8 @@ private fun MediaPreview(
     canNavigateMedia: Boolean,
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
+    onMinimizeMedia: () -> Unit,
+    backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
 ) {
     val context = LocalContext.current
     val infoResult by produceState<Result<MediaPreviewInfo>?>(initialValue = null, source.key) {
@@ -885,9 +939,9 @@ private fun MediaPreview(
             if (info == null) {
                 PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
             } else if (source.kind == EntryKind.AUDIO) {
-                AudioPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia)
+                AudioPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, onMinimizeMedia, backgroundPlaylist)
             } else {
-                VideoPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia)
+                VideoPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, backgroundPlaylist)
             }
         }
     }
@@ -900,6 +954,8 @@ private fun AudioPreview(
     canNavigateMedia: Boolean,
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
+    onMinimizeMedia: () -> Unit,
+    backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
 ) {
     val context = LocalContext.current
     val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
@@ -915,6 +971,28 @@ private fun AudioPreview(
     var playbackSpeed by remember(source.key) { mutableFloatStateOf(1f) }
     var volume by remember(source.key) { mutableFloatStateOf(1f) }
     var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
+    var minimizeWhenReady by remember(source.key) { mutableStateOf(false) }
+    val latestPlayingInBackground by rememberUpdatedState(playingInBackground)
+    val startBackground: () -> Unit = {
+        runCatching { BackgroundPlaybackService.play(context, source.uri(context), source.name, positionMillis,
+            loopEnabled, playbackSpeed, volume, backgroundPlaylistForSource(context, source, backgroundPlaylist)) }
+            .onSuccess {
+                player?.let { active -> if (runCatching { active.isPlaying }.getOrDefault(false)) active.pause() }
+                playing = false
+                backgroundPlaybackError = false
+            }.onFailure { backgroundPlaybackError = true; minimizeWhenReady = false }
+    }
+    val latestStartBackground by rememberUpdatedState(startBackground)
+    LaunchedEffect(minimizeWhenReady, background?.phase, playingInBackground) {
+        if (minimizeWhenReady && playingInBackground && background?.phase == com.affilemanager.app.media.BackgroundPlaybackPhase.PLAYING) {
+            minimizeWhenReady = false
+            onMinimizeMedia()
+        }
+        if (minimizeWhenReady && background?.phase == com.affilemanager.app.media.BackgroundPlaybackPhase.ERROR) {
+            minimizeWhenReady = false
+            backgroundPlaybackError = true
+        }
+    }
 
     DisposableEffect(source.key) {
         val created = MediaPlayer()
@@ -971,7 +1049,20 @@ private fun AudioPreview(
         verticalArrangement = Arrangement.Top,
     ) {
         Surface(
-            modifier = Modifier.size(240.dp),
+            modifier = Modifier.fillMaxWidth(.82f).aspectRatio(1f).testTag("audio_artwork")
+                .pointerInput(source.key) {
+                    var dragged = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { dragged = 0f },
+                        onVerticalDrag = { change, delta -> change.consume(); dragged += delta },
+                        onDragEnd = {
+                            if (dragged > 80.dp.toPx()) {
+                                minimizeWhenReady = true
+                                if (!latestPlayingInBackground) latestStartBackground()
+                            }
+                        },
+                    )
+                },
             shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceContainerHighest,
         ) {
@@ -1032,30 +1123,11 @@ private fun AudioPreview(
                 }
             },
             onVolumeChanged = { volume = it },
-            onPlayInBackground = {
-                runCatching {
-                    BackgroundPlaybackService.play(
-                        context,
-                        source.uri(context),
-                        source.name,
-                        positionMillis,
-                        loopEnabled,
-                        playbackSpeed,
-                        volume,
-                    )
-                }.onSuccess {
-                    player?.let { active -> if (runCatching { active.isPlaying }.getOrDefault(false)) active.pause() }
-                    playing = false
-                    backgroundPlaybackError = false
-                }.onFailure {
-                    backgroundPlaybackError = true
-                }
-            },
+            onPlayInBackground = startBackground,
         )
         if (backgroundPlaybackError) {
             Text(uiText("Foninio atkūrimo paleisti nepavyko"), color = MaterialTheme.colorScheme.error)
         }
-        MediaPropertyRows(info)
     }
 }
 
@@ -1066,6 +1138,7 @@ private fun VideoPreview(
     canNavigateMedia: Boolean,
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
+    backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
 ) {
     val context = LocalContext.current
     val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
@@ -1082,6 +1155,15 @@ private fun VideoPreview(
     var playbackSpeed by remember(source.key) { mutableFloatStateOf(1f) }
     var volume by remember(source.key) { mutableFloatStateOf(1f) }
     var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
+    var controlsVisible by remember(source.key) { mutableStateOf(true) }
+    var controlsInteraction by remember(source.key) { mutableLongStateOf(0L) }
+    var controlsHeld by remember(source.key) { mutableStateOf(false) }
+    LaunchedEffect(playing, controlsVisible, controlsInteraction, controlsHeld) {
+        if (playing && controlsVisible && !controlsHeld) {
+            delay(7_000L)
+            controlsVisible = false
+        }
+    }
 
     DisposableEffect(source.key) {
         onDispose {
@@ -1106,8 +1188,21 @@ private fun VideoPreview(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().testTag("video_player")) {
-    val videoHeight = (maxHeight * 0.55f).coerceIn(120.dp, 480.dp)
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    val videoHeight = if (controlsVisible) (maxHeight * 0.55f).coerceIn(120.dp, 480.dp) else maxHeight
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        .pointerInput(source.key) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                controlsHeld = true
+                try {
+                    controlsInteraction++
+                    do { val event = awaitPointerEvent() } while (event.changes.any { it.pressed })
+                } finally {
+                    controlsHeld = false
+                    controlsInteraction++
+                }
+            }
+        }) {
         Box(modifier = Modifier.fillMaxWidth().height(videoHeight).background(androidx.compose.ui.graphics.Color.Black)) {
             AndroidView(
                 factory = { viewContext ->
@@ -1139,8 +1234,12 @@ private fun VideoPreview(
             )
             if (!prepared && !playbackError) CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             if (playbackError) PreviewLoadError(IllegalStateException())
+            VideoGestureOverlay(volume = volume, onVolume = { volume = it }, onTap = {
+                controlsVisible = !controlsVisible
+                controlsInteraction++
+            })
         }
-        if (!playingInBackground) PlaybackControls(
+        if (!playingInBackground && controlsVisible) PlaybackControls(
             prefix = "video",
             prepared = prepared,
             playing = playing,
@@ -1187,6 +1286,7 @@ private fun VideoPreview(
                         loopEnabled,
                         playbackSpeed,
                         volume,
+                        backgroundPlaylistForSource(context, source, backgroundPlaylist),
                     )
                 }.onSuccess {
                     videoView?.pause()
@@ -1201,7 +1301,6 @@ private fun VideoPreview(
             if (backgroundPlaybackError) {
                 Text(uiText("Foninio atkūrimo paleisti nepavyko"), color = MaterialTheme.colorScheme.error)
             }
-            MediaPropertyRows(info)
         }
     }
     }
@@ -2428,7 +2527,38 @@ private fun PropertyRow(label: String, value: String) {
     HorizontalDivider()
 }
 
-private fun mediaPreviewInfo(context: android.content.Context, source: PreviewSource): MediaPreviewInfo {
+@Composable
+private fun MediaDetailsDialog(source: PreviewSource, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val locale = LocalConfiguration.current.locales[0]
+    val rows by produceState<Result<List<Pair<String, String>>>?>(null, source.key, locale) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                if (source.kind == EntryKind.IMAGE) imageMetadata(context, source, locale)
+                else mediaPreviewInfo(context, source, includeArtwork = false).let {
+                    listOfNotNull("Trukmė" to MediaPlaybackRules.timeLabel(it.durationMillis),
+                        it.mimeType?.let { value -> "Tipas" to value }, it.bitRate?.let { value -> "Bitų sparta" to value })
+                }
+            }
+        }
+    }
+    AfModalDialog(title = "Informacija", icon = Icons.Rounded.Info, onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("preview_details_dialog"), actions = { TextButton(onClick = onDismiss) { LText("Uždaryti") } }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+            PropertyRow("Pavadinimas", source.name)
+            PropertyRow("Vieta", source.locationLabel)
+            source.sizeBytes?.let { PropertyRow("Dydis", FileSystemRules.humanBytes(it)) }
+            val result = rows
+            if (result == null) CircularProgressIndicator()
+            else result.fold(
+                onSuccess = { values -> values.forEach { (label, value) -> PropertyRow(label, value) } },
+                onFailure = { PreviewLoadError(it) },
+            )
+        }
+    }
+}
+
+private fun mediaPreviewInfo(context: android.content.Context, source: PreviewSource, includeArtwork: Boolean = true): MediaPreviewInfo {
     val retriever = MediaMetadataRetriever()
     return try {
         source.localFile?.let { retriever.setDataSource(it.absolutePath) }
@@ -2437,13 +2567,19 @@ private fun mediaPreviewInfo(context: android.content.Context, source: PreviewSo
             durationMillis = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
             mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE),
             bitRate = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE),
-            artwork = retriever.embeddedPicture
+            artwork = if (!includeArtwork) null else retriever.embeddedPicture
                 ?.takeIf { it.size <= 8 * 1_024 * 1_024 }
                 ?.let(::decodeMediaArtwork),
         )
     } finally {
         retriever.release()
     }
+}
+
+private fun backgroundPlaylistForSource(context: android.content.Context, source: PreviewSource,
+    playlist: List<com.affilemanager.app.media.BackgroundMediaItem>): List<com.affilemanager.app.media.BackgroundMediaItem> {
+    val local = source.localFile?.let(Uri::fromFile)?.toString() ?: return playlist
+    return playlist.map { if (it.uri == local) it.copy(uri = source.uri(context).toString()) else it }
 }
 
 private fun decodeMediaArtwork(bytes: ByteArray): Bitmap? {

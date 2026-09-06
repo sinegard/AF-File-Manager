@@ -63,7 +63,7 @@ object FileSystemRules {
             "gradle", "properties", "toml", "ini", "conf", "cfg", "proto", "graphql", "gql", "env", "gitignore",
             "doc", "docx", "odt", "xls", "xlsx", "ods", "ppt", "pptx", "epub" -> EntryKind.DOCUMENT
             "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "jar" -> EntryKind.ARCHIVE
-            "apk", "apks", "xapk" -> EntryKind.APK
+            "apk", "apks", "apkm", "xapk" -> EntryKind.APK
             else -> EntryKind.OTHER
         }
     }

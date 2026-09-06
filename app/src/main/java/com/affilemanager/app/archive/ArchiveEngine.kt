@@ -417,7 +417,8 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             lower.endsWith(".7z") -> ArchiveFormat.SEVEN_Z
             lower.endsWith(".rar") -> ArchiveFormat.RAR
             lower.endsWith(".gz") -> ArchiveFormat.GZIP
-            lower.endsWith(".zip") || lower.endsWith(".jar") || lower.endsWith(".apk") -> ArchiveFormat.ZIP
+            lower.endsWith(".zip") || lower.endsWith(".jar") || lower.endsWith(".apk") ||
+                lower.endsWith(".apks") || lower.endsWith(".apkm") || lower.endsWith(".xapk") -> ArchiveFormat.ZIP
             else -> throw IllegalArgumentException("Nepalaikomas archyvo formatas")
         }
     }

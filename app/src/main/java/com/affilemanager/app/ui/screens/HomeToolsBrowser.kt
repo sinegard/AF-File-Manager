@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -442,7 +444,7 @@ private fun HomeBrowserGridCard(
     val iconSize = ((if (compact) 26f else 38f) * iconScalePercent / 100f).dp
     ElevatedCard(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(if (compact) 104.dp else 132.dp),
+        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).heightIn(min = if (compact) 104.dp else 132.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(
@@ -451,7 +453,7 @@ private fun HomeBrowserGridCard(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(iconSize))
-            Text(title, modifier = Modifier.padding(top = 8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            Text(title, modifier = Modifier.padding(top = 8.dp), minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             if (!compact) {
                 Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -842,11 +844,13 @@ private fun StorageHomeSection(
     onToggleLayout: () -> Unit,
     onConfigureLayout: () -> Unit,
 ) {
-    Row(
+    FlowRow(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
     ) {
-        LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("home_storage_heading"))
         TextButton(
             onClick = onOpenCleanup,
             modifier = Modifier.testTag("analyze_storage_button"),
@@ -909,7 +913,7 @@ private fun StorageHomeSection(
         val columns = displaySettings.gridColumns.coerceIn(1, 3)
         val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
         locations.chunked(columns).forEach { rowLocations ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+            Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(spacing)) {
                 rowLocations.forEach { location ->
                     StorageLocationTile(
                         location = location,
@@ -1016,11 +1020,11 @@ private fun HomeToolsSection(
         HomeToolLocation("bookmarks", "Žymelės", itemCountLabel(bookmarkCount), Icons.Rounded.Bookmark, onOpenBookmarks),
     )
     tools.chunked(2).forEach { rowTools ->
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             rowTools.forEach { tool ->
                 ElevatedCard(
                     onClick = tool.onClick,
-                    modifier = Modifier.weight(1f).height(116.dp).testTag("home_tool_${tool.id}"),
+                    modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 116.dp).testTag("home_tool_${tool.id}"),
                     colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
                 ) {
                     Column(
@@ -1369,7 +1373,7 @@ private fun StorageLocationTile(
     )
     ElevatedCard(
         onClick = location.onClick,
-        modifier = modifier.height(132.dp),
+        modifier = modifier.fillMaxHeight().heightIn(min = 132.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(

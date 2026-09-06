@@ -95,7 +95,11 @@ class DurableTransferPlanner {
 
         val destination = File(destinationDirectoryPath).canonicalFile
         require(destination.isDirectory) { "Paskirties aplankas nepasiekiamas" }
-        val sources = sourcePaths.distinct().map { File(it).canonicalFile }
+        val sources = sourcePaths.map { path ->
+            val requested = File(path)
+            require(!Files.isSymbolicLink(requested.toPath())) { "Simbolinės nuorodos nekopijuojamos" }
+            requested.canonicalFile
+        }.distinct()
         sources.forEach { source ->
             require(source.exists()) { "Failas nebeegzistuoja: ${source.name}" }
             require(!Files.isSymbolicLink(source.toPath())) { "Simbolinės nuorodos nepalaikomos: ${source.name}" }
@@ -114,9 +118,12 @@ class DurableTransferPlanner {
             while (pending.isNotEmpty()) {
                 val node = pending.removeLast()
                 require(node.depth <= MAX_TREE_DEPTH) { "Aplankų gylis viršija $MAX_TREE_DEPTH ribą" }
+                require(!Files.isSymbolicLink(node.requestedTarget.toPath())) { "Simbolinės nuorodos negali būti perrašomos" }
                 val resolved = resolveTarget(node.source, node.requestedTarget, conflictPolicy, reservedTargets) ?: continue
                 val (target, replaceExisting) = resolved
                 val targetKey = target.canonicalPath
+                require(FileSystemRules.isContained(destination, target)) { "Tikslas išeina už paskirties katalogo" }
+                require(node.source.canonicalPath != targetKey) { "Šaltinis ir paskirtis yra tas pats failas" }
                 require(reservedTargets.add(targetKey)) {
                     "Keli šaltiniai planuoja tą patį tikslą: ${target.name}; pasirinkite „Palikti abu“"
                 }
@@ -290,16 +297,27 @@ class DurableTransferEngine {
         updatedAtMillis = System.currentTimeMillis(),
     )
 
-    fun restoreBackupsAfterCopyCancellation(plan: DurableTransferPlan, state: DurableTransferState) {
-        if (state.phase != TransferPhase.COPY) return
+    suspend fun restoreBackupsAfterCopyCancellation(
+        plan: DurableTransferPlan,
+        state: DurableTransferState,
+        writer: DurableTransferStateWriter,
+    ): DurableTransferState {
+        // Persist the rewind before touching backups. A crash half-way through
+        // rollback must not resume past files whose old contents were restored.
+        val cancelled = state.copy(
+            status = DurableTransferStatus.CANCELLED,
+            nextItemIndex = if (state.phase == TransferPhase.COPY) 0 else state.nextItemIndex,
+            retryPosition = if (state.phase == TransferPhase.COPY) 0 else state.retryPosition,
+            lastMessage = "Atšaukta naudotojo; užbaigtos kopijos gali likti paskirties vietoje",
+            updatedAtMillis = System.currentTimeMillis(),
+        )
+        writer.saveState(cancelled)
+        if (state.phase != TransferPhase.COPY) return cancelled
         plan.items.asReversed().forEach { item ->
-            val backup = backupFile(plan, item)
-            if (!backup.exists()) return@forEach
-            val target = File(item.targetPath)
-            if (target.exists()) deleteTree(target)
-            backup.renameTo(target)
+            restoreBackup(plan, item)
             partialFile(plan, item).delete()
         }
+        return cancelled
     }
 
     private suspend fun copyPhase(
@@ -323,9 +341,9 @@ class DurableTransferEngine {
             try {
                 copyOne(plan, item, context)
                 state = if (retry.isEmpty()) {
-                    state.copy(nextItemIndex = itemIndex + 1, lastMessage = null)
+                    state.copy(nextItemIndex = itemIndex + 1, failedItemIndices = state.failedItemIndices - itemIndex, lastMessage = null)
                 } else {
-                    state.copy(retryPosition = state.retryPosition + 1, lastMessage = null)
+                    state.copy(retryPosition = state.retryPosition + 1, failedItemIndices = state.failedItemIndices - itemIndex, lastMessage = null)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -376,12 +394,28 @@ class DurableTransferEngine {
     ): DurableTransferState {
         var state = initial
         require(state.failedItemIndices.isEmpty()) { "Šaltiniai nešalinami, kol plane yra klaidų" }
+        // A skipped root has no planned items. Never recursively sweep a root:
+        // it can also contain files added after the user confirmed this plan.
+        val itemsByRoot = plan.items.groupBy(PlannedTransferItem::sourceRootIndex)
         for (rootIndex in state.nextDeleteRootIndex until plan.sourceRoots.size) {
             currentCoroutineContext().ensureActive()
             context.checkpoint()
-            verifyRootTargets(plan, rootIndex)
-            val root = File(plan.sourceRoots[rootIndex])
-            if (root.exists()) deleteTreeSuspend(root, context)
+            itemsByRoot[rootIndex].orEmpty().asReversed().forEach { item ->
+                context.checkpoint()
+                validateItemPaths(plan, item)
+                val source = File(item.sourcePath)
+                require(!Files.isSymbolicLink(source.toPath())) { "Simbolinės nuorodos nešalinamos perkeliant" }
+                if (!source.exists()) return@forEach // A preceding attempt already removed this item.
+                verifySource(item, source)
+                val target = File(item.targetPath)
+                require(if (item.directory) target.isDirectory else filesEquivalent(source, target, plan.verification)) {
+                    "Tikslas pasikeitė prieš šaltinio pašalinimą: ${target.name}"
+                }
+                // File.delete only removes an empty directory. Unplanned children
+                // remain at the source and cause an explicit, retryable failure.
+                require(source.delete() || !source.exists()) { "Nepavyko pašalinti ${source.name}" }
+                context.progress(itemDelta = 1, currentName = source.name)
+            }
             state = state.copy(nextDeleteRootIndex = rootIndex + 1, updatedAtMillis = System.currentTimeMillis())
             writer.saveState(state)
         }
@@ -413,16 +447,9 @@ class DurableTransferEngine {
     }
 
     private suspend fun copyOne(plan: DurableTransferPlan, item: PlannedTransferItem, context: OperationContext) {
+        validateItemPaths(plan, item)
         val source = File(item.sourcePath)
-        require(source.exists()) { "Šaltinis nebeegzistuoja" }
-        require(source.isDirectory == item.directory) { "Šaltinio tipas pasikeitė" }
-        require(!Files.isSymbolicLink(source.toPath())) { "Simbolinė nuoroda nepalaikoma" }
-        if (!item.directory) {
-            require(source.length() == item.sizeBytes && source.lastModified() == item.modifiedAtMillis) {
-                "Šaltinis pasikeitė po plano patvirtinimo"
-            }
-        }
-
+        verifySource(item, source)
         val target = File(item.targetPath)
         if (item.directory) {
             ensureDirectory(plan, item, target)
@@ -430,7 +457,10 @@ class DurableTransferEngine {
             return
         }
 
-        if (target.isFile && filesEquivalent(source, target, plan.verification)) {
+        // Equal length is not proof that an existing file is our completed copy.
+        // Only byte-identical content may be reused after an interrupted operation.
+        // The selected SIZE/SHA256 policy still applies to newly written copies.
+        if (target.isFile && filesEquivalent(source, target, TransferVerification.SHA256)) {
             context.progress(itemDelta = 1, byteDelta = item.sizeBytes, currentName = source.name)
             return
         }
@@ -456,21 +486,45 @@ class DurableTransferEngine {
                     buffer.fill(0)
                 }
             }
-            require(source.length() == item.sizeBytes && source.lastModified() == item.modifiedAtMillis) {
-                "Šaltinis pasikeitė kopijavimo metu"
-            }
+            verifySource(item, source)
             require(partial.length() == item.sizeBytes) { "Kopijos dydis nesutampa" }
             if (sourceDigest != null) {
                 require(MessageDigest.isEqual(sourceDigest.digest(), sha256(partial))) { "SHA-256 patikra nepavyko" }
             }
-            if (target.exists() && !target.delete()) throw IllegalStateException("Nepavyko pakeisti ${target.name}")
-            if (!partial.renameTo(target)) throw IllegalStateException("Nepavyko užbaigti ${target.name}")
+            validateItemPaths(plan, item)
+            // The existing target was already put aside, if replacement was
+            // authorized. A target appearing during the copy belongs to someone
+            // else. Do not use REPLACE_EXISTING or ATOMIC_MOVE here (the latter
+            // may replace an existing target even without REPLACE_EXISTING).
+            require(!target.exists()) { "Tikslas pasikeitė po plano patvirtinimo: ${target.name}" }
+            Files.move(partial.toPath(), target.toPath())
             target.setLastModified(item.modifiedAtMillis)
             require(filesEquivalent(source, target, plan.verification)) { "Galutinė kopijos patikra nepavyko" }
             context.progress(itemDelta = 1, currentName = source.name)
         } finally {
             if (partial.exists()) partial.delete()
         }
+    }
+
+    private fun verifySource(item: PlannedTransferItem, source: File) {
+        require(source.exists()) { "Šaltinis nebeegzistuoja" }
+        require(source.isDirectory == item.directory) { "Šaltinio tipas pasikeitė" }
+        require(!Files.isSymbolicLink(source.toPath())) { "Simbolinė nuoroda nepalaikoma" }
+        if (!item.directory) {
+            require(source.length() == item.sizeBytes && source.lastModified() == item.modifiedAtMillis) {
+                "Šaltinis pasikeitė po plano patvirtinimo"
+            }
+        }
+    }
+
+    private fun validateItemPaths(plan: DurableTransferPlan, item: PlannedTransferItem) {
+        val source = File(item.sourcePath)
+        val target = File(item.targetPath)
+        require(source.canonicalPath == item.sourcePath) { "Šaltinis pasikeitė po plano patvirtinimo" }
+        require(target.canonicalPath == item.targetPath &&
+            File(plan.destinationPath).canonicalPath == plan.destinationPath &&
+            FileSystemRules.isContained(File(plan.destinationPath), target)) { "Tikslas išeina už paskirties katalogo" }
+        require(source.canonicalPath != target.canonicalPath) { "Šaltinis ir paskirtis yra tas pats failas" }
     }
 
     private fun ensureDirectory(plan: DurableTransferPlan, item: PlannedTransferItem, target: File) {
@@ -483,42 +537,38 @@ class DurableTransferEngine {
         if (!target.exists()) return
         require(item.replaceExisting) { "Tikslas pasikeitė po plano patvirtinimo: ${target.name}" }
         val backup = backupFile(plan, item)
-        if (backup.exists()) {
-            deleteTree(target)
-            return
-        }
-        require(!backup.exists() && target.renameTo(backup)) { "Nepavyko saugiai atidėti keičiamo failo" }
+        require(!backup.exists() && !Files.isSymbolicLink(backup.toPath())) { "Nepavyko saugiai atidėti keičiamo failo" }
+        Files.move(target.toPath(), backup.toPath())
     }
 
-    private fun restoreBackup(plan: DurableTransferPlan, item: PlannedTransferItem) {
+    private suspend fun restoreBackup(plan: DurableTransferPlan, item: PlannedTransferItem) {
+        validateItemPaths(plan, item)
         val backup = backupFile(plan, item)
+        require(!Files.isSymbolicLink(backup.toPath())) { "Simbolinės nuorodos negali būti perrašomos" }
         if (!backup.exists()) return
         val target = File(item.targetPath)
-        if (target.exists()) deleteTree(target)
-        require(backup.renameTo(target)) { "Nepavyko grąžinti ankstesnio tikslo" }
-    }
-
-    private fun verifyRootTargets(plan: DurableTransferPlan, rootIndex: Int) {
-        plan.items.filter { it.sourceRootIndex == rootIndex && !it.directory }.forEach { item ->
-            val source = File(item.sourcePath)
-            if (!source.exists()) return@forEach
-            val target = File(item.targetPath)
-            require(target.isFile && filesEquivalent(source, target, plan.verification)) {
-                "Tikslas pasikeitė prieš šaltinio pašalinimą: ${target.name}"
+        if (target.exists()) {
+            // Never erase unrelated files or children created after this copy.
+            require(if (item.directory) target.isDirectory else
+                filesEquivalent(File(item.sourcePath), target, TransferVerification.SHA256)) {
+                "Tikslas pasikeitė po plano patvirtinimo: ${target.name}"
             }
+            require(target.delete()) { "Nepavyko grąžinti ankstesnio tikslo" }
         }
+        Files.move(backup.toPath(), target.toPath())
     }
 
-    private fun filesEquivalent(source: File, target: File, verification: TransferVerification): Boolean {
+    private suspend fun filesEquivalent(source: File, target: File, verification: TransferVerification): Boolean {
         if (!source.isFile || !target.isFile || source.length() != target.length()) return false
         return verification == TransferVerification.SIZE || MessageDigest.isEqual(sha256(source), sha256(target))
     }
 
-    private fun sha256(file: File): ByteArray {
+    private suspend fun sha256(file: File): ByteArray {
         val digest = MessageDigest.getInstance("SHA-256")
         FileInputStream(file).use { input ->
             val buffer = ByteArray(BUFFER_SIZE)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val read = input.read(buffer)
                 if (read < 0) break
                 digest.update(buffer, 0, read)
@@ -528,18 +578,6 @@ class DurableTransferEngine {
         return digest.digest()
     }
 
-    private suspend fun deleteTreeSuspend(file: File, context: OperationContext) {
-        context.checkpoint()
-        if (file.isDirectory) {
-            file.listFiles()?.forEach { deleteTreeSuspend(it, context) }
-                ?: throw SecurityException("Nepavyko perskaityti ${file.name}")
-        }
-        val size = if (file.isFile) file.length() else 0L
-        require(file.delete() || !file.exists()) { "Nepavyko pašalinti ${file.name}" }
-        context.progress(itemDelta = 1, byteDelta = 0, currentName = file.name)
-        if (size < 0) error("Neigiama failo apimtis")
-    }
-
     private fun backupFile(plan: DurableTransferPlan, item: PlannedTransferItem): File =
         File(File(item.targetPath).parentFile, ".af-backup-${plan.id}-${item.index}")
 
@@ -547,6 +585,10 @@ class DurableTransferEngine {
         File(File(item.targetPath).parentFile, ".af-part-${plan.id}-${item.index}.tmp")
 
     private fun deleteTree(file: File) {
+        if (Files.isSymbolicLink(file.toPath())) {
+            require(file.delete()) { "Nepavyko pašalinti ${file.name}" }
+            return
+        }
         if (!file.exists()) return
         if (file.isDirectory) file.listFiles()?.forEach(::deleteTree)
         require(file.delete() || !file.exists()) { "Nepavyko pašalinti ${file.name}" }

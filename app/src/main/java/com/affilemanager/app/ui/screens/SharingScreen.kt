@@ -77,13 +77,14 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val incomingShare by viewModel.incomingShare.collectAsStateWithLifecycle()
     val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) left.path else right.path
-    val sharedPath = preferences.sharedPath
     val protocol = preferences.protocol
+    val sharedPath = preferences.pathFor(protocol)
     val duration = preferences.durationMinutes
     val portText = preferences.portText
     val username = preferences.username
     val readOnly = preferences.readOnly
     var pickerStartPath by remember { mutableStateOf<String?>(null) }
+    var pickerProtocol by remember { mutableStateOf<LanTransferProtocol?>(protocol) }
     var password by remember { mutableStateOf("") }
     val running = transfer.status == LanTransferStatus.RUNNING || transfer.status == LanTransferStatus.STARTING
     val optionsResult = runCatching {
@@ -101,7 +102,10 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             loadDirectory = viewModel::listLocalDirectoryForUpload,
             onDismiss = { pickerStartPath = null },
             onSelect = { selected ->
-                viewModel.updateShareScreenPreferences { it.copy(sharedPath = selected) }
+                viewModel.updateShareScreenPreferences {
+                    pickerProtocol?.let { target -> it.withPathFor(target, selected) }
+                        ?: it.copy(nearbyReceivePath = selected)
+                }
                 pickerStartPath = null
             },
         )
@@ -123,11 +127,11 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         item {
             NearbyPhoneTransferCard(
                 viewModel = viewModel,
-                receiveDirectory = sharedPath,
+                receiveDirectory = preferences.nearbyReceivePath,
                 lanState = transfer,
                 incomingShare = incomingShare,
                 onIncomingShareConsumed = viewModel::consumeIncomingShare,
-                onChooseReceiveDirectory = { pickerStartPath = sharedPath },
+                onChooseReceiveDirectory = { pickerProtocol = null; pickerStartPath = preferences.nearbyReceivePath },
                 receiverName = preferences.receiverName,
                 onReceiverNameChange = { receiverName ->
                     viewModel.updateShareScreenPreferences { it.copy(receiverName = receiverName) }
@@ -159,17 +163,17 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     }
                     AfActionRow {
                         OutlinedButton(
-                            onClick = { viewModel.updateShareScreenPreferences { it.copy(sharedPath = activePath) } },
+                            onClick = { viewModel.updateShareScreenPreferences { it.withPathFor(protocol, activePath) } },
                             enabled = !running,
                         ) {
                             LText("Naudoti aktyvų aplanką")
                         }
-                        OutlinedButton(onClick = { pickerStartPath = sharedPath }, enabled = !running) {
+                        OutlinedButton(onClick = { pickerProtocol = protocol; pickerStartPath = sharedPath }, enabled = !running) {
                             LText("Naršyti aplankus")
                         }
                     }
                     roots.forEach { root ->
-                        OutlinedButton(onClick = { pickerStartPath = root.path }, enabled = !running, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { pickerProtocol = protocol; pickerStartPath = root.path }, enabled = !running, modifier = Modifier.fillMaxWidth()) {
                             LText(root.title.ifBlank { root.path }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }

@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
 import okhttp3.Call
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
@@ -55,10 +57,37 @@ data class NearbyTransferState(
 )
 
 object NearbyTransferController {
+    internal val connection = NearbyConnection()
+    fun connectedPairing(): NearbyPairing? = connection.pairing()
+    suspend fun prepareReturnPairing(context: Context, root: String, name: String, peer: NearbyPairing): NearbyPairing {
+        var current = LanTransferController.state.value
+        if (current.status !in setOf(LanTransferStatus.RUNNING, LanTransferStatus.STARTING)) {
+            val before = current
+            val address = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                java.net.DatagramSocket().use { socket ->
+                    socket.connect(java.net.InetAddress.getByName(peer.host), peer.port)
+                    socket.localAddress.hostAddress
+                }
+            }
+            LanTransferController.start(context, root, bindAddress = address)
+            current = withTimeout(8_000L) { LanTransferController.state.first {
+                it !== before && it.status in setOf(LanTransferStatus.RUNNING, LanTransferStatus.ERROR)
+            } }
+        }
+        require(current.status == LanTransferStatus.RUNNING && current.protocol == LanTransferProtocol.WEB &&
+            !current.readOnly && current.rootPath == root) { "Pirmiausia sustabdykite kitą bendrinimo sesiją" }
+        val url = java.net.URI(requireNotNull(current.url))
+        return NearbyPairing.create(url.host, url.port, requireNotNull(current.code), name)
+    }
+    fun disconnect(context: Context) {
+        connection.clear()
+        cancel(context)
+        LanTransferController.stop(context)
+    }
     private val _state = MutableStateFlow(NearbyTransferState())
     val state: StateFlow<NearbyTransferState> = _state.asStateFlow()
 
-    fun start(context: Context, pairing: NearbyPairing, prepared: PreparedNearbyTransfer) {
+    fun start(context: Context, pairing: NearbyPairing, prepared: PreparedNearbyTransfer, returnPairing: NearbyPairing? = null) {
         val validatedPairing = NearbyPairing.parse(pairing.encoded())
         require(
             prepared.paths.size <= NearbySourcePreparer.MAX_FILES &&
@@ -79,6 +108,7 @@ object NearbyTransferController {
         val intent = Intent(context, NearbyTransferService::class.java)
             .setAction(NearbyTransferService.ACTION_START)
             .putExtra(NearbyTransferService.EXTRA_PAIRING, validatedPairing.encoded())
+            .putExtra("return_pairing", returnPairing?.encoded())
             .putStringArrayListExtra(NearbyTransferService.EXTRA_PATHS, ArrayList(prepared.paths))
             .putStringArrayListExtra(NearbyTransferService.EXTRA_RELATIVE_PATHS, ArrayList(prepared.relativePaths))
             .putStringArrayListExtra(NearbyTransferService.EXTRA_DIRECTORIES, ArrayList(prepared.directories))
@@ -123,7 +153,7 @@ class NearbyTransferService : Service() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var transferJob: Job? = null
+    @Volatile private var transferJob: Job? = null
     @Volatile private var activeCall: Call? = null
     @Volatile private var cancelledByUser = false
     private val client = OkHttpClient.Builder()
@@ -151,6 +181,8 @@ class NearbyTransferService : Service() {
         if (transferJob?.isActive == true) return START_NOT_STICKY
 
         val pairingPayload = intent.getStringExtra(EXTRA_PAIRING).orEmpty()
+        val returnPairing = intent.getStringExtra("return_pairing")
+        intent.removeExtra("return_pairing")
         val paths = intent.getStringArrayListExtra(EXTRA_PATHS)?.toList().orEmpty()
         val relativePaths = intent.getStringArrayListExtra(EXTRA_RELATIVE_PATHS)?.toList().orEmpty()
         val directories = intent.getStringArrayListExtra(EXTRA_DIRECTORIES)?.toList().orEmpty()
@@ -161,7 +193,7 @@ class NearbyTransferService : Service() {
         intent.removeExtra(EXTRA_DIRECTORIES)
         intent.removeExtra(EXTRA_CLEANUP_ROOT)
         cancelledByUser = false
-        transferJob = scope.launch { runTransfer(pairingPayload, paths, relativePaths, directories, cleanupRoot) }
+        transferJob = scope.launch { runTransfer(pairingPayload, paths, relativePaths, directories, cleanupRoot, returnPairing, startId) }
         return START_NOT_STICKY
     }
 
@@ -177,7 +209,10 @@ class NearbyTransferService : Service() {
         relativePaths: List<String>,
         directories: List<String>,
         cleanupRoot: String?,
+        returnPairing: String?,
+        startId: Int,
     ) {
+        var terminalState: NearbyTransferState? = null
         try {
             val pairing = NearbyPairing.parse(pairingPayload)
             val validatedDirectories = directories.map(::validateRelativePath).distinct()
@@ -200,16 +235,19 @@ class NearbyTransferService : Service() {
                     files = details,
                 ),
             )
-            val cookie = login(pairing)
-            announceFiles(pairing, cookie, details)
+            val cookie = NearbyTransferController.connection.cookieFor(pairing) ?: login(pairing)
+            val batchId = java.util.UUID.randomUUID().toString()
+            if (returnPairing != null) announceReturnPeer(pairing, cookie, NearbyPairing.parse(returnPairing))
+            announceFiles(pairing, cookie, details, batchId)
             validatedDirectories.sortedBy { it.count { char -> char == '/' } }
-                .forEach { relative -> createRemoteDirectory(pairing, cookie, relative) }
+                .forEach { relative -> createRemoteDirectory(pairing, cookie, relative, batchId) }
             files.forEachIndexed { index, transferFile ->
                 val file = transferFile.file
                 if (cancelledByUser) throw CancellationException("Siuntimas atšauktas")
                 var lastPublished = 0L
                 upload(
                     pairing = pairing,
+                    batchId = batchId,
                     cookie = cookie,
                     file = file,
                     relativePath = transferFile.relativePath,
@@ -258,34 +296,30 @@ class NearbyTransferService : Service() {
                 message = "Siuntimas baigtas",
                 files = details,
             )
-            publish(completed)
-            finishForeground()
+            terminalState = completed
         } catch (cancelled: CancellationException) {
             val state = NearbyTransferController.state.value.copy(
                 status = NearbyTransferStatus.CANCELLED,
                 message = "Siuntimas atšauktas",
                 files = stoppedFiles(TransferFileStatus.CANCELLED),
             )
-            publish(state)
-            finishForeground()
+            terminalState = state
         } catch (error: Throwable) {
             val state = NearbyTransferController.state.value.copy(
                 status = if (cancelledByUser) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.ERROR,
                 message = if (cancelledByUser) "Siuntimas atšauktas" else (error.message ?: "Siuntimas nepavyko").take(240),
                 files = stoppedFiles(if (cancelledByUser) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED),
             )
-            publish(state)
-            finishForeground()
+            terminalState = state
         } finally {
             activeCall = null
-            if (cleanupRoot != null) {
-                // The private forwarding copy is deliberately not retained as history.
-                val state = NearbyTransferController.state.value
-                NearbyTransferController.publish(state.copy(files = state.files.map { it.copy(localPath = null) }))
-            }
             cleanupRoot?.let(::safeDeleteStage)
+            finishForeground()
             transferJob = null
-            stopSelf()
+            stopSelf(startId)
+            // Completion opens admission for the next batch only after this owner is finished.
+            terminalState?.let { state -> NearbyTransferController.publish(
+                if (cleanupRoot == null) state else state.copy(files = state.files.map { it.copy(localPath = null) })) }
         }
     }
 
@@ -294,14 +328,15 @@ class NearbyTransferService : Service() {
             if (it.status == TransferFileStatus.COMPLETED) it else it.copy(status = status)
         }
 
-    private fun announceFiles(pairing: NearbyPairing, cookie: String, files: List<TransferFileProgress>) {
+    private fun announceFiles(pairing: NearbyPairing, cookie: String, files: List<TransferFileProgress>, batchId: String) {
         val url = "http://${pairing.host}:${pairing.port}/nearby/manifest".toHttpUrl()
         val request = Request.Builder().url(url)
             .post(NearbyTransferManifest.encode(files).toRequestBody("application/json".toMediaType()))
-            .header("Cookie", cookie).build()
+            .header("Cookie", cookie).header("X-AF-Batch-ID", batchId).build()
         val call = client.newCall(request)
         activeCall = call
         call.execute().use { response ->
+            checkSessionResponse(pairing, response.code)
             // Older AF receivers do not support metadata but still accept files.
             require(response.isSuccessful || response.code == 404) { "Siuntimo rinkinio keliai nesutampa" }
         }
@@ -317,18 +352,34 @@ class NearbyTransferService : Service() {
         val call = client.newCall(request)
         activeCall = call
         call.execute().use { response ->
+            checkSessionResponse(pairing, response.code)
             require(response.isSuccessful) { "Gavęs telefonas atmetė susiejimo kodą (${response.code})" }
             val cookie = response.headers.values("Set-Cookie")
                 .asSequence()
                 .map { it.substringBefore(';').trim() }
                 .firstOrNull { it.startsWith("af_session=") }
             require(!cookie.isNullOrBlank()) { "Gavimo sesija nepatvirtinta" }
+            val expires = response.header("X-AF-Session-Expires")?.toLongOrNull() ?: (System.currentTimeMillis() + 15 * 60_000L)
+            NearbyTransferController.connection.remember(pairing, cookie, expires)
             return cookie
+        }
+    }
+
+    private fun announceReturnPeer(pairing: NearbyPairing, cookie: String, returnPairing: NearbyPairing) {
+        val request = Request.Builder().url("http://${pairing.host}:${pairing.port}/nearby/peer")
+            .header("Cookie", cookie).post(returnPairing.encoded().toRequestBody("text/plain".toMediaType())).build()
+        val call = client.newCall(request)
+        activeCall = call
+        call.execute().use { response ->
+            checkSessionResponse(pairing, response.code)
+            // Previous AF versions remain usable for one-way transfers.
+            require(response.isSuccessful || response.code == 404) { "Gavimo sesija nepatvirtinta" }
         }
     }
 
     private fun upload(
         pairing: NearbyPairing,
+        batchId: String,
         cookie: String,
         file: File,
         relativePath: String,
@@ -353,18 +404,20 @@ class NearbyTransferService : Service() {
             .url(url)
             .post(ProgressFileRequestBody(file, onProgress))
             .header("Cookie", cookie)
+            .header("X-AF-Batch-ID", batchId)
             .header("User-Agent", "AF-File-Manager/Nearby")
             .build()
         val call = client.newCall(request)
         activeCall = call
         call.execute().use { response ->
+            checkSessionResponse(pairing, response.code)
             require(response.isSuccessful) {
                 response.body?.string()?.take(200)?.ifBlank { null } ?: "Gavęs telefonas atmetė failą (${response.code})"
             }
         }
     }
 
-    private fun createRemoteDirectory(pairing: NearbyPairing, cookie: String, relativePath: String) {
+    private fun createRemoteDirectory(pairing: NearbyPairing, cookie: String, relativePath: String, batchId: String) {
         val url = "http://${pairing.host}:${pairing.port}/".toHttpUrl().newBuilder()
             .addPathSegment("mkdir")
             .addQueryParameter("path", relativePath)
@@ -373,16 +426,22 @@ class NearbyTransferService : Service() {
             .url(url)
             .post(ByteArray(0).toRequestBody("application/octet-stream".toMediaType()))
             .header("Cookie", cookie)
+            .header("X-AF-Batch-ID", batchId)
             .header("User-Agent", "AF-File-Manager/Nearby")
             .build()
         val call = client.newCall(request)
         activeCall = call
         call.execute().use { response ->
+            checkSessionResponse(pairing, response.code)
             require(response.isSuccessful) {
                 response.body?.string()?.take(200)?.ifBlank { null }
                     ?: "Gavęs telefonas neatvėrė aplanko (${response.code})"
             }
         }
+    }
+
+    private fun checkSessionResponse(pairing: NearbyPairing, status: Int) {
+        check(!NearbyTransferController.connection.clearIfRejected(pairing, status)) { "Gavimo sesija nepatvirtinta" }
     }
 
     private fun validateFiles(

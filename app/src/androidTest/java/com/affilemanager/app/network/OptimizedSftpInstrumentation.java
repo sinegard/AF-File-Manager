@@ -27,7 +27,13 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
         char[] password = new char[0];
         try {
             boolean verified;
-            if ("background-playback".equals(suite)) {
+            if ("nearby".equals(suite)) {
+                launchTargetActivity();
+                verified = com.affilemanager.app.transfer.NearbyRuntimeVerifier.verify(this);
+            } else if ("split-apk".equals(suite)) {
+                launchTargetActivity();
+                verified = com.affilemanager.app.apk.SplitApkRuntimeVerifier.verify(this);
+            } else if ("background-playback".equals(suite)) {
                 launchTargetActivity();
                 verified = BackgroundPlaybackRuntimeVerifier.verify(this);
             } else if ("webdav".equals(suite)) {

@@ -26,6 +26,18 @@ class PreviewActionsMenuTest {
         compose.runOnIdle { assertEquals(listOf("open", "edit", "sign", "share", "hash"), called) }
     }
 
+    @Test fun detailsIsAnExplicitOverflowActionAndNeverOpensOnItsOwn() {
+        var opened = false
+        compose.setContent { MaterialTheme {
+            PreviewActionsMenu("image", true, false, {}, null, null, {}, {}, onDetails = { opened = true })
+        } }
+        compose.runOnIdle { assertEquals(false, opened) }
+        compose.onNodeWithTag("preview_actions_menu").performClick()
+        compose.onNodeWithTag("preview_details_action").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(true, opened) }
+        compose.onNodeWithTag("preview_details_action").assertDoesNotExist()
+    }
+
     @Test fun busyOrUnsupportedActionsCannotBeInvokedAndChangingFileClosesMenu() {
         val source = mutableStateOf("first")
         var actions = 0
