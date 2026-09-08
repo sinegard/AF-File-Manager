@@ -90,6 +90,7 @@ import com.affilemanager.app.network.RemoteOperation
 import com.affilemanager.app.network.RemotePath
 import com.affilemanager.app.network.ReconnectingRemoteClient
 import com.affilemanager.app.network.RemoteCopyEngine
+import com.affilemanager.app.network.RemoteSelectionInfoScanner
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.operations.OperationContext
 import com.affilemanager.app.operations.BatchRenamePreview
@@ -1358,6 +1359,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeCustomization { HomeCustomizationRules.setShortcutVisible(it, id, visible) }
     }
 
+    suspend fun loadAdvancedSelectionInfo(paths: Collection<String>): Result<FileSelectionSummary> =
+        graph.privilegedFiles.selectionInfo(paths)
+
     fun setCustomColors(colors: com.affilemanager.app.ui.theme.CustomThemeColors): Boolean =
         runCatching { graph.appearance.setCustomColors(colors) }
             .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }.isSuccess
@@ -1387,6 +1391,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCardTransparency(percent: Int) {
         runCatching { graph.appearance.setCardTransparency(percent) }
+            .onFailure { message("Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setWallpaperShading(percent: Int) {
+        runCatching { graph.appearance.setWallpaperShading(percent) }
+            .onFailure { message("Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setTransparentMenus(enabled: Boolean) {
+        runCatching { graph.appearance.setTransparentMenus(enabled) }
             .onFailure { message("Išvaizdos nustatymo išsaugoti nepavyko", true) }
     }
 
@@ -4382,8 +4396,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun emptyTrash() {
         if (_trashBrowser.value.emptying) return
         _trashBrowser.update { it.copy(emptying = true, error = null) }
-        viewModelScope.launch {
-            val result = graph.trash.emptyAll()
+        graph.operationManager.submit("Išvaloma šiukšliadėžė") {
+            val result = graph.trash.emptyAll(this)
             _trashBrowser.update {
                 it.copy(
                     itemId = null,
@@ -4402,6 +4416,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 result.deletedItems > 0 -> message("Šiukšliadėžė išvalyta: ${result.deletedItems}")
                 else -> message("Šiukšliadėžė jau tuščia")
             }
+        }.onFailure {
+            _trashBrowser.update { current -> current.copy(emptying = false) }
+            message(it.message ?: "Trynimo pradėti nepavyko", true)
         }
     }
 
@@ -4783,12 +4800,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteTrashForever(id: String) {
-        viewModelScope.launch {
-            graph.trash.deleteForever(id).fold(
+        graph.operationManager.submit("Šalinama iš šiukšliadėžės") {
+            graph.trash.deleteForever(id, this).fold(
                 onSuccess = { refreshTrash() },
                 onFailure = { message(it.message ?: "Ištrinti nepavyko", true) },
             )
-        }
+        }.onFailure { message(it.message ?: "Trynimo pradėti nepavyko", true) }
     }
 
     fun refreshSafLocations() {
@@ -4961,13 +4978,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSafEntry(entry: SafEntry) {
-        viewModelScope.launch {
-            graph.safFiles.delete(entry.uri).fold(
-                onSuccess = { refreshSafBrowser() },
-                onFailure = { message(it.message ?: "Ištrinti nepavyko", true) },
-            )
-        }
+        graph.operationManager.submit("Šalinamas ${entry.name}") {
+            setTotals(1, entry.sizeBytes.takeIf { !entry.directory })
+            checkpoint()
+            graph.safFiles.delete(entry.uri).getOrThrow()
+            progress(itemDelta = 1, byteDelta = entry.sizeBytes.takeIf { !entry.directory } ?: 0L, currentName = entry.name)
+            refreshSafBrowser()
+        }.onFailure { message(it.message ?: "Trynimo pradėti nepavyko", true) }
     }
+
+    suspend fun loadSafSelectionInfo(uris: Collection<String>): Result<FileSelectionSummary> =
+        graph.safFiles.selectionInfo(uris)
 
     fun copyLocalToSaf(localPath: String) {
         val destinationUri = _safBrowser.value.currentUri ?: return
@@ -5829,13 +5850,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val protocol = _networkState.value.connectedProfile?.protocol ?: return
         val selected = entries.distinctBy { RemotePath.normalize(it.path) }.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
         if (selected.isEmpty()) return
-        viewModelScope.launch {
+        graph.operationManager.submit("Šalinama iš serverio: ${selected.size}") {
             _networkState.update { it.copy(loading = true, error = null) }
             var firstFailure: Throwable? = null
             var deleted = 0
+            setTotals(selected.size, selected.takeIf { values -> values.none(RemoteEntry::directory) }?.sumOf(RemoteEntry::sizeBytes))
             selected.forEach { entry ->
+                checkpoint()
                 runCatching { client.delete(entry.path, recursive = entry.directory) }
-                    .onSuccess { deleted += 1 }
+                    .onSuccess { deleted += 1; progress(itemDelta = 1, byteDelta = entry.sizeBytes.takeIf { !entry.directory } ?: 0L, currentName = entry.name) }
                     .onFailure { if (firstFailure == null) firstFailure = it }
             }
             clearRemoteSelection()
@@ -5843,6 +5866,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (failure == null) {
                 refreshRemote()
             } else if (deleted > 0) {
+                completeWithErrors(selected.size - deleted, "Ištrinta: $deleted, nepavyko ištrinti: ${selected.size - deleted}")
                 refreshRemote()
                 message("Ištrinta: $deleted, nepavyko ištrinti: ${selected.size - deleted}", true)
             } else {
@@ -5853,7 +5877,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
-        }
+        }.onFailure { message(it.message ?: "Trynimo pradėti nepavyko", true) }
+    }
+
+    suspend fun loadRemoteSelectionInfo(entries: Collection<RemoteEntry>): Result<FileSelectionSummary> = runCatching {
+        val client = remoteClient ?: throw IllegalStateException("Server connection is not active")
+        RemoteSelectionInfoScanner().scan(entries, client)
     }
 
     fun setSyncMode(mode: SyncMode) {

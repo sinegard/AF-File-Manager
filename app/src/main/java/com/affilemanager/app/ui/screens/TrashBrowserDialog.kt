@@ -23,6 +23,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
@@ -32,18 +34,18 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -77,6 +79,9 @@ import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.LazyListFastScroller
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,6 +102,8 @@ fun TrashBrowserDialog(
     var searchQuery by remember(state.itemId, state.relativePath) { mutableStateOf("") }
     var menu by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
+    val listState = androidx.compose.runtime.key(state.itemId, state.relativePath) { rememberLazyListState() }
+    val gridState = androidx.compose.runtime.key(state.itemId, state.relativePath) { rememberLazyGridState() }
     LaunchedEffect(state.itemId, state.relativePath) {
         searchVisible = false
         searchQuery = ""
@@ -120,9 +127,8 @@ fun TrashBrowserDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
+        com.affilemanager.app.ui.theme.AppearancePage(
             modifier = Modifier.fillMaxSize().testTag("trash-browser-dialog"),
-            color = MaterialTheme.colorScheme.surface,
         ) {
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 DirectoryBrowserToolbar(
@@ -209,6 +215,7 @@ fun TrashBrowserDialog(
                         displayedEntries.isEmpty() -> TrashEmptyState("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
                         state.grid -> LazyVerticalGrid(
                             columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                            state = gridState,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
                             verticalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
@@ -226,6 +233,7 @@ fun TrashBrowserDialog(
                             }
                         }
                         else -> LazyColumn(
+                            state = listState,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(7.dp),
                         ) {
@@ -242,47 +250,36 @@ fun TrashBrowserDialog(
                             }
                         }
                     }
+                    if (displayedEntries.isNotEmpty()) {
+                        if (state.grid) LazyGridFastScroller(gridState) else LazyListFastScroller(listState)
+                    }
                 }
             }
         }
     }
 
     if (confirmEmpty) {
-        AfModalDialog(
-            title = "Išvalyti visą šiukšliadėžę?",
-            icon = Icons.Rounded.Warning,
-            onDismissRequest = { confirmEmpty = false },
-            modifier = Modifier.testTag("empty_trash_dialog"),
-            actions = {
-                TextButton(onClick = { confirmEmpty = false }) { LText("Atšaukti") }
-                Button(onClick = { confirmEmpty = false; viewModel.emptyTrash() }) { LText("Išvalyti viską") }
+        val roots = state.entries.filter(TrashBrowserEntry::topLevel)
+        DeleteConfirmationDialog(
+            names = roots.map(TrashBrowserEntry::name), permanent = true,
+            title = "Išvalyti visą šiukšliadėžę?", confirmLabel = "Išvalyti viską",
+            onDismiss = { confirmEmpty = false },
+            onConfirm = { confirmEmpty = false; viewModel.emptyTrash() },
+            loadSummary = roots.takeIf { it.isNotEmpty() }?.let { items ->
+                suspend { viewModel.loadFileSelectionInfo(items.map(TrashBrowserEntry::storedPath)) }
             },
-        ) {
-            LText(
-                "Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.",
-                modifier = Modifier.fillMaxWidth().padding(18.dp),
-            )
-        }
+            explanation = "Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.",
+        )
     }
 
     deleteTarget?.let { entry ->
-        AfModalDialog(
-            title = "Ištrinti visam laikui?",
-            icon = Icons.Rounded.Warning,
-            onDismissRequest = { deleteTarget = null },
-            modifier = Modifier.testTag("delete_trash_item_dialog"),
-            actions = {
-                TextButton(onClick = { deleteTarget = null }) { LText("Atšaukti") }
-                Button(onClick = { viewModel.deleteTrashForever(entry.itemId); deleteTarget = null }) {
-                    LText("Ištrinti visam laikui")
-                }
-            },
-        ) {
-            LText(
-                "„${entry.name}“ nebebus galima atkurti iš programos šiukšliadėžės.",
-                modifier = Modifier.fillMaxWidth().padding(18.dp),
-            )
-        }
+        DeleteConfirmationDialog(
+            names = listOf(entry.name), permanent = true,
+            onDismiss = { deleteTarget = null },
+            onConfirm = { viewModel.deleteTrashForever(entry.itemId); deleteTarget = null },
+            loadSummary = { viewModel.loadFileSelectionInfo(listOf(entry.storedPath)) },
+            explanation = "Elemento nebebus galima atkurti iš programos šiukšliadėžės.",
+        )
     }
 
     if (showDisplaySettings) {

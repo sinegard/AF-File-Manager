@@ -22,16 +22,16 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.KeyboardHide
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -103,9 +103,8 @@ fun TerminalOverlay(
             decorFitsSystemWindows = false,
         ),
     ) {
-        Surface(
+        com.affilemanager.app.ui.theme.AppearancePage(
             modifier = Modifier.fillMaxSize().testTag("terminal-screen"),
-            color = Color.Black,
         ) {
             Column(
                 modifier = Modifier
@@ -114,6 +113,7 @@ fun TerminalOverlay(
                     .navigationBarsPadding()
                     .imePadding(),
             ) {
+                com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
                 Row(
                     modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -172,6 +172,7 @@ fun TerminalOverlay(
                         Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti terminalą"))
                     }
                 }
+                }
                 HorizontalDivider(color = Color.DarkGray)
 
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
@@ -190,6 +191,7 @@ fun TerminalOverlay(
                                         TerminalLocation.PRIVILEGED -> "Paleidžiamas privilegijuotas terminalas…"
                                         TerminalLocation.SERVER -> "Jungiamasi prie serverio terminalo…"
                                     },
+                                    color = Color.White,
                                 )
                             }
                         }
@@ -308,6 +310,7 @@ private fun TerminalKeyBar(
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
 ) {
+    com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -350,6 +353,7 @@ private fun TerminalKeyBar(
         TerminalKey("PgUp", state.running) { onKey(VTermKey.PAGEUP) }
         TerminalKey("PgDn", state.running) { onKey(VTermKey.PAGEDOWN) }
         TerminalKey("Enter", state.running) { onKey(VTermKey.ENTER) }
+    }
     }
 }
 

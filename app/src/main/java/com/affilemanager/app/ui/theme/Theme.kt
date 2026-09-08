@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -282,16 +283,20 @@ fun AFFileManagerTheme(
             CustomThemeColors(0xFFB3261E.toInt(), 0xFF775653.toInt(), 0xFF795831.toInt(), 0xFFFFF8F7.toInt(), 0xFFFFF8F7.toInt())
         })
         AppColorPalette.CUSTOM -> customColorScheme(if (settings.amoledBlack && darkTheme) {
-            settings.customColors.copy(background = 0xFF000000.toInt(), surface = 0xFF000000.toInt())
+            settings.customColors.copy(background = 0xFF000000.toInt())
         } else settings.customColors)
         AppColorPalette.DEFAULT -> if (darkTheme) DefaultDarkColors else DefaultLightColors
     } }
     val completeColors = if (settings.colorPalette in setOf(AppColorPalette.DYNAMIC, AppColorPalette.CUSTOM, AppColorPalette.RED)) {
         baseColors
     } else baseColors.withPaletteSurfaces()
-    val opaqueColors = if (settings.amoledBlack && darkTheme) completeColors.withAmoledBackground() else completeColors
+    val opaqueColors = if (settings.amoledBlack && darkTheme && settings.colorPalette != AppColorPalette.CUSTOM) {
+        completeColors.withAmoledBackground()
+    } else completeColors
     val alpha = 1f - settings.cardTransparency.coerceIn(0, 100) / 100f
     val colors = opaqueColors.copy(
+        surface = opaqueColors.surface.copy(alpha = alpha),
+        surfaceVariant = opaqueColors.surfaceVariant.copy(alpha = alpha),
         surfaceContainerLow = opaqueColors.surfaceContainerLow.copy(alpha = alpha),
         surfaceContainer = opaqueColors.surfaceContainer.copy(alpha = alpha),
         surfaceContainerHigh = opaqueColors.surfaceContainerHigh.copy(alpha = alpha),
@@ -301,8 +306,15 @@ fun AFFileManagerTheme(
     MaterialTheme(
         colorScheme = colors,
     ) {
-        SystemBarsTheme(colors = opaqueColors)
-        CompositionLocalProvider(LocalAppearanceSettings provides settings) { content() }
+        SystemBarsTheme(colors = opaqueColors.copy(surface = opaqueColors.background,
+            surfaceContainer = colors.surfaceContainer.compositeOver(opaqueColors.background)))
+        CompositionLocalProvider(
+            LocalAppearanceSettings provides settings,
+            LocalOpaqueColors provides opaqueColors,
+            androidx.compose.material3.LocalContentColor provides opaqueColors.onBackground,
+            // An explicitly chosen RGB surface must not acquire Material's accent tint.
+            androidx.compose.material3.LocalTonalElevationEnabled provides (settings.colorPalette != AppColorPalette.CUSTOM),
+        ) { ProvideAppearanceWallpaper { AppearanceContentOn(opaqueColors.background) { content() } } }
     }
 }
 

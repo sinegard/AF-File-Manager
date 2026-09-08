@@ -7,6 +7,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CustomThemeRulesTest {
+    @Test fun oldPalettesKeepFiveColorsAndNewPopupAndControlRolesRoundTrip() {
+        val old = listOf("#123456", "#BADCFE", "#A1B2C3", "#000000", "#456789")
+        val migrated = CustomThemeRules.parseStored(old.joinToString(","))
+        assertEquals(old, migrated.values().take(5).map(CustomThemeRules::hex))
+        assertEquals(migrated.surface, migrated.popup)
+        val selected = migrated.copy(popup = 0xFFEEDDCC.toInt(), controls = 0xFF102040.toInt())
+        assertEquals(selected, CustomThemeRules.parseStored(selected.values().joinToString(",", transform = CustomThemeRules::hex)))
+        val scheme = customColorScheme(selected)
+        assertEquals(Color(selected.controls), scheme.primaryContainer)
+        assertEquals(Color(selected.controls), scheme.secondaryContainer)
+        assertEquals(Color(selected.surface), scheme.surfaceContainerHighest)
+        for (percent in listOf(0, 40, 100)) {
+            val settings = AppearanceSettings(colorPalette = AppColorPalette.CUSTOM, customColors = selected, cardTransparency = percent)
+            assertEquals(Color(selected.popup), resolvePopupColor(settings, scheme))
+            assertEquals(Color(selected.popup).copy(alpha = 1f - percent / 100f),
+                resolvePopupColor(settings.copy(transparentMenus = true), scheme))
+        }
+    }
+
+    @Test fun changingSecondaryCannotRecolorAnExplicitCardSurface() {
+        val selected = CustomThemeColors(surface = 0xFF102030.toInt())
+        val first = customColorScheme(selected)
+        val changed = customColorScheme(selected.copy(secondary = 0xFFFF0000.toInt()))
+        listOf(first.surface, first.surfaceContainerLow, first.surfaceContainer, first.surfaceContainerHigh,
+            first.surfaceContainerHighest, first.surfaceVariant).forEach { assertEquals(Color(selected.surface), it) }
+        assertEquals(first.surfaceContainerHighest, changed.surfaceContainerHighest)
+        assertEquals(first.surfaceContainer, changed.surfaceContainer)
+    }
+
     @Test fun opaqueHexRoundTripsAndMalformedColorsAreRejected() {
         assertEquals(0xFFAb1234.toInt(), CustomThemeRules.parseHex("  #ab1234  "))
         assertEquals("#AB1234", CustomThemeRules.hex(0xFFAb1234.toInt()))

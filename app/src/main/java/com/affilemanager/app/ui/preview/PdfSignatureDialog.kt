@@ -28,7 +28,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -37,7 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -141,9 +141,8 @@ internal fun PdfSignatureDialog(
         onDismissRequest = { if (!applying && !submitted) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
+        com.affilemanager.app.ui.theme.AppearancePage(
             modifier = Modifier.fillMaxSize().testTag("pdf-signature-dialog"),
-            color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(

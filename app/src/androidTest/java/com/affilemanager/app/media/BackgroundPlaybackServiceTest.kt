@@ -58,6 +58,9 @@ class BackgroundPlaybackServiceTest {
         @Suppress("DEPRECATION")
         val token = requireNotNull(notification.extras.getParcelable<MediaSession.Token>(Notification.EXTRA_MEDIA_SESSION))
         val controller = MediaController(context, token)
+        // StateFlow publication precedes the asynchronous platform MediaSession/Binder update.
+        // Verify both surfaces settle, not that two independent observers change in one CPU instant.
+        compose.waitUntil(5_000) { controller.playbackState?.state == PlaybackState.STATE_PLAYING }
         assertEquals(PlaybackState.STATE_PLAYING, controller.playbackState?.state)
         controller.transportControls.pause()
         waitFor(BackgroundPlaybackPhase.PAUSED)

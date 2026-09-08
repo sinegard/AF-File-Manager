@@ -15,8 +15,13 @@ class AppearanceRepositoryTest {
         val repository = AppearanceRepository(application)
         val before = repository.settings.value
         try {
-            val custom = CustomThemeColors(primary = 0xFFAB1428.toInt(), background = 0xFF111111.toInt(), surface = 0xFF171717.toInt())
+            val custom = CustomThemeColors(primary = 0xFFAB1428.toInt(), background = 0xFF111111.toInt(), surface = 0xFF171717.toInt(),
+                popup = 0xff663311.toInt(), controls = 0xfffada11.toInt())
             repository.setCustomColors(custom)
+            repository.setWallpaperShading(38)
+            repository.setTransparentMenus(true)
+            assertEquals(38, AppearanceRepository(application).settings.value.wallpaperShading)
+            assertEquals(true, AppearanceRepository(application).settings.value.transparentMenus)
             assertEquals(AppColorPalette.CUSTOM, AppearanceRepository(application).settings.value.colorPalette)
             assertEquals(custom, AppearanceRepository(application).settings.value.customColors)
             org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { repository.setCustomColors(custom.copy(primary = 0x00123456)) }
@@ -27,6 +32,8 @@ class AppearanceRepositoryTest {
         } finally {
             repository.setCustomColors(before.customColors)
             repository.setColorPalette(before.colorPalette)
+            repository.setWallpaperShading(before.wallpaperShading)
+            repository.setTransparentMenus(before.transparentMenus)
         }
     }
 

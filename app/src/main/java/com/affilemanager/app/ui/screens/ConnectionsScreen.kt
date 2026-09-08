@@ -54,14 +54,14 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material3.AlertDialog
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -120,6 +120,9 @@ import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
 import com.affilemanager.app.ui.components.longPressDragSelect
 import com.affilemanager.app.ui.components.AfPullToRefresh
+import com.affilemanager.app.ui.components.LazyListFastScroller
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
@@ -287,25 +290,18 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
     deleteRemote?.let { entries ->
         val single = entries.singleOrNull()
-        AlertDialog(
-            onDismissRequest = { deleteRemote = null },
-            title = {
-                LText(
-                    when {
-                        entries.size > 1 -> "Ištrinti pasirinktus elementus?"
-                        single?.directory == true -> "Ištrinti aplanką ir jo turinį?"
-                        else -> "Ištrinti failą?"
-                    },
-                )
+        DeleteConfirmationDialog(
+            names = entries.map(RemoteEntry::name), permanent = true,
+            title = when {
+                entries.size > 1 -> "Ištrinti pasirinktus elementus?"
+                single?.directory == true -> "Ištrinti aplanką ir jo turinį?"
+                else -> "Ištrinti failą?"
             },
-            text = {
-                LText(
-                    single?.let { "„${it.name}“ bus ištrintas nuotoliniame serveryje be vietinės šiukšlinės." }
-                        ?: "${entries.size} elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės.",
-                )
-            },
-            confirmButton = { Button(onClick = { viewModel.remoteDelete(entries); deleteRemote = null }) { LText("Ištrinti") } },
-            dismissButton = { TextButton(onClick = { deleteRemote = null }) { LText("Atšaukti") } },
+            confirmLabel = "Ištrinti",
+            onDismiss = { deleteRemote = null },
+            onConfirm = { viewModel.remoteDelete(entries); deleteRemote = null },
+            loadSummary = { viewModel.loadRemoteSelectionInfo(entries) },
+            explanation = "Elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės.",
         )
     }
     if (showSync) {
@@ -845,6 +841,7 @@ private fun RemoteEntryList(
             }
         }
         if (!loading) Spacer(Modifier.size(1.dp).testTag("remote_list_ready"))
+        LazyListFastScroller(listState)
     }
 }
 
@@ -906,6 +903,7 @@ private fun RemoteEntryGrid(
             }
         }
         if (!loading) Spacer(Modifier.size(1.dp).testTag("remote_grid_ready"))
+        LazyGridFastScroller(gridState)
     }
 }
 
@@ -929,6 +927,7 @@ private fun RemoteEntryRow(
     val iconSize = (42f * iconScalePercent / 100f).dp
     val itemSpacing = (12f * spacingScalePercent / 100f).dp
     val verticalPadding = (9f * spacingScalePercent / 100f).dp
+    com.affilemanager.app.ui.theme.AppearanceContentOn(if (selected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -939,7 +938,7 @@ private fun RemoteEntryRow(
                         .background(MaterialTheme.colorScheme.primaryContainer, selectionShape)
                         .border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape)
                 } else {
-                    Modifier.background(MaterialTheme.colorScheme.surface)
+                    Modifier
                 },
             )
             .semantics { onLongClick { onToggleSelection(); true } }
@@ -964,6 +963,7 @@ private fun RemoteEntryRow(
             LText(metadata, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
+    }
     }
     HorizontalDivider(
         modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),
@@ -1338,7 +1338,7 @@ internal fun LocalUploadDialog(
                             ),
                         shape = selectionShape,
                         colors = CardDefaults.cardColors(
-                            containerColor = if (entrySelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                            containerColor = if (entrySelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
                         ),
                     ) {
                         Row(

@@ -2,6 +2,18 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
+## Unreleased
+
+- Wallpaper, background colors and card transparency now carry through file browsers, Quick locations, trash and other AF windows. Transparent cards no longer leave a shadow behind. Wallpaper shading has its own adjustment.
+- Custom themes have separate colors for menus/dialogs and controls. Changing an accent no longer changes the card color you chose. Menu transparency is optional, and text contrast follows its background.
+- Add more files while a phone-to-phone transfer is running. Both phones show queued files, and sent and received files share one reopenable list. X and Close hide the window; a separate Disconnect ends the session, with confirmation if files are still transferring. Interrupted batches and temporary sending copies are cleaned up without deleting originals.
+- Paired phones can exchange short session-only messages, with clear participant labels beside sent and received content. Messages are not saved after disconnecting.
+- APK, APKS, APKM and XAPK installation now starts with an AF summary showing the app icon, candidate and installed versions, package size, minimum and target Android APIs, and packaged processor architectures. Android still owns the final installation confirmation.
+- File operations show a shared progress window with the current item, known byte and item totals, Cancel and Hide actions. Hidden work continues through a foreground notification with its own cancel action.
+- Delete confirmations across local files, search and cleanup results, protected storage, Android document providers, remote servers, archives and Trash now show the selected names plus bounded file, folder and size totals before the destructive action is enabled.
+- Long file lists and grids have a draggable side scroller, including local, category, remote, protected, document-provider, Trash and archive browsers.
+- Installed-app information includes a direct link to that app's Android system settings. Shared confirmation windows now use the same adaptive AF header, dividers and wrapping action area.
+
 ## [0.34.0] - 2026-09-06
 
 - Copying keeps the originals. Cut and paste removes a source only after its destination has been checked; skipped files and files changed during the operation stay at the source. Interrupted operations recover more safely, and a file created at the destination during copying or Save as is no longer silently overwritten.

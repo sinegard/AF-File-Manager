@@ -35,19 +35,19 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -87,6 +87,9 @@ import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.ui.components.PrivilegedFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.components.AfPullToRefresh
+import com.affilemanager.app.ui.components.LazyListFastScroller
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 
@@ -121,7 +124,7 @@ fun AdvancedStorageBrowserDialog(
         onDismissRequest = viewModel::closeAdvancedBrowser,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 DirectoryBrowserToolbar(
                     title = uiText(state.title),
@@ -305,20 +308,13 @@ fun AdvancedStorageBrowserDialog(
         }
     }
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { LText("Ištrinti visam laikui?") },
-            text = {
-                LText(
-                    "Pasirinkta: ${state.selectedPaths.size}. Šių apsaugotų failų nebus galima atkurti iš AF File Manager šiukšlinės.",
-                )
-            },
-            confirmButton = {
-                Button(onClick = { confirmDelete = false; viewModel.deleteAdvancedSelectionPermanently() }) {
-                    LText("Ištrinti visam laikui")
-                }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { LText("Atšaukti") } },
+        val entries = state.entries.filter { it.absolutePath in state.selectedPaths }
+        DeleteConfirmationDialog(
+            names = entries.map(FileEntry::name), permanent = true,
+            onDismiss = { confirmDelete = false },
+            onConfirm = { confirmDelete = false; viewModel.deleteAdvancedSelectionPermanently() },
+            loadSummary = { viewModel.loadAdvancedSelectionInfo(state.selectedPaths) },
+            explanation = "Šių apsaugotų failų nebus galima atkurti iš AF File Manager šiukšlinės.",
         )
     }
     if (showDisplaySettings) {
@@ -376,6 +372,7 @@ private fun AdvancedList(
             )
         }
     }
+    Box(Modifier.fillMaxSize()) {
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().testTag("advanced_list"),
@@ -393,6 +390,8 @@ private fun AdvancedList(
             )
             HorizontalDivider()
         }
+    }
+    LazyListFastScroller(listState)
     }
 }
 
@@ -424,6 +423,7 @@ private fun AdvancedGrid(
             )
         }
     }
+    Box(Modifier.fillMaxSize()) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
         state = gridState,
@@ -444,6 +444,8 @@ private fun AdvancedGrid(
                 viewModel = viewModel,
             )
         }
+    }
+    LazyGridFastScroller(gridState)
     }
 }
 

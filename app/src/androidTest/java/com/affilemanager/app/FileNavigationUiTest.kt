@@ -1,6 +1,7 @@
 package com.affilemanager.app
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -242,6 +243,7 @@ class FileNavigationUiTest {
 
             compose.onNodeWithTag("category_info").assertIsDisplayed().performClick()
             compose.onNodeWithTag("file_info_dialog").assertIsDisplayed()
+            compose.onNodeWithTag("open_app_settings").assertIsDisplayed().assertHasClickAction()
             compose.runOnUiThread { viewModel.clearFileCategorySelection() }
             compose.activity.onBackPressedDispatcher.onBackPressed()
             compose.waitForIdle()

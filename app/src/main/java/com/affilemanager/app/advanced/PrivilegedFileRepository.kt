@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Environment
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileEntryOrdering
+import com.affilemanager.app.data.FileSelectionSummary
 import com.affilemanager.app.editing.EditConflict
 import com.affilemanager.app.editing.EditLimits
 import com.affilemanager.app.editing.EditOrigin
@@ -19,6 +20,7 @@ import com.affilemanager.app.operations.OperationContext
 import com.topjohnwu.superuser.nio.ExtendedFile
 import com.topjohnwu.superuser.nio.FileSystemManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -107,6 +109,51 @@ class PrivilegedFileRepository(
         toEntry(existingContained(manager, path, allowRoot = false))
     }
 
+    suspend fun selectionInfo(paths: Collection<String>): Result<FileSelectionSummary> = ioResult {
+        val selected = paths.map(String::trim).filter(String::isNotEmpty).distinct()
+        require(selected.isNotEmpty() && selected.size <= PrivilegedPathRules.MAX_SELECTED_ROOTS) {
+            "Netinkamas pasirinktų elementų skaičius"
+        }
+        val manager = access.fileSystemOrThrow()
+        data class Pending(val file: ExtendedFile, val depth: Int, val selectedRoot: Boolean)
+        val pending = ArrayDeque<Pending>()
+        selected.asReversed().forEach { pending.add(Pending(existingContained(manager, it, allowRoot = false), 0, true)) }
+        val seen = hashSetOf<String>()
+        var files = 0
+        var folders = 0
+        var bytes = 0L
+        var scanned = 0
+        var complete = true
+        while (pending.isNotEmpty()) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (scanned >= 100_000) { complete = false; break }
+            val current = pending.removeLast()
+            val canonical = runCatching { canonicalContained(current.file, allowRoot = false) }.getOrElse {
+                complete = false; continue
+            }
+            if (!seen.add(canonical.canonicalPath)) { complete = false; continue }
+            scanned++
+            when {
+                runCatching { Files.isSymbolicLink(canonical.toPath()) }.getOrDefault(false) -> complete = false
+                canonical.isDirectory -> {
+                    if (!current.selectedRoot) folders++
+                    if (current.depth >= 64) { complete = false; continue }
+                    val children = canonical.listFiles()
+                    if (children == null) complete = false else children.take(50_000).asReversed().forEach {
+                        pending.add(Pending(it, current.depth + 1, false))
+                    }
+                }
+                canonical.isFile -> {
+                    files++
+                    val value = canonical.length().coerceAtLeast(0L)
+                    bytes = if (value > Long.MAX_VALUE - bytes) Long.MAX_VALUE else bytes + value
+                }
+                else -> complete = false
+            }
+        }
+        FileSelectionSummary(selected.size, files, folders, bytes, scanned, complete)
+    }
+
     suspend fun createFile(parentPath: String, requestedName: String): Result<FileEntry> = ioResult {
         val manager = access.fileSystemOrThrow()
         val parent = existingContained(manager, parentPath, allowRoot = true)
@@ -134,12 +181,15 @@ class PrivilegedFileRepository(
         require(paths.isNotEmpty() && paths.size <= PrivilegedPathRules.MAX_SELECTED_ROOTS) { "Netinkamas pasirinktų elementų skaičius" }
         val manager = access.fileSystemOrThrow()
         val sources = paths.distinct().map { existingContained(manager, it, allowRoot = false) }
-        operation.setTotals(null, null)
+        val summary = selectionInfo(paths).getOrThrow()
+        operation.setTotals(
+            items = summary.scannedNodes.takeIf { summary.complete },
+            bytes = summary.totalBytes.takeIf { summary.complete },
+        )
         var removed = 0
         sources.forEach { source ->
             operation.checkpoint()
             deleteTree(source, source, operation, depth = 0, counter = Counter())
-            operation.progress(itemDelta = 1, currentName = source.name)
             removed += 1
         }
         PrivilegedTransferResult(removed, 0)
@@ -487,11 +537,14 @@ class PrivilegedFileRepository(
         require(file.canonicalPath == root.canonicalPath || file.canonicalPath.startsWith("${root.canonicalPath}/")) { "Trynimo kelias išeina už pasirinkto elemento" }
         if (file.isSymlink) {
             require(file.delete()) { "Simbolinės nuorodos pašalinti nepavyko" }
+            operation.progress(itemDelta = 1, currentName = file.name)
             return
         }
         if (file.isDirectory) file.listFiles()?.forEach { child -> deleteTree(root, child, operation, depth + 1, counter) }
             ?: throw SecurityException("Aplankas neperskaitomas")
+        val bytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L
         require(file.delete()) { "Pašalinti nepavyko: ${file.name}" }
+        operation.progress(itemDelta = 1, byteDelta = bytes, currentName = file.name)
     }
 
     private suspend fun deleteLocalTree(root: File, file: File, operation: OperationContext, depth: Int, counter: Counter) {

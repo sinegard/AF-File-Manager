@@ -40,13 +40,13 @@ import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Usb
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,7 +54,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -85,6 +85,7 @@ import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.search.AnalysisProgress
@@ -858,14 +859,13 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
 
     if (confirmTrash) {
-        AlertDialog(
-            onDismissRequest = { confirmTrash = false },
-            title = { LText("Perkelti rezultatus į šiukšlinę?") },
-            text = { LText("Pasirinkta: ${searchState.selectedPaths.size}. Failus bus galima atkurti skiltyje „Daugiau“.") },
-            confirmButton = {
-                Button(onClick = { viewModel.trashSearchSelection(); confirmTrash = false }) { LText("Perkelti") }
-            },
-            dismissButton = { TextButton(onClick = { confirmTrash = false }) { LText("Atšaukti") } },
+        val selectedPaths = searchState.selectedPaths.toList()
+        DeleteConfirmationDialog(
+            names = selectedPaths.map { File(it).name }, permanent = false,
+            title = "Perkelti rezultatus į šiukšlinę?",
+            onDismiss = { confirmTrash = false },
+            onConfirm = { viewModel.trashSearchSelection(); confirmTrash = false },
+            loadSummary = { viewModel.loadFileSelectionInfo(selectedPaths) },
         )
     }
 
@@ -902,6 +902,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         }
                     }
                     LText("Pažymėta: ${selectedPaths.size} iš ${group.paths.size}", style = MaterialTheme.typography.labelLarge)
+                    LText("Failai: ${selectedPaths.size} · aplankai: 0 · dydis: ${FileSystemRules.humanBytes(group.sizeBytes * selectedPaths.size)}",
+                        style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
@@ -930,6 +932,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 analysisRootPaths = analysisState.rootPaths.ifEmpty { listOfNotNull(analysisState.rootPath) },
                 onAnalyzeSimilarImages = viewModel::analyzeSimilarImages,
                 onMoveToTrash = viewModel::trashAnalysisSelection,
+                loadSelectionInfo = viewModel::loadFileSelectionInfo,
                 onLoadFolder = viewModel::loadCleanupFolder,
                 onOpenFile = viewModel::open,
                 onDismiss = { showCleanupReview = false },

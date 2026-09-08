@@ -21,7 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -72,8 +72,10 @@ fun AfModalDialog(
                     )
                     .then(modifier),
                 shape = MaterialTheme.shapes.extraLarge,
-                tonalElevation = 6.dp,
+                color = com.affilemanager.app.ui.theme.popupColor(),
+                tonalElevation = 0.dp,
             ) {
+                com.affilemanager.app.ui.theme.PopupContent {
                 // A landscape keyboard can leave less room than the header and footer
                 // together. Let the whole short dialog scroll instead of clipping actions.
                 // Keep the content slot bounded so nested lists still receive finite height.
@@ -134,6 +136,7 @@ fun AfModalDialog(
                         ) { actions() }
                     }
                 }
+            }
             }
         }
     }

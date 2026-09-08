@@ -66,6 +66,7 @@ fun DirectoryBrowserToolbar(
     modifier: Modifier = Modifier,
     actions: @Composable () -> Unit,
 ) {
+    com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -110,6 +111,7 @@ fun DirectoryBrowserToolbar(
             onOpenSettings = onOpenSettings,
         )
         actions()
+    }
     }
 }
 

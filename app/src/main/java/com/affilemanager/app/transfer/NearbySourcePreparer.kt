@@ -20,6 +20,8 @@ data class PreparedNearbyTransfer(
     val relativePaths: List<String> = paths.map { File(it).name },
     val directories: List<String> = emptyList(),
     val cleanupRootPath: String? = null,
+    val fileSizes: List<Long> = emptyList(),
+    val totalBytes: Long = fileSizes.sum(),
 )
 
 class NearbySourcePreparer(
@@ -201,6 +203,7 @@ class NearbySourcePreparer(
             relativePaths = normalizedRelative,
             directories = normalizedDirectories,
             cleanupRootPath = cleanupRoot?.canonicalPath,
+            fileSizes = files.map { it.length() },
         )
     }
 

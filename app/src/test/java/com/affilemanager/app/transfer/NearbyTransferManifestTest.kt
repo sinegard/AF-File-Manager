@@ -7,6 +7,19 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class NearbyTransferManifestTest {
+    @Test fun addingPendingFilesPreservesTheActiveBatchAndBothStayVisible() {
+        val tracker = NearbyReceiveFiles()
+        val first = java.util.UUID.randomUUID().toString()
+        val second = java.util.UUID.randomUUID().toString()
+        tracker.announce(listOf(TransferFileProgress("first.txt", 8)), first)
+        tracker.validate(1, "first.txt", 8, first)
+        val combined = tracker.announce(listOf(TransferFileProgress("next.txt", 4)), second)
+        assertEquals(listOf("first.txt", "next.txt"), combined.map { it.relativePath })
+        assertEquals(TransferFileStatus.TRANSFERRING, combined[0].status)
+        assertEquals(TransferFileStatus.WAITING, combined[1].status)
+        assertThrows(IllegalArgumentException::class.java) { tracker.validate(1, "next.txt", 4, second) }
+    }
+
     @Test fun newBatchDoesNotResetAnActiveUploadAndStaleRetriesCannotMutateIt() {
         val tracker = NearbyReceiveFiles()
         val first = java.util.UUID.randomUUID().toString()
@@ -14,11 +27,12 @@ class NearbyTransferManifestTest {
         val file = TransferFileProgress("first.txt", 3)
         tracker.announce(listOf(file), first)
         tracker.validate(1, file.relativePath, 3, first)
-        assertThrows(IllegalArgumentException::class.java) { tracker.announce(listOf(file), second) }
+        tracker.announce(listOf(TransferFileProgress("second.txt", 2)), second)
+        assertThrows(IllegalArgumentException::class.java) { tracker.validate(1, "second.txt", 2, second) }
         tracker.update(1, file.copy(status = TransferFileStatus.COMPLETED), first)
         tracker.announce(listOf(TransferFileProgress("second.txt", 2)), second)
         assertThrows(IllegalArgumentException::class.java) { tracker.validate(1, "first.txt", 3, first) }
-        assertThrows(IllegalArgumentException::class.java) { tracker.announce(listOf(file), first) }
+        assertEquals(TransferFileStatus.COMPLETED, tracker.announce(listOf(file), first)[0].status)
         tracker.validate(1, "second.txt", 2, second)
     }
     @Test fun roundTripOnlyExposesRelativeNamesAndSizes() {

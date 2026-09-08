@@ -23,6 +23,7 @@ import com.affilemanager.app.network.NetworkProfileStore
 import com.affilemanager.app.network.RemoteClientFactory
 import com.affilemanager.app.network.RemoteCopyEngine
 import com.affilemanager.app.operations.FileOperationManager
+import com.affilemanager.app.operations.FileOperationForegroundService
 import com.affilemanager.app.operations.LocalFileOperator
 import com.affilemanager.app.operations.BatchRenameEngine
 import com.affilemanager.app.operations.DurableTransferCoordinator
@@ -94,7 +95,9 @@ class AppGraph(application: Application) {
     val textMerge = ThreeWayTextMerge()
     val localFileOperator = LocalFileOperator()
     val batchRename = BatchRenameEngine()
-    val operationManager = FileOperationManager(applicationScope)
+    val operationManager = FileOperationManager(applicationScope) {
+        FileOperationForegroundService.start(application)
+    }
     val durableTransferRepository = DurableTransferRepository(application)
     val durableTransfers = DurableTransferCoordinator(operationManager, durableTransferRepository)
     val trash = TrashRepository(application)

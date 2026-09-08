@@ -17,11 +17,13 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -36,10 +38,10 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -48,7 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -83,6 +85,9 @@ import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.ui.components.LazyListFastScroller
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -104,6 +109,8 @@ fun SafBrowserDialog(
     var showDisplaySettings by remember(state.currentUri) { mutableStateOf(false) }
     var searchVisible by remember(state.location?.uri) { mutableStateOf(false) }
     var searchQuery by remember(state.location?.uri) { mutableStateOf("") }
+    val listState = androidx.compose.runtime.key(state.currentUri) { rememberLazyListState() }
+    val gridState = androidx.compose.runtime.key(state.currentUri) { rememberLazyGridState() }
     LaunchedEffect(state.currentUri) {
         searchVisible = false
         searchQuery = ""
@@ -123,7 +130,7 @@ fun SafBrowserDialog(
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier = Modifier.fillMaxSize()) {
+        com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize().padding(WindowInsets.safeDrawing.asPaddingValues())) {
                 DirectoryBrowserToolbar(
                     title = state.title,
@@ -220,6 +227,7 @@ fun SafBrowserDialog(
                     } else if (state.grid) {
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                            state = gridState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp, 8.dp, 10.dp, 92.dp),
                             horizontalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
@@ -240,7 +248,7 @@ fun SafBrowserDialog(
                             }
                         }
                     } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
                             items(displayedEntries, key = SafEntry::uri) { entry ->
                                 SafEntryRow(
                                     entry = entry,
@@ -255,6 +263,9 @@ fun SafBrowserDialog(
                                 )
                             }
                         }
+                    }
+                    if (displayedEntries.isNotEmpty()) {
+                        if (state.grid) LazyGridFastScroller(gridState) else LazyListFastScroller(listState)
                     }
                     FloatingActionButton(onClick = { create = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)) {
                         Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti"))
@@ -284,21 +295,14 @@ fun SafBrowserDialog(
         SafInfoDialog(entry = entry, onDismiss = { info = null })
     }
     delete?.let { entry ->
-        AfModalDialog(
-            onDismissRequest = { delete = null },
-            title = "Ištrinti visam laikui?",
-            icon = Icons.Rounded.Delete,
-            modifier = Modifier.testTag("saf_delete_dialog"),
-            actions = {
-                TextButton(onClick = { delete = null }) { LText("Atšaukti") }
-                Button(onClick = { viewModel.deleteSafEntry(entry); delete = null }) { LText("Ištrinti") }
-            },
-        ) {
-            LText(
-                "„${entry.name}“ bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę.",
-                modifier = Modifier.verticalScroll(rememberScrollState()).padding(18.dp),
-            )
-        }
+        DeleteConfirmationDialog(
+            names = listOf(entry.name), permanent = true,
+            onDismiss = { delete = null },
+            onConfirm = { viewModel.deleteSafEntry(entry); delete = null },
+            loadSummary = { viewModel.loadSafSelectionInfo(listOf(entry.uri)) },
+            confirmLabel = "Ištrinti",
+            explanation = "Elementas bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę.",
+        )
     }
     if (showDisplaySettings) {
         DirectoryDisplaySettingsDialog(

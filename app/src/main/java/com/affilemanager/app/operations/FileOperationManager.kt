@@ -94,7 +94,10 @@ class OperationContext internal constructor(
     }
 }
 
-class FileOperationManager(private val scope: CoroutineScope) {
+class FileOperationManager(
+    private val scope: CoroutineScope,
+    private val onOperationQueued: () -> Unit = {},
+) {
     companion object {
         private const val MAX_QUEUED_OPERATIONS = 32
         private const val MAX_VISIBLE_HISTORY = 64
@@ -178,6 +181,7 @@ class FileOperationManager(private val scope: CoroutineScope) {
             update(id) { copy(status = OperationStatus.FAILED, message = "Operacijų eilė pilna") }
             return Result.failure(IllegalStateException("Operacijų eilė pilna"))
         }
+        runCatching(onOperationQueued)
         return Result.success(id)
     }
 

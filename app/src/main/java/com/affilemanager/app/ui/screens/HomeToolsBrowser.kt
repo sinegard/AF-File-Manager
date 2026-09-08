@@ -88,16 +88,16 @@ import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material3.AlertDialog
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfElevatedCard as ElevatedCard
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -107,7 +107,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -413,6 +413,7 @@ private fun HomeBrowserListCard(
     onClick: () -> Unit,
 ) {
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -443,6 +444,7 @@ private fun HomeBrowserGridCard(
 ) {
     val iconSize = ((if (compact) 26f else 38f) * iconScalePercent / 100f).dp
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).heightIn(min = if (compact) 104.dp else 132.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1023,6 +1025,7 @@ private fun HomeToolsSection(
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             rowTools.forEach { tool ->
                 ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
                     onClick = tool.onClick,
                     modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 116.dp).testTag("home_tool_${tool.id}"),
                     colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1242,6 +1245,7 @@ private fun homeShortcutIcon(shortcut: HomeShortcut): ImageVector = when (shortc
 private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
     val context = LocalContext.current
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = onOpen,
         modifier = Modifier.width(188.dp).height(172.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1271,6 +1275,7 @@ private fun RecentFileCard(item: RecentFileItem, onOpen: () -> Unit) {
 private fun RecentFileListItem(item: RecentFileItem, onOpen: () -> Unit) {
     val context = LocalContext.current
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = onOpen,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1337,6 +1342,7 @@ private fun QuickLocationTile(
 ) {
     val iconSize = ((if (compact) 24f else 32f) * iconScalePercent / 100f).dp
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = onClick,
         modifier = modifier.heightIn(min = if (compact) 80.dp else 92.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1372,6 +1378,7 @@ private fun StorageLocationTile(
         label = "storage tile usage",
     )
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = location.onClick,
         modifier = modifier.fillMaxHeight().heightIn(min = 132.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -1416,6 +1423,7 @@ private fun StorageLocationCard(
         label = "storage usage",
     )
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),

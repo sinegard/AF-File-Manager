@@ -34,7 +34,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.AlertDialog
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LocalTextStyle
@@ -48,7 +48,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -81,6 +81,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import com.affilemanager.app.operations.OperationStatus
+import com.affilemanager.app.ui.components.OperationProgressDialog
 import com.affilemanager.app.IncomingViewRequest
 import com.affilemanager.app.IncomingShareRequest
 import com.affilemanager.app.ui.preview.FilePreviewDialog
@@ -150,6 +151,7 @@ fun AFFileManagerApp(
     var unlocked by remember(appLockEnabled) { mutableStateOf(!appLockEnabled) }
     var appStopped by remember { mutableStateOf(false) }
     var dismissedUpdateVersion by remember { mutableStateOf<String?>(null) }
+    var hiddenOperationIds by remember { mutableStateOf(emptySet<String>()) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val activeOperations = operations.count {
@@ -161,6 +163,13 @@ fun AFFileManagerApp(
         AppSection.CONNECTIONS -> networkState.selectedPaths.isNotEmpty()
         else -> false
     }
+    val visibleOperation = operations.firstOrNull {
+        it.id !in hiddenOperationIds && (it.status == OperationStatus.RUNNING || it.status == OperationStatus.PAUSED)
+    } ?: operations.firstOrNull { it.id !in hiddenOperationIds && it.status == OperationStatus.QUEUED }
+    LaunchedEffect(activeOperations) {
+        if (activeOperations == 0) hiddenOperationIds = emptySet()
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val systemBackAction = BackNavigationRules.decide(
         previewOpen = preview != null,
         section = section,
@@ -267,6 +276,7 @@ fun AFFileManagerApp(
                 Column {
                     if (preview == null && (!appLockEnabled || unlocked)) BackgroundPlaybackBar()
                     if (!wideNavigation) {
+                        com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
                         NavigationBar {
                             destinations.forEach { destination ->
                                 NavigationBarItem(
@@ -282,12 +292,14 @@ fun AFFileManagerApp(
                                 )
                             }
                         }
+                        }
                     }
                 }
             },
         ) { padding ->
             Row(modifier = Modifier.fillMaxSize()) {
                 if (wideNavigation) {
+                    com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
                     NavigationRail {
                         destinations.forEach { destination ->
                             NavigationRailItem(
@@ -302,6 +314,7 @@ fun AFFileManagerApp(
                                 label = { NavigationLabel(destination.label, Modifier.width(railLabelWidth)) },
                             )
                         }
+                    }
                     }
                 }
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -456,6 +469,19 @@ fun AFFileManagerApp(
         onToggleAlt = viewModel::toggleTerminalAlt,
     )
 
+    visibleOperation?.let { operation ->
+        OperationProgressDialog(
+            operation = operation,
+            onCancel = { viewModel.cancelOperation(operation.id) },
+            onHide = {
+                hiddenOperationIds = hiddenOperationIds + operation.id
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            },
+        )
+    }
+
     val offeredRelease = when (val update = updateState) {
         is AppUpdateState.Available -> update.release
         is AppUpdateState.Ready -> update.release
@@ -524,7 +550,7 @@ internal fun AppLockOverlay(onUnlock: () -> Unit, onCancel: (() -> Unit)? = null
         onDismissRequest = { onCancel?.invoke() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = onCancel != null, dismissOnClickOutside = false),
     ) {
-        androidx.compose.material3.Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -588,6 +614,7 @@ private fun NavigationLabel(label: String, modifier: Modifier = Modifier) {
         platformStyle = PlatformTextStyle(includeFontPadding = true),
         textAlign = TextAlign.Center,
     )
+
     val measurer = rememberTextMeasurer()
     BoxWithConstraints(modifier) {
         val width = with(density) { (maxWidth - 4.dp).roundToPx().coerceAtLeast(1) }
@@ -612,6 +639,6 @@ private fun DestinationIcon(icon: ImageVector, badgeCount: Int?) {
             Icon(icon, contentDescription = null)
         }
     } else {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(icon, contentDescription = null)
     }
 }

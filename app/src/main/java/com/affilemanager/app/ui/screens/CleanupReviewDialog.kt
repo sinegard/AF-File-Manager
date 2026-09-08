@@ -25,20 +25,20 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.SelectAll
 import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,6 +69,9 @@ import com.affilemanager.app.model.StorageAnalysis
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
+import com.affilemanager.app.data.FileSelectionSummary
+import com.affilemanager.app.data.FileSelectionInfoScanner
 import java.io.File
 import java.text.NumberFormat
 
@@ -134,6 +137,9 @@ internal fun CleanupReviewDialog(
     analysisRootPaths: List<String>,
     onAnalyzeSimilarImages: () -> Unit,
     onMoveToTrash: (Set<String>) -> Unit,
+    loadSelectionInfo: suspend (Collection<String>) -> Result<FileSelectionSummary> = { paths ->
+        runCatching { FileSelectionInfoScanner().scan(paths) }
+    },
     onLoadFolder: suspend (String) -> Result<DirectoryContentsUsage>,
     onOpenFile: (FileEntry) -> Unit,
     onDismiss: () -> Unit,
@@ -214,9 +220,8 @@ internal fun CleanupReviewDialog(
         onDismissRequest = navigateBack,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Surface(
+        com.affilemanager.app.ui.theme.AppearancePage(
             modifier = Modifier.fillMaxSize().testTag("cleanup_review_dialog"),
-            color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 Row(
@@ -438,21 +443,19 @@ internal fun CleanupReviewDialog(
     }
 
     if (confirmTrash) {
-        AlertDialog(
-            onDismissRequest = { confirmTrash = false },
-            title = { LText("Perkelti pasirinktus elementus į šiukšlinę?") },
-            text = { LText("Pasirinkta: ${selected.size}. Elementus vėliau bus galima atkurti arba ištrinti visam laikui.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        confirmTrash = false
-                        onMoveToTrash(selected)
-                        selected = emptySet()
-                    },
-                    modifier = Modifier.testTag("cleanup_confirm_move"),
-                ) { LText("Perkelti") }
+        val selectedSnapshot = selected
+        DeleteConfirmationDialog(
+            names = selectedSnapshot.map { File(it).name }, permanent = false,
+            title = "Perkelti pasirinktus elementus į šiukšlinę?",
+            onDismiss = { confirmTrash = false },
+            onConfirm = {
+                confirmTrash = false
+                onMoveToTrash(selectedSnapshot)
+                selected = emptySet()
             },
-            dismissButton = { TextButton(onClick = { confirmTrash = false }) { LText("Atšaukti") } },
+            loadSummary = { loadSelectionInfo(selectedSnapshot) },
+            explanation = "Elementus vėliau bus galima atkurti arba ištrinti visam laikui.",
+            confirmTestTag = "cleanup_confirm_move",
         )
     }
 }

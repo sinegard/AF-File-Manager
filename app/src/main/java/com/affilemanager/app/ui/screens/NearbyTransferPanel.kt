@@ -47,11 +47,11 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.VideoFile
 import androidx.compose.material.icons.rounded.WifiTethering
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,6 +99,7 @@ import com.affilemanager.app.transfer.NearbyPairing
 import com.affilemanager.app.transfer.NearbyQrCode
 import com.affilemanager.app.transfer.NearbySourcePreparer
 import com.affilemanager.app.transfer.NearbyTransferController
+import com.affilemanager.app.transfer.NearbyChatController
 import com.affilemanager.app.transfer.NearbyTransferState
 import com.affilemanager.app.transfer.NearbyTransferStatus
 import com.affilemanager.app.transfer.PreparedNearbyTransfer
@@ -117,7 +118,6 @@ import java.net.URI
 import java.util.UUID
 
 private enum class NearbySendStep { PICK, PAIR }
-private enum class NearbyDetailsSide { SEND, RECEIVE }
 
 @Composable
 internal fun NearbyPhoneTransferCard(
@@ -132,20 +132,38 @@ internal fun NearbyPhoneTransferCard(
 ) {
     val context = LocalContext.current
     val nearbyState by NearbyTransferController.state.collectAsStateWithLifecycle()
+    val peer by NearbyTransferController.connection.state.collectAsStateWithLifecycle()
+    val chatState by NearbyChatController.state.collectAsStateWithLifecycle()
+    val chatSendError = uiText("Žinutės išsiųsti nepavyko")
     var showSender by remember { mutableStateOf(false) }
     var showReceiver by remember { mutableStateOf(false) }
-    var detailsSide by remember { mutableStateOf<NearbyDetailsSide?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
+    var confirmDisconnect by remember { mutableStateOf(false) }
+    var hadPeer by remember { mutableStateOf(peer != null) }
     var receivedDetailsShown by remember(lanState.url) { mutableStateOf(false) }
-    LaunchedEffect(lanState.incomingUpload != null, showReceiver) {
-        if (showReceiver && !receivedDetailsShown && lanState.incomingUpload?.files?.isNotEmpty() == true) {
-            receivedDetailsShown = true
-            showReceiver = false
-            detailsSide = NearbyDetailsSide.RECEIVE
+    val incoming = lanState.incomingUpload?.files.orEmpty()
+    val allFiles = remember(nearbyState.files, incoming) { nearbyState.files + incoming }
+    val receiving = incoming.any { it.status in setOf(com.affilemanager.app.transfer.TransferFileStatus.WAITING,
+        com.affilemanager.app.transfer.TransferFileStatus.TRANSFERRING) }
+    fun disconnect() { NearbyTransferController.disconnect(context); confirmDisconnect = false; showDetails = false }
+    fun requestDisconnect() { if (nearbyState.isActive() || receiving) confirmDisconnect = true else disconnect() }
+
+    LaunchedEffect(peer) {
+        if (peer != null) hadPeer = true
+        else if (hadPeer) {
+            showDetails = false; showReceiver = false; confirmDisconnect = false; hadPeer = false
+            // Keep progress/errors and the reopenable file history on the session card.
+            // A locally prepared, unsent selection is not discarded by a peer disconnect.
         }
     }
 
-    LaunchedEffect(incomingShare?.requestId, nearbyState.status) {
-        if (incomingShare != null && !nearbyState.isActive()) showSender = true
+    LaunchedEffect(incoming.isNotEmpty(), showReceiver) {
+        if (showReceiver && !receivedDetailsShown && incoming.isNotEmpty()) {
+            receivedDetailsShown = true; showReceiver = false; showDetails = true
+        }
+    }
+    LaunchedEffect(incomingShare?.requestId) {
+        if (incomingShare != null) { showDetails = false; showReceiver = false; showSender = true }
     }
 
     Card(modifier = Modifier.fillMaxWidth().testTag("nearby_phone_transfer")) {
@@ -154,82 +172,69 @@ internal fun NearbyPhoneTransferCard(
                 Icon(Icons.Rounded.PhoneAndroid, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Column(modifier = Modifier.weight(1f)) {
                     LText("Perdavimas tarp telefonų", fontWeight = FontWeight.SemiBold)
-                    LText("Tiesiogiai tame pačiame privačiame Wi-Fi arba telefono prieigos taško tinkle.", style = MaterialTheme.typography.bodySmall)
+                    if (peer != null) {
+                        LText("Prisijungta", style = MaterialTheme.typography.labelSmall)
+                        Text(peer!!.receiverName, style = MaterialTheme.typography.bodySmall)
+                    } else LText("Tiesiogiai tame pačiame privačiame Wi-Fi arba telefono prieigos taško tinkle.", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            LText(
-                "Perdavimas nėra šifruojamas. Naudokite tik savo telefono prieigos tašką arba patikimą privatų Wi-Fi tinklą.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            LText("Perdavimas nėra šifruojamas. Naudokite tik savo telefono prieigos tašką arba patikimą privatų Wi-Fi tinklą.",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AfActionRow {
-                OutlinedButton(onClick = { showSender = true }, enabled = !nearbyState.isActive()) {
-                    Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
-                    LText("Siųsti", modifier = Modifier.padding(start = 6.dp))
+                if (peer == null) {
+                    OutlinedButton(onClick = { showSender = true }, enabled = !nearbyState.isActive()) {
+                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
+                        LText("Siųsti", modifier = Modifier.padding(start = 6.dp))
+                    }
+                    Button(onClick = { showReceiver = true }) {
+                        Icon(Icons.Rounded.QrCode2, contentDescription = null)
+                        LText("Gauti", modifier = Modifier.padding(start = 6.dp))
+                    }
+                } else {
+                    OutlinedButton(onClick = { showSender = true }, modifier = Modifier.testTag("nearby_add_files")) { LText("Siųsti daugiau") }
+                    TextButton(onClick = ::requestDisconnect, modifier = Modifier.testTag("nearby_disconnect")) { LText("Atsijungti") }
                 }
-                Button(onClick = { showReceiver = true }) {
-                    Icon(Icons.Rounded.QrCode2, contentDescription = null)
-                    LText("Gauti", modifier = Modifier.padding(start = 6.dp))
+                if (peer != null || allFiles.isNotEmpty()) {
+                    TextButton(onClick = { showDetails = true }, modifier = Modifier.testTag("nearby_send_details")) { LText("Failai") }
                 }
             }
             NearbyProgress(state = nearbyState, onCancel = { NearbyTransferController.cancel(context) })
-            if (nearbyState.status != NearbyTransferStatus.IDLE) {
-                TextButton(onClick = { detailsSide = NearbyDetailsSide.SEND }, modifier = Modifier.testTag("nearby_send_details")) { LText("Failai") }
-            }
-            if (NearbyTransferController.connectedPairing() != null) {
-                TextButton(onClick = { NearbyTransferController.disconnect(context) }) { LText("Atsijungti") }
-            }
         }
     }
-
-    if (showSender) {
-        NearbySendDialog(
-            viewModel = viewModel,
-            incomingShare = incomingShare,
-            onIncomingShareConsumed = onIncomingShareConsumed,
-            onDismiss = { showSender = false },
-            onTransferStarted = { detailsSide = NearbyDetailsSide.SEND },
-            connectedPairing = NearbyTransferController.connectedPairing(),
-        )
-    }
-    if (showReceiver) {
-        NearbyReceiveDialog(
-            receiveDirectory = receiveDirectory,
-            lanState = lanState,
-            receiverName = receiverName,
-            onReceiverNameChange = onReceiverNameChange,
-            onChooseDirectory = {
-                showReceiver = false
-                onChooseReceiveDirectory()
-            },
-            onDismiss = { showReceiver = false },
-            onOpenDetails = { showReceiver = false; detailsSide = NearbyDetailsSide.RECEIVE },
-        )
-    }
-    when (detailsSide) {
-        NearbyDetailsSide.SEND -> NearbyTransferDetails(
-            files = nearbyState.files, transferredBytes = nearbyState.sentBytes,
-            totalBytes = nearbyState.totalBytes, totalFiles = nearbyState.fileCount,
-            onPreview = viewModel::open, onDismiss = { detailsSide = null },
-            onCancel = if (nearbyState.isActive()) ({ NearbyTransferController.cancel(context) }) else null,
-            message = nearbyState.message,
-            onSendMore = if (!nearbyState.isActive() && NearbyTransferController.connectedPairing() != null) ({
-                detailsSide = null; showSender = true
-            }) else null,
-        )
-        NearbyDetailsSide.RECEIVE -> lanState.incomingUpload?.let { progress ->
-            NearbyTransferDetails(progress.files, progress.receivedBytes, progress.totalBytes, progress.totalFiles,
-                viewModel::open, { detailsSide = null },
-                onCancel = if (lanState.status == LanTransferStatus.RUNNING) ({
-                    LanTransferController.stop(context)
-                    detailsSide = null
-                }) else null, cancelLabel = "Sustabdyti gavimą",
-                onSendMore = if (!nearbyState.isActive() && NearbyTransferController.connectedPairing() != null) ({
-                    detailsSide = null; showSender = true
-                }) else null)
-        }
-        null -> Unit
-    }
+    if (showSender) NearbySendDialog(viewModel, incomingShare, onIncomingShareConsumed,
+        onDismiss = { showSender = false }, onTransferStarted = { showDetails = true }, connectedPairing = peer)
+    if (showReceiver) NearbyReceiveDialog(receiveDirectory, lanState, receiverName, onReceiverNameChange,
+        onChooseDirectory = { showReceiver = false; onChooseReceiveDirectory() }, onDismiss = { showReceiver = false },
+        onOpenDetails = { showReceiver = false; showDetails = true })
+    if (showDetails) NearbyTransferDetails(
+        files = allFiles, transferredBytes = allFiles.sumOf { it.transferredBytes }, totalBytes = allFiles.sumOf { it.sizeBytes },
+        totalFiles = allFiles.size, onPreview = viewModel::open, onDismiss = { showDetails = false },
+        onCancel = when {
+            nearbyState.isActive() -> ({ NearbyTransferController.cancel(context) })
+            peer == null && lanState.status == LanTransferStatus.RUNNING -> ({ LanTransferController.stop(context) })
+            else -> null
+        },
+        cancelLabel = if (nearbyState.isActive()) "Atšaukti" else "Sustabdyti gavimą",
+        message = nearbyState.message, outgoingCount = nearbyState.files.size,
+        onSendMore = if (peer != null) ({ showDetails = false; showSender = true }) else null,
+        onDisconnect = if (peer != null) ::requestDisconnect else null,
+        localName = receiverName,
+        peerName = peer?.receiverName ?: uiText("Kitas telefonas"),
+        chatMessages = chatState.messages,
+        chatSending = chatState.sending,
+        chatError = chatState.error,
+        onSendMessage = if (peer != null) ({ text ->
+            runCatching { NearbyTransferController.sendMessage(context, text, receiverName) }
+                .onFailure { Toast.makeText(context, it.message ?: chatSendError, Toast.LENGTH_LONG).show() }
+        }) else null,
+    )
+    if (confirmDisconnect) com.affilemanager.app.ui.theme.AfAlertDialog(
+        onDismissRequest = { confirmDisconnect = false },
+        title = { LText("Atsijungti") },
+        text = { LText("Atsijungus nebaigti siuntimai bus atšaukti. Jau gauti failai liks.") },
+        confirmButton = { TextButton(onClick = ::disconnect, modifier = Modifier.testTag("nearby_confirm_disconnect")) { LText("Atsijungti") } },
+        dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { LText("Atšaukti") } },
+    )
 }
 
 @Composable
@@ -649,6 +654,7 @@ internal fun NearbySendDialog(
                         scope.launch { startPreparedTransfer(pairing, sources) }
                     },
                     enabled = parsedPairing?.isSuccess == true && prepared != null && !loading,
+                    modifier = Modifier.testTag("nearby_start_transfer"),
                 ) { LText("Pradėti siuntimą") }
             }
         },
@@ -824,7 +830,7 @@ internal fun NearbySendDialog(
                     label = { LText("Arba įklijuokite susiejimo kodą") },
                     minLines = 3,
                     maxLines = 5,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_pairing_input"),
                     isError = pairingPayload.isNotBlank() && parsedPairing?.isFailure == true,
                 )
                 parsedPairing?.exceptionOrNull()?.message?.let { LText(it, color = MaterialTheme.colorScheme.error) }

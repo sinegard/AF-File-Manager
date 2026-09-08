@@ -14,6 +14,7 @@ data class TransferFileProgress(
     val status: TransferFileStatus = TransferFileStatus.WAITING,
     val localPath: String? = null,
     val modifiedAtMillis: Long = 0,
+    val batchId: String = "",
 ) {
     val name: String get() = relativePath.substringAfterLast('/')
 }
@@ -77,58 +78,77 @@ internal object NearbyTransferManifest {
     }
 }
 
-/** One active batch; a bounded ID history separates a new explicit send from an HTTP retry. */
+/** One upload at a time, with separately identified pending batches and bounded visible history. */
 internal class NearbyReceiveFiles {
-    private var announced: List<TransferFileProgress>? = null
-    private var batchId: String? = null
+    private val batches = linkedMapOf<String?, List<TransferFileProgress>>()
     private val seenBatches = mutableSetOf<String>()
-    @Synchronized fun hasManifest(): Boolean = announced != null
+    @Synchronized fun hasManifest(): Boolean = batches.isNotEmpty()
+
+    @Synchronized fun snapshot(): List<TransferFileProgress> = batches.flatMap { (id, files) ->
+        files.map { it.copy(batchId = id.orEmpty()) }
+    }
 
     @Synchronized fun announce(files: List<TransferFileProgress>, id: String? = null): List<TransferFileProgress> {
         if (id != null) require(id.length == 36 && runCatching { java.util.UUID.fromString(id).toString() == id }.getOrDefault(false)) { "Gavimo sesija nepatvirtinta" }
-        announced?.let { current ->
-            if (id != null && id != batchId) {
-                require(current.none { it.status == TransferFileStatus.TRANSFERRING } && id !in seenBatches && seenBatches.size < 128) {
-                    "Gavimo sesija nepatvirtinta"
-                }
-                batchId = id
-                seenBatches += id
-                announced = files
-                return files
-            }
+        batches[id]?.let { current ->
             // An HTTP retry after a lost acknowledgement must not reset progress.
             require(current.map { it.relativePath to it.sizeBytes } == files.map { it.relativePath to it.sizeBytes }) {
                 "Gavimo sesija nepatvirtinta"
             }
-            return current
+            return snapshot()
         }
-        announced = files
-        batchId = id
-        if (id != null) seenBatches += id
-        return files
+        require(id == null || (id !in seenBatches && seenBatches.size < 128)) { "Gavimo sesija nepatvirtinta" }
+        require(files.size <= NearbySourcePreparer.MAX_FILES && files.sumOf { it.sizeBytes } <= NearbySourcePreparer.MAX_TOTAL_BYTES)
+        // Drop only finished history when a new explicit batch needs the finite metadata budget.
+        while (batches.isNotEmpty() && (batches.size >= 16 || batches.values.sumOf { it.size } + files.size > NearbySourcePreparer.MAX_FILES ||
+                batches.values.flatten().sumOf { it.sizeBytes } + files.sumOf { it.sizeBytes } > NearbySourcePreparer.MAX_TOTAL_BYTES)) {
+            val finished = batches.entries.firstOrNull { it.value.all { file -> file.status.isTerminal() } }
+            require(finished != null) { "Siuntimo eilė pilna" }
+            batches.remove(finished.key)
+        }
+        batches[id] = files
+        if (id != null) seenBatches.add(id)
+        return snapshot()
     }
 
     @Synchronized fun requireBatch(id: String?) {
-        require(batchId == id) { "Siuntimo rinkinio keliai nesutampa" }
+        require((id == null && batches.isEmpty()) || batches.containsKey(id)) { "Siuntimo rinkinio keliai nesutampa" }
     }
 
     @Synchronized fun validate(index: Int, path: String, size: Long, id: String? = null) {
         requireBatch(id)
-        val files = announced ?: return // Older senders have no manifest.
+        val files = batches[id] ?: return // Older senders have no manifest.
+        require(batches.entries.takeWhile { it.key != id }.all { it.value.all { file -> file.status.isTerminal() } } &&
+            batches.values.all { it.none { file -> file.status == TransferFileStatus.TRANSFERRING } }) {
+            "Gavimo sesija nepatvirtinta"
+        }
         val item = files.getOrNull(index - 1)
         require(item != null && item.relativePath == path && item.sizeBytes == size &&
             item.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.FAILED)) {
             "Siuntimo rinkinio keliai nesutampa"
         }
-        announced = files.toMutableList().apply { this[index - 1] = item.copy(status = TransferFileStatus.TRANSFERRING) }
+        batches[id] = files.toMutableList().apply { this[index - 1] = item.copy(status = TransferFileStatus.TRANSFERRING) }
     }
 
     @Synchronized fun update(index: Int, item: TransferFileProgress, id: String? = null): List<TransferFileProgress> {
         requireBatch(id)
-        val files = announced ?: return listOf(item)
+        val files = batches[id] ?: return listOf(item)
         val changed = files.toMutableList()
-        changed[index - 1] = item
-        announced = changed
-        return changed
+        val previous = changed[index - 1]
+        changed[index - 1] = if (previous.status == TransferFileStatus.CANCELLED && item.status != TransferFileStatus.COMPLETED) {
+            item.copy(status = TransferFileStatus.CANCELLED)
+        } else item
+        batches[id] = changed
+        return snapshot()
     }
+
+    @Synchronized fun cancel(id: String?): List<TransferFileProgress> {
+        requireBatch(id)
+        batches[id]?.let { files -> batches[id] = files.map { if (it.status == TransferFileStatus.COMPLETED) it else it.copy(status = TransferFileStatus.CANCELLED) } }
+        return snapshot()
+    }
+
+    @Synchronized fun isCancelled(id: String?, index: Int): Boolean = batches[id]?.getOrNull(index - 1)?.status == TransferFileStatus.CANCELLED
 }
+
+internal fun TransferFileStatus.isTerminal(): Boolean = this in setOf(TransferFileStatus.COMPLETED, TransferFileStatus.FAILED, TransferFileStatus.CANCELLED)

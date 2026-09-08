@@ -424,6 +424,7 @@ private fun FileVisualFrame(
     modifier: Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainerHighest) {
     Box(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceContainerHighest, shape),
@@ -497,6 +498,8 @@ private fun FileVisualFrame(
             )
         }
     }
+}
+
 }
 
 @Composable

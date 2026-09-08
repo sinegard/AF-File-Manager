@@ -1,5 +1,7 @@
 package com.affilemanager.app.ui.components
 
+import android.widget.Toast
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,11 +25,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.cleanup.ApplicationActions
 import com.affilemanager.app.data.FileSelectionSummary
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.ui.localization.LText
@@ -38,6 +42,8 @@ import java.util.Date
 
 @Composable
 fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val settingsError = uiText("Programos nustatymų atidaryti nepavyko")
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
     AfModalDialog(
         title = entry.name,
@@ -45,8 +51,15 @@ fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
         icon = Icons.Rounded.Info,
         modifier = Modifier.testTag("file_info_dialog"),
         onDismissRequest = onDismiss,
-        showFooter = false,
-        actions = {},
+        showFooter = entry.packageName != null,
+        actions = {
+            entry.packageName?.let { packageName ->
+                TextButton(onClick = {
+                    runCatching { context.startActivity(ApplicationActions.settingsIntent(packageName)) }
+                        .onFailure { Toast.makeText(context, settingsError, Toast.LENGTH_LONG).show() }
+                }, modifier = Modifier.testTag("open_app_settings")) { LText("Atidaryti programos nustatymus") }
+            }
+        },
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
@@ -77,6 +90,8 @@ fun FileInfoDialog(
     loadSummary: suspend (Collection<String>) -> Result<FileSelectionSummary>,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val settingsError = uiText("Programos nustatymų atidaryti nepavyko")
     val stableEntries = remember(entries) { entries.distinctBy(FileEntry::absolutePath) }
     val paths = remember(stableEntries) { stableEntries.map(FileEntry::absolutePath) }
     val single = stableEntries.singleOrNull()
@@ -102,8 +117,15 @@ fun FileInfoDialog(
         icon = Icons.Rounded.Info,
         modifier = Modifier.testTag("file_info_dialog"),
         onDismissRequest = onDismiss,
-        showFooter = false,
-        actions = {},
+        showFooter = single?.packageName != null,
+        actions = {
+            single?.packageName?.let { packageName ->
+                TextButton(onClick = {
+                    runCatching { context.startActivity(ApplicationActions.settingsIntent(packageName)) }
+                        .onFailure { Toast.makeText(context, settingsError, Toast.LENGTH_LONG).show() }
+                }, modifier = Modifier.testTag("open_app_settings")) { LText("Atidaryti programos nustatymus") }
+            }
+        },
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),

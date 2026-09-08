@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.ensureActive
 import okhttp3.Call
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
@@ -80,46 +81,29 @@ object NearbyTransferController {
         return NearbyPairing.create(url.host, url.port, requireNotNull(current.code), name)
     }
     fun disconnect(context: Context) {
+        context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_DISCONNECT))
+    }
+    internal fun peerDisconnected(context: Context) {
         connection.clear()
-        cancel(context)
-        LanTransferController.stop(context)
+        NearbyChatController.clear()
+        context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_DISCONNECT)
+            .putExtra("notify_peer", false))
     }
     private val _state = MutableStateFlow(NearbyTransferState())
     val state: StateFlow<NearbyTransferState> = _state.asStateFlow()
 
+    internal val queue = NearbySendQueue { _state.value = it }
+
+    @Synchronized
     fun start(context: Context, pairing: NearbyPairing, prepared: PreparedNearbyTransfer, returnPairing: NearbyPairing? = null) {
-        val validatedPairing = NearbyPairing.parse(pairing.encoded())
-        require(
-            prepared.paths.size <= NearbySourcePreparer.MAX_FILES &&
-                prepared.directories.size <= NearbySourcePreparer.MAX_DIRECTORIES &&
-                (prepared.paths.isNotEmpty() || prepared.directories.isNotEmpty()),
-        ) {
-            "Netinkamas siunčiamų failų skaičius"
-        }
-        check(_state.value.status !in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) { "Ruošiamas siuntimas" }
-        require(prepared.relativePaths.size == prepared.paths.size) { "Siuntimo rinkinio keliai nesutampa" }
-        val starting =
-            NearbyTransferState(
-                status = NearbyTransferStatus.STARTING,
-                receiverName = validatedPairing.receiverName,
-                fileCount = prepared.paths.size,
-                message = "Ruošiamas tiesioginis vietinis siuntimas",
-            )
-        val intent = Intent(context, NearbyTransferService::class.java)
-            .setAction(NearbyTransferService.ACTION_START)
-            .putExtra(NearbyTransferService.EXTRA_PAIRING, validatedPairing.encoded())
-            .putExtra("return_pairing", returnPairing?.encoded())
-            .putStringArrayListExtra(NearbyTransferService.EXTRA_PATHS, ArrayList(prepared.paths))
-            .putStringArrayListExtra(NearbyTransferService.EXTRA_RELATIVE_PATHS, ArrayList(prepared.relativePaths))
-            .putStringArrayListExtra(NearbyTransferService.EXTRA_DIRECTORIES, ArrayList(prepared.directories))
-            .putExtra(NearbyTransferService.EXTRA_CLEANUP_ROOT, prepared.cleanupRootPath)
-        val previous = _state.value
-        publish(starting)
+        val validated = NearbyPairing.parse(pairing.encoded())
+        val batch = queue.enqueue(validated, prepared, returnPairing)
         try {
-            ContextCompat.startForegroundService(context, intent)
+            ContextCompat.startForegroundService(context, Intent(context, NearbyTransferService::class.java)
+                .setAction(NearbyTransferService.ACTION_START).putExtra("batch_id", batch.id))
         } catch (failure: Exception) {
-            publish(previous)
-            throw failure
+            queue.rollback(batch.id)
+            throw failure // The picker still owns its temporary sources if launch was rejected.
         }
     }
 
@@ -127,9 +111,18 @@ object NearbyTransferController {
         context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_CANCEL))
     }
 
+    fun sendMessage(context: Context, body: String, senderName: String) {
+        val validated = NearbyChatController.validate(body)
+        require(connection.pairing() != null) { "Telefonas nebeprisijungęs" }
+        context.startService(Intent(context, NearbyTransferService::class.java)
+            .setAction(NearbyTransferService.ACTION_SEND_MESSAGE)
+            .putExtra(NearbyTransferService.EXTRA_MESSAGE, validated)
+            .putExtra(NearbyTransferService.EXTRA_SENDER_NAME, senderName.take(NearbyPairing.MAX_NAME_LENGTH)))
+    }
+
     fun clearFinished() {
         if (_state.value.status in setOf(NearbyTransferStatus.COMPLETED, NearbyTransferStatus.CANCELLED, NearbyTransferStatus.ERROR)) {
-            _state.value = NearbyTransferState()
+            queue.clearFinished()
         }
     }
 
@@ -142,6 +135,10 @@ class NearbyTransferService : Service() {
     companion object {
         const val ACTION_START = "com.affilemanager.app.action.START_NEARBY_TRANSFER"
         const val ACTION_CANCEL = "com.affilemanager.app.action.CANCEL_NEARBY_TRANSFER"
+        const val ACTION_DISCONNECT = "com.affilemanager.app.action.DISCONNECT_NEARBY_TRANSFER"
+        const val ACTION_SEND_MESSAGE = "com.affilemanager.app.action.SEND_NEARBY_MESSAGE"
+        const val EXTRA_MESSAGE = "message"
+        const val EXTRA_SENDER_NAME = "sender_name"
         const val EXTRA_PAIRING = "pairing"
         const val EXTRA_PATHS = "paths"
         const val EXTRA_RELATIVE_PATHS = "relative_paths"
@@ -156,6 +153,13 @@ class NearbyTransferService : Service() {
     @Volatile private var transferJob: Job? = null
     @Volatile private var activeCall: Call? = null
     @Volatile private var cancelledByUser = false
+    private val preparationJobs = mutableMapOf<String, Job>()
+    private val metadataLock = kotlinx.coroutines.sync.Mutex()
+    private var currentBatchId: String? = null
+    private var lastStartId = 0
+    private var disconnecting = false
+    private var controlJobs = 0
+    private val ownedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.MINUTES)
@@ -172,49 +176,109 @@ class NearbyTransferService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL) {
-            cancelTransfer()
-            return START_NOT_STICKY
+        lastStartId = startId
+        when (intent?.action) {
+            ACTION_CANCEL -> cancelTransfer()
+            ACTION_DISCONNECT -> disconnectPeer(intent.getBooleanExtra("notify_peer", true))
+            ACTION_SEND_MESSAGE -> sendMessage(
+                intent.getStringExtra(EXTRA_MESSAGE).orEmpty(),
+                intent.getStringExtra(EXTRA_SENDER_NAME).orEmpty(),
+            )
+            ACTION_START -> {
+                val id = intent.getStringExtra("batch_id")
+                val batch = id?.let(NearbyTransferController.queue::get)
+                if (batch == null || disconnecting) { finishIfIdle(); return START_NOT_STICKY }
+                startAsForeground(progressNotification(NearbyTransferController.state.value))
+                prepareBatch(batch)
+            }
         }
-        if (intent?.action != ACTION_START) return START_NOT_STICKY
-        startAsForeground(progressNotification(NearbyTransferController.state.value))
-        if (transferJob?.isActive == true) return START_NOT_STICKY
-
-        val pairingPayload = intent.getStringExtra(EXTRA_PAIRING).orEmpty()
-        val returnPairing = intent.getStringExtra("return_pairing")
-        intent.removeExtra("return_pairing")
-        val paths = intent.getStringArrayListExtra(EXTRA_PATHS)?.toList().orEmpty()
-        val relativePaths = intent.getStringArrayListExtra(EXTRA_RELATIVE_PATHS)?.toList().orEmpty()
-        val directories = intent.getStringArrayListExtra(EXTRA_DIRECTORIES)?.toList().orEmpty()
-        val cleanupRoot = intent.getStringExtra(EXTRA_CLEANUP_ROOT)
-        intent.removeExtra(EXTRA_PAIRING)
-        intent.removeExtra(EXTRA_PATHS)
-        intent.removeExtra(EXTRA_RELATIVE_PATHS)
-        intent.removeExtra(EXTRA_DIRECTORIES)
-        intent.removeExtra(EXTRA_CLEANUP_ROOT)
-        cancelledByUser = false
-        transferJob = scope.launch { runTransfer(pairingPayload, paths, relativePaths, directories, cleanupRoot, returnPairing, startId) }
         return START_NOT_STICKY
     }
 
+    @Synchronized private fun prepareBatch(batch: NearbySendBatch) {
+        if (preparationJobs.isNotEmpty() || disconnecting) return
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+            while (true) {
+                val batch = NearbyTransferController.queue.nextToPrepare() ?: break
+                ownedIds.add(batch.id)
+            try {
+                val files = validateFiles(batch.sources.paths, batch.sources.relativePaths, batch.sources.directories.isNotEmpty())
+                val details = files.map { TransferFileProgress(it.relativePath, it.file.length(),
+                    localPath = it.file.path, modifiedAtMillis = it.file.lastModified()) }
+                metadataLock.lock()
+                val announced: Boolean
+                try {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val cookie = NearbyTransferController.connection.cookieFor(batch.pairing) ?: login(batch.pairing)
+                    batch.returnPairing?.let { announceReturnPeer(batch.pairing, cookie, it) }
+                    announced = NearbyTransferController.connection.supportsQueue(batch.pairing)
+                    if (announced) announceFiles(batch.pairing, cookie, details, batch.id)
+                } finally { metadataLock.unlock() }
+                NearbyTransferController.queue.ready(batch.id, details, announced)
+            } catch (failure: Exception) {
+                val current = NearbyTransferController.queue.get(batch.id)?.state ?: batch.state
+                val status = if (failure is CancellationException || current.status == NearbyTransferStatus.CANCELLED) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.ERROR
+                batch.sources.cleanupRootPath?.let(::safeDeleteStage)
+                // The receiver may have accepted the manifest before its reply was lost.
+                // Retire that exact batch before announcing another one, without replaying files.
+                val cookie = NearbyTransferController.connection.cookieFor(batch.pairing)
+                if (cookie != null && NearbyTransferController.connection.supportsQueue(batch.pairing)) {
+                    runCatching { sendControl(batch.pairing, cookie, "/nearby/cancel", batch.id) }
+                }
+                NearbyTransferController.queue.update(batch.id, current.copy(status = status,
+                    message = if (status == NearbyTransferStatus.CANCELLED) "Siuntimas atšauktas" else (failure.message ?: "Siuntimas nepavyko").take(240),
+                    files = current.files.map { it.copy(status = if (status == NearbyTransferStatus.CANCELLED) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED,
+                        localPath = if (batch.sources.cleanupRootPath != null) null else it.localPath) }))
+            }
+            startNext()
+            }
+            } finally {
+                synchronized(this@NearbyTransferService) {
+                    preparationJobs.clear()
+                    NearbyTransferController.queue.nextToPrepare()?.let(::prepareBatch)
+                }
+                finishIfIdle()
+            }
+        }
+        preparationJobs[batch.id] = job
+        job.start()
+    }
+
+    @Synchronized private fun startNext() {
+        if (disconnecting || transferJob != null) return
+        val batch = NearbyTransferController.queue.takeNext() ?: return
+        cancelledByUser = false
+        currentBatchId = batch.id
+        transferJob = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            runTransfer(batch)
+        }
+        transferJob?.start()
+    }
+
+    @Synchronized private fun finishIfIdle() {
+        if (disconnecting || controlJobs > 0 || transferJob != null || preparationJobs.isNotEmpty() || NearbyTransferController.queue.hasPending()) return
+        finishForeground()
+        stopSelf(lastStartId)
+    }
+
     override fun onDestroy() {
-        activeCall?.cancel()
+        disconnecting = true
+        client.dispatcher.cancelAll()
         scope.cancel()
+        // Process-local queued metadata never restores a transfer after service/process death.
+        NearbyTransferController.queue.cancel(ownedIds).filter { it.id != currentBatchId }.forEach { it.sources.cleanupRootPath?.let(::safeDeleteStage) }
         super.onDestroy()
     }
 
-    private suspend fun runTransfer(
-        pairingPayload: String,
-        paths: List<String>,
-        relativePaths: List<String>,
-        directories: List<String>,
-        cleanupRoot: String?,
-        returnPairing: String?,
-        startId: Int,
-    ) {
+    private suspend fun runTransfer(batch: NearbySendBatch) {
+        val pairing = batch.pairing
+        val paths = batch.sources.paths
+        val relativePaths = batch.sources.relativePaths
+        val directories = batch.sources.directories
+        val cleanupRoot = batch.sources.cleanupRootPath
         var terminalState: NearbyTransferState? = null
         try {
-            val pairing = NearbyPairing.parse(pairingPayload)
             val validatedDirectories = directories.map(::validateRelativePath).distinct()
             require(validatedDirectories.size <= NearbySourcePreparer.MAX_DIRECTORIES) {
                 "Siunčiamame rinkinyje per daug aplankų"
@@ -223,6 +287,7 @@ class NearbyTransferService : Service() {
             var details = files.map { TransferFileProgress(it.relativePath, it.file.length(),
                 localPath = it.file.absolutePath, modifiedAtMillis = it.file.lastModified()) }
             val totalBytes = files.sumOf { it.file.length() }
+            require(files.map { it.file.length() } == batch.state.files.map { it.sizeBytes }) { "Failas pasikeitė po peržiūros" }
             var completedBytes = 0L
             var completedFiles = 0
             publish(
@@ -236,9 +301,8 @@ class NearbyTransferService : Service() {
                 ),
             )
             val cookie = NearbyTransferController.connection.cookieFor(pairing) ?: login(pairing)
-            val batchId = java.util.UUID.randomUUID().toString()
-            if (returnPairing != null) announceReturnPeer(pairing, cookie, NearbyPairing.parse(returnPairing))
-            announceFiles(pairing, cookie, details, batchId)
+            val batchId = batch.id
+            if (!batch.announced) announceFiles(pairing, cookie, details, batchId)
             validatedDirectories.sortedBy { it.count { char -> char == '/' } }
                 .forEach { relative -> createRemoteDirectory(pairing, cookie, relative, batchId) }
             files.forEachIndexed { index, transferFile ->
@@ -282,7 +346,7 @@ class NearbyTransferService : Service() {
                 details = details.toMutableList().apply {
                     this[index] = this[index].copy(transferredBytes = file.length(), status = TransferFileStatus.COMPLETED)
                 }
-                publish(NearbyTransferController.state.value.copy(
+                publish(requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
                     completedFiles = completedFiles, sentBytes = completedBytes, files = details,
                 ))
             }
@@ -298,14 +362,14 @@ class NearbyTransferService : Service() {
             )
             terminalState = completed
         } catch (cancelled: CancellationException) {
-            val state = NearbyTransferController.state.value.copy(
+            val state = requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
                 status = NearbyTransferStatus.CANCELLED,
                 message = "Siuntimas atšauktas",
                 files = stoppedFiles(TransferFileStatus.CANCELLED),
             )
             terminalState = state
         } catch (error: Throwable) {
-            val state = NearbyTransferController.state.value.copy(
+            val state = requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
                 status = if (cancelledByUser) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.ERROR,
                 message = if (cancelledByUser) "Siuntimas atšauktas" else (error.message ?: "Siuntimas nepavyko").take(240),
                 files = stoppedFiles(if (cancelledByUser) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED),
@@ -313,18 +377,22 @@ class NearbyTransferService : Service() {
             terminalState = state
         } finally {
             activeCall = null
+            if (terminalState?.status in setOf(NearbyTransferStatus.ERROR, NearbyTransferStatus.CANCELLED) &&
+                NearbyTransferController.connection.supportsQueue(pairing)) {
+                val cookie = NearbyTransferController.connection.cookieFor(pairing)
+                if (cookie != null) runCatching { sendControl(pairing, cookie, "/nearby/cancel", batch.id) }
+            }
             cleanupRoot?.let(::safeDeleteStage)
-            finishForeground()
-            transferJob = null
-            stopSelf(startId)
-            // Completion opens admission for the next batch only after this owner is finished.
-            terminalState?.let { state -> NearbyTransferController.publish(
+            terminalState?.let { state -> NearbyTransferController.queue.update(batch.id,
                 if (cleanupRoot == null) state else state.copy(files = state.files.map { it.copy(localPath = null) })) }
+            synchronized(this@NearbyTransferService) { transferJob = null; currentBatchId = null }
+            startNext()
+            finishIfIdle()
         }
     }
 
     private fun stoppedFiles(status: TransferFileStatus): List<TransferFileProgress> =
-        NearbyTransferController.state.value.files.map {
+        NearbyTransferController.queue.get(requireNotNull(currentBatchId))?.state?.files.orEmpty().map {
             if (it.status == TransferFileStatus.COMPLETED) it else it.copy(status = status)
         }
 
@@ -334,6 +402,7 @@ class NearbyTransferService : Service() {
             .post(NearbyTransferManifest.encode(files).toRequestBody("application/json".toMediaType()))
             .header("Cookie", cookie).header("X-AF-Batch-ID", batchId).build()
         val call = client.newCall(request)
+        if (request.url.encodedPath != "/upload") call.timeout().timeout(15, TimeUnit.SECONDS)
         activeCall = call
         call.execute().use { response ->
             checkSessionResponse(pairing, response.code)
@@ -342,7 +411,7 @@ class NearbyTransferService : Service() {
         }
     }
 
-    private fun login(pairing: NearbyPairing): String {
+    private fun login(pairing: NearbyPairing, rememberSession: Boolean = true): String {
         val url = "http://${pairing.host}:${pairing.port}/login".toHttpUrl()
         val request = Request.Builder()
             .url(url)
@@ -350,6 +419,7 @@ class NearbyTransferService : Service() {
             .header("User-Agent", "AF-File-Manager/Nearby")
             .build()
         val call = client.newCall(request)
+        if (request.url.encodedPath != "/upload") call.timeout().timeout(15, TimeUnit.SECONDS)
         activeCall = call
         call.execute().use { response ->
             checkSessionResponse(pairing, response.code)
@@ -360,7 +430,11 @@ class NearbyTransferService : Service() {
                 .firstOrNull { it.startsWith("af_session=") }
             require(!cookie.isNullOrBlank()) { "Gavimo sesija nepatvirtinta" }
             val expires = response.header("X-AF-Session-Expires")?.toLongOrNull() ?: (System.currentTimeMillis() + 15 * 60_000L)
-            NearbyTransferController.connection.remember(pairing, cookie, expires)
+            if (rememberSession) {
+                NearbyChatController.beginSession(pairing)
+                NearbyTransferController.connection.remember(pairing, cookie, expires)
+                NearbyTransferController.connection.setQueueSupported(pairing, response.header("X-AF-Queue-Version") == "1")
+            }
             return cookie
         }
     }
@@ -369,6 +443,7 @@ class NearbyTransferService : Service() {
         val request = Request.Builder().url("http://${pairing.host}:${pairing.port}/nearby/peer")
             .header("Cookie", cookie).post(returnPairing.encoded().toRequestBody("text/plain".toMediaType())).build()
         val call = client.newCall(request)
+        if (request.url.encodedPath != "/upload") call.timeout().timeout(15, TimeUnit.SECONDS)
         activeCall = call
         call.execute().use { response ->
             checkSessionResponse(pairing, response.code)
@@ -408,6 +483,7 @@ class NearbyTransferService : Service() {
             .header("User-Agent", "AF-File-Manager/Nearby")
             .build()
         val call = client.newCall(request)
+        if (request.url.encodedPath != "/upload") call.timeout().timeout(15, TimeUnit.SECONDS)
         activeCall = call
         call.execute().use { response ->
             checkSessionResponse(pairing, response.code)
@@ -430,6 +506,7 @@ class NearbyTransferService : Service() {
             .header("User-Agent", "AF-File-Manager/Nearby")
             .build()
         val call = client.newCall(request)
+        if (request.url.encodedPath != "/upload") call.timeout().timeout(15, TimeUnit.SECONDS)
         activeCall = call
         call.execute().use { response ->
             checkSessionResponse(pairing, response.code)
@@ -483,13 +560,100 @@ class NearbyTransferService : Service() {
 
     private fun cancelTransfer() {
         cancelledByUser = true
-        activeCall?.cancel()
+        val abandoned = NearbyTransferController.queue.cancel()
+        ownedIds.addAll(abandoned.map { it.id })
+        client.dispatcher.cancelAll()
+        synchronized(this) { preparationJobs.values.forEach { it.cancel() } }
         transferJob?.cancel(CancellationException("Siuntimas atšauktas"))
-        if (transferJob == null) stopSelf()
+        synchronized(this) { controlJobs++ }
+        scope.launch {
+            try {
+            // Local temporary copies do not wait for a slow/unreachable peer's acknowledgement.
+            abandoned.filter { it.id != currentBatchId }.forEach { it.sources.cleanupRootPath?.let(::safeDeleteStage) }
+            abandoned.forEach { batch ->
+                val cookie = NearbyTransferController.connection.cookieFor(batch.pairing)
+                if (cookie != null && NearbyTransferController.connection.supportsQueue(batch.pairing)) {
+                    runCatching { sendControl(batch.pairing, cookie, "/nearby/cancel", batch.id) }
+                }
+            }
+            } finally {
+                synchronized(this@NearbyTransferService) { controlJobs-- }
+                finishIfIdle()
+            }
+        }
+    }
+
+    private fun disconnectPeer(notifyPeer: Boolean) {
+        if (disconnecting) return
+        disconnecting = true
+        val peer = NearbyTransferController.connectedPairing()
+        val cookie = peer?.let(NearbyTransferController.connection::cookieFor)
+        cancelTransfer()
+        NearbyTransferController.connection.clear()
+        NearbyChatController.clear()
+        scope.launch {
+            try {
+                if (notifyPeer && peer != null) {
+                    // A receive-only peer may not have used the return one-time code yet.
+                    val accepted = cookie ?: login(peer, rememberSession = false)
+                    sendControl(peer, accepted, "/nearby/disconnect")
+                }
+            } catch (_: Exception) {
+                // Local stop is unconditional, even when the other phone is already gone.
+            } finally {
+                NearbyTransferController.connection.clear()
+                LanTransferController.stop(this@NearbyTransferService)
+                finishForeground()
+                stopSelf(lastStartId)
+            }
+        }
+    }
+
+    private fun sendMessage(raw: String, senderName: String) {
+        val message = runCatching { NearbyChatController.validate(raw) }.getOrElse {
+            NearbyChatController.failed(it.message ?: "Žinutės išsiųsti nepavyko")
+            finishIfIdle()
+            return
+        }
+        val peer = NearbyTransferController.connectedPairing()
+        if (peer == null) {
+            NearbyChatController.failed("Telefonas nebeprisijungęs")
+            finishIfIdle()
+            return
+        }
+        synchronized(this) { controlJobs++ }
+        NearbyChatController.sending(true)
+        scope.launch {
+            try {
+                val cookie = NearbyTransferController.connection.cookieFor(peer) ?: login(peer)
+                val request = Request.Builder().url("http://${peer.host}:${peer.port}/nearby/message")
+                    .header("Cookie", cookie)
+                    .post(message.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                    .build()
+                client.newCall(request).apply { timeout().timeout(15, TimeUnit.SECONDS) }.execute().use { response ->
+                    checkSessionResponse(peer, response.code)
+                    require(response.isSuccessful) { "Žinutės išsiųsti nepavyko (${response.code})" }
+                }
+                NearbyChatController.sent(senderName.ifBlank { "Šis telefonas" }, message)
+            } catch (failure: Exception) {
+                NearbyChatController.failed(failure.message ?: "Žinutės išsiųsti nepavyko")
+            } finally {
+                synchronized(this@NearbyTransferService) { controlJobs-- }
+                finishIfIdle()
+            }
+        }
+    }
+
+    private fun sendControl(peer: NearbyPairing, cookie: String, path: String, id: String? = null) {
+        val request = Request.Builder().url("http://${peer.host}:${peer.port}$path").header("Cookie", cookie)
+            .post(ByteArray(0).toRequestBody(null)).apply { if (id != null) header("X-AF-Batch-ID", id) }.build()
+        val call = client.newCall(request)
+        call.timeout().timeout(3, TimeUnit.SECONDS)
+        call.execute().use { require(it.isSuccessful || it.code == 404) { "Gavimo sesija nepatvirtinta" } }
     }
 
     private fun publish(state: NearbyTransferState) {
-        NearbyTransferController.publish(state)
+        NearbyTransferController.queue.update(requireNotNull(currentBatchId), state)
         // Updating an active foreground notification does not require the optional Android 13
         // notification-drawer permission. The transfer remains visible in Android's foreground
         // service UI even when that permission is unavailable.
@@ -559,6 +723,7 @@ class NearbyTransferService : Service() {
         private val file: File,
         private val onProgress: (Long) -> Unit,
     ) : RequestBody() {
+        override fun isOneShot() = true
         override fun contentType() = "application/octet-stream".toMediaType()
         override fun contentLength(): Long = file.length()
 

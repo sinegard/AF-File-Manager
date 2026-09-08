@@ -3,6 +3,52 @@ package com.affilemanager.app.ui.localization
 /** English is the canonical public UI; Lithuanian source copy is retained as the second locale. */
 object UiTranslator {
     private val english = mapOf(
+        "APK turi per daug įrašų" to "The APK contains too many entries",
+        "Turi būti pasirinktas pagrindinis APK" to "The base APK must be selected",
+        "APK metaduomenų talpyklos sukurti nepavyko" to "Could not create the APK metadata cache",
+        "Ruošiama failų operacija" to "Preparing file operation",
+        "Ruošiama…" to "Preparing…",
+        "Failų operacijos" to "File operations",
+        "Kopijavimo, perkėlimo ir šalinimo eiga" to "Copy, move, and delete progress",
+        "Žinutė tuščia" to "The message is empty",
+        "Žinutė per ilga" to "The message is too long",
+        "Žinutėje yra nepalaikomų ženklų" to "The message contains unsupported characters",
+        "Telefonas nebeprisijungęs" to "The phone is no longer connected",
+        "Žinutės išsiųsti nepavyko" to "Could not send the message",
+        "Šis telefonas" to "This phone",
+        "Kitas telefonas" to "Other phone",
+        "Žinutės" to "Messages",
+        "Žinutė" to "Message",
+        "Siųsti žinutę" to "Send message",
+        "Šio veiksmo nebus galima atšaukti." to "This action cannot be undone.",
+        "Elementus bus galima atkurti iš AF File Manager šiukšlinės." to
+            "Items can be restored from AF File Manager Trash.",
+        "Dalis turinio neįskaičiuota, nes pasiekta saugi skenavimo riba." to
+            "Some content was not counted because the safe scan limit was reached.",
+        "Slėpti" to "Hide",
+        "Paslėpus operacija tęsis fone ir bus rodoma Android pranešimuose." to
+            "When hidden, the operation continues in the background and appears in Android notifications.",
+        "Išvaloma šiukšliadėžė" to "Emptying Trash",
+        "Šalinama iš šiukšliadėžės" to "Deleting from Trash",
+        "Patvirtinti programos diegimą" to "Confirm app installation",
+        "Įdiegta versija" to "Installed version",
+        "Nežinoma" to "Unknown",
+        "Tikslinė Android API" to "Target Android API",
+        "Procesoriaus architektūros" to "Processor architectures",
+        "Universalus / nėra vietinių bibliotekų" to "Universal / no native libraries",
+        "APK nenurodo patikimos maksimalios Android versijos; rodoma kūrėjo pasirinkta tikslinė API." to
+            "The APK does not specify a reliable maximum Android version; the developer's target API is shown.",
+        "Atidaryti programos nustatymus" to "Open app settings",
+        "Šių apsaugotų failų nebus galima atkurti iš AF File Manager šiukšlinės." to
+            "These protected files cannot be restored from AF File Manager Trash.",
+        "Elementus vėliau bus galima atkurti arba ištrinti visam laikui." to
+            "Items can later be restored or permanently deleted.",
+        "Elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės." to
+            "Items will be deleted on the remote server without local trash.",
+        "Elementas bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę." to
+            "The item will be deleted through Android's document provider and will not enter AF File Manager Trash.",
+        "Elemento nebebus galima atkurti iš programos šiukšliadėžės." to
+            "The item can no longer be restored from the app Trash.",
         "Raudona" to "Red",
         "Pasirinktinė paletė" to "Custom palette",
         "Pasirinkti failai nepasiekiami arba neatitinka prašomo tipo" to "Selected files are unavailable or do not match the requested type",
@@ -1731,6 +1777,12 @@ object UiTranslator {
             Regex("^(\\d+) aplankų · (.+)$") to { match: MatchResult -> "${match.groupValues[1]} folders · ${match.groupValues[2]}" },
             Regex("^(.+)/s · liko apie (\\d+)s$") to { match: MatchResult -> "${match.groupValues[1]}/s · about ${match.groupValues[2]}s left" },
             Regex("^(\\d+) vienodi failai · (.+) kiekvienas$") to { match: MatchResult -> "${match.groupValues[1]} identical files · ${match.groupValues[2]} each" },
+            Regex("^Atlikta (\\d+) iš (\\d+)$") to { match: MatchResult ->
+                "Completed ${match.groupValues[1]} of ${match.groupValues[2]}"
+            },
+            Regex("^Failai: (\\d+)$") to { match: MatchResult -> "Files: ${match.groupValues[1]}" },
+            Regex("^Aplankai: (\\d+)$") to { match: MatchResult -> "Folders: ${match.groupValues[1]}" },
+            Regex("^Dydis: (.+)$") to { match: MatchResult -> "Size: ${match.groupValues[1]}" },
             Regex("^(.+) · Neteisingi jungties duomenys$") to { match: MatchResult -> "${match.groupValues[1]} · Invalid connection data" },
             Regex("^… ir dar (\\d+)$") to { match: MatchResult -> "… and ${match.groupValues[1]} more" },
             Regex("^(.+) failo tipo piktograma$") to { match: MatchResult -> "${match.groupValues[1]} file-type icon" },

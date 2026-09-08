@@ -19,10 +19,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -82,7 +82,7 @@ class FilePickerActivity : AppCompatActivity() {
             val appearance by graph.appearance.settings.collectAsState()
             val lockEnabled by graph.appLock.enabled.collectAsState()
             AFFileManagerTheme(settings = appearance) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                com.affilemanager.app.ui.theme.AppearancePage(Modifier.fillMaxSize()) {
                     if (lockEnabled && !unlocked) {
                         AppLockOverlay(onUnlock = {
                             authenticate(this, translated("Atrakinti AF File Manager"), { unlocked = true }) { error = it }

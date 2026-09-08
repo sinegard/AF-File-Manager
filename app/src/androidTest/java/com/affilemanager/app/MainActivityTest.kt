@@ -619,7 +619,7 @@ class MainActivityTest {
             compose.onNodeWithTag("appearance_settings").performScrollTo()
             compose.onNodeWithTag("theme_mode_dark").performClick()
             compose.onNodeWithTag("palette_material_blue").performScrollTo().performClick()
-            compose.onNodeWithTag("amoled_black").performClick()
+            compose.onNodeWithTag("amoled_black").performScrollTo().performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 val settings = viewModel.appearanceSettings.value

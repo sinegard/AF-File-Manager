@@ -37,19 +37,19 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -83,6 +83,9 @@ import com.affilemanager.app.ui.components.FileInfoDialog
 import com.affilemanager.app.ui.components.FileSizeBar
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.SelectionActionBar
+import com.affilemanager.app.ui.components.LazyListFastScroller
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import java.io.File
@@ -180,7 +183,7 @@ fun FileCategoryBrowser(
         if (state.selectedPaths.isNotEmpty()) viewModel.clearFileCategorySelection()
         else viewModel.closeFileCategory()
     }
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    com.affilemanager.app.ui.theme.AppearancePage(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
                 if (state.selectedPaths.isNotEmpty()) {
                     SelectionActionBar(
@@ -388,7 +391,8 @@ fun FileCategoryBrowser(
                     visible.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         LText("Atitinkančių failų nėra")
                     }
-                    state.grid -> LazyVerticalGrid(
+                    state.grid -> Box {
+                    LazyVerticalGrid(
                         columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
                         state = gridState,
                         modifier = Modifier.fillMaxSize().testTag("category_grid"),
@@ -417,7 +421,10 @@ fun FileCategoryBrowser(
                             }
                         }
                     }
-                    else -> LazyColumn(
+                    LazyGridFastScroller(gridState)
+                    }
+                    else -> Box {
+                    LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize().testTag("category_list"),
                         contentPadding = PaddingValues(bottom = 24.dp),
@@ -442,6 +449,8 @@ fun FileCategoryBrowser(
                                 }
                             }
                         }
+                    }
+                    LazyListFastScroller(listState)
                     }
                 }
                 }
@@ -475,20 +484,12 @@ fun FileCategoryBrowser(
     }
     infoTarget?.let { entry -> FileInfoDialog(entry = entry, onDismiss = { infoTarget = null }) }
     if (confirmTrash) {
-        AlertDialog(
-            onDismissRequest = { confirmTrash = false },
-            title = { LText("Perkelti į šiukšlinę?") },
-            text = { LText("Pasirinkti failai bus perkelti į AF File Manager šiukšlinę ir juos bus galima atkurti.") },
-            dismissButton = { TextButton(onClick = { confirmTrash = false }) { LText("Atšaukti") } },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmTrash = false
-                        viewModel.trashFileCategorySelection()
-                    },
-                    modifier = Modifier.testTag("category_delete_confirm"),
-                ) { LText("Perkelti") }
-            },
+        val selected = state.entries.filter { it.absolutePath in state.selectedPaths }
+        DeleteConfirmationDialog(
+            names = selected.map(FileEntry::name), permanent = false,
+            onDismiss = { confirmTrash = false },
+            onConfirm = { confirmTrash = false; viewModel.trashFileCategorySelection() },
+            loadSummary = { viewModel.loadFileSelectionInfo(selected.map(FileEntry::absolutePath)) },
         )
     }
 }

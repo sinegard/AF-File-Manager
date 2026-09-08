@@ -13,8 +13,19 @@ data class CustomThemeColors(
     val tertiary: Int = 0xFF8B4E00.toInt(),
     val background: Int = 0xFFF6F8FC.toInt(),
     val surface: Int = 0xFFFFFFFF.toInt(),
+    val popup: Int = surface,
+    val controls: Int = defaultControlColor(primary, surface),
 ) {
-    fun values(): List<Int> = listOf(primary, secondary, tertiary, background, surface)
+    fun values(): List<Int> = listOf(primary, secondary, tertiary, background, surface, popup, controls)
+}
+
+private fun defaultControlColor(primary: Int, surface: Int): Int {
+    var color = 0xFF000000.toInt()
+    for (shift in listOf(16, 8, 0)) {
+        val mixed = ((surface ushr shift and 255) * .82f + (primary ushr shift and 255) * .18f).toInt()
+        color = color or (mixed shl shift)
+    }
+    return color
 }
 
 object CustomThemeRules {
@@ -25,13 +36,14 @@ object CustomThemeRules {
     fun hex(value: Int): String = String.format(Locale.ROOT, "#%06X", value and 0xFFFFFF)
 
     fun parseDraft(values: List<String>): CustomThemeColors? {
-        if (values.size != 5) return null
+        if (values.size !in setOf(5, 7)) return null
         val colors = values.map { parseHex(it) ?: return null }
-        return CustomThemeColors(colors[0], colors[1], colors[2], colors[3], colors[4])
+        return CustomThemeColors(colors[0], colors[1], colors[2], colors[3], colors[4],
+            popup = colors.getOrElse(5) { colors[4] }, controls = colors.getOrElse(6) { defaultControlColor(colors[0], colors[4]) })
     }
 
     fun parseStored(value: String?): CustomThemeColors =
-        value?.takeIf { it.length <= 39 }?.split(',')?.let(::parseDraft) ?: CustomThemeColors()
+        value?.takeIf { it.length <= 55 }?.split(',')?.let(::parseDraft) ?: CustomThemeColors()
 
     fun contrast(first: Color, second: Color): Float {
         val a = first.luminance()
@@ -61,10 +73,10 @@ internal fun customColorScheme(colors: CustomThemeColors): ColorScheme {
     val primary = CustomThemeRules.readableAccent(Color(colors.primary), surface)
     val secondary = CustomThemeRules.readableAccent(Color(colors.secondary), surface)
     val tertiary = CustomThemeRules.readableAccent(Color(colors.tertiary), surface)
-    val primaryContainer = lerp(surface, primary, .18f)
-    val secondaryContainer = lerp(surface, secondary, .18f)
+    val primaryContainer = Color(colors.controls)
+    val secondaryContainer = Color(colors.controls)
     val tertiaryContainer = lerp(surface, tertiary, .18f)
-    val variant = lerp(surface, secondary, .12f)
+    val variant = surface
     val error = CustomThemeRules.readableAccent(Color(0xFFBA1A1A), surface)
     val errorContainer = lerp(surface, error, .18f)
     return lightColorScheme(
@@ -77,13 +89,13 @@ internal fun customColorScheme(colors: CustomThemeColors): ColorScheme {
         background = background, onBackground = CustomThemeRules.foreground(background),
         surface = surface, onSurface = foreground,
         surfaceVariant = variant, onSurfaceVariant = CustomThemeRules.foreground(variant),
-        surfaceTint = primary, outline = lerp(surface, foreground, .65f), outlineVariant = lerp(surface, foreground, .35f),
+        surfaceTint = surface, outline = lerp(surface, foreground, .65f), outlineVariant = lerp(surface, foreground, .35f),
         error = error, onError = CustomThemeRules.foreground(error),
         errorContainer = errorContainer, onErrorContainer = CustomThemeRules.foreground(errorContainer),
         inverseSurface = foreground, inverseOnSurface = CustomThemeRules.foreground(foreground),
         inversePrimary = CustomThemeRules.readableAccent(primary, foreground),
         surfaceDim = surface, surfaceBright = variant, surfaceContainerLowest = surface,
-        surfaceContainerLow = lerp(surface, secondary, .04f), surfaceContainer = lerp(surface, secondary, .08f),
-        surfaceContainerHigh = lerp(surface, secondary, .12f), surfaceContainerHighest = lerp(surface, secondary, .16f),
+        surfaceContainerLow = surface, surfaceContainer = surface,
+        surfaceContainerHigh = surface, surfaceContainerHighest = surface,
     )
 }

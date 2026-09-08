@@ -16,10 +16,10 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.PhoneAndroid
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -192,6 +192,7 @@ fun EditSaveAsDialog(
                     else -> LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
                         items(directories, key = { it.second }) { (directoryName, directoryPath) ->
                             ListItem(
+                                colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                                 headlineContent = { Text(directoryName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingContent = { Icon(Icons.Rounded.Folder, contentDescription = null) },
                                 trailingContent = {

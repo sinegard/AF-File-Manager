@@ -16,6 +16,73 @@ class LanHttpServerTest {
     @get:Rule
     val temporary = TemporaryFolder()
 
+    @Test fun nearbyMessagesRequireAuthenticationAndStayOutOfSharedStorage() {
+        val root = temporary.newFolder("messages")
+        val received = java.util.concurrent.CopyOnWriteArrayList<String>()
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678",
+            onNearbyMessage = { received += it }).use { server ->
+            val port = server.start().port
+            val body = "Hello from the other phone"
+            val anonymous = request(port,
+                "POST /nearby/message HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body")
+            assertTrue(anonymous.startsWith("HTTP/1.1 401"))
+            assertTrue(received.isEmpty())
+
+            val cookie = login(port)
+            val accepted = request(port,
+                "POST /nearby/message HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body")
+            assertTrue(accepted.startsWith("HTTP/1.1 200"))
+            assertEquals(listOf(body), received)
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+
+            val tooLarge = "x".repeat(LanHttpServer.MAX_NEARBY_MESSAGE_BYTES + 1)
+            assertTrue(request(port,
+                "POST /nearby/message HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${tooLarge.length}\r\n\r\n$tooLarge")
+                .startsWith("HTTP/1.1 400"))
+            assertEquals(1, received.size)
+        }
+    }
+
+    @Test fun midUploadAppendKeepsBothBatchesAndCancelClosesOnlyTheActiveUpload() {
+        val root = temporary.newFolder("queued-upload")
+        val updates = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
+        val started = java.util.concurrent.CountDownLatch(1)
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678", onUploadProgress = {
+            updates += it
+            if (it.files.any { row -> row.status == TransferFileStatus.TRANSFERRING }) started.countDown()
+        }).use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            val first = java.util.UUID.randomUUID().toString()
+            val second = java.util.UUID.randomUUID().toString()
+            fun announce(id: String, name: String, size: Long) {
+                val body = NearbyTransferManifest.encode(listOf(TransferFileProgress(name, size))).toString(Charsets.UTF_8)
+                assertTrue(request(port, "POST /nearby/manifest HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $id\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body").startsWith("HTTP/1.1 200"))
+            }
+            announce(first, "one.txt", 100)
+            Socket(InetAddress.getLoopbackAddress(), port).use { upload ->
+                upload.soTimeout = 4_000
+                upload.getOutputStream().write("POST /upload?name=one.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $first\r\nContent-Length: 100\r\n\r\npartial".toByteArray())
+                assertTrue(started.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                announce(second, "two.txt", 2)
+                assertEquals(listOf("one.txt", "two.txt"), updates.last().files.map { it.name })
+                assertEquals(listOf(TransferFileStatus.TRANSFERRING, TransferFileStatus.WAITING), updates.last().files.map { it.status })
+                val early = request(port, "POST /upload?name=two.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $second\r\nContent-Length: 2\r\n\r\nok")
+                assertTrue(early.startsWith("HTTP/1.1 400"))
+                assertTrue(request(port, "POST /nearby/cancel HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $first\r\nContent-Length: 0\r\n\r\n").startsWith("HTTP/1.1 200"))
+                assertEquals(-1, upload.getInputStream().read())
+                assertEquals(TransferFileStatus.CANCELLED, updates.last().files.first().status)
+            }
+            val next = request(port, "POST /upload?name=two.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $second\r\nContent-Length: 2\r\n\r\nok")
+            assertTrue(next.startsWith("HTTP/1.1 201"))
+            assertEquals("ok", root.resolve("two.txt").readText())
+            assertFalse(root.resolve("one.txt").exists())
+            assertTrue(updates.last().files.first().localPath == null)
+            assertTrue(request(port, "POST /nearby/disconnect HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 0\r\n\r\n").startsWith("HTTP/1.1 200"))
+            assertFalse(root.listFiles().orEmpty().any { it.name.endsWith(".partial") })
+        }
+    }
+
     @Test fun nearbyManifestRequiresAuthenticationAndPublishesOnlyCommittedKeepBothPaths() {
         val root = temporary.newFolder("manifest").apply { resolve("photo.txt").writeText("original") }
         val updates = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
@@ -38,7 +105,8 @@ class LanHttpServerTest {
             assertEquals(TransferFileStatus.COMPLETED, file.status)
             assertEquals("hello", java.io.File(requireNotNull(file.localPath)).readText())
             assertEquals("original", root.resolve("photo.txt").readText())
-            assertTrue(updates.filterNot { it.completed }.flatMap { it.files }.all { it.localPath == null })
+            // A completed row stays previewable while other queued files are still pending.
+            assertTrue(updates.flatMap { it.files }.filterNot { it.status == TransferFileStatus.COMPLETED }.all { it.localPath == null })
             val mismatched = request(port,
                 "POST /upload?name=wrong.txt&fileCount=2&fileIndex=2 HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 0\r\n\r\n")
             assertTrue(mismatched.startsWith("HTTP/1.1 400"))

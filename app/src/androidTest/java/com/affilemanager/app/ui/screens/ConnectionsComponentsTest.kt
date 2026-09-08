@@ -2,6 +2,8 @@ package com.affilemanager.app.ui.screens
 
 import android.view.View
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,7 +72,12 @@ class ConnectionsComponentsTest {
         val openRequests = AtomicInteger()
         val downloadRequests = AtomicInteger()
         compose.setContent {
-            MaterialTheme {
+            com.affilemanager.app.ui.theme.AFFileManagerTheme(com.affilemanager.app.ui.theme.AppearanceSettings(
+                colorPalette = com.affilemanager.app.ui.theme.AppColorPalette.CUSTOM,
+                customColors = com.affilemanager.app.ui.theme.CustomThemeColors(background = 0xff181820.toInt(),
+                    surface = 0xffeeeecc.toInt(), popup = 0xffff5aaf.toInt(), controls = 0xff55edbb.toInt()),
+            )) {
+                com.affilemanager.app.ui.theme.AppearancePage(Modifier.fillMaxSize()) {
                 Column {
                     RemoteBrowser(
                         state = NetworkUiState(
@@ -105,11 +112,26 @@ class ConnectionsComponentsTest {
                 }
             }
         }
+        }
 
         compose.onNodeWithTag("directory_toolbar_remote").assertIsDisplayed()
         compose.onNodeWithTag("directory_search_remote").assertIsDisplayed()
         compose.onNodeWithTag("directory_layout_remote").assertIsDisplayed()
         compose.onNodeWithContentDescription("Folder actions").performClick()
+        compose.onNodeWithTag("remote_upload_choose").assertIsDisplayed()
+        compose.waitForIdle()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(100, 2_000)
+        val popup = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        try {
+            var matching = 0
+            for (y in 0 until popup.height step 8) for (x in 0 until popup.width step 8) {
+                if (popup.getPixel(x, y) == 0xffff5aaf.toInt()) matching++
+            }
+            val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+            val folder = java.io.File(app.getExternalFilesDir("validation"), "issues-164-167").apply { mkdirs() }
+            java.io.File(folder, "remote-custom-popup.png").outputStream().use { popup.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            org.junit.Assert.assertTrue("Remote menus must use the chosen popup color ($matching matching pixels)", matching > 30)
+        } finally { popup.recycle() }
         compose.onNodeWithTag("remote_upload_choose").assertIsEnabled().assertHasClickAction()
         compose.onNodeWithTag("remote_paste_local").assertIsEnabled().assertHasClickAction()
         compose.onNodeWithText("Paste (2)").performClick()

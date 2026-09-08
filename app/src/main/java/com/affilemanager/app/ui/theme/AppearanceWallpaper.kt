@@ -11,7 +11,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -25,6 +27,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 internal val LocalAppearanceSettings = staticCompositionLocalOf { AppearanceSettings() }
+internal val LocalOpaqueColors = staticCompositionLocalOf { androidx.compose.material3.lightColorScheme() }
+private val LocalWallpaper = staticCompositionLocalOf<Bitmap?> { null }
 
 /** One private, bounded image, decoded off the UI thread only when its revision changes. */
 internal object AppearanceWallpaper {
@@ -89,7 +93,7 @@ internal object AppearanceWallpaper {
 }
 
 @Composable
-internal fun AppearanceBackground() {
+internal fun ProvideAppearanceWallpaper(content: @Composable () -> Unit) {
     val settings = LocalAppearanceSettings.current
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(null, settings.wallpaperRevision) {
@@ -97,12 +101,31 @@ internal fun AppearanceBackground() {
             BitmapFactory.decodeFile(AppearanceWallpaper.file(context, settings.wallpaperRevision).path)
         }
     }
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    CompositionLocalProvider(LocalWallpaper provides bitmap, content = content)
+}
+
+@Composable
+internal fun AppearanceBackground() {
+    val settings = LocalAppearanceSettings.current
+    val bitmap = LocalWallpaper.current
+    Box(Modifier.fillMaxSize().background(LocalOpaqueColors.current.background)) {
         bitmap?.let {
             Image(it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().testTag("appearance_wallpaper"))
             // Keep text outside cards readable over photographs. Does not modify the user's image.
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background.copy(alpha = .72f)))
+            Box(Modifier.fillMaxSize().background(LocalOpaqueColors.current.background.copy(alpha = settings.wallpaperShading.coerceIn(0, 100) / 100f)))
+        }
+    }
+}
+
+/** Page-sized dialogs and Activities share the same decoded wallpaper as the root, not a card fill. */
+@Composable
+internal fun AppearancePage(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Box(modifier) {
+        AppearanceBackground()
+        AppearanceContentOn(LocalOpaqueColors.current.background) {
+        Surface(color = androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = LocalOpaqueColors.current.onBackground, modifier = Modifier.fillMaxSize(), content = content)
         }
     }
 }

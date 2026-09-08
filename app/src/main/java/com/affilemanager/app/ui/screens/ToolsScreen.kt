@@ -38,12 +38,12 @@ import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -183,6 +183,8 @@ fun ToolsScreen(
                 onCustomColors = viewModel::setCustomColors,
                 onWallpaper = viewModel::setWallpaper,
                 onCardTransparency = viewModel::setCardTransparency,
+                onWallpaperShading = viewModel::setWallpaperShading,
+                onTransparentMenus = viewModel::setTransparentMenus,
             )
         }
 
@@ -584,6 +586,8 @@ internal fun AppearanceSettingsCard(
     onCustomColors: (CustomThemeColors) -> Boolean,
     onWallpaper: (android.net.Uri?) -> Unit = {},
     onCardTransparency: (Int) -> Unit = {},
+    onWallpaperShading: (Int) -> Unit = {},
+    onTransparentMenus: (Boolean) -> Unit = {},
 ) {
     var editCustom by remember { mutableStateOf(false) }
     if (editCustom) CustomPaletteDialog(settings.customColors, onCustomColors, onDismiss = { editCustom = false })
@@ -596,7 +600,7 @@ internal fun AppearanceSettingsCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             LText("Išvaizda", fontWeight = FontWeight.SemiBold)
-            WallpaperSettings(settings, onWallpaper, onCardTransparency)
+            WallpaperSettings(settings, onWallpaper, onCardTransparency, onWallpaperShading, onTransparentMenus)
             LText("Temos režimas", style = MaterialTheme.typography.labelLarge)
             AfActionRow {
                 AppThemeMode.entries.forEach { mode ->

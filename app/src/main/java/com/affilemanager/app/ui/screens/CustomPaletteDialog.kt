@@ -40,7 +40,8 @@ internal fun CustomPaletteDialog(
     var fields by remember { mutableStateOf(initial.values().map(CustomThemeRules::hex)) }
     var saveFailed by remember { mutableStateOf(false) }
     val parsed = remember(fields) { CustomThemeRules.parseDraft(fields) }
-    val labels = listOf("Pagrindinė spalva", "Antrinė spalva", "Trečioji spalva", "Fono spalva", "Kortelių spalva")
+    val labels = listOf("Pagrindinė spalva", "Antrinė spalva", "Trečioji spalva", "Fono spalva", "Kortelių spalva",
+        "Meniu ir dialogų spalva", "Mygtukų ir pasirinkimų spalva")
     AfModalDialog(
         title = "Pasirinktinė paletė",
         icon = Icons.Rounded.Palette,

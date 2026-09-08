@@ -48,8 +48,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -84,22 +86,22 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SaveAs
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -185,6 +187,9 @@ import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.LazyListFastScroller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -358,9 +363,8 @@ fun FilePreviewDialog(
     }
 
     Dialog(onDismissRequest = navigateBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
+        com.affilemanager.app.ui.theme.AppearancePage(
             modifier = Modifier.fillMaxSize().testTag("file-preview-dialog"),
-            color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
@@ -1631,6 +1635,7 @@ private fun EditSaveAsConflictDialog(
 @Composable
 private fun ApkPreview(file: File) {
     val context = LocalContext.current
+    var confirmInstall by remember(file.absolutePath) { mutableStateOf(false) }
     val info = remember(file.absolutePath) {
         @Suppress("DEPRECATION")
         context.packageManager.getPackageArchiveInfo(
@@ -1659,11 +1664,17 @@ private fun ApkPreview(file: File) {
             }
         }
         LText("Diegimą visada patvirtina Android sistema. Programa negali jo atlikti tyliai.", style = MaterialTheme.typography.bodySmall)
-        Button(onClick = { installApk(context, file) }) {
+        Button(onClick = { confirmInstall = true }) {
             Icon(Icons.Rounded.InstallMobile, contentDescription = null)
             LText("Atidaryti diegimo lange", modifier = Modifier.padding(start = 8.dp))
         }
     }
+    if (confirmInstall) ApkInstallConfirmationDialog(
+        cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}",
+        load = { com.affilemanager.app.apk.ApkInstallMetadataReader.standalone(context, file) },
+        onDismiss = { confirmInstall = false },
+        onInstall = { confirmInstall = false; installApk(context, file) },
+    )
 }
 
 @Composable
@@ -1704,11 +1715,15 @@ private fun ArchivePreview(
     var deleteRequested by remember(file.absolutePath) { mutableStateOf<Set<String>?>(null) }
     var moveRequested by remember(file.absolutePath) { mutableStateOf<Set<String>?>(null) }
     var refreshing by remember(file.absolutePath) { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(currentPath) {
         searchVisible = false
         searchQuery = ""
         selectedPaths = emptySet()
+        listState.scrollToItem(0)
+        gridState.scrollToItem(0)
     }
     LaunchedEffect(entries) {
         selectedPaths = selectedPaths.filterTo(linkedSetOf()) { selected ->
@@ -1899,8 +1914,10 @@ private fun ArchivePreview(
             visibleEntries.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 LText(if (children.isEmpty()) "Aplankas tuščias" else "Atitikmenų nerasta")
             }
-            grid -> LazyVerticalGrid(
+            grid -> {
+                LazyVerticalGrid(
                 columns = GridCells.Fixed(displaySettings.gridColumns.coerceIn(1, 6)),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
                 verticalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
@@ -1926,9 +1943,12 @@ private fun ArchivePreview(
                         loadThumbnail = loadThumbnail,
                     )
                 }
+                }
+                LazyGridFastScroller(gridState)
             }
-            else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(visibleEntries, key = { it.path }) { entry ->
+            else -> {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    items(visibleEntries, key = { it.path }) { entry ->
                     ArchiveListItem(
                         entry = entry,
                         iconScalePercent = displaySettings.iconScalePercent,
@@ -1948,8 +1968,10 @@ private fun ArchivePreview(
                         onDelete = if (mutable && onDeleteEntries != null) ({ deleteRequested = setOf(entry.path) }) else null,
                         loadThumbnail = loadThumbnail,
                     )
-                    HorizontalDivider()
+                        HorizontalDivider()
+                    }
                 }
+                LazyListFastScroller(listState)
             }
         }
         }
@@ -2025,18 +2047,23 @@ private fun ArchivePreview(
         )
     }
     deleteRequested?.let { requested ->
-        AlertDialog(
-            onDismissRequest = { deleteRequested = null },
-            title = { LText("Ištrinti iš archyvo?") },
-            text = { LText("Bus saugiai perrašytas ZIP archyvas. Prieš pakeitimą sukuriama atkūrimo kopija.") },
-            confirmButton = {
-                Button(onClick = {
-                    onDeleteEntries?.invoke(requested)
-                    selectedPaths = emptySet()
-                    deleteRequested = null
-                }) { LText("Ištrinti") }
+        val affected = entries.filter { archiveEntry ->
+            val path = archiveEntry.name.replace('\\', '/').trim('/')
+            requested.any { selected -> path == selected || path.startsWith("$selected/") }
+        }
+        DeleteConfirmationDialog(
+            names = requested.map { it.substringAfterLast('/') }, permanent = false,
+            title = "Ištrinti iš archyvo?", confirmLabel = "Ištrinti",
+            onDismiss = { deleteRequested = null },
+            onConfirm = {
+                onDeleteEntries?.invoke(requested)
+                selectedPaths = emptySet()
+                deleteRequested = null
             },
-            dismissButton = { TextButton(onClick = { deleteRequested = null }) { LText("Atšaukti") } },
+            explanation = "Bus saugiai perrašytas ZIP archyvas. Prieš pakeitimą sukuriama atkūrimo kopija.",
+            fallbackFiles = affected.count { !it.directory },
+            fallbackFolders = affected.count(ArchiveEntryInfo::directory),
+            fallbackBytes = affected.filterNot(ArchiveEntryInfo::directory).sumOf { it.sizeBytes.coerceAtLeast(0L) },
         )
     }
     moveRequested?.let { requested ->
@@ -2079,10 +2106,11 @@ private fun ArchiveListItem(
     val iconSize = (32f * iconScalePercent / 100f).dp
     val verticalPadding = (10f * spacingScalePercent / 100f).dp
     var menuExpanded by remember(entry.path) { mutableStateOf(false) }
+    com.affilemanager.app.ui.theme.AppearanceContentOn(if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
+            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 14.dp, vertical = verticalPadding)
             .testTag("archive-entry-${entry.path}"),
@@ -2121,6 +2149,7 @@ private fun ArchiveListItem(
             )
         }
         if (entry.directory) Icon(Icons.Rounded.ChevronRight, contentDescription = uiText("Atidaryti aplanką"))
+    }
     }
 }
 

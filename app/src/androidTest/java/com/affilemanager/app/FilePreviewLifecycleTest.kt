@@ -205,7 +205,18 @@ class FilePreviewLifecycleTest {
         } finally {
             compose.runOnUiThread {
                 AppLanguageManager.setLanguage(compose.activity, AppLanguageManager.ENGLISH)
+            }
+            compose.waitUntil(10_000) {
+                AppLanguageManager.normalizeLanguageTag(
+                    compose.activity.resources.configuration.locales[0].language,
+                ) == AppLanguageManager.ENGLISH &&
+                    compose.onAllNodesWithTag("nav_files").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.runOnUiThread {
                 ViewModelProvider(compose.activity)[MainViewModel::class.java].closePreview()
+            }
+            compose.waitUntil(5_000) {
+                ViewModelProvider(compose.activity)[MainViewModel::class.java].preview.value == null
             }
             fixtureBase.deleteRecursively()
         }

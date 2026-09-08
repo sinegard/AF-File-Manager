@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.affilemanager.app.apk.SplitApkArchive
 import com.affilemanager.app.apk.SplitApkInstallActivity
 import com.affilemanager.app.apk.SplitApkPlan
+import com.affilemanager.app.apk.ApkInstallMetadataReader
 import com.affilemanager.app.ui.localization.LText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,24 +45,20 @@ internal fun SplitApkPreview(file: File, onExtract: () -> Unit) {
     }
     var selected by remember(file.path) { mutableStateOf<Set<String>?>(null) }
     var error by remember(file.path) { mutableStateOf<String?>(null) }
+    var confirmInstall by remember(file.path) { mutableStateOf(false) }
+    val plan = result?.getOrNull()
+    val chosen = selected ?: plan?.parts?.map { it.name }?.toSet().orEmpty()
     Column(Modifier.fillMaxSize().padding(14.dp).testTag("split_apk_preview")) {
         LText("APK rinkinys", style = MaterialTheme.typography.titleLarge)
         LText("Diegiamos originalios pasirašytos dalys. Jų jungimas į vieną APK pakeistų parašą.", style = MaterialTheme.typography.bodySmall)
-        val plan = result?.getOrNull()
-        val chosen = selected ?: plan?.parts?.map { it.name }?.toSet().orEmpty()
         OutlinedButton(onClick = onExtract, modifier = Modifier.testTag("split_apk_extract")) { LText("Išpakuoti originalias dalis") }
         if (result == null) CircularProgressIndicator()
         result?.exceptionOrNull()?.let { LText(it.message ?: "Netinkamas APK rinkinys", color = MaterialTheme.colorScheme.error) }
         if (plan != null) {
             if (plan.hasExtraData) LText("Papildomi OBB duomenys automatiškai nediegiami. Juos galima išpakuoti atskirai.")
-            Button(onClick = {
-                runCatching {
-                    if (!context.packageManager.canRequestPackageInstalls()) {
-                        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
-                    } else context.startActivity(Intent(context, SplitApkInstallActivity::class.java)
-                        .putExtra("archive", file.path).putStringArrayListExtra("parts", ArrayList(chosen)))
-                }.onFailure { error = it.message ?: "Diegti nepavyko" }
-            }, modifier = Modifier.testTag("split_apk_install")) { LText("Atidaryti diegimo lange") }
+            Button(onClick = { confirmInstall = true }, modifier = Modifier.testTag("split_apk_install")) {
+                LText("Atidaryti diegimo lange")
+            }
             error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
             LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                 items(plan.parts, key = { it.name }) { part ->
@@ -77,4 +74,21 @@ internal fun SplitApkPreview(file: File, onExtract: () -> Unit) {
             }
         }
     }
+    val installPlan = plan
+    if (confirmInstall && installPlan != null) ApkInstallConfirmationDialog(
+        cacheKey = "${file.path}:${file.lastModified()}:${chosen.sorted()}",
+        load = { ApkInstallMetadataReader.bundle(context, file, installPlan, chosen) },
+        onDismiss = { confirmInstall = false },
+        onInstall = {
+            runCatching {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
+                } else {
+                    context.startActivity(Intent(context, SplitApkInstallActivity::class.java)
+                        .putExtra("archive", file.path).putStringArrayListExtra("parts", ArrayList(chosen)))
+                    confirmInstall = false
+                }
+            }.onFailure { error = it.message ?: "Diegti nepavyko" }
+        },
+    )
 }

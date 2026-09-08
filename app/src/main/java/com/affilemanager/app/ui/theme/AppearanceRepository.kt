@@ -32,6 +32,8 @@ data class AppearanceSettings(
     val customColors: CustomThemeColors = CustomThemeColors(),
     val wallpaperRevision: Long = 0L,
     val cardTransparency: Int = 0,
+    val wallpaperShading: Int = 72,
+    val transparentMenus: Boolean = false,
 )
 
 object AppearanceRules {
@@ -67,6 +69,10 @@ class AppearanceRepository(context: Context) {
 
     fun setCardTransparency(percent: Int) = update { it.copy(cardTransparency = percent.coerceIn(0, 100)) }
 
+    fun setWallpaperShading(percent: Int) = update { it.copy(wallpaperShading = percent.coerceIn(0, 100)) }
+
+    fun setTransparentMenus(enabled: Boolean) = update { it.copy(transparentMenus = enabled) }
+
     fun setCustomColors(colors: CustomThemeColors) = update {
         require(colors.values().all { color -> color ushr 24 == 255 }) { "Use opaque RGB colors" }
         it.copy(colorPalette = AppColorPalette.CUSTOM, customColors = colors)
@@ -83,7 +89,10 @@ class AppearanceRepository(context: Context) {
                 .putBoolean(KEY_AMOLED_BLACK, updated.amoledBlack)
                 .putLong("wallpaper_revision", updated.wallpaperRevision)
                 .putInt("card_transparency", updated.cardTransparency)
-                .putString("custom_colors_v1", updated.customColors.values().joinToString(",", transform = CustomThemeRules::hex))
+                .putInt("wallpaper_shading", updated.wallpaperShading)
+                .putBoolean("transparent_menus", updated.transparentMenus)
+                .putString("custom_colors_v1", updated.customColors.values().take(5).joinToString(",", transform = CustomThemeRules::hex))
+                .putString("custom_colors_v2", updated.customColors.values().joinToString(",", transform = CustomThemeRules::hex))
                 .commit(),
         ) { "Appearance settings could not be saved" }
         mutableSettings.value = updated
@@ -97,8 +106,11 @@ class AppearanceRepository(context: Context) {
             ?.let { stored -> AppColorPalette.entries.firstOrNull { it.name == stored } }
             ?: AppColorPalette.DEFAULT,
         amoledBlack = preferences.getBoolean(KEY_AMOLED_BLACK, false),
-        customColors = CustomThemeRules.parseStored(preferences.getString("custom_colors_v1", null)),
+        customColors = CustomThemeRules.parseStored(preferences.getString("custom_colors_v2", null)
+            ?: preferences.getString("custom_colors_v1", null)),
         wallpaperRevision = preferences.getLong("wallpaper_revision", 0L).coerceAtLeast(0L),
         cardTransparency = preferences.getInt("card_transparency", 0).coerceIn(0, 100),
+        wallpaperShading = preferences.getInt("wallpaper_shading", 72).coerceIn(0, 100),
+        transparentMenus = preferences.getBoolean("transparent_menus", false),
     )
 }

@@ -11,6 +11,8 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -134,6 +136,47 @@ class SafFileRepository(private val context: Context) {
 
     suspend fun delete(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching { check(document(uri).delete()) { "Ištrinti nepavyko" } }
+    }
+
+    suspend fun selectionInfo(uris: Collection<String>): Result<FileSelectionSummary> = withContext(Dispatchers.IO) {
+        runCatching {
+            val roots = uris.map(String::trim).filter(String::isNotEmpty).distinct()
+            require(roots.isNotEmpty() && roots.size <= 10_000) { "Netinkamas pasirinktų elementų skaičius" }
+            data class Pending(val file: DocumentFile, val depth: Int, val selectedRoot: Boolean)
+            val pending = ArrayDeque<Pending>()
+            roots.asReversed().forEach { pending.add(Pending(document(it), 0, true)) }
+            val seen = hashSetOf<String>()
+            var files = 0
+            var folders = 0
+            var bytes = 0L
+            var scanned = 0
+            var complete = true
+            while (pending.isNotEmpty()) {
+                coroutineContext.ensureActive()
+                if (scanned >= MAX_COPY_ENTRIES) { complete = false; break }
+                val current = pending.removeLast()
+                if (!seen.add(current.file.uri.toString())) { complete = false; continue }
+                scanned++
+                when {
+                    current.file.isDirectory -> {
+                        if (!current.selectedRoot) folders++
+                        if (current.depth >= MAX_DEPTH) { complete = false; continue }
+                        val children = runCatching { current.file.listFiles() }.getOrElse { complete = false; emptyArray() }
+                        if (children.size > MAX_DIRECTORY_ENTRIES) complete = false
+                        children.take(MAX_DIRECTORY_ENTRIES).asReversed().forEach {
+                            pending.add(Pending(it, current.depth + 1, false))
+                        }
+                    }
+                    current.file.isFile -> {
+                        files++
+                        val value = current.file.length().coerceAtLeast(0L)
+                        bytes = if (value > Long.MAX_VALUE - bytes) Long.MAX_VALUE else bytes + value
+                    }
+                    else -> complete = false
+                }
+            }
+            FileSelectionSummary(roots.size, files, folders, bytes, scanned, complete)
+        }
     }
 
     suspend fun copyFromLocal(source: File, parentUri: String, operation: OperationContext? = null): Result<Unit> =

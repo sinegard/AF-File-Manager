@@ -5,6 +5,7 @@ import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
 import android.os.SystemClock;
+import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -54,7 +55,7 @@ public final class NearbyRuntimeVerifier {
                             boolean uploaded = false;
                             if (start.startsWith("POST /login ")) {
                                 if (logins.incrementAndGet() != 1) throw new AssertionError("Consumed one-time code was used again");
-                                extra = "Set-Cookie: af_session=fixture-only; HttpOnly; Path=/\r\nX-AF-Session-Expires: " + (System.currentTimeMillis() + 60000) + "\r\n";
+                                extra = "Set-Cookie: af_session=fixture-only; HttpOnly; Path=/\r\nX-AF-Queue-Version: 1\r\nX-AF-Session-Expires: " + (System.currentTimeMillis() + 60000) + "\r\n";
                             } else {
                                 if (!"af_session=fixture-only".equals(headers.get("cookie"))) throw new AssertionError("Missing session cookie");
                                 String batch = headers.get("x-af-batch-id");
@@ -63,7 +64,7 @@ public final class NearbyRuntimeVerifier {
                                 } else if (start.startsWith("POST /upload?")) {
                                     if (!batches.contains(batch) || !Arrays.equals(expected, body)) throw new AssertionError("Upload bytes or batch mismatch");
                                     uploaded = true;
-                                } else throw new AssertionError("Unexpected request route");
+                                } else if (!start.startsWith("POST /nearby/peer ")) throw new AssertionError("Unexpected request route");
                             }
                             socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n" + extra + "\r\nOK").getBytes(StandardCharsets.US_ASCII));
                             socket.getOutputStream().flush();
@@ -76,12 +77,25 @@ public final class NearbyRuntimeVerifier {
             try {
                 String pairing = "af-file-manager://receive?host=" + address.getHostAddress() + "&port=" + server.getLocalPort() + "&code=12345678&name=NativeFixture";
                 for (int batch = 1; batch <= 2; batch++) {
-                    Intent command = new Intent().setClassName(context, "com.affilemanager.app.transfer.NearbyTransferService")
-                        .setAction("com.affilemanager.app.action.START_NEARBY_TRANSFER").putExtra("pairing", pairing)
-                        .putStringArrayListExtra("paths", new ArrayList<>(Collections.singletonList(source.getPath())))
-                        .putStringArrayListExtra("relative_paths", new ArrayList<>(Collections.singletonList(source.getName())))
-                        .putStringArrayListExtra("directories", new ArrayList<>());
-                    test.runOnMainSync(() -> context.startForegroundService(command));
+                    // Exercise the same share -> preview -> explicit Start path as a user.
+                    // No unshrunk test API or stale service payload contract in the release APK.
+                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".files", source);
+                    Intent command = new Intent(Intent.ACTION_SEND).setClassName(context, "com.affilemanager.app.MainActivity")
+                        .setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    test.runOnMainSync(() -> context.startActivity(command));
+                    awaitNode(test, "prepared files", node -> "Ready to send: 1".contentEquals(node.getText() == null ? "" : node.getText()));
+                    if (batch == 1) {
+                        AccessibilityNodeInfo field = awaitNode(test, "pairing input", node -> node.isEditable() &&
+                            "android.widget.EditText".contentEquals(node.getClassName()));
+                        android.os.Bundle text = new android.os.Bundle();
+                        text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pairing);
+                        if (!field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Pairing field rejected input");
+                    }
+                    AccessibilityNodeInfo label = awaitNode(test, "Start button", node -> "Start transfer".contentEquals(node.getText() == null ? "" : node.getText()) &&
+                        clickableAncestor(node) != null && clickableAncestor(node).isEnabled());
+                    AccessibilityNodeInfo start = clickableAncestor(label);
+                    if (!start.performAction(AccessibilityNodeInfo.ACTION_CLICK)) throw new AssertionError("Explicit Start action unavailable");
                     long deadline = SystemClock.elapsedRealtime() + 10000;
                     while (failed.get() == null && (uploads.get() < batch || running(context)) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
                     if (failed.get() != null) throw new AssertionError("Native fixture failed", failed.get());
@@ -95,6 +109,8 @@ public final class NearbyRuntimeVerifier {
             }
         } finally {
             test.runOnMainSync(() -> context.stopService(new Intent().setClassName(context, "com.affilemanager.app.transfer.NearbyTransferService")));
+            test.runOnMainSync(() -> context.startService(new Intent().setClassName(context, "com.affilemanager.app.transfer.LanTransferService")
+                .setAction("com.affilemanager.app.action.STOP_LAN_TRANSFER")));
             if (!source.delete() || !root.delete()) throw new AssertionError("Transfer fixture cleanup failed");
         }
     }
@@ -102,6 +118,38 @@ public final class NearbyRuntimeVerifier {
         for (ActivityManager.RunningServiceInfo service : context.getSystemService(ActivityManager.class).getRunningServices(100))
             if (service.service.getClassName().equals("com.affilemanager.app.transfer.NearbyTransferService")) return true;
         return false;
+    }
+    private interface NodeMatch { boolean matches(AccessibilityNodeInfo node); }
+    private static AccessibilityNodeInfo clickableAncestor(AccessibilityNodeInfo node) {
+        for (int depth = 0; node != null && depth < 5; depth++, node = node.getParent())
+            if (node.isClickable()) return node;
+        return null;
+    }
+    private static AccessibilityNodeInfo awaitNode(Instrumentation test, String description, NodeMatch match) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 8000;
+        List<String> observed = new ArrayList<>();
+        while (SystemClock.elapsedRealtime() < deadline) {
+            observed.clear();
+            ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
+            AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
+            if (root != null) nodes.add(root);
+            int count = 0;
+            while (!nodes.isEmpty() && count++ < 2000) {
+                AccessibilityNodeInfo node = nodes.removeFirst();
+                if (node.isVisibleToUser() && match.matches(node)) return node;
+                if (node.isVisibleToUser() && observed.size() < 80)
+                    observed.add(node.getClassName() + " / " + node.getText() + " / " + node.getViewIdResourceName());
+                for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) nodes.add(child); }
+            }
+            SystemClock.sleep(50);
+        }
+        android.graphics.Bitmap screenshot = test.getUiAutomation().takeScreenshot();
+        if (screenshot != null) {
+            File evidence = new File(test.getTargetContext().getExternalFilesDir("validation"), "optimized-nearby-control.png");
+            try (FileOutputStream output = new FileOutputStream(evidence)) { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output); }
+            finally { screenshot.recycle(); }
+        }
+        throw new AssertionError("Optimized " + description + " unavailable. Observed: " + observed);
     }
     private static String line(InputStream input) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

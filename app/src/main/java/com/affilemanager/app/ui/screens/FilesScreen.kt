@@ -84,16 +84,16 @@ import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material3.AlertDialog
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfElevatedCard as ElevatedCard
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.VerticalDivider
@@ -106,7 +106,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -189,6 +189,9 @@ import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.FileInfoDialog
 import com.affilemanager.app.ui.components.FileSizeBar
 import com.affilemanager.app.ui.components.longPressDragSelect
+import com.affilemanager.app.ui.components.LazyListFastScroller
+import com.affilemanager.app.ui.components.LazyGridFastScroller
+import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
@@ -552,22 +555,16 @@ fun FilesScreen(
         )
     }
     trashPanel?.let { panel ->
-        val count = if (panel == PanelId.LEFT) left.selectedPaths.size else right.selectedPaths.size
-        AfModalDialog(
-            title = "Perkelti į šiukšlinę?",
-            icon = Icons.Rounded.Delete,
-            onDismissRequest = { trashPanel = null },
-            modifier = Modifier.testTag("move_to_trash_dialog"),
-            actions = {
-                TextButton(onClick = { trashPanel = null }) { LText("Atšaukti") }
-                Button(onClick = { viewModel.moveSelectionToTrash(panel); trashPanel = null }) { LText("Perkelti") }
-            },
-        ) {
-            LText(
-                "Pasirinkta: $count. Failus bus galima atkurti skiltyje „Daugiau“.",
-                modifier = Modifier.fillMaxWidth().padding(18.dp),
-            )
-        }
+        val selectedState = if (panel == PanelId.LEFT) left else right
+        val paths = selectedState.selectedPaths.toList()
+        val entries = selectedState.entries.filter { it.absolutePath in selectedState.selectedPaths }
+        DeleteConfirmationDialog(
+            names = entries.map(FileEntry::name).ifEmpty { paths.map { java.io.File(it).name } },
+            permanent = false,
+            onDismiss = { trashPanel = null },
+            onConfirm = { viewModel.moveSelectionToTrash(panel); trashPanel = null },
+            loadSummary = { viewModel.loadFileSelectionInfo(paths) },
+        )
     }
     archiveRequest?.let { request ->
         ArchiveDialog(
@@ -779,6 +776,7 @@ fun FilesScreen(
 @Composable
 private fun PermissionBanner(onRequest: () -> Unit) {
     ElevatedCard(
+        elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
     ) {
@@ -861,8 +859,7 @@ private fun FilePanel(
     }
     Column(
         modifier = modifier
-            .fillMaxHeight()
-            .background(if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLow),
+            .fillMaxHeight(),
     ) {
         PanelTabsBar(panelId, tabs, viewModel)
         if (state.selectedPaths.isNotEmpty()) {
@@ -1220,6 +1217,7 @@ private fun PanelTabsBar(
     onBeforeTabAction: () -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
+    com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainerLow) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1285,6 +1283,8 @@ private fun PanelTabsBar(
             }
         }
     }
+}
+
 }
 
 @Composable
@@ -1464,6 +1464,7 @@ internal fun FileList(
             }
         }
         if (state.entries.isNotEmpty()) Spacer(Modifier.size(1.dp).testTag("file_list_content_$panel"))
+        LazyListFastScroller(listState)
         if (!state.loading) Spacer(Modifier.size(1.dp).testTag("file_list_ready_$panel"))
     }
 }
@@ -1628,6 +1629,7 @@ internal fun FileGrid(
             }
         }
         if (state.entries.isNotEmpty()) Spacer(Modifier.size(1.dp).testTag("file_grid_content_$panel"))
+        LazyGridFastScroller(gridState)
         if (!state.loading) Spacer(Modifier.size(1.dp).testTag("file_grid_ready_$panel"))
     }
 }
@@ -1671,6 +1673,7 @@ private fun FileRow(
     val verticalPadding = (9f * spacingScalePercent / 100f).dp
     val itemSpacing = (12f * spacingScalePercent / 100f).dp
     val itemAlpha = if (entry.isHidden && !selected) 0.64f else 1f
+    com.affilemanager.app.ui.theme.AppearanceContentOn(if (selected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1681,7 +1684,7 @@ private fun FileRow(
                         .background(MaterialTheme.colorScheme.primaryContainer, selectionShape)
                         .border(1.5.dp, MaterialTheme.colorScheme.primary, selectionShape)
                 } else {
-                    Modifier.background(MaterialTheme.colorScheme.surface)
+                    Modifier
                 },
             )
             .alpha(itemAlpha)
@@ -1715,6 +1718,7 @@ private fun FileRow(
         }
         if (!entry.isReadable) LText("Neprieinama", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
+    }
     }
     HorizontalDivider(
         modifier = Modifier.padding(start = iconSize + itemSpacing + 12.dp),

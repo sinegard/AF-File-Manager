@@ -3,6 +3,15 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "Failas pasikeitė po peržiūros" to "The file changed after the preview",
+        "Fono pritemdymas" to "Background shading",
+        "Skaidrūs meniu ir dialogai" to "Transparent menus and dialogs",
+        "Meniu ir dialogų spalva" to "Menu and dialog color",
+        "Mygtukų ir pasirinkimų spalva" to "Button and selection color",
+        "Siuntimo eilė pilna" to "The transfer queue is full",
+        "Gaunami failai" to "Receiving",
+        "Siunčiami failai" to "Sending",
+        "Atsijungus nebaigti siuntimai bus atšaukti. Jau gauti failai liks." to "Disconnecting will cancel unfinished transfers. Files already received will stay.",
         "Fono paveikslėlis" to "Wallpaper",
         "Kortelių skaidrumas" to "Card transparency",
         "Pasirinkite paveikslėlį" to "Select an image",

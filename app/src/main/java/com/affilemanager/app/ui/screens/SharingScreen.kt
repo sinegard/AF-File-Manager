@@ -25,10 +25,10 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.affilemanager.app.ui.theme.AfButton as Button
+import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +74,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
     val roots by viewModel.roots.collectAsStateWithLifecycle()
     val transfer by LanTransferController.state.collectAsStateWithLifecycle()
+    val nearbyPeer by com.affilemanager.app.transfer.NearbyTransferController.connection.state.collectAsStateWithLifecycle()
     val incomingShare by viewModel.incomingShare.collectAsStateWithLifecycle()
     val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) left.path else right.path
@@ -138,6 +139,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 },
             )
         }
+        if (nearbyPeer == null) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 protocolChip("Web", LanTransferProtocol.WEB, protocol, !running) { selected ->
@@ -302,6 +304,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             }
         }
         }
+    }
     }
 }
 

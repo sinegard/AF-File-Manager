@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Surface
+import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -34,7 +36,9 @@ class SplitApkInstallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sessionId = savedInstanceState?.getInt("session", -1) ?: intent.getIntExtra("expected_session", -1)
-        setContent { AFFileManagerTheme { Surface(Modifier.fillMaxSize()) {
+        setContent {
+            val appearance by (application as com.affilemanager.app.AFFileManagerApplication).graph.appearance.settings.collectAsStateWithLifecycle()
+            AFFileManagerTheme(settings = appearance) { com.affilemanager.app.ui.theme.AppearancePage(Modifier.fillMaxSize()) {
             Column(Modifier.padding(24.dp)) {
                 LText("APK rinkinys")
                 message.value?.let { LText(it) } ?: CircularProgressIndicator()

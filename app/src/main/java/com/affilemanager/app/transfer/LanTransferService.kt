@@ -22,6 +22,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.util.Collections
+import kotlinx.coroutines.flow.update
 
 enum class LanTransferStatus { STOPPED, STARTING, RUNNING, ERROR }
 enum class LanTransferProtocol { WEB, FTP, WEBDAV }
@@ -72,6 +73,26 @@ object LanTransferController {
 
     internal fun publish(state: LanTransferState) {
         _state.value = state
+    }
+
+    internal fun publishStopped(reason: String) {
+        _state.update { previous ->
+            val incoming = previous.incomingUpload?.let { progress ->
+                progress.copy(files = progress.files.map { file ->
+                    if (file.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.TRANSFERRING))
+                        file.copy(status = TransferFileStatus.CANCELLED, localPath = null) else file
+                })
+            }
+            // Credentials/endpoints belong to the ended session; its bounded file results
+            // stay available until a new receive session replaces them. No disk history.
+            LanTransferState(status = LanTransferStatus.STOPPED, message = reason, incomingUpload = incoming)
+        }
+    }
+
+    internal fun publishUpload(progress: LanUploadProgress) {
+        _state.update { current ->
+            if (current.status == LanTransferStatus.RUNNING) current.copy(incomingUpload = progress) else current
+        }
     }
 }
 
@@ -160,7 +181,7 @@ class LanTransferService : Service() {
             requireNotNull(address) { "Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas" }
             val stopped: (String) -> Unit = { reason ->
                 NearbyTransferController.connection.clear()
-                LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
+                LanTransferController.publishStopped(reason)
                 stopSelf()
             }
             when (protocol) {
@@ -172,13 +193,16 @@ class LanTransferService : Service() {
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
                     language = resources.configuration.locales[0].language,
-                    onNearbyPeer = { peer, expiry -> NearbyTransferController.connection.remember(peer, expires = expiry) },
-                    onUploadProgress = { progress ->
-                        val current = LanTransferController.state.value
-                        if (current.status == LanTransferStatus.RUNNING) {
-                            LanTransferController.publish(current.copy(incomingUpload = progress))
-                        }
+                    onNearbyPeer = { peer, expiry ->
+                        NearbyChatController.beginSession(peer)
+                        NearbyTransferController.connection.remember(peer, expires = expiry)
                     },
+                    onNearbyMessage = { message ->
+                        val sender = NearbyTransferController.connectedPairing()?.receiverName ?: "Phone"
+                        NearbyChatController.received(sender, message)
+                    },
+                    onNearbyDisconnect = { NearbyTransferController.peerDisconnected(this) },
+                    onUploadProgress = LanTransferController::publishUpload,
                     onStopped = stopped,
                 )
                 LanTransferProtocol.FTP -> LanFtpServer(
@@ -245,7 +269,7 @@ class LanTransferService : Service() {
     private fun stopServer(reason: String) {
         server?.stop(reason)
         server = null
-        LanTransferController.publish(LanTransferState(status = LanTransferStatus.STOPPED, message = reason))
+        LanTransferController.publishStopped(reason)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
