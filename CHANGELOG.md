@@ -4,6 +4,8 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.35.0] - 2026-09-08
+
 - Wallpaper, background colors and card transparency now carry through file browsers, Quick locations, trash and other AF windows. Transparent cards no longer leave a shadow behind. Wallpaper shading has its own adjustment.
 - Custom themes have separate colors for menus/dialogs and controls. Changing an accent no longer changes the card color you chose. Menu transparency is optional, and text contrast follows its background.
 - Add more files while a phone-to-phone transfer is running. Both phones show queued files, and sent and received files share one reopenable list. X and Close hide the window; a separate Disconnect ends the session, with confirmation if files are still transferring. Interrupted batches and temporary sending copies are cleaned up without deleting originals.
