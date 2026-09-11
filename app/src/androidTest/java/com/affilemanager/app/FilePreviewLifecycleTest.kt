@@ -2,6 +2,7 @@ package com.affilemanager.app
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.ClipboardManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
@@ -14,14 +15,17 @@ import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.pinch
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
@@ -41,6 +45,9 @@ import com.affilemanager.app.data.LocalFileRepository
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.preview.PdfSignaturePlacementSemanticsKey
+import com.affilemanager.app.ui.preview.PdfTextRules
+import com.affilemanager.app.ui.preview.PdfTextSelectionSemanticsKey
+import com.affilemanager.app.ui.preview.PdfViewportSemanticsKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -268,18 +275,133 @@ class FilePreviewLifecycleTest {
             }
             assertTrue(compose.onAllNodesWithText("Ryškus PDF", substring = true).fetchSemanticsNodes().isEmpty())
             assertTrue(compose.onAllNodesWithText("1 / 3").fetchSemanticsNodes().isEmpty())
+            val viewport = compose.onNodeWithTag("pdf-zoom-viewport")
+            val beforeOneFingerScroll = viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey]
+            viewport.performTouchInput { swipeUp() }
+            compose.waitUntil(timeoutMillis = 5_000) {
+                val afterScroll = viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey]
+                afterScroll.pageIndex > beforeOneFingerScroll.pageIndex ||
+                    afterScroll.verticalScroll > beforeOneFingerScroll.verticalScroll
+            }
             compose.onNodeWithTag("pdf-continuous-pages").performScrollToIndex(2)
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithContentDescription("PDF page 3", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithContentDescription("PDF page 3", useUnmergedTree = true).assertIsDisplayed()
-            compose.onNodeWithContentDescription("Zoom in").performClick()
-            compose.onNodeWithText("125 %").fetchSemanticsNode()
+            val beforePinch = viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey]
+            val viewportBounds = viewport.fetchSemanticsNode().boundsInRoot
+            var pinchFocus = Offset(viewportBounds.width * 0.72f, viewportBounds.height * 0.40f)
+            val pinchPageBefore = PdfTextRules.pageAtViewportPosition(beforePinch.visiblePages, pinchFocus.y)
+            viewport.performTouchInput {
+                pinch(
+                    start0 = pinchFocus + Offset(-40f, 0f),
+                    start1 = pinchFocus + Offset(40f, 0f),
+                    end0 = pinchFocus + Offset(-100f, 0f),
+                    end1 = pinchFocus + Offset(100f, 0f),
+                    durationMillis = 500,
+                )
+            }
+            compose.waitForIdle()
+            val afterPinch = viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey]
+            val pinchPageAfter = afterPinch.visiblePages.single { it.index == pinchPageBefore.index }
+            assertTrue("PDF pinch did not zoom: ${afterPinch.scale}", afterPinch.scale >= 1.5f)
+            assertEquals(
+                (beforePinch.horizontalScroll + pinchFocus.x) / beforePinch.scale,
+                (afterPinch.horizontalScroll + pinchFocus.x) / afterPinch.scale,
+                8f,
+            )
+            assertEquals(
+                pinchFocus.y,
+                pinchPageAfter.offset +
+                    (pinchFocus.y - pinchPageBefore.offset) / beforePinch.scale * afterPinch.scale,
+                40f,
+            )
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithContentDescription("PDF page 3", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             compose.waitForIdle()
             captureRoot(File(validationRoot, "preview-pdf-continuous-page3.png"))
+            assertTrue(compose.onAllNodesWithTag("pdf-selection-highlight-2").fetchSemanticsNodes().isEmpty())
+            val beforeZoomOut = viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey]
+            val zoomOutViewportBounds = viewport.fetchSemanticsNode().boundsInRoot
+            pinchFocus = Offset(zoomOutViewportBounds.width * 0.72f, zoomOutViewportBounds.height * 0.40f)
+            val zoomOutPageBefore = PdfTextRules.pageAtViewportPosition(beforeZoomOut.visiblePages, pinchFocus.y)
+            viewport.performTouchInput {
+                pinch(
+                    start0 = pinchFocus + Offset(-100f, 0f),
+                    start1 = pinchFocus + Offset(100f, 0f),
+                    end0 = pinchFocus + Offset(-60f, 0f),
+                    end1 = pinchFocus + Offset(60f, 0f),
+                    durationMillis = 500,
+                )
+            }
+            compose.waitForIdle()
+            val afterZoomOut = viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey]
+            val zoomOutPageAfter = afterZoomOut.visiblePages.single { it.index == zoomOutPageBefore.index }
+            assertTrue(afterZoomOut.scale < beforeZoomOut.scale)
+            assertEquals(
+                (beforeZoomOut.horizontalScroll + pinchFocus.x) / beforeZoomOut.scale,
+                (afterZoomOut.horizontalScroll + pinchFocus.x) / afterZoomOut.scale,
+                8f,
+            )
+            val zoomOutFocusedY = zoomOutPageAfter.offset +
+                (pinchFocus.y - zoomOutPageBefore.offset) / beforeZoomOut.scale * afterZoomOut.scale
+            val lastVisiblePage = afterZoomOut.visiblePages.maxBy { it.index }
+            val reachedDocumentEnd = lastVisiblePage.index == 2 && kotlin.math.abs(
+                lastVisiblePage.offset + lastVisiblePage.size - zoomOutViewportBounds.height,
+            ) <= 40f
+            assertTrue(
+                "PDF zoom-out moved its focus without reaching the document end: " +
+                    "$zoomOutFocusedY / ${pinchFocus.y}; pages=${afterZoomOut.visiblePages}",
+                kotlin.math.abs(zoomOutFocusedY - pinchFocus.y) <= 40f || reachedDocumentEnd,
+            )
+            compose.onNodeWithText("Reset").performClick()
+            compose.onNodeWithText("100 %").assertIsDisplayed()
+            compose.onNodeWithTag("pdf-continuous-pages").performScrollToIndex(2)
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("pdf-page-2", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            val pdfPage = compose.onNodeWithTag("pdf-page-2", useUnmergedTree = true)
+            pdfPage.performTouchInput {
+                longClick(
+                    position = Offset(
+                        visibleSize.width * (62f / 595f),
+                        visibleSize.height * (108f / 842f),
+                    ),
+                )
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].text == "AF"
+                }.getOrDefault(false)
+            }
+            val initialSelection = pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey]
+            assertEquals("AF", initialSelection.text)
+            pdfPage.performTouchInput {
+                val destination = Offset(
+                    visibleSize.width * (285f / 595f),
+                    visibleSize.height * (108f / 842f),
+                )
+                down(Offset(initialSelection.stopHandle.x, initialSelection.stopHandle.y))
+                moveTo(destination, delayMillis = 450)
+                up()
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                runCatching {
+                    pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].text.length > initialSelection.text.length
+                }.getOrDefault(false)
+            }
+            val extendedSelection = pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey]
+            assertTrue(extendedSelection.text.startsWith("AF File Manager"))
+            compose.onNodeWithTag("pdf-copy-selection").assertIsDisplayed().performClick()
+            val clipboard = application.getSystemService(ClipboardManager::class.java)
+            compose.waitUntil(timeoutMillis = 5_000) {
+                clipboard.primaryClip?.getItemAt(0)?.coerceToText(application)?.toString() == extendedSelection.text
+            }
+            captureRoot(File(validationRoot, "preview-pdf-direct-selection-full.png"))
+            captureTaggedNode("pdf-page-2", File(validationRoot, "preview-pdf-direct-selection.png"))
+            compose.onNodeWithTag("pdf-clear-selection").assertIsDisplayed().performClick()
+            assertTrue(compose.onAllNodesWithTag("pdf-selection-highlight-2").fetchSemanticsNodes().isEmpty())
             compose.runOnUiThread { viewModel.closePreview() }
         } finally {
             fixtureRoot.deleteRecursively()

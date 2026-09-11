@@ -416,6 +416,8 @@ data class TrashBrowserUiState(
     val showThumbnails: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
+    val storedItemCount: Int = 0,
+    val storedItemCountComplete: Boolean = true,
     val loading: Boolean = false,
     val emptying: Boolean = false,
     val error: String? = null,
@@ -4283,11 +4285,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else current
         }
         viewModelScope.launch {
-            graph.trash.browse(snapshot.itemId, snapshot.relativePath).fold(
-                onSuccess = { entries ->
+            runCatching {
+                graph.trash.browse(snapshot.itemId, snapshot.relativePath).getOrThrow() to graph.trash.storageState()
+            }.fold(
+                onSuccess = { (entries, storage) ->
                     _trashBrowser.update { current ->
                         if (current.itemId == snapshot.itemId && current.relativePath == snapshot.relativePath) {
-                            current.copy(entries = entries, loading = false, error = null)
+                            current.copy(
+                                entries = entries,
+                                storedItemCount = storage.storedItemCount,
+                                storedItemCountComplete = storage.countComplete,
+                                loading = false,
+                                error = null,
+                            )
                         } else current
                     }
                 },
@@ -4397,24 +4407,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_trashBrowser.value.emptying) return
         _trashBrowser.update { it.copy(emptying = true, error = null) }
         graph.operationManager.submit("Išvaloma šiukšliadėžė") {
-            val result = graph.trash.emptyAll(this)
-            _trashBrowser.update {
-                it.copy(
-                    itemId = null,
-                    relativePath = "",
-                    rootName = null,
-                    entries = emptyList(),
-                    emptying = false,
-                ).withTrashDisplaySettings(savedDirectoryDisplaySettings(trashDirectoryIdentity(null, "")))
-            }
-            refreshTrash()
-            when {
-                result.failedItems > 0 -> message(
-                    "Ištrinta: ${result.deletedItems}, nepavyko ištrinti: ${result.failedItems}",
-                    true,
-                )
-                result.deletedItems > 0 -> message("Šiukšliadėžė išvalyta: ${result.deletedItems}")
-                else -> message("Šiukšliadėžė jau tuščia")
+            try {
+                val result = graph.trash.emptyAll(this)
+                _trashBrowser.update {
+                    it.copy(
+                        itemId = null,
+                        relativePath = "",
+                        rootName = null,
+                        entries = emptyList(),
+                        storedItemCount = if (result.failedItems == 0) 0 else it.storedItemCount,
+                        storedItemCountComplete = result.failedItems == 0,
+                    ).withTrashDisplaySettings(savedDirectoryDisplaySettings(trashDirectoryIdentity(null, "")))
+                }
+                when {
+                    result.failedItems > 0 -> {
+                        val summary = "Ištrinta: ${result.deletedItems}, nepavyko ištrinti: ${result.failedItems}"
+                        completeWithErrors(result.failedItems, summary)
+                        message(summary, true)
+                    }
+                    result.deletedItems > 0 -> message("Šiukšliadėžė išvalyta: ${result.deletedItems}")
+                    else -> message("Šiukšliadėžė jau tuščia")
+                }
+            } finally {
+                _trashBrowser.update { current -> current.copy(emptying = false) }
+                refreshTrash()
             }
         }.onFailure {
             _trashBrowser.update { current -> current.copy(emptying = false) }

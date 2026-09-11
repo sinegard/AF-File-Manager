@@ -5,7 +5,10 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.operations.OperationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -53,6 +56,13 @@ data class EmptyTrashResult(
     val failedItems: Int,
 )
 
+data class TrashStorageState(
+    val storedItemCount: Int,
+    val countComplete: Boolean,
+) {
+    val hasStoredData: Boolean get() = storedItemCount > 0 || !countComplete
+}
+
 internal object TrashPathRules {
     private const val MAX_DEPTH = 64
     private const val MAX_SEGMENT_LENGTH = 255
@@ -79,9 +89,27 @@ class TrashRepository(
 ) {
     companion object {
         private const val MAX_TRASH_ITEMS = 10_000
+        private const val MAX_ROOT_ENTRIES_PER_PASS = 20_000
         private const val MAX_DIRECTORY_ENTRIES = 50_000
+        private const val MAX_SCAN_ENTRIES = 200_000
         private const val COPY_BUFFER = 256 * 1_024
     }
+
+    private data class RootSnapshot(
+        val entries: List<File>,
+        val complete: Boolean,
+    )
+
+    private class EntryBudget(private val maximum: Int) {
+        private var used = 0
+
+        fun claim() {
+            used += 1
+            require(used <= maximum) { "Per daug elementų" }
+        }
+    }
+
+    private val mutationMutex = Mutex()
 
     private val root: File by lazy {
         (configuredRoot ?: requireNotNull(context.getExternalFilesDir("trash")) { "Šiukšliadėžės vieta nepasiekiama" })
@@ -90,6 +118,14 @@ class TrashRepository(
 
     suspend fun list(): List<TrashItem> = withContext(Dispatchers.IO) {
         listInternal()
+    }
+
+    suspend fun storageState(): TrashStorageState = withContext(Dispatchers.IO) {
+        val snapshot = rootSnapshot()
+        TrashStorageState(
+            storedItemCount = groupRootEntries(snapshot.entries).size,
+            countComplete = snapshot.complete,
+        )
     }
 
     suspend fun browse(itemId: String?, relativePath: String = ""): Result<List<TrashBrowserEntry>> =
@@ -132,80 +168,131 @@ class TrashRepository(
     }
 
     suspend fun moveToTrash(paths: List<String>, operation: OperationContext) = withContext(Dispatchers.IO) {
-        require(paths.isNotEmpty()) { "Nepasirinkta failų" }
-        val sources = paths.distinct().map { File(it).canonicalFile }
-        val scans = sources.associateWith { source ->
-            require(source.exists()) { "Failas nebeegzistuoja: ${source.name}" }
-            scan(source)
-        }
-        operation.setTotals(scans.values.sumOf { it.first }, scans.values.fold(0L) { total, scan -> Math.addExact(total, scan.second) })
-        sources.forEach { source ->
-            operation.checkpoint()
-            val id = UUID.randomUUID().toString()
-            val stored = File(root, "$id.payload")
-            val partial = File(root, "$id.partial")
-            val scan = requireNotNull(scans[source])
-
-            if (!source.renameTo(stored)) {
-                copyTree(source, partial, operation, 0)
-                val copied = scan(partial)
-                require(copied == scan) { "Šiukšlinės kopija nepatikrinta" }
-                require(partial.renameTo(stored)) { "Nepavyko užbaigti šiukšlinės kopijos" }
-                deleteTree(source, source, 0)
+        mutationMutex.withLock {
+            require(paths.isNotEmpty()) { "Nepasirinkta failų" }
+            val sources = paths.distinct().map { File(it).canonicalFile }
+            val scans = sources.associateWith { source ->
+                require(source.exists()) { "Failas nebeegzistuoja: ${source.name}" }
+                scan(source)
             }
-
-            val item = TrashItem(
-                id = id,
-                originalPath = source.absolutePath,
-                storedPath = stored.absolutePath,
-                deletedAtMillis = System.currentTimeMillis(),
-                sizeBytes = scan.second,
-                directory = source.isDirectory || stored.isDirectory,
+            operation.setTotals(
+                scans.values.sumOf { it.first },
+                scans.values.fold(0L) { total, value -> Math.addExact(total, value.second) },
             )
-            writeMetadata(item)
-            operation.progress(itemDelta = scan.first, byteDelta = scan.second, currentName = source.name)
+            sources.forEach { source ->
+                operation.checkpoint()
+                val id = UUID.randomUUID().toString()
+                val stored = File(root, "$id.payload")
+                val partial = File(root, "$id.partial")
+                val sourceScan = requireNotNull(scans[source])
+                val sourceWasDirectory = source.isDirectory
+                val movedByRename = source.renameTo(stored)
+
+                if (movedByRename) {
+                    val item = trashItem(id, source, stored, sourceScan, sourceWasDirectory)
+                    try {
+                        writeMetadata(item)
+                    } catch (error: Throwable) {
+                        if (!source.exists() && stored.exists()) runCatching { stored.renameTo(source) }
+                        throw error
+                    }
+                } else {
+                    try {
+                        copyTree(source, partial, operation, 0)
+                        val copied = scan(partial)
+                        require(copied == sourceScan) { "Šiukšlinės kopija nepatikrinta" }
+                        require(partial.renameTo(stored)) { "Nepavyko užbaigti šiukšlinės kopijos" }
+                    } catch (error: Throwable) {
+                        cleanupQuietly(partial)
+                        throw error
+                    }
+
+                    val item = trashItem(id, source, stored, sourceScan, sourceWasDirectory)
+                    try {
+                        writeMetadata(item)
+                    } catch (error: Throwable) {
+                        cleanupQuietly(stored)
+                        throw error
+                    }
+                    // Keep the verified Trash copy and its metadata if source cleanup fails.
+                    // That is visible and recoverable instead of becoming an orphaned payload.
+                    deleteTree(source, source, 0, budget = EntryBudget(MAX_SCAN_ENTRIES))
+                }
+                operation.progress(itemDelta = sourceScan.first, byteDelta = sourceScan.second, currentName = source.name)
+            }
         }
     }
 
     suspend fun restore(id: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val metadata = File(root, "$id.json")
-            val item = readMetadata(metadata)
-            val stored = File(item.storedPath)
-            require(stored.exists()) { "Šiukšlinės turinys neberastas" }
-            val requested = File(item.originalPath)
-            requested.parentFile?.mkdirs()
-            val target = if (requested.exists()) FileSystemRules.keepBothTarget(requested) else requested
-            require(stored.renameTo(target)) { "Atkurti nepavyko" }
-            metadata.delete()
-            target.absolutePath
+        mutationMutex.withLock {
+            runCatching {
+                val metadata = File(root, "$id.json")
+                val item = readMetadata(metadata)
+                val stored = File(item.storedPath)
+                require(stored.exists()) { "Šiukšlinės turinys neberastas" }
+                val requested = File(item.originalPath)
+                requested.parentFile?.mkdirs()
+                val target = if (requested.exists()) FileSystemRules.keepBothTarget(requested) else requested
+                require(stored.renameTo(target)) { "Atkurti nepavyko" }
+                check(metadata.delete() || !metadata.exists()) { "Nepavyko pašalinti metaduomenų" }
+                target.absolutePath
+            }
         }
     }
 
     suspend fun deleteForever(id: String, operation: OperationContext? = null): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val metadata = File(root, "$id.json")
-            val item = readMetadata(metadata)
-            val stored = File(item.storedPath)
-            val totals = if (stored.exists()) scan(stored) else 0 to 0L
-            operation?.setTotals(totals.first, totals.second)
-            deleteTrackedItem(metadata, item, operation)
+        mutationMutex.withLock {
+            runCatching {
+                val metadata = File(root, "$id.json")
+                val item = readMetadata(metadata)
+                val stored = File(item.storedPath)
+                val totals = if (stored.exists()) scan(stored) else 0 to 0L
+                operation?.setTotals(totals.first, totals.second)
+                deleteTrackedItem(metadata, item, operation, EntryBudget(MAX_SCAN_ENTRIES))
+            }
         }
     }
 
     suspend fun emptyAll(operation: OperationContext? = null): EmptyTrashResult = withContext(Dispatchers.IO) {
-        var deleted = 0
-        var failed = 0
-        val items = metadataItems()
-        val totals = items.map { (_, item) -> File(item.storedPath).takeIf(File::exists)?.let(::scan) ?: (0 to 0L) }
-        operation?.setTotals(totals.sumOf { it.first }, totals.fold(0L) { sum, value -> Math.addExact(sum, value.second) })
-        items.forEach { (metadata, item) ->
-            operation?.checkpoint()
-            runCatching { deleteTrackedItem(metadata, item, operation) }
-                .onSuccess { deleted += 1 }
-                .onFailure { failed += 1 }
+        mutationMutex.withLock {
+            var deleted = 0
+            var failed = 0
+            val failedGroupKeys = mutableSetOf<String>()
+            val deletionBudget = EntryBudget(MAX_SCAN_ENTRIES)
+            var snapshot = rootSnapshot()
+            if (snapshot.complete) {
+                val totals = scanAll(snapshot.entries, operation)
+                operation?.setTotals(totals.first, totals.second)
+            } else {
+                operation?.setTotals(null, null)
+            }
+
+            while (snapshot.entries.isNotEmpty()) {
+                val candidates = snapshot.entries.filterNot { logicalRootKey(it.name) in failedGroupKeys }
+                if (candidates.isEmpty()) break
+                groupRootEntries(candidates).forEach { group ->
+                    val groupKey = logicalRootKey(group.first().name)
+                    operation?.checkpoint()
+                    var groupFailed = false
+                    for (entry in group.sortedWith(compareBy<File>(::cleanupPriority).thenBy(File::getName))) {
+                        if (!entry.exists() && !Files.isSymbolicLink(entry.toPath())) continue
+                        try {
+                            deleteTree(root, entry, 0, operation, deletionBudget)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            failedGroupKeys += groupKey
+                            groupFailed = true
+                            break
+                        }
+                    }
+                    if (groupFailed) failed += 1 else deleted += 1
+                }
+                snapshot = rootSnapshot()
+                if (snapshot.complete && snapshot.entries.all { logicalRootKey(it.name) in failedGroupKeys }) break
+            }
+            EmptyTrashResult(deletedItems = deleted, failedItems = failed)
         }
-        EmptyTrashResult(deletedItems = deleted, failedItems = failed)
     }
 
     private fun listInternal(): List<TrashItem> = metadataItems()
@@ -216,6 +303,62 @@ class TrashRepository(
         ?.take(MAX_TRASH_ITEMS)
         ?.mapNotNull { metadata -> runCatching { metadata to readMetadata(metadata) }.getOrNull() }
         .orEmpty()
+
+    private fun rootSnapshot(): RootSnapshot {
+        val entries = ArrayList<File>(minOf(MAX_ROOT_ENTRIES_PER_PASS, 1_024))
+        var complete = true
+        Files.newDirectoryStream(root.toPath()).use { stream ->
+            val iterator = stream.iterator()
+            while (iterator.hasNext()) {
+                if (entries.size == MAX_ROOT_ENTRIES_PER_PASS) {
+                    complete = false
+                    break
+                }
+                val entry = iterator.next().toFile().absoluteFile
+                require(entry.parentFile == root.absoluteFile) { "Netinkamas šiukšlinės kelias" }
+                entries += entry
+            }
+        }
+        return RootSnapshot(entries.sortedBy(File::getName), complete)
+    }
+
+    private fun groupRootEntries(entries: List<File>): List<List<File>> = entries
+        .groupBy { file -> logicalRootKey(file.name) }
+        .toSortedMap()
+        .values
+        .toList()
+
+    private fun logicalRootKey(name: String): String {
+        val id = when {
+            name.endsWith(".json.partial") -> name.removeSuffix(".json.partial")
+            name.endsWith(".payload") -> name.removeSuffix(".payload")
+            name.endsWith(".partial") -> name.removeSuffix(".partial")
+            name.endsWith(".json") -> name.removeSuffix(".json")
+            else -> return "entry:$name"
+        }
+        return if (id.isBlank()) "entry:$name" else "trash:$id"
+    }
+
+    private fun cleanupPriority(file: File): Int = when {
+        file.name.endsWith(".json") -> 2
+        file.name.endsWith(".json.partial") -> 1
+        else -> 0
+    }
+
+    private fun trashItem(
+        id: String,
+        source: File,
+        stored: File,
+        sourceScan: Pair<Int, Long>,
+        sourceWasDirectory: Boolean,
+    ): TrashItem = TrashItem(
+        id = id,
+        originalPath = source.absolutePath,
+        storedPath = stored.absolutePath,
+        deletedAtMillis = System.currentTimeMillis(),
+        sizeBytes = sourceScan.second,
+        directory = sourceWasDirectory,
+    )
 
     private fun toRootBrowserEntry(item: TrashItem): TrashBrowserEntry {
         val stored = File(item.storedPath)
@@ -235,11 +378,16 @@ class TrashRepository(
         )
     }
 
-    private suspend fun deleteTrackedItem(metadata: File, item: TrashItem, operation: OperationContext? = null) {
+    private suspend fun deleteTrackedItem(
+        metadata: File,
+        item: TrashItem,
+        operation: OperationContext? = null,
+        budget: EntryBudget? = null,
+    ) {
         require(FileSystemRules.isContained(root, metadata)) { "Netinkamas šiukšliadėžės metaduomenų kelias" }
         val stored = File(item.storedPath)
         require(FileSystemRules.isContained(root, stored)) { "Netinkamas šiukšliadėžės turinio kelias" }
-        if (stored.exists()) deleteTree(stored, stored, 0, operation)
+        if (stored.exists()) deleteTree(stored, stored, 0, operation, budget)
         check(metadata.delete() || !metadata.exists()) { "Nepavyko pašalinti metaduomenų" }
     }
 
@@ -253,8 +401,13 @@ class TrashRepository(
             .put("deletedAtMillis", item.deletedAtMillis)
             .put("sizeBytes", item.sizeBytes)
             .put("directory", item.directory)
-        temporary.writeText(json.toString(), Charsets.UTF_8)
-        require(temporary.renameTo(target)) { "Nepavyko įrašyti šiukšlinės metaduomenų" }
+        try {
+            temporary.writeText(json.toString(), Charsets.UTF_8)
+            require(temporary.renameTo(target)) { "Nepavyko įrašyti šiukšlinės metaduomenų" }
+        } catch (error: Throwable) {
+            runCatching { temporary.delete() }
+            throw error
+        }
     }
 
     private fun readMetadata(file: File): TrashItem {
@@ -294,9 +447,16 @@ class TrashRepository(
         }
     }
 
-    private suspend fun deleteTree(containmentRoot: File, file: File, depth: Int, operation: OperationContext? = null) {
+    private suspend fun deleteTree(
+        containmentRoot: File,
+        file: File,
+        depth: Int,
+        operation: OperationContext? = null,
+        budget: EntryBudget? = null,
+    ) {
         require(depth <= 64) { "Per gilus aplankų medis" }
         operation?.checkpoint()
+        budget?.claim()
         val rootPath = containmentRoot.absoluteFile.toPath().normalize()
         val candidatePath = file.absoluteFile.toPath().normalize()
         require(candidatePath.startsWith(rootPath)) { "Trynimo kelias išeina už leistinos ribos" }
@@ -305,7 +465,7 @@ class TrashRepository(
             operation?.progress(itemDelta = 1, currentName = file.name)
             return
         }
-        if (file.isDirectory) file.listFiles()?.forEach { deleteTree(containmentRoot, it, depth + 1, operation) }
+        if (file.isDirectory) file.listFiles()?.forEach { deleteTree(containmentRoot, it, depth + 1, operation, budget) }
         val bytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L
         require(file.delete()) { "Nepavyko ištrinti ${file.name}" }
         operation?.progress(itemDelta = 1, byteDelta = bytes, currentName = file.name)
@@ -319,11 +479,37 @@ class TrashRepository(
         while (pending.isNotEmpty()) {
             val current = pending.removeLast()
             entries += 1
-            require(entries <= 200_000) { "Per daug elementų" }
+            require(entries <= MAX_SCAN_ENTRIES) { "Per daug elementų" }
+            val currentPath = current.toPath()
+            if (Files.isSymbolicLink(currentPath)) continue
             if (current.isDirectory) current.listFiles()?.forEach(pending::add)
                 ?: throw SecurityException("Aplankas neperskaitomas")
             else bytes = Math.addExact(bytes, current.length())
         }
         return entries to bytes
+    }
+
+    private suspend fun scanAll(files: List<File>, operation: OperationContext?): Pair<Int, Long> {
+        var entries = 0
+        var bytes = 0L
+        val pending = ArrayDeque<File>()
+        files.asReversed().forEach(pending::add)
+        while (pending.isNotEmpty()) {
+            operation?.checkpoint()
+            val current = pending.removeLast()
+            entries += 1
+            require(entries <= MAX_SCAN_ENTRIES) { "Per daug elementų" }
+            val currentPath = current.toPath()
+            if (Files.isSymbolicLink(currentPath)) continue
+            if (current.isDirectory) current.listFiles()?.forEach(pending::add)
+                ?: throw SecurityException("Aplankas neperskaitomas")
+            else bytes = Math.addExact(bytes, current.length())
+        }
+        return entries to bytes
+    }
+
+    private suspend fun cleanupQuietly(file: File) {
+        if (!file.exists() && !Files.isSymbolicLink(file.toPath())) return
+        runCatching { deleteTree(file, file, 0, budget = EntryBudget(MAX_SCAN_ENTRIES)) }
     }
 }

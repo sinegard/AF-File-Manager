@@ -14,7 +14,149 @@ internal object PreviewZoomRules {
     fun zoomIn(scale: Float, maximum: Float): Float = clamp(scale + STEP, maximum)
     fun zoomOut(scale: Float, maximum: Float): Float = clamp(scale - STEP, maximum)
     fun percent(scale: Float): Int = (scale * 100).roundToInt()
+
+    fun anchoredScrollOffset(
+        currentScroll: Float,
+        focusInViewport: Float,
+        oldScale: Float,
+        newScale: Float,
+    ): Float {
+        require(currentScroll.isFinite() && currentScroll >= 0f) { "Invalid PDF scroll offset" }
+        require(focusInViewport.isFinite() && focusInViewport >= 0f) { "Invalid PDF zoom focus" }
+        require(oldScale.isFinite() && oldScale > 0f) { "Invalid previous PDF scale" }
+        require(newScale.isFinite() && newScale > 0f) { "Invalid next PDF scale" }
+        return (((currentScroll + focusInViewport) / oldScale) * newScale - focusInViewport)
+            .coerceAtLeast(0f)
+    }
 }
+
+internal object PdfTextRules {
+    const val MAX_SOURCE_BYTES = 256L * 1_024L * 1_024L
+    const val MAX_PAGE_TEXT_CHARS = 256 * 1_024
+    const val MAX_SELECTION_RECTS = 8_192
+    const val SCRATCH_ROOT_NAME = "pdf-text-selection"
+
+    fun requireSourceSize(sizeBytes: Long?): Long? = sizeBytes?.also {
+        require(it in 1..MAX_SOURCE_BYTES) { "Failas per didelis peržiūrai" }
+    }
+
+    fun requirePageIndex(pageIndex: Int, pageCount: Int): Int = pageIndex.also {
+        require(pageCount in 1..PdfRenderRules.MAX_PAGE_COUNT && it in 0 until pageCount) {
+            "PDF puslapis nepasiekiamas"
+        }
+    }
+
+    fun requireTextLength(characters: Int): Int = characters.also {
+        require(it in 0..MAX_PAGE_TEXT_CHARS) { "Failas per didelis peržiūrai" }
+    }
+
+    fun requireSelectionRectCount(rectangles: Int): Int = rectangles.also {
+        require(it in 0..MAX_SELECTION_RECTS) { "Failas per didelis peržiūrai" }
+    }
+
+    fun pageClosestToViewportCenter(
+        visiblePages: List<PdfVisiblePage>,
+        viewportStart: Int,
+        viewportEnd: Int,
+    ): Int {
+        require(visiblePages.isNotEmpty()) { "PDF puslapis nepasiekiamas" }
+        require(viewportEnd > viewportStart) { "PDF puslapis nepasiekiamas" }
+        val viewportCenter = (viewportStart.toLong() + viewportEnd.toLong()) / 2L
+        return visiblePages.minBy { page ->
+            val pageCenter = page.offset.toLong() + page.size.toLong() / 2L
+            kotlin.math.abs(pageCenter - viewportCenter)
+        }.index
+    }
+
+    fun pageAtViewportPosition(
+        visiblePages: List<PdfVisiblePage>,
+        position: Float,
+    ): PdfVisiblePage {
+        require(visiblePages.isNotEmpty() && position.isFinite()) { "PDF puslapis nepasiekiamas" }
+        visiblePages.firstOrNull { page ->
+            position >= page.offset && position < page.offset.toLong() + page.size.toLong()
+        }?.let { return it }
+        return visiblePages.minBy { page ->
+            kotlin.math.abs(page.offset.toDouble() + page.size.toDouble() / 2.0 - position)
+        }
+    }
+}
+
+internal data class PdfPageSize(val width: Int, val height: Int) {
+    init {
+        require(width > 0 && height > 0) { "Netinkamas PDF puslapio dydis" }
+    }
+
+    val aspectRatio: Float get() = width.toFloat() / height
+}
+
+internal data class PdfPagePoint(val x: Float, val y: Float)
+internal data class PdfDisplayPoint(val x: Float, val y: Float)
+internal data class PdfDisplaySize(val width: Float, val height: Float)
+
+internal enum class PdfSelectionHandle { START, STOP }
+
+internal object PdfSelectionRules {
+    fun pagePoint(
+        displayPoint: PdfDisplayPoint,
+        displaySize: PdfDisplaySize,
+        pageSize: PdfPageSize,
+    ): PdfPagePoint {
+        require(displayPoint.x.isFinite() && displayPoint.y.isFinite()) { "PDF perskaityti nepavyko" }
+        require(displaySize.width.isFinite() && displaySize.width > 0f) { "Netinkamas PDF peržiūros plotis" }
+        require(displaySize.height.isFinite() && displaySize.height > 0f) { "PDF perskaityti nepavyko" }
+        return PdfPagePoint(
+            x = (displayPoint.x / displaySize.width * pageSize.width).coerceIn(0f, pageSize.width.toFloat()),
+            y = (displayPoint.y / displaySize.height * pageSize.height).coerceIn(0f, pageSize.height.toFloat()),
+        )
+    }
+
+    fun displayPoint(
+        pagePoint: PdfPagePoint,
+        displaySize: PdfDisplaySize,
+        pageSize: PdfPageSize,
+    ): PdfDisplayPoint {
+        require(pagePoint.x.isFinite() && pagePoint.y.isFinite()) { "PDF perskaityti nepavyko" }
+        require(displaySize.width.isFinite() && displaySize.width > 0f) { "Netinkamas PDF peržiūros plotis" }
+        require(displaySize.height.isFinite() && displaySize.height > 0f) { "PDF perskaityti nepavyko" }
+        return PdfDisplayPoint(
+            x = pagePoint.x.coerceIn(0f, pageSize.width.toFloat()) / pageSize.width * displaySize.width,
+            y = pagePoint.y.coerceIn(0f, pageSize.height.toFloat()) / pageSize.height * displaySize.height,
+        )
+    }
+
+    fun handleAt(
+        touch: PdfDisplayPoint,
+        start: PdfDisplayPoint,
+        stop: PdfDisplayPoint,
+        hitRadius: Float,
+    ): PdfSelectionHandle? {
+        require(hitRadius.isFinite() && hitRadius > 0f) { "PDF perskaityti nepavyko" }
+        val startDistance = distanceSquared(touch, start)
+        val stopDistance = distanceSquared(touch, stop)
+        val maximumDistance = hitRadius * hitRadius
+        return when {
+            startDistance <= maximumDistance && startDistance <= stopDistance -> PdfSelectionHandle.START
+            stopDistance <= maximumDistance -> PdfSelectionHandle.STOP
+            else -> null
+        }
+    }
+
+    private fun distanceSquared(first: PdfDisplayPoint, second: PdfDisplayPoint): Float {
+        require(
+            first.x.isFinite() && first.y.isFinite() && second.x.isFinite() && second.y.isFinite(),
+        ) { "PDF perskaityti nepavyko" }
+        val x = first.x - second.x
+        val y = first.y - second.y
+        return x * x + y * y
+    }
+}
+
+internal data class PdfVisiblePage(
+    val index: Int,
+    val offset: Int,
+    val size: Int,
+)
 
 internal object PdfRenderRules {
     const val MAX_PAGE_COUNT = 5_000

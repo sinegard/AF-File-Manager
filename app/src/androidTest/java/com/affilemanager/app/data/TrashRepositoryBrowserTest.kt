@@ -53,6 +53,45 @@ class TrashRepositoryBrowserTest {
             assertEquals(0, result.failedItems)
             assertTrue(repository.list().isEmpty())
             assertTrue(repository.browse(itemId = null).getOrThrow().isEmpty())
+            assertFalse(repository.storageState().hasStoredData)
+        } finally {
+            sourceRoot.deleteRecursively()
+            trashRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun emptyAllRemovesInvisibleOrphanedAndInterruptedTrashData() = runBlocking {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val sourceRoot = File(requireNotNull(application.getExternalFilesDir("trash-orphan-source")), "run-${System.nanoTime()}")
+        val trashRoot = File(application.cacheDir, "trash-orphans-${System.nanoTime()}")
+        require(sourceRoot.mkdirs())
+        try {
+            val trackedSource = File(sourceRoot, "tracked.bin").apply { writeBytes(ByteArray(257) { 7 }) }
+            val repository = TrashRepository(application, configuredRoot = trashRoot)
+            repository.moveToTrash(listOf(trackedSource.absolutePath), OperationContext.background())
+
+            val orphanId = "orphan-${System.nanoTime()}"
+            File(trashRoot, "$orphanId.payload").writeBytes(ByteArray(4_096) { 3 })
+            File(trashRoot, "$orphanId.partial").writeBytes(ByteArray(2_048) { 5 })
+            val corruptId = "corrupt-${System.nanoTime()}"
+            File(trashRoot, "$corruptId.payload").writeBytes(ByteArray(1_024) { 9 })
+            File(trashRoot, "$corruptId.json").writeText("{not valid trash metadata")
+            File(trashRoot, "$corruptId.json.partial").writeText("unfinished")
+            File(trashRoot, "legacy-residue.bin").writeBytes(ByteArray(512) { 1 })
+
+            assertEquals(1, repository.list().size)
+            assertTrue(repository.browse(itemId = null).getOrThrow().size == 1)
+            val before = repository.storageState()
+            assertTrue(before.hasStoredData)
+            assertEquals(4, before.storedItemCount)
+
+            val result = repository.emptyAll(OperationContext.background())
+
+            assertEquals(4, result.deletedItems)
+            assertEquals(0, result.failedItems)
+            assertFalse(repository.storageState().hasStoredData)
+            assertTrue(trashRoot.listFiles().orEmpty().isEmpty())
         } finally {
             sourceRoot.deleteRecursively()
             trashRoot.deleteRecursively()

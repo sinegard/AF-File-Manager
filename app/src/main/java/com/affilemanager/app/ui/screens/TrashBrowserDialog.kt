@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -95,6 +96,8 @@ fun TrashBrowserDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit,
 ) {
+    val cleanupItemCount = maxOf(itemCount, state.storedItemCount)
+    val cleanupAvailable = cleanupItemCount > 0 || !state.storedItemCountComplete
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     var confirmEmpty by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<TrashBrowserEntry?>(null) }
@@ -181,7 +184,8 @@ fun TrashBrowserDialog(
                             DropdownMenuItem(
                                 text = { LText("Išvalyti visą šiukšliadėžę") },
                                 leadingIcon = { Icon(Icons.Rounded.DeleteForever, contentDescription = null) },
-                                enabled = itemCount > 0 && !state.emptying,
+                                enabled = cleanupAvailable && !state.emptying,
+                                modifier = Modifier.testTag("trash_empty_all"),
                                 onClick = { menu = false; confirmEmpty = true },
                             )
                         }
@@ -268,7 +272,11 @@ fun TrashBrowserDialog(
             loadSummary = roots.takeIf { it.isNotEmpty() }?.let { items ->
                 suspend { viewModel.loadFileSelectionInfo(items.map(TrashBrowserEntry::storedPath)) }
             },
-            explanation = "Visi $itemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima.",
+            explanation = if (state.storedItemCountComplete && cleanupItemCount > 0) {
+                "Visi $cleanupItemCount šiukšliadėžėje esantys elementai bus ištrinti visam laikui ir jų atkurti nebebus galima."
+            } else {
+                "Šio veiksmo nebus galima atšaukti."
+            },
         )
     }
 
@@ -374,6 +382,7 @@ private fun TrashBrowserGridItem(
     val iconSize = (72f * iconScalePercent / 100f).dp
     Card(
         onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().testTag("trash-grid-item-${entry.name}"),
         shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
@@ -391,7 +400,14 @@ private fun TrashBrowserGridItem(
                 showThumbnails = showThumbnails,
                 modifier = Modifier.size(iconSize),
             )
-            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                entry.name,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
             if (entry.topLevel) {
                 Row {
                     IconButton(onClick = onRestore) {

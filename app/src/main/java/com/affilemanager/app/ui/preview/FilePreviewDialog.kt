@@ -5,6 +5,7 @@ import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,14 +18,21 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.view.View
+import android.widget.TextView
+import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -35,6 +43,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -61,6 +70,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Calculate
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Delete
@@ -117,12 +127,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
@@ -131,6 +145,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -150,6 +165,7 @@ import com.affilemanager.app.archive.ArchiveBrowserItem
 import com.affilemanager.app.archive.ArchiveMutationRules
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
+import com.affilemanager.app.BuildConfig
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.editing.EditConflict
 import com.affilemanager.app.editing.EditExistingPolicy
@@ -191,8 +207,12 @@ import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.components.LazyGridFastScroller
 import com.affilemanager.app.ui.components.LazyListFastScroller
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -204,15 +224,55 @@ import java.util.Locale
 
 internal val pdfRenderPermits = Semaphore(1)
 
-internal data class PdfDocumentInfo(val pageAspectRatios: List<Float>) {
-    val pageCount: Int get() = pageAspectRatios.size
+internal data class PdfDocumentInfo(val pages: List<PdfPageSize>) {
+    val pageCount: Int get() = pages.size
 }
+
+internal data class PdfViewportSnapshot(
+    val scale: Float,
+    val horizontalScroll: Int,
+    val pageIndex: Int,
+    val verticalScroll: Int,
+    val visiblePages: List<PdfVisiblePage>,
+)
+
+internal val PdfViewportSemanticsKey = SemanticsPropertyKey<PdfViewportSnapshot>("PdfViewport")
+
+internal data class PdfTextSelectionSnapshot(
+    val text: String,
+    val boundsCount: Int,
+    val startHandle: PdfDisplayPoint,
+    val stopHandle: PdfDisplayPoint,
+)
+
+internal val PdfTextSelectionSemanticsKey =
+    SemanticsPropertyKey<PdfTextSelectionSnapshot>("PdfTextSelection")
+
+private data class PdfSelectionRequest(
+    val pageIndex: Int,
+    val start: PdfTextBoundary,
+    val stop: PdfTextBoundary,
+    val clearOnEmpty: Boolean,
+)
 
 private data class MediaPreviewInfo(
     val durationMillis: Long,
     val mimeType: String?,
     val bitRate: String?,
     val artwork: Bitmap?,
+)
+
+private class PdfPinchAnchor {
+    var active = false
+    var pageIndex = 0
+    var documentX = 0f
+    var documentY = 0f
+}
+
+private data class PdfZoomScrollRequest(
+    val horizontal: Float,
+    val pageIndex: Int,
+    val vertical: Float,
 )
 
 @Composable
@@ -772,19 +832,102 @@ private fun PdfPreview(source: PreviewSource) {
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     var renderScale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     val horizontalScroll = rememberScrollState()
-    @Suppress("DEPRECATION")
-    val transformState = rememberTransformableState { zoomChange, _, _ ->
-        scale = PreviewZoomRules.clamp(scale * zoomChange, PreviewZoomRules.PDF_MAX_SCALE)
+    val listState = rememberLazyListState()
+    val pinchAnchor = remember(source.key) { PdfPinchAnchor() }
+    val zoomScrollRequests = remember(source.key) {
+        MutableSharedFlow<PdfZoomScrollRequest>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
     }
+    val selectionRequests = remember(source.key) {
+        MutableSharedFlow<PdfSelectionRequest>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    }
+    val directSelectionSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+    val selectionFailureText = uiText("PDF perskaityti nepavyko")
+    val copiedText = uiText("Nukopijuota")
+    var directSelection by remember(source.key) { mutableStateOf<PdfPageTextSelection?>(null) }
+    var selectionPendingPage by remember(source.key) { mutableStateOf<Int?>(null) }
+    var textSelectionPage by remember(source.key) { mutableStateOf<Int?>(null) }
     val updateScale: (Float) -> Unit = { scale = PreviewZoomRules.clamp(it, PreviewZoomRules.PDF_MAX_SCALE) }
+    LaunchedEffect(source.key) {
+        zoomScrollRequests.collectLatest { request ->
+            // Anchor the page during the scale remeasure. Scrolling the old layout first can
+            // clamp against the old page height and move the point between the fingers.
+            val verticalOffset = request.vertical.toInt()
+            listState.requestScrollToItem(request.pageIndex, verticalOffset.coerceAtLeast(0))
+            withFrameNanos { }
+            if (verticalOffset < 0) listState.scrollBy(verticalOffset.toFloat())
+            horizontalScroll.scrollTo(request.horizontal.toInt().coerceAtLeast(0))
+        }
+    }
     LaunchedEffect(scale) {
         if (scale <= PreviewZoomRules.MIN_SCALE) horizontalScroll.scrollTo(0)
         delay(140)
         renderScale = scale
     }
+    LaunchedEffect(source.key, directSelectionSupported) {
+        if (!directSelectionSupported) return@LaunchedEffect
+        selectionRequests.collectLatest { request ->
+            selectionPendingPage = request.pageIndex
+            if (!request.clearOnEmpty) delay(24)
+            val result = runCatching {
+                pdfRenderPermits.withPermit {
+                    runInterruptible(Dispatchers.IO) {
+                        selectPdfPageText(
+                            context = context,
+                            source = source,
+                            pageIndex = request.pageIndex,
+                            start = request.start,
+                            stop = request.stop,
+                        )
+                    }
+                }
+            }
+            result.onSuccess { selected ->
+                if (selected != null || request.clearOnEmpty) directSelection = selected
+            }.onFailure {
+                Toast.makeText(context, selectionFailureText, Toast.LENGTH_SHORT).show()
+            }
+            selectionPendingPage = null
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-        ZoomControls(scale, PreviewZoomRules.PDF_MAX_SCALE, updateScale)
+        ZoomControls(
+            scale = scale,
+            maximum = PreviewZoomRules.PDF_MAX_SCALE,
+            onScaleChanged = updateScale,
+            onSelectText = if (directSelectionSupported) null else ({
+                val pageCount = documentInfoResult?.getOrNull()?.pageCount ?: 0
+                if (pageCount > 0) {
+                    val layout = listState.layoutInfo
+                    val visiblePages = layout.visibleItemsInfo.map { item ->
+                        PdfVisiblePage(index = item.index, offset = item.offset, size = item.size)
+                    }
+                    textSelectionPage = if (visiblePages.isEmpty()) {
+                        listState.firstVisibleItemIndex
+                    } else {
+                        PdfTextRules.pageClosestToViewportCenter(
+                            visiblePages = visiblePages,
+                            viewportStart = layout.viewportStartOffset,
+                            viewportEnd = layout.viewportEndOffset,
+                        )
+                    }.coerceIn(0, pageCount - 1)
+                }
+            }),
+            onCopySelectedText = directSelection?.let { selected ->
+                {
+                    context.getSystemService(ClipboardManager::class.java)
+                        .setPrimaryClip(ClipData.newPlainText(source.name, selected.text))
+                    Toast.makeText(context, copiedText, Toast.LENGTH_SHORT).show()
+                }
+            },
+            onClearSelectedText = directSelection?.let { { directSelection = null } },
+        )
         when (val loaded = documentInfoResult) {
             null -> CircularProgressIndicator()
             else -> {
@@ -796,16 +939,90 @@ private fun PdfPreview(source: PreviewSource) {
                         modifier = Modifier
                             .fillMaxSize()
                             .clipToBounds()
-                            .transformable(
-                                state = transformState,
-                                canPan = { false },
-                                lockRotationOnZoomPan = true,
-                            ),
+                            .testTag("pdf-zoom-viewport")
+                            .then(
+                                if (BuildConfig.DEBUG) Modifier.semantics {
+                                    this[PdfViewportSemanticsKey] = PdfViewportSnapshot(
+                                        scale = scale,
+                                        horizontalScroll = horizontalScroll.value,
+                                        pageIndex = listState.firstVisibleItemIndex,
+                                        verticalScroll = listState.firstVisibleItemScrollOffset,
+                                        visiblePages = listState.layoutInfo.visibleItemsInfo.map { item ->
+                                            PdfVisiblePage(index = item.index, offset = item.offset, size = item.size)
+                                        },
+                                    )
+                                } else Modifier,
+                            )
+                            .pointerInput(source.key) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    pinchAnchor.active = false
+                                    var gestureScale = scale
+                                    var pointersPressed = true
+                                    while (pointersPressed) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val pressedPointers = event.changes.count { it.pressed }
+                                        val stablePinchPointers = event.changes.count {
+                                            it.pressed && it.previousPressed
+                                        }
+                                        if (stablePinchPointers >= 2) {
+                                            val centroid = event.calculateCentroid(useCurrent = true)
+                                            if (centroid.x.isFinite() && centroid.y.isFinite()) {
+                                                if (!pinchAnchor.active) {
+                                                    val previousCentroid = event.calculateCentroid(useCurrent = false)
+                                                    val anchorCentroid = if (
+                                                        previousCentroid.x.isFinite() && previousCentroid.y.isFinite()
+                                                    ) previousCentroid else centroid
+                                                    pinchAnchor.active = true
+                                                    gestureScale = scale
+                                                    val anchorPage = PdfTextRules.pageAtViewportPosition(
+                                                        visiblePages = listState.layoutInfo.visibleItemsInfo.map { item ->
+                                                            PdfVisiblePage(
+                                                                index = item.index,
+                                                                offset = item.offset,
+                                                                size = item.size,
+                                                            )
+                                                        },
+                                                        position = anchorCentroid.y,
+                                                    )
+                                                    pinchAnchor.pageIndex = anchorPage.index
+                                                    pinchAnchor.documentX =
+                                                        (horizontalScroll.value + anchorCentroid.x) / gestureScale
+                                                    pinchAnchor.documentY =
+                                                        (anchorCentroid.y - anchorPage.offset)
+                                                            .coerceIn(0f, anchorPage.size.toFloat()) / gestureScale
+                                                }
+                                                val nextScale = PreviewZoomRules.clamp(
+                                                    gestureScale * event.calculateZoom(),
+                                                    PreviewZoomRules.PDF_MAX_SCALE,
+                                                )
+                                                if (nextScale != gestureScale) {
+                                                    gestureScale = nextScale
+                                                    scale = nextScale
+                                                    zoomScrollRequests.tryEmit(
+                                                        PdfZoomScrollRequest(
+                                                            horizontal = pinchAnchor.documentX * nextScale - centroid.x,
+                                                            pageIndex = pinchAnchor.pageIndex,
+                                                            vertical = pinchAnchor.documentY * nextScale - centroid.y,
+                                                        ),
+                                                    )
+                                                }
+                                                event.changes.forEach { change -> change.consume() }
+                                            }
+                                        } else if (pressedPointers < 2) {
+                                            pinchAnchor.active = false
+                                        }
+                                        pointersPressed = event.changes.any { it.pressed }
+                                    }
+                                    pinchAnchor.active = false
+                                }
+                            },
                     ) {
                         val viewportWidthPx = with(LocalDensity.current) { maxWidth.roundToPx().coerceAtLeast(1) }
                         val contentWidth = maxWidth * scale
                         Row(modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScroll)) {
                             LazyColumn(
+                                state = listState,
                                 modifier = Modifier
                                     .fillMaxHeight()
                                     .width(contentWidth)
@@ -817,9 +1034,33 @@ private fun PdfPreview(source: PreviewSource) {
                                         context = context,
                                         source = source,
                                         pageIndex = pageIndex,
-                                        pageAspectRatio = documentInfo.pageAspectRatios[pageIndex],
+                                        pageSize = documentInfo.pages[pageIndex],
                                         viewportWidthPx = viewportWidthPx,
                                         renderScale = renderScale,
+                                        directSelectionEnabled = directSelectionSupported,
+                                        selection = directSelection?.takeIf { it.pageIndex == pageIndex },
+                                        selectionPending = selectionPendingPage == pageIndex,
+                                        onSelectWord = { point ->
+                                            directSelection = null
+                                            selectionRequests.tryEmit(
+                                                PdfSelectionRequest(
+                                                    pageIndex = pageIndex,
+                                                    start = PdfTextBoundary.AtPoint(point),
+                                                    stop = PdfTextBoundary.AtPoint(point),
+                                                    clearOnEmpty = true,
+                                                ),
+                                            )
+                                        },
+                                        onMoveSelectionBoundary = { start, stop ->
+                                            selectionRequests.tryEmit(
+                                                PdfSelectionRequest(
+                                                    pageIndex = pageIndex,
+                                                    start = start,
+                                                    stop = stop,
+                                                    clearOnEmpty = false,
+                                                ),
+                                            )
+                                        },
                                     )
                                 }
                             }
@@ -829,6 +1070,13 @@ private fun PdfPreview(source: PreviewSource) {
             }
         }
     }
+    textSelectionPage?.let { pageIndex ->
+        PdfTextSelectionDialog(
+            source = source,
+            pageIndex = pageIndex,
+            onDismiss = { textSelectionPage = null },
+        )
+    }
 }
 
 @Composable
@@ -836,13 +1084,35 @@ private fun PdfPageItem(
     context: android.content.Context,
     source: PreviewSource,
     pageIndex: Int,
-    pageAspectRatio: Float,
+    pageSize: PdfPageSize,
     viewportWidthPx: Int,
     renderScale: Float,
+    directSelectionEnabled: Boolean,
+    selection: PdfPageTextSelection?,
+    selectionPending: Boolean,
+    onSelectWord: (PdfPagePoint) -> Unit,
+    onMoveSelectionBoundary: (PdfTextBoundary, PdfTextBoundary) -> Unit,
 ) {
     var bitmap by remember(source.key, pageIndex) { mutableStateOf<Bitmap?>(null) }
     var renderError by remember(source.key, pageIndex) { mutableStateOf<Throwable?>(null) }
     var rendering by remember(source.key, pageIndex) { mutableStateOf(true) }
+    var displaySize by remember(source.key, pageIndex) { mutableStateOf(IntSize.Zero) }
+    val currentSelection by rememberUpdatedState(selection)
+    val currentMoveSelectionBoundary by rememberUpdatedState(onMoveSelectionBoundary)
+    val handleHitRadius = with(LocalDensity.current) { 28.dp.toPx() }
+    val handleRadius = with(LocalDensity.current) { 7.dp.toPx() }
+    val handleStem = with(LocalDensity.current) { 10.dp.toPx() }
+    val selectionColor = MaterialTheme.colorScheme.primary
+    val selectionHighlight = selectionColor.copy(alpha = 0.28f)
+    val selectionSnapshot = selection?.takeIf { displaySize.width > 0 && displaySize.height > 0 }?.let { selected ->
+        val measured = PdfDisplaySize(displaySize.width.toFloat(), displaySize.height.toFloat())
+        PdfTextSelectionSnapshot(
+            text = selected.text,
+            boundsCount = selected.bounds.size,
+            startHandle = PdfSelectionRules.displayPoint(selected.startHandle, measured, pageSize),
+            stopHandle = PdfSelectionRules.displayPoint(selected.stopHandle, measured, pageSize),
+        )
+    }
     LaunchedEffect(source.key, pageIndex, viewportWidthPx, renderScale) {
         rendering = true
         val result = withContext(Dispatchers.IO) {
@@ -865,27 +1135,144 @@ private fun PdfPageItem(
     ) {
         when (val loadedBitmap = bitmap) {
             null -> if (renderError == null || rendering) Box(
-                modifier = Modifier.fillMaxWidth().aspectRatio(pageAspectRatio),
+                modifier = Modifier.fillMaxWidth().aspectRatio(pageSize.aspectRatio),
                 contentAlignment = Alignment.Center,
             ) { CircularProgressIndicator() } else PreviewLoadError(requireNotNull(renderError))
-            else -> Image(
+            else -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(loadedBitmap.width.toFloat() / loadedBitmap.height)
+                    .onSizeChanged { displaySize = it }
+                    .then(
+                        if (directSelectionEnabled) Modifier.pointerInput(source.key, pageIndex, pageSize, handleHitRadius) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(
+                                    requireUnconsumed = false,
+                                    pass = PointerEventPass.Initial,
+                                )
+                                val selected = currentSelection
+                                if (selected?.pageIndex != pageIndex || size.width <= 0 || size.height <= 0) {
+                                    return@awaitEachGesture
+                                }
+                                val measured = PdfDisplaySize(size.width.toFloat(), size.height.toFloat())
+                                val startHandle = PdfSelectionRules.displayPoint(selected.startHandle, measured, pageSize)
+                                val stopHandle = PdfSelectionRules.displayPoint(selected.stopHandle, measured, pageSize)
+                                val handle = PdfSelectionRules.handleAt(
+                                    touch = PdfDisplayPoint(down.position.x, down.position.y),
+                                    start = startHandle,
+                                    stop = stopHandle,
+                                    hitRadius = handleHitRadius,
+                                ) ?: return@awaitEachGesture
+                                val fixedBoundary = if (handle == PdfSelectionHandle.START) {
+                                    PdfTextBoundary.AtPoint(selected.stopHandle)
+                                } else {
+                                    PdfTextBoundary.AtPoint(selected.startHandle)
+                                }
+                                down.consume()
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.changes.count { it.pressed } > 1) break
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) {
+                                        change.consume()
+                                        break
+                                    }
+                                    val movingPoint = PdfSelectionRules.pagePoint(
+                                        displayPoint = PdfDisplayPoint(change.position.x, change.position.y),
+                                        displaySize = measured,
+                                        pageSize = pageSize,
+                                    )
+                                    if (handle == PdfSelectionHandle.START) {
+                                        currentMoveSelectionBoundary(PdfTextBoundary.AtPoint(movingPoint), fixedBoundary)
+                                    } else {
+                                        currentMoveSelectionBoundary(fixedBoundary, PdfTextBoundary.AtPoint(movingPoint))
+                                    }
+                                    change.consume()
+                                }
+                            }
+                        } else Modifier,
+                    )
+                    .then(
+                        if (directSelectionEnabled) Modifier.pointerInput(source.key, pageIndex, pageSize) {
+                            detectTapGestures(
+                                onLongPress = { position ->
+                                    if (size.width > 0 && size.height > 0) {
+                                        onSelectWord(
+                                            PdfSelectionRules.pagePoint(
+                                                displayPoint = PdfDisplayPoint(position.x, position.y),
+                                                displaySize = PdfDisplaySize(size.width.toFloat(), size.height.toFloat()),
+                                                pageSize = pageSize,
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                        } else Modifier,
+                    )
+                    .then(
+                        if (BuildConfig.DEBUG && selectionSnapshot != null) Modifier.semantics {
+                            this[PdfTextSelectionSemanticsKey] = selectionSnapshot
+                        } else Modifier,
+                    )
+                    .testTag("pdf-page-$pageIndex"),
+            ) {
+                Image(
                     bitmap = loadedBitmap.asImageBitmap(),
                     contentDescription = uiText("PDF puslapis ${pageIndex + 1}"),
-                    modifier = Modifier.fillMaxWidth().aspectRatio(loadedBitmap.width.toFloat() / loadedBitmap.height),
+                    modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit,
                 )
+                selection?.let { selected ->
+                    Canvas(modifier = Modifier.fillMaxSize().testTag("pdf-selection-highlight-$pageIndex")) {
+                        val xScale = size.width / pageSize.width
+                        val yScale = size.height / pageSize.height
+                        selected.bounds.forEach { bounds ->
+                            drawRect(
+                                color = selectionHighlight,
+                                topLeft = Offset(bounds.left * xScale, bounds.top * yScale),
+                                size = Size(
+                                    (bounds.right - bounds.left) * xScale,
+                                    (bounds.bottom - bounds.top) * yScale,
+                                ),
+                            )
+                        }
+                        val start = Offset(selected.startHandle.x * xScale, selected.startHandle.y * yScale)
+                        val stop = Offset(selected.stopHandle.x * xScale, selected.stopHandle.y * yScale)
+                        val startKnob = start + Offset(0f, handleStem)
+                        val stopKnob = stop + Offset(0f, handleStem)
+                        drawLine(selectionColor, start, startKnob, strokeWidth = 3f)
+                        drawLine(selectionColor, stop, stopKnob, strokeWidth = 3f)
+                        drawCircle(selectionColor, radius = handleRadius, center = startKnob)
+                        drawCircle(selectionColor, radius = handleRadius, center = stopKnob)
+                    }
+                }
+                if (selectionPending) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center).size(28.dp).testTag("pdf-selection-loading-$pageIndex"),
+                        strokeWidth = 2.dp,
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ZoomControls(scale: Float, maximum: Float, onScaleChanged: (Float) -> Unit) {
+private fun ZoomControls(
+    scale: Float,
+    maximum: Float,
+    onScaleChanged: (Float) -> Unit,
+    onSelectText: (() -> Unit)? = null,
+    onCopySelectedText: (() -> Unit)? = null,
+    onClearSelectedText: (() -> Unit)? = null,
+) {
     val zoomOutDescription = uiText("Atitolinti")
     val zoomInDescription = uiText("Priartinti")
-    Row(
+    FlowRow(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
         horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(
             onClick = { onScaleChanged(PreviewZoomRules.zoomOut(scale, maximum)) },
@@ -904,6 +1291,99 @@ private fun ZoomControls(scale: Float, maximum: Float, onScaleChanged: (Float) -
         ) { LText("+", style = MaterialTheme.typography.headlineSmall) }
         TextButton(onClick = { onScaleChanged(PreviewZoomRules.MIN_SCALE) }, enabled = scale > PreviewZoomRules.MIN_SCALE) {
             LText("Atstatyti")
+        }
+        onSelectText?.let { selectText ->
+            IconButton(
+                onClick = selectText,
+                modifier = Modifier.testTag("pdf-select-text"),
+            ) {
+                Icon(
+                    Icons.Rounded.ContentCopy,
+                    contentDescription = uiText("Kopijuoti pažymėtą tekstą"),
+                )
+            }
+        }
+        onCopySelectedText?.let { copySelectedText ->
+            IconButton(
+                onClick = copySelectedText,
+                modifier = Modifier.testTag("pdf-copy-selection"),
+            ) {
+                Icon(
+                    Icons.Rounded.ContentCopy,
+                    contentDescription = uiText("Kopijuoti pažymėtą tekstą"),
+                )
+            }
+        }
+        onClearSelectedText?.let { clearSelectedText ->
+            IconButton(
+                onClick = clearSelectedText,
+                modifier = Modifier.testTag("pdf-clear-selection"),
+            ) {
+                Icon(Icons.Rounded.Close, contentDescription = uiText("Išvalyti"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfTextSelectionDialog(
+    source: PreviewSource,
+    pageIndex: Int,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val result by produceState<Result<String>?>(initialValue = null, source.key, pageIndex) {
+        value = runCatching {
+            pdfRenderPermits.withPermit {
+                runInterruptible(Dispatchers.IO) { extractPdfPageText(context, source, pageIndex) }
+            }
+        }
+    }
+    AfModalDialog(
+        title = "PDF puslapis ${pageIndex + 1}",
+        subtitle = "Kopijuoti pažymėtą tekstą",
+        icon = Icons.Rounded.ContentCopy,
+        onDismissRequest = onDismiss,
+        expandedContent = true,
+        modifier = Modifier.testTag("pdf-text-selection-dialog"),
+        actions = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("pdf-text-close")) {
+                LText("Uždaryti")
+            }
+        },
+    ) {
+        when (val loaded = result) {
+            null -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            else -> loaded.fold(
+                onSuccess = { text ->
+                    if (text.isBlank()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            LText("Atitikmenų nerasta")
+                        }
+                    } else {
+                        AndroidView(
+                            factory = { viewContext ->
+                                TextView(viewContext).apply {
+                                    tag = "pdf-selectable-text-view"
+                                    setTextIsSelectable(true)
+                                    isVerticalScrollBarEnabled = true
+                                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                                    setPadding(24, 20, 24, 20)
+                                }
+                            },
+                            update = { view ->
+                                view.text = text
+                                view.setTextColor(textColor)
+                            },
+                            modifier = Modifier.fillMaxSize().testTag("pdf-selectable-text"),
+                        )
+                    }
+                },
+                onFailure = { PreviewLoadError(it) },
+            )
         }
     }
 }
@@ -2635,9 +3115,9 @@ internal fun pdfDocumentInfo(context: android.content.Context, source: PreviewSo
             require(renderer.pageCount > 0) { "PDF neturi puslapių" }
             require(renderer.pageCount <= PdfRenderRules.MAX_PAGE_COUNT) { "PDF viršijo ${PdfRenderRules.MAX_PAGE_COUNT} puslapių saugos ribą" }
             PdfDocumentInfo(
-                pageAspectRatios = List(renderer.pageCount) { pageIndex ->
+                pages = List(renderer.pageCount) { pageIndex ->
                     renderer.openPage(pageIndex).use { page ->
-                        page.width.toFloat() / page.height.coerceAtLeast(1)
+                        PdfPageSize(page.width, page.height)
                     }
                 },
             )

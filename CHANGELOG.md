@@ -4,6 +4,12 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.36.0] - 2026-09-11
+
+- Emptying Trash now also removes interrupted copies, orphaned payloads and damaged Trash metadata that could previously remain hidden while continuing to occupy app data. The cleanup action stays available when only this hidden residue remains.
+- Trash moves, restores and permanent deletion are serialized so a cleanup cannot catch a file halfway through another Trash operation. Failed moves clean up their temporary copy where possible and keep recoverable data visible.
+- Hold a word directly on a PDF page to select it, drag either handle to extend the selection, and copy it. Two-finger zoom keeps the point between the fingers in place while preserving ordinary one-finger scrolling. Trash grid cards keep long names and restore/delete actions aligned.
+
 ## [0.35.0] - 2026-09-08
 
 - Wallpaper, background colors and card transparency now carry through file browsers, Quick locations, trash and other AF windows. Transparent cards no longer leave a shadow behind. Wallpaper shading has its own adjustment.

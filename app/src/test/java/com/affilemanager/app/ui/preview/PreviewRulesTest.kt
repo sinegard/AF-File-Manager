@@ -1,6 +1,7 @@
 package com.affilemanager.app.ui.preview
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +27,142 @@ class PreviewRulesTest {
         assertTrue(extreme.first <= PdfRenderRules.MAX_WIDTH_PX)
         assertTrue(extreme.first.toLong() * extreme.second <= PdfRenderRules.MAX_PIXELS)
         assertEquals(595.0 / 842.0, extreme.first.toDouble() / extreme.second, 0.002)
+    }
+
+    @Test
+    fun pdfZoomKeepsTheDocumentPointUnderTheFingerMidpoint() {
+        val oldScale = 1.5f
+        val newScale = 3f
+        val oldScroll = 240f
+        val fingerMidpoint = 360f
+
+        val newScroll = PreviewZoomRules.anchoredScrollOffset(
+            currentScroll = oldScroll,
+            focusInViewport = fingerMidpoint,
+            oldScale = oldScale,
+            newScale = newScale,
+        )
+
+        assertEquals(
+            (oldScroll + fingerMidpoint) / oldScale,
+            (newScroll + fingerMidpoint) / newScale,
+            0.001f,
+        )
+        assertEquals(840f, newScroll, 0.001f)
+        assertEquals(
+            0f,
+            PreviewZoomRules.anchoredScrollOffset(
+                currentScroll = 0f,
+                focusInViewport = 360f,
+                oldScale = 3f,
+                newScale = 1f,
+            ),
+            0.001f,
+        )
+    }
+
+    @Test
+    fun pdfSelectableTextLimitsRejectInvalidPagesAndUnboundedContent() {
+        assertEquals(1, PdfTextRules.requirePageIndex(pageIndex = 1, pageCount = 3))
+        assertEquals(128L, PdfTextRules.requireSourceSize(128L))
+        assertEquals(null, PdfTextRules.requireSourceSize(null))
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            PdfTextRules.requirePageIndex(pageIndex = 3, pageCount = 3)
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            PdfTextRules.requireSourceSize(PdfTextRules.MAX_SOURCE_BYTES + 1L)
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            PdfTextRules.requireTextLength(PdfTextRules.MAX_PAGE_TEXT_CHARS + 1)
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            PdfTextRules.requireSelectionRectCount(PdfTextRules.MAX_SELECTION_RECTS + 1)
+        }
+    }
+
+    @Test
+    fun pdfTextSelectionUsesThePageNearestTheViewportCenter() {
+        assertEquals(
+            2,
+            PdfTextRules.pageClosestToViewportCenter(
+                visiblePages = listOf(
+                    PdfVisiblePage(index = 1, offset = -760, size = 1_000),
+                    PdfVisiblePage(index = 2, offset = 248, size = 1_000),
+                ),
+                viewportStart = 0,
+                viewportEnd = 1_000,
+            ),
+        )
+    }
+
+    @Test
+    fun pdfPinchAnchorUsesThePageDirectlyUnderTheFingers() {
+        val visiblePages = listOf(
+            PdfVisiblePage(index = 1, offset = -760, size = 1_000),
+            PdfVisiblePage(index = 2, offset = 248, size = 1_000),
+        )
+
+        assertEquals(1, PdfTextRules.pageAtViewportPosition(visiblePages, position = 120f).index)
+        assertEquals(2, PdfTextRules.pageAtViewportPosition(visiblePages, position = 500f).index)
+        assertEquals(2, PdfTextRules.pageAtViewportPosition(visiblePages, position = 2_000f).index)
+    }
+
+    @Test
+    fun pdfSelectionMapsDisplayedTouchIntoClampedTopLeftPagePoints() {
+        val pageSize = PdfPageSize(width = 595, height = 842)
+        val displaySize = PdfDisplaySize(width = 1_190f, height = 1_684f)
+
+        assertEquals(
+            PdfPagePoint(x = 297.5f, y = 421f),
+            PdfSelectionRules.pagePoint(
+                displayPoint = PdfDisplayPoint(x = 595f, y = 842f),
+                displaySize = displaySize,
+                pageSize = pageSize,
+            ),
+        )
+        assertEquals(
+            PdfPagePoint(x = 0f, y = 842f),
+            PdfSelectionRules.pagePoint(
+                displayPoint = PdfDisplayPoint(x = -80f, y = 2_000f),
+                displaySize = displaySize,
+                pageSize = pageSize,
+            ),
+        )
+        assertEquals(
+            PdfDisplayPoint(x = 595f, y = 842f),
+            PdfSelectionRules.displayPoint(
+                pagePoint = PdfPagePoint(x = 297.5f, y = 421f),
+                displaySize = displaySize,
+                pageSize = pageSize,
+            ),
+        )
+    }
+
+    @Test
+    fun pdfSelectionHandleHitUsesTheNearestBoundedTouchTarget() {
+        val start = PdfDisplayPoint(x = 100f, y = 180f)
+        val stop = PdfDisplayPoint(x = 300f, y = 180f)
+
+        assertEquals(
+            PdfSelectionHandle.START,
+            PdfSelectionRules.handleAt(PdfDisplayPoint(116f, 190f), start, stop, hitRadius = 32f),
+        )
+        assertEquals(
+            PdfSelectionHandle.STOP,
+            PdfSelectionRules.handleAt(PdfDisplayPoint(285f, 168f), start, stop, hitRadius = 32f),
+        )
+        assertNull(
+            PdfSelectionRules.handleAt(PdfDisplayPoint(200f, 180f), start, stop, hitRadius = 32f),
+        )
+        assertEquals(
+            PdfSelectionHandle.START,
+            PdfSelectionRules.handleAt(
+                touch = PdfDisplayPoint(105f, 100f),
+                start = PdfDisplayPoint(100f, 100f),
+                stop = PdfDisplayPoint(112f, 100f),
+                hitRadius = 32f,
+            ),
+        )
     }
 
     @Test
