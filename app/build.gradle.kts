@@ -22,8 +22,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 55
-        versionName = "0.37.0"
+        versionCode = 56
+        versionName = "0.37.1"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 

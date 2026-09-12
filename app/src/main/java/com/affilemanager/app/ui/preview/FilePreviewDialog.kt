@@ -690,6 +690,8 @@ fun FilePreviewDialog(
                 onDelete()
             },
             explanation = explanation,
+            fallbackFiles = 1,
+            fallbackBytes = source.sizeBytes ?: 0L,
             confirmTestTag = "preview_confirm_delete",
         )
     }

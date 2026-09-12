@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -21,6 +22,23 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class OperationDialogsTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun deleteConfirmationShowsTheProvidedFileFallback() {
+        compose.setContent { MaterialTheme {
+            DeleteConfirmationDialog(
+                names = listOf("preview-delete.txt"),
+                permanent = false,
+                onDismiss = {},
+                onConfirm = {},
+                fallbackFiles = 1,
+                fallbackBytes = 26,
+            )
+        } }
+
+        compose.onNodeWithTag("delete_file_count").assertTextContains("1", substring = true)
+        compose.onNodeWithTag("delete_folder_count").assertTextContains("0", substring = true)
+        compose.onNodeWithTag("delete_size").assertTextContains("26 B", substring = true)
+    }
 
     @Test fun deleteConfirmationWaitsForAndShowsTheRecursiveSummary() {
         val summary = CompletableDeferred<Result<FileSelectionSummary>>()

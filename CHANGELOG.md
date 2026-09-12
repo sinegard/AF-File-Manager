@@ -4,6 +4,10 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.37.1] - 2026-09-12
+
+- Preview deletion confirmation now counts the selected file and shows its actual size instead of an empty summary.
+
 ## [0.37.0] - 2026-09-12
 
 - Trash can now keep files forever or remove them after 1, 3, 7, 14, 30, 60 or 90 days. Large selections continue past stale entries, and the folder refreshes after deletion instead of leaving removed files on screen.
