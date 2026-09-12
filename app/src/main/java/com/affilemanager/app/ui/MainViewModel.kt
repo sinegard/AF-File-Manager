@@ -31,6 +31,7 @@ import com.affilemanager.app.data.ShareScreenPreferences
 import com.affilemanager.app.data.TrashBrowserEntry
 import com.affilemanager.app.data.TrashItem
 import com.affilemanager.app.data.TrashPathRules
+import com.affilemanager.app.data.TrashRetentionPeriod
 import com.affilemanager.app.data.PanelWorkspace
 import com.affilemanager.app.data.WorkspaceSession
 import com.affilemanager.app.data.WorkspaceTab
@@ -418,6 +419,7 @@ data class TrashBrowserUiState(
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val storedItemCount: Int = 0,
     val storedItemCountComplete: Boolean = true,
+    val retentionPeriod: TrashRetentionPeriod = TrashRetentionPeriod.NEVER,
     val loading: Boolean = false,
     val emptying: Boolean = false,
     val error: String? = null,
@@ -461,7 +463,7 @@ data class FileEditUiState(
 
 sealed interface PreviewTarget {
     data class LocalFile(val entry: FileEntry) : PreviewTarget
-    data class TrashFile(val entry: FileEntry) : PreviewTarget
+    data class TrashFile(val itemId: String, val entry: FileEntry) : PreviewTarget
     data class ContentFile(val entry: ContentFileEntry) : PreviewTarget
     data class RemoteFile(
         val remote: RemoteEntry,
@@ -2512,12 +2514,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun moveSelectionToTrash(panel: PanelId) {
-        val selected = panelFlow(panel).value.selectedPaths.toList()
+        val requestedState = panelFlow(panel).value
+        val selected = requestedState.selectedPaths.toList()
         if (selected.isEmpty()) return
         graph.operationManager.submit("Keliama į šiukšlinę") {
             graph.trash.moveToTrash(selected, this)
-        }.onSuccess { clearSelection(panel) }
-            .onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
+            clearSelection(panel)
+            if (panelFlow(panel).value.path == requestedState.path) refreshPanel(panel)
+            refreshTrash()
+        }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
     }
 
     fun createDirectory(panel: PanelId, name: String) {
@@ -4142,6 +4147,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun canDeletePreview(target: PreviewTarget): Boolean = when (target) {
+        is PreviewTarget.ArchiveEntry -> false
+        else -> true
+    }
+
+    fun deletePreviewTarget() {
+        val target = _preview.value ?: return
+        if (!canDeletePreview(target)) return
+        if (_fileEditState.value.hasUnsavedChanges || _fileEditState.value.saving || _fileEditState.value.modifyingPdf) {
+            message("Pirmiausia išsaugokite arba atmeskite redagavimo pakeitimus", true)
+            return
+        }
+
+        val title = when (target) {
+            is PreviewTarget.LocalFile -> "Keliama į šiukšlinę"
+            is PreviewTarget.Archive -> "Keliama į šiukšlinę"
+            is PreviewTarget.Vault -> "Keliama į šiukšlinę"
+            is PreviewTarget.TrashFile -> "Šalinama iš šiukšliadėžės"
+            is PreviewTarget.ContentFile -> "Šalinamas Android dokumentas"
+            is PreviewTarget.RemoteFile -> "Šalinama iš serverio"
+            is PreviewTarget.RemoteArchive -> "Šalinama iš serverio"
+            is PreviewTarget.PrivilegedFile -> "Šalinamas apsaugotas failas"
+            is PreviewTarget.ArchiveEntry -> return
+        }
+        graph.operationManager.submit(title) {
+            when (target) {
+                is PreviewTarget.LocalFile -> graph.trash.moveToTrash(listOf(target.entry.absolutePath), this)
+                is PreviewTarget.Archive -> graph.trash.moveToTrash(listOf(target.file.absolutePath), this)
+                is PreviewTarget.Vault -> graph.trash.moveToTrash(listOf(target.file.absolutePath), this)
+                is PreviewTarget.TrashFile -> graph.trash.deleteForever(target.itemId, this).getOrThrow()
+                is PreviewTarget.ContentFile -> {
+                    setTotals(1, target.entry.sizeBytes)
+                    checkpoint()
+                    graph.contentFiles.delete(target.entry.uri).getOrThrow()
+                    progress(itemDelta = 1, byteDelta = target.entry.sizeBytes ?: 0L, currentName = target.entry.name)
+                }
+                is PreviewTarget.RemoteFile -> deleteRemotePreviewTarget(target.profileId, target.connectionName, target.remote, this)
+                is PreviewTarget.RemoteArchive -> deleteRemotePreviewTarget(target.profileId, target.connectionName, target.remote, this)
+                is PreviewTarget.PrivilegedFile -> graph.privilegedFiles.deletePermanently(listOf(target.entry.absolutePath), this)
+                is PreviewTarget.ArchiveEntry -> return@submit
+            }
+            if (_preview.value == target) closePreviewImmediately()
+            when (target) {
+                is PreviewTarget.RemoteFile,
+                is PreviewTarget.RemoteArchive,
+                -> refreshRemote()
+                is PreviewTarget.PrivilegedFile -> refreshAdvancedBrowser()
+                else -> {
+                    refreshPanel(PanelId.LEFT)
+                    refreshPanel(PanelId.RIGHT)
+                    refreshFileCategory()
+                    refreshRecentFiles()
+                    refreshTrash()
+                }
+            }
+        }.onFailure { message(it.message ?: "Trynimo pradėti nepavyko", true) }
+    }
+
+    private suspend fun deleteRemotePreviewTarget(
+        profileId: String,
+        connectionName: String,
+        entry: RemoteEntry,
+        operation: OperationContext,
+    ) {
+        val profile = _networkState.value.connectedProfile
+        require(profile?.id == profileId) { "Prieš trindami vėl prisijunkite prie $connectionName" }
+        val client = remoteClient ?: throw IllegalStateException("Serverio ryšys neaktyvus")
+        operation.setTotals(1, entry.sizeBytes.takeIf { !entry.directory })
+        operation.checkpoint()
+        client.delete(entry.path, recursive = entry.directory)
+        operation.progress(
+            itemDelta = 1,
+            byteDelta = entry.sizeBytes.takeIf { !entry.directory } ?: 0L,
+            currentName = entry.name,
+        )
+    }
+
     fun cancelAnalysis() {
         if (_analysisState.value.running.not()) return
         analysisRequestId += 1L
@@ -4268,6 +4350,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             open = true,
             sortMode = sort.mode,
             sortDirection = sort.direction,
+            retentionPeriod = graph.trashRetentionSettings.load(),
         ).withTrashDisplaySettings(display)
         refreshTrashBrowser()
     }
@@ -4314,7 +4397,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openTrashEntry(entry: TrashBrowserEntry) {
         if (!entry.isDirectory) {
-            _preview.value = PreviewTarget.TrashFile(entry.toFileEntry())
+            _preview.value = PreviewTarget.TrashFile(entry.itemId, entry.toFileEntry())
             return
         }
         val current = _trashBrowser.value
@@ -4462,6 +4545,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 message("Pridėta ${selected.size} · iš viso ${updated.size}")
             }
             .onFailure { message(it.message ?: "Vietos įrašyti nepavyko", true) }
+    }
+
+    fun setTrashRetentionPeriod(period: TrashRetentionPeriod) {
+        runCatching {
+            graph.trashRetentionSettings.save(period)
+            graph.trashRetentionScheduler.synchronize(period)
+        }.onFailure {
+            message(it.message ?: "Šiukšliadėžės saugojimo laikotarpio išsaugoti nepavyko", true)
+            return
+        }
+        _trashBrowser.update { it.copy(retentionPeriod = period) }
+        if (period == TrashRetentionPeriod.NEVER) return
+        graph.operationManager.submit("Valomi pasenę šiukšliadėžės elementai") {
+            val result = graph.trash.deleteExpired(period)
+            if (result.failedItems > 0) {
+                if (result.deletedItems == 0) error("Pasenusių elementų ištrinti nepavyko")
+                completeWithErrors(result.failedItems, "Kai kurių pasenusių elementų ištrinti nepavyko")
+            }
+            refreshTrash()
+        }.onFailure { message(it.message ?: "Automatinio šiukšliadėžės valymo pradėti nepavyko", true) }
     }
 
     fun copyArchiveEntriesToSet(entryPaths: Set<String>) {

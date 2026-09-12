@@ -22,16 +22,17 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 54
-        versionName = "0.36.0"
+        versionCode = 55
+        versionName = "0.37.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
         testInstrumentationRunner = if (testOptimizedRelease) {
             "com.affilemanager.app.network.OptimizedSftpInstrumentation"
         } else {
-            "androidx.test.runner.AndroidJUnitRunner"
+            "com.affilemanager.app.SelfContainedTestRunner"
         }
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
         testProguardFiles("test-proguard-rules.pro")
         vectorDrawables.useSupportLibrary = true
 
@@ -115,6 +116,7 @@ android {
     }
 
     testOptions {
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
         unitTests.all {
             it.useJUnit()
         }
@@ -186,6 +188,7 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit-ktx:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestUtil("androidx.test:orchestrator:1.6.1")
 }
 
 tasks.register("verifyReleaseDynamicRuntimeClasses") {

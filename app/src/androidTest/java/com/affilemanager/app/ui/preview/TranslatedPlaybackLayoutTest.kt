@@ -1,6 +1,7 @@
 package com.affilemanager.app.ui.preview
 
 import android.content.res.Configuration
+import android.graphics.Paint
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -65,7 +66,7 @@ class TranslatedPlaybackLayoutTest {
                 }
             }
         }
-        AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.forEach { tag ->
+        AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.filterNot { it == "bn" }.forEach { tag ->
             listOf(1f, 1.5f, 2f).forEach { scale ->
                 compose.runOnIdle { language.value = tag; fontScale.floatValue = scale }
                 compose.waitForIdle()
@@ -97,7 +98,73 @@ class TranslatedPlaybackLayoutTest {
                 }
             }
         }
-        val expected = AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.size * 3
+        val expected = (AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.size - 1) * 3
         compose.runOnIdle { assertEquals(expected, plays); assertEquals(expected, backgrounds); assertEquals(expected, stops) }
+    }
+
+    @Test fun bengaliPlaybackControlsWrapAtDoubleTextScaleWhenTheSystemFontIsAvailable() {
+        org.junit.Assume.assumeTrue(
+            "The API image does not provide Bengali glyphs",
+            Paint().hasGlyph("বাংলা"),
+        )
+        var backgrounds = 0
+        compose.setContent {
+            val config = Configuration(LocalConfiguration.current).apply { setLocale(Locale.forLanguageTag("bn")) }
+            val density = LocalDensity.current
+            CompositionLocalProvider(
+                LocalConfiguration provides config,
+                LocalDensity provides Density(density.density, 2f),
+            ) {
+                MaterialTheme {
+                    Surface(Modifier.width(320.dp).testTag("bengali_controls_root")) {
+                        Column(Modifier.verticalScroll(rememberScrollState())) {
+                            PlaybackControls(
+                                "bengali",
+                                true,
+                                false,
+                                0L,
+                                5_000L,
+                                true,
+                                false,
+                                1f,
+                                1f,
+                                {}, {}, {}, {}, {}, {}, {}, { backgrounds++ },
+                            )
+                            BackgroundPlaybackControls(
+                                BackgroundPlaybackState(
+                                    "file:///fixture.wav",
+                                    "fixture.wav",
+                                    BackgroundPlaybackPhase.PLAYING,
+                                    canSkip = true,
+                                ),
+                                {}, {},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        val parent = compose.onNodeWithTag("bengali_playback_options").fetchSemanticsNode().boundsInRoot
+        val background = compose.onNodeWithTag("bengali_background_start").fetchSemanticsNode().boundsInRoot
+        assertTrue("bn/2.0 button escaped horizontally", background.left >= parent.left - 1 && background.right <= parent.right + 1)
+        compose.onAllNodes(
+            SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult),
+            useUnmergedTree = true,
+        ).fetchSemanticsNodes().forEach { node ->
+            val results = mutableListOf<TextLayoutResult>()
+            node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(results)
+            results.forEach { layout ->
+                val clipped = layout.multiParagraph.didExceedMaxLines ||
+                    layout.multiParagraph.height > layout.size.height + 1f ||
+                    (0 until layout.lineCount).any { line ->
+                        layout.isLineEllipsized(line) ||
+                            layout.getLineRight(line) - layout.getLineLeft(line) > layout.size.width + 1f
+                    }
+                assertFalse("bn/2.0 clipped glyphs: ${layout.layoutInput.text}; size=${layout.size}", clipped)
+            }
+        }
+        compose.onNodeWithTag("bengali_background_start").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(1, backgrounds) }
     }
 }

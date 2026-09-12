@@ -693,6 +693,20 @@ object UiTranslator {
         "Paleidžiama…" to "Starting…",
         "Šiukšliadėžė" to "Trash",
         "Šiukšliadėžė tuščia" to "Trash is empty",
+        "Šalinamas Android dokumentas" to "Deleting Android document",
+        "Šalinama iš serverio" to "Deleting from server",
+        "Šalinamas apsaugotas failas" to "Deleting protected file",
+        "Valomi pasenę šiukšliadėžės elementai" to "Removing expired Trash items",
+        "Automatinis šiukšliadėžės valymas" to "Automatic Trash cleanup",
+        "Pasirinkite, kiek laiko ištrinti elementai turi būti saugomi." to "Choose how long deleted items are kept.",
+        "Po 1 dienos" to "After 1 day",
+        "Po 3 dienų" to "After 3 days",
+        "Po 7 dienų" to "After 7 days",
+        "Po 14 dienų" to "After 14 days",
+        "Po 30 dienų" to "After 30 days",
+        "Po 60 dienų" to "After 60 days",
+        "Po 90 dienų" to "After 90 days",
+        "Niekada netrinti automatiškai" to "Never delete automatically",
         "Pasirinktos ir debesijos vietos" to "Selected and cloud locations",
         "Fono sinchronizavimas" to "Background synchronization",
         "Atidaryti šiukšliadėžę" to "Open trash",
@@ -772,6 +786,8 @@ object UiTranslator {
         "Greita paieška šiame aplanke" to "Quick search in this folder",
         "Uždaryti greitą paiešką" to "Close quick search",
         "Filtruoti šį aplanką" to "Filter this folder",
+        "Pagal plėtinį" to "By extension",
+        "Failų turinyje" to "In file contents",
         "Atitikmenų nerasta" to "No matches found",
         "Pabandykite kitą pavadinimą" to "Try another name",
         "Išdėstymas" to "Layout",
@@ -1624,6 +1640,9 @@ object UiTranslator {
             },
             Regex("^Prieš sujungdami vėl prisijunkite prie (.+)$") to { match: MatchResult ->
                 "Reconnect to ${match.groupValues[1]} before merging"
+            },
+            Regex("^Prieš trindami vėl prisijunkite prie (.+)$") to { match: MatchResult ->
+                "Reconnect to ${match.groupValues[1]} before deleting"
             },
             Regex("^Redaktoriuje pažymėta konfliktų: (\\d+)\\. Išspręskite žymeklius ir išsaugokite\\.$") to { match: MatchResult ->
                 "Conflicts marked in the editor: ${match.groupValues[1]}. Resolve the markers and save."

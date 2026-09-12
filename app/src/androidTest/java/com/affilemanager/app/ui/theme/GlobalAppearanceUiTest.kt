@@ -85,17 +85,20 @@ class GlobalAppearanceUiTest {
 
     private fun captureAndCheck(name: String, expected: Int) {
         compose.waitForIdle()
-        val frame = java.util.concurrent.CountDownLatch(1)
-        compose.runOnUiThread { android.view.Choreographer.getInstance().postFrameCallback {
-            android.view.Choreographer.getInstance().postFrameCallback { frame.countDown() }
-        } }
-        assertTrue("Native frame was not drawn", frame.await(2, java.util.concurrent.TimeUnit.SECONDS))
-        InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(100, 2_000)
-        val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-        try {
-            val folder = File(compose.activity.getExternalFilesDir("validation"), "issues-164-167").apply { mkdirs() }
-            File(folder, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            var matches = 0; var count = 0
+        val deadline = android.os.SystemClock.uptimeMillis() + 2_000
+        var image: Bitmap
+        var matches: Int
+        var count: Int
+        do {
+            val frame = java.util.concurrent.CountDownLatch(1)
+            compose.runOnUiThread { android.view.Choreographer.getInstance().postFrameCallback {
+                android.view.Choreographer.getInstance().postFrameCallback { frame.countDown() }
+            } }
+            assertTrue("Native frame was not drawn", frame.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(100, 2_000)
+            image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            matches = 0
+            count = 0
             for (y in image.height / 5 until image.height * 4 / 5 step 8) {
                 for (x in image.width / 10 until image.width * 9 / 10 step 8) {
                     val pixel = image.getPixel(x, y)
@@ -103,6 +106,13 @@ class GlobalAppearanceUiTest {
                     count++
                 }
             }
+            if (matches > count * .40 || android.os.SystemClock.uptimeMillis() >= deadline) break
+            image.recycle()
+            android.os.SystemClock.sleep(40)
+        } while (true)
+        try {
+            val folder = File(compose.activity.getExternalFilesDir("validation"), "issues-164-167").apply { mkdirs() }
+            File(folder, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
             assertTrue("$name: page wallpaper/background is covered ($matches/$count pixels)", matches > count * .40)
         } finally { image.recycle() }
     }

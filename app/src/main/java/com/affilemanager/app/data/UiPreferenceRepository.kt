@@ -38,6 +38,8 @@ data class SearchDraftPreferences(
     val selectedStoragePaths: Set<String> = emptySet(),
     val includeHidden: Boolean = false,
     val useRegex: Boolean = false,
+    val matchExtension: Boolean = false,
+    val searchContents: Boolean = false,
     val kinds: Set<EntryKind> = emptySet(),
     val minimumMiB: String = "",
     val maximumMiB: String = "",
@@ -98,6 +100,8 @@ class UiPreferenceRepository(context: Context) {
                 selectedStoragePaths = json.stringSet("selectedStoragePaths"),
                 includeHidden = json.optBoolean("includeHidden"),
                 useRegex = json.optBoolean("useRegex"),
+                matchExtension = json.optBoolean("matchExtension"),
+                searchContents = json.optBoolean("searchContents"),
                 kinds = json.stringSet("kinds").mapNotNullTo(linkedSetOf()) { enumValueOrNull<EntryKind>(it) },
                 minimumMiB = json.optString("minimumMiB"),
                 maximumMiB = json.optString("maximumMiB"),
@@ -116,6 +120,8 @@ class UiPreferenceRepository(context: Context) {
             .put("selectedStoragePaths", normalized.selectedStoragePaths.toJsonArray())
             .put("includeHidden", normalized.includeHidden)
             .put("useRegex", normalized.useRegex)
+            .put("matchExtension", normalized.matchExtension)
+            .put("searchContents", normalized.searchContents)
             .put("kinds", normalized.kinds.map(EntryKind::name).toJsonArray())
             .put("minimumMiB", normalized.minimumMiB)
             .put("maximumMiB", normalized.maximumMiB)

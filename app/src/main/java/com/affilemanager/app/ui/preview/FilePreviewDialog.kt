@@ -208,9 +208,11 @@ import com.affilemanager.app.ui.components.LazyGridFastScroller
 import com.affilemanager.app.ui.components.LazyListFastScroller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Semaphore
@@ -282,6 +284,7 @@ fun FilePreviewDialog(
     archiveDisplayDefaults: DirectoryDisplayDefaults,
     onApplyArchiveDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
     onClose: () -> Unit,
+    onDelete: (() -> Unit)?,
     onPrepareEdit: () -> Unit,
     onApplyPdfSignature: (SignatureDrawing, PdfSignaturePlacement) -> Unit,
     onEditTextChanged: (String) -> Unit,
@@ -333,6 +336,7 @@ fun FilePreviewDialog(
     var pdfApplyBaseline by remember(source.key) { mutableStateOf<String?>(null) }
     var showSaveAs by remember(source.key) { mutableStateOf(false) }
     var showDetails by remember(source.key) { mutableStateOf(false) }
+    var confirmDelete by remember(source.key) { mutableStateOf(false) }
     var showSplitExtract by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val archiveMaterializedEntry = target is PreviewTarget.ArchiveEntry
@@ -480,6 +484,7 @@ fun FilePreviewDialog(
                                 }
                             }
                         },
+                        onDelete = onDelete?.let { action -> { confirmDelete = true } },
                     )
                 }
                 HorizontalDivider()
@@ -658,6 +663,34 @@ fun FilePreviewDialog(
                     pdfApplyBaseline = null
                 }
             },
+        )
+    }
+    if (confirmDelete && onDelete != null) {
+        val permanent = target is PreviewTarget.TrashFile ||
+            target is PreviewTarget.ContentFile ||
+            target is PreviewTarget.RemoteFile ||
+            target is PreviewTarget.RemoteArchive ||
+            target is PreviewTarget.PrivilegedFile
+        val explanation = when (target) {
+            is PreviewTarget.ContentFile -> "Elementas bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę."
+            is PreviewTarget.RemoteFile,
+            is PreviewTarget.RemoteArchive,
+            -> "Elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės."
+            is PreviewTarget.PrivilegedFile -> "Šių apsaugotų failų nebus galima atkurti iš AF File Manager šiukšlinės."
+            is PreviewTarget.TrashFile -> "Elemento nebebus galima atkurti iš programos šiukšliadėžės."
+            else -> "Elementus bus galima atkurti iš AF File Manager šiukšlinės."
+        }
+        DeleteConfirmationDialog(
+            names = listOf(source.name),
+            permanent = permanent,
+            title = if (permanent) "Ištrinti visam laikui?" else "Perkelti į šiukšlinę?",
+            onDismiss = { confirmDelete = false },
+            onConfirm = {
+                confirmDelete = false
+                onDelete()
+            },
+            explanation = explanation,
+            confirmTestTag = "preview_confirm_delete",
         )
     }
     if (activeEditState?.confirmDiscard == true) {
@@ -841,11 +874,9 @@ private fun PdfPreview(source: PreviewSource) {
         )
     }
     val selectionRequests = remember(source.key) {
-        MutableSharedFlow<PdfSelectionRequest>(
-            extraBufferCapacity = 1,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
+        Channel<PdfSelectionRequest>(Channel.CONFLATED)
     }
+    DisposableEffect(selectionRequests) { onDispose { selectionRequests.close() } }
     val directSelectionSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
     val selectionFailureText = uiText("PDF perskaityti nepavyko")
     val copiedText = uiText("Nukopijuota")
@@ -871,7 +902,7 @@ private fun PdfPreview(source: PreviewSource) {
     }
     LaunchedEffect(source.key, directSelectionSupported) {
         if (!directSelectionSupported) return@LaunchedEffect
-        selectionRequests.collectLatest { request ->
+        selectionRequests.receiveAsFlow().collectLatest { request ->
             selectionPendingPage = request.pageIndex
             if (!request.clearOnEmpty) delay(24)
             val result = runCatching {
@@ -1042,7 +1073,7 @@ private fun PdfPreview(source: PreviewSource) {
                                         selectionPending = selectionPendingPage == pageIndex,
                                         onSelectWord = { point ->
                                             directSelection = null
-                                            selectionRequests.tryEmit(
+                                            selectionRequests.trySend(
                                                 PdfSelectionRequest(
                                                     pageIndex = pageIndex,
                                                     start = PdfTextBoundary.AtPoint(point),
@@ -1052,7 +1083,7 @@ private fun PdfPreview(source: PreviewSource) {
                                             )
                                         },
                                         onMoveSelectionBoundary = { start, stop ->
-                                            selectionRequests.tryEmit(
+                                            selectionRequests.trySend(
                                                 PdfSelectionRequest(
                                                     pageIndex = pageIndex,
                                                     start = start,

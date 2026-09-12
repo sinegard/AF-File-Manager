@@ -21,6 +21,8 @@ data class SavedSearch(
     val name: String,
     val rootPaths: List<String>,
     val query: String,
+    val matchExtension: Boolean,
+    val searchContents: Boolean,
     val minBytes: Long?,
     val maxBytes: Long?,
     val modifiedAfter: Long?,
@@ -34,6 +36,8 @@ data class SavedSearch(
 
     fun filters() = SearchFilters(
         query = query,
+        matchExtension = matchExtension,
+        searchContents = searchContents,
         minBytes = minBytes,
         maxBytes = maxBytes,
         modifiedAfter = modifiedAfter,
@@ -335,6 +339,8 @@ class NavigationRepository(context: Context) {
                 name = item.getString("name"),
                 rootPaths = roots,
                 query = item.getString("query"),
+                matchExtension = item.optBoolean("matchExtension", false),
+                searchContents = item.optBoolean("searchContents", false),
                 minBytes = item.optionalLong("minBytes"),
                 maxBytes = item.optionalLong("maxBytes"),
                 modifiedAfter = item.optionalLong("modifiedAfter"),
@@ -369,6 +375,8 @@ class NavigationRepository(context: Context) {
             name = name.trim().take(80),
             rootPaths = rootPaths.map { File(it).canonicalPath }.distinct(),
             query = filters.query,
+            matchExtension = filters.matchExtension,
+            searchContents = filters.searchContents,
             minBytes = filters.minBytes,
             maxBytes = filters.maxBytes,
             modifiedAfter = filters.modifiedAfter,
@@ -401,6 +409,8 @@ class NavigationRepository(context: Context) {
                     .put("root", search.rootPath)
                     .put("roots", roots)
                     .put("query", search.query)
+                    .put("matchExtension", search.matchExtension)
+                    .put("searchContents", search.searchContents)
                     .put("minBytes", search.minBytes ?: JSONObject.NULL)
                     .put("maxBytes", search.maxBytes ?: JSONObject.NULL)
                     .put("modifiedAfter", search.modifiedAfter ?: JSONObject.NULL)

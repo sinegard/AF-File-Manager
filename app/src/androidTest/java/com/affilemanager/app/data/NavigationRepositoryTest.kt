@@ -158,6 +158,8 @@ class NavigationRepositoryTest {
                     kinds = setOf(EntryKind.DOCUMENT, EntryKind.IMAGE),
                     includeHidden = true,
                     useRegex = true,
+                    matchExtension = true,
+                    searchContents = true,
                     tags = setOf("Projektas/Dokumentai", "Svarbu"),
                 ),
             ).single { it.name == name }
@@ -172,6 +174,8 @@ class NavigationRepositoryTest {
             assertEquals(setOf(EntryKind.DOCUMENT, EntryKind.IMAGE), restored.kinds)
             assertTrue(restored.includeHidden)
             assertTrue(restored.useRegex)
+            assertTrue(restored.matchExtension)
+            assertTrue(restored.searchContents)
             assertEquals(setOf("Projektas/Dokumentai", "Svarbu"), restored.tags)
         } finally {
             savedId?.let(repository::removeSearch)

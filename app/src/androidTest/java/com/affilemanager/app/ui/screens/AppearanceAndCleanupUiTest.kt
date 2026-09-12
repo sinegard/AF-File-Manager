@@ -111,7 +111,7 @@ class AppearanceAndCleanupUiTest {
         var closed = false
         compose.setContent { MaterialTheme { CustomPaletteDialog(CustomThemeColors(), { false }, { closed = true }) } }
         compose.onNodeWithTag("custom_palette_save").performClick()
-        compose.onNodeWithText("Could not save appearance settings").assertIsDisplayed()
+        compose.onNodeWithText("Could not save appearance settings").performScrollTo().assertIsDisplayed()
         assertEquals(false, closed)
     }
 

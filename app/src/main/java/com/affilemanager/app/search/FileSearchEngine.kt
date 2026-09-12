@@ -15,6 +15,7 @@ import com.affilemanager.app.model.FileTypeUsage
 import com.affilemanager.app.model.SearchFilters
 import com.affilemanager.app.model.StorageAnalysis
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -57,6 +58,16 @@ class FileSearchEngine(
         const val MAX_ANALYSIS_ROOTS = 16
         private const val HASH_BUFFER = 256 * 1_024
         private const val MAX_DIRECTORY_DEPTH = 64
+        private const val MAX_CONTENT_FILE_BYTES = 4L * 1_024L * 1_024L
+        private const val MAX_CONTENT_SCAN_BYTES = 256L * 1_024L * 1_024L
+        private const val MAX_CONTENT_SCAN_FILES = 5_000
+        private val TEXT_CONTENT_EXTENSIONS = setOf(
+            "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "html", "htm", "smil", "smi",
+            "lua", "kt", "kts", "java", "c", "h", "cpp", "hpp", "cs", "js", "jsx", "ts", "tsx", "py",
+            "sh", "sql", "css", "scss", "sass", "less", "php", "rb", "go", "rs", "swift", "dart", "vue",
+            "svelte", "smali", "gradle", "properties", "toml", "ini", "conf", "cfg", "proto", "graphql",
+            "gql", "env", "gitignore",
+        )
     }
 
     constructor(localFiles: LocalFileRepository) : this(localFiles::toEntry)
@@ -73,6 +84,9 @@ class FileSearchEngine(
             null
         }
         val results = mutableListOf<FileEntry>()
+        var contentFilesScanned = 0
+        var contentBytesScanned = 0L
+        var contentLimitReached = false
         val rootPaths = roots.map { File(it).absoluteFile.toPath().normalize().toString() }.toSet()
         val walk = walk(roots) { file ->
             val normalizedPath = file.absoluteFile.toPath().normalize().toString()
@@ -84,7 +98,41 @@ class FileSearchEngine(
                 regex != null -> regex.containsMatchIn(entry.name)
                 else -> entry.name.contains(filters.query, ignoreCase = true)
             }
-            val matches = nameMatches &&
+            val extensionMatches = filters.matchExtension && filters.query.isNotBlank() && when {
+                regex != null -> regex.containsMatchIn(entry.extension)
+                else -> entry.extension.contains(filters.query.trimStart('.'), ignoreCase = true)
+            }
+            val contentMatches = if (filters.searchContents && filters.query.isNotBlank() && file.isFile &&
+                entry.extension in TEXT_CONTENT_EXTENSIONS && file.length() in 0..MAX_CONTENT_FILE_BYTES
+            ) {
+                val length = file.length().coerceAtLeast(0L)
+                if (contentFilesScanned >= MAX_CONTENT_SCAN_FILES ||
+                    contentBytesScanned > MAX_CONTENT_SCAN_BYTES - length
+                ) {
+                    contentLimitReached = true
+                    false
+                } else {
+                    contentFilesScanned += 1
+                    contentBytesScanned += length
+                    try {
+                        coroutineContext.ensureActive()
+                        val text = file.readText(Charsets.UTF_8)
+                        coroutineContext.ensureActive()
+                        if (regex != null) regex.containsMatchIn(text) else text.contains(filters.query, ignoreCase = true)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        false
+                    }
+                }
+            } else false
+            val alternateQuerySurface = filters.matchExtension || filters.searchContents
+            val queryMatches = filters.query.isBlank() || if (alternateQuerySurface) {
+                extensionMatches || contentMatches
+            } else {
+                nameMatches
+            }
+            val matches = queryMatches &&
                 (filters.minBytes == null || entry.sizeBytes >= filters.minBytes) &&
                 (filters.maxBytes == null || entry.sizeBytes <= filters.maxBytes) &&
                 (filters.modifiedAfter == null || entry.modifiedAtMillis >= filters.modifiedAfter) &&
@@ -97,7 +145,7 @@ class FileSearchEngine(
         FileSearchResult(
             entries = results.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.thenBy { it.name.lowercase() }.thenBy { it.absolutePath }),
             scannedEntries = walk.visited,
-            truncated = walk.limitReached || walk.stoppedEarly,
+            truncated = walk.limitReached || walk.stoppedEarly || contentLimitReached,
         )
     }
 

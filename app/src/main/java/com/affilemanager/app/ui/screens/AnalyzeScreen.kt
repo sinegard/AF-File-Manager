@@ -131,6 +131,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var query by remember { mutableStateOf(searchState.filters.query) }
     var includeHidden by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.includeHidden else searchDraft.includeHidden) }
     var regex by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.useRegex else searchDraft.useRegex) }
+    var matchExtension by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.matchExtension else searchDraft.matchExtension) }
+    var searchContents by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.searchContents else searchDraft.searchContents) }
     var kinds by remember { mutableStateOf(if (hasActiveSearch) searchState.filters.kinds else searchDraft.kinds) }
     var minimumMiB by remember {
         mutableStateOf(if (hasActiveSearch) bytesToMiBText(searchState.filters.minBytes) else searchDraft.minimumMiB)
@@ -174,6 +176,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             query = searchState.filters.query
             includeHidden = searchState.filters.includeHidden
             regex = searchState.filters.useRegex
+            matchExtension = searchState.filters.matchExtension
+            searchContents = searchState.filters.searchContents
             kinds = searchState.filters.kinds
             minimumMiB = bytesToMiBText(searchState.filters.minBytes)
             maximumMiB = bytesToMiBText(searchState.filters.maxBytes)
@@ -226,6 +230,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     }
     val currentFilters = SearchFilters(
         query = query,
+        matchExtension = matchExtension,
+        searchContents = searchContents,
         minBytes = minBytes,
         maxBytes = maxBytes,
         modifiedAfter = newerThanDays?.let { System.currentTimeMillis() - it * DAY_MILLIS },
@@ -356,13 +362,28 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
                         singleLine = true,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         FilterChip(selected = includeHidden, onClick = { includeHidden = !includeHidden }, label = { LText("Paslėpti") })
                         FilterChip(
                             selected = regex,
                             onClick = { regex = !regex },
                             enabled = query.isNotBlank(),
                             label = { LText("Regex") },
+                        )
+                        FilterChip(
+                            selected = matchExtension,
+                            onClick = { matchExtension = !matchExtension },
+                            enabled = query.isNotBlank(),
+                            label = { LText("Pagal plėtinį") },
+                        )
+                        FilterChip(
+                            selected = searchContents,
+                            onClick = { searchContents = !searchContents },
+                            enabled = query.isNotBlank(),
+                            label = { LText("Failų turinyje") },
                         )
                     }
                     FilterChip(
@@ -478,6 +499,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 query = ""
                                 includeHidden = false
                                 regex = false
+                                matchExtension = false
+                                searchContents = false
                                 kinds = emptySet()
                                 minimumMiB = ""
                                 maximumMiB = ""
@@ -742,6 +765,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         selectedStoragePaths,
         includeHidden,
         regex,
+        matchExtension,
+        searchContents,
         kinds,
         minimumMiB,
         maximumMiB,
@@ -756,6 +781,8 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 selectedStoragePaths = selectedStoragePaths,
                 includeHidden = includeHidden,
                 useRegex = regex,
+                matchExtension = matchExtension,
+                searchContents = searchContents,
                 kinds = kinds,
                 minimumMiB = minimumMiB,
                 maximumMiB = maximumMiB,

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -70,6 +71,7 @@ import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.components.DeleteConfirmationDialog
+import com.affilemanager.app.ui.components.LazyListFastScroller
 import com.affilemanager.app.data.FileSelectionSummary
 import com.affilemanager.app.data.FileSelectionInfoScanner
 import java.io.File
@@ -248,11 +250,29 @@ internal fun CleanupReviewDialog(
                             )
                         }
                     }
-                    Icon(
-                        if (currentFolderPath == null) Icons.Rounded.DeleteSweep else Icons.Rounded.FolderOpen,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                    if (currentFolderPath == null && category == CleanupCategory.EMPTY_FOLDERS) {
+                        val emptyFolderPaths = categoryCandidates.mapTo(linkedSetOf(), CleanupCandidate::path)
+                        val allSelected = emptyFolderPaths.isNotEmpty() && emptyFolderPaths.all(selected::contains)
+                        IconButton(
+                            onClick = {
+                                selected = if (allSelected) selected - emptyFolderPaths else selected + emptyFolderPaths
+                            },
+                            enabled = emptyFolderPaths.isNotEmpty(),
+                            modifier = Modifier.testTag("cleanup_select_all_empty_folders"),
+                        ) {
+                            Icon(
+                                Icons.Rounded.SelectAll,
+                                contentDescription = uiText(if (allSelected) "Atžymėti visus" else "Pasirinkti visus"),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    } else {
+                        Icon(
+                            if (currentFolderPath == null) Icons.Rounded.DeleteSweep else Icons.Rounded.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     if (currentFolderPath == null && category == CleanupCategory.DUPLICATES) {
                         IconButton(
                             onClick = {
@@ -369,20 +389,24 @@ internal fun CleanupReviewDialog(
                     }
                 } else if (category == CleanupCategory.TYPE_USAGE) {
                     val maximum = analysis.typeUsage.maxOfOrNull { it.sizeBytes }?.coerceAtLeast(1L) ?: 1L
-                    LazyColumn(modifier = Modifier.weight(1f).testTag("analysis_type_usage")) {
-                        items(analysis.typeUsage, key = { it.kind }) { usage ->
-                            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    LText(cleanupKindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
-                                    LText("${FileSystemRules.humanBytes(usage.sizeBytes)} · ${usage.fileCount}", style = MaterialTheme.typography.bodySmall)
+                    val typeUsageListState = rememberLazyListState()
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        LazyColumn(modifier = Modifier.fillMaxSize().testTag("analysis_type_usage"), state = typeUsageListState) {
+                            items(analysis.typeUsage, key = { it.kind }) { usage ->
+                                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        LText(cleanupKindLabel(usage.kind), fontWeight = FontWeight.SemiBold)
+                                        LText("${FileSystemRules.humanBytes(usage.sizeBytes)} · ${usage.fileCount}", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { usage.sizeBytes.toFloat() / maximum.toFloat() },
+                                        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                                    )
                                 }
-                                LinearProgressIndicator(
-                                    progress = { usage.sizeBytes.toFloat() / maximum.toFloat() },
-                                    modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
-                                )
+                                HorizontalDivider()
                             }
-                            HorizontalDivider()
                         }
+                        LazyListFastScroller(typeUsageListState)
                     }
                 } else if (category == CleanupCategory.SIMILAR_IMAGES && !similarImagesAnalyzed) {
                     Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -470,20 +494,25 @@ private fun CleanupCandidateList(
     modifier: Modifier = Modifier,
     testTag: String,
 ) {
-    LazyColumn(
-        modifier = modifier.fillMaxWidth().testTag(testTag),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 5.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(candidates, key = CleanupCandidate::path) { candidate ->
-            CleanupCandidateRow(
-                candidate = candidate,
-                totalBytes = totalBytes,
-                selected = candidate.path in selected,
-                onToggle = { onToggle(candidate) },
-                onOpen = { onOpen(candidate) },
-            )
+    val listState = rememberLazyListState()
+    Box(modifier = modifier.fillMaxWidth()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().testTag(testTag),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 5.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(candidates, key = CleanupCandidate::path) { candidate ->
+                CleanupCandidateRow(
+                    candidate = candidate,
+                    totalBytes = totalBytes,
+                    selected = candidate.path in selected,
+                    onToggle = { onToggle(candidate) },
+                    onOpen = { onOpen(candidate) },
+                )
+            }
         }
+        LazyListFastScroller(listState)
     }
 }
 

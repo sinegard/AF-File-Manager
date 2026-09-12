@@ -99,6 +99,8 @@ enum class StorageRootKind {
 
 data class SearchFilters(
     val query: String = "",
+    val matchExtension: Boolean = false,
+    val searchContents: Boolean = false,
     val minBytes: Long? = null,
     val maxBytes: Long? = null,
     val modifiedAfter: Long? = null,

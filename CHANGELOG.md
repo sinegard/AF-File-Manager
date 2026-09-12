@@ -4,6 +4,14 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.37.0] - 2026-09-12
+
+- Trash can now keep files forever or remove them after 1, 3, 7, 14, 30, 60 or 90 days. Large selections continue past stale entries, and the folder refreshes after deletion instead of leaving removed files on screen.
+- Search can optionally match file extensions or text inside bounded text and code files. Ordinary name searches remain lightweight and do not read file contents.
+- Deletable files can be removed from the preview menu after confirmation, whether they came from local storage, Trash, a document provider, a remote connection or protected storage.
+- Cleanup lists can select every empty folder and use the same temporary fast scroller as other long lists. The scroller now gets out of the way shortly after scrolling stops.
+- Android 8 and 9 have an additional removable-storage fallback for SD cards and USB drives exposed through app-specific external directories.
+
 ## [0.36.0] - 2026-09-11
 
 - Emptying Trash now also removes interrupted copies, orphaned payloads and damaged Trash metadata that could previously remain hidden while continuing to occupy app data. The cleanup action stays available when only this hidden residue remains.

@@ -3,6 +3,7 @@ package com.affilemanager.app.data
 import android.content.Context
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Environment
 import android.os.storage.StorageManager
 import com.affilemanager.app.core.FileSystemRules
@@ -89,12 +90,49 @@ internal object StorageVolumeMountPolicy {
         state in setOf(Environment.MEDIA_MOUNTED, Environment.MEDIA_MOUNTED_READ_ONLY)
 }
 
+internal object LegacyStorageRootPolicy {
+    fun fromAppExternalFilesDirectory(directory: File?): File? {
+        val files = directory ?: return null
+        if (files.name != "files") return null
+        val packageDirectory = files.parentFile ?: return null
+        val dataDirectory = packageDirectory.parentFile?.takeIf { it.name == "data" } ?: return null
+        val androidDirectory = dataDirectory.parentFile?.takeIf { it.name == "Android" } ?: return null
+        return androidDirectory.parentFile
+    }
+
+    fun chooseForVolume(
+        primary: Boolean,
+        uuid: String?,
+        volumeIndex: Int,
+        primaryRoot: File,
+        candidates: List<File?>,
+    ): File? {
+        if (primary) return primaryRoot
+        val normalizedUuid = uuid?.trim()?.takeIf(String::isNotEmpty)
+        return normalizedUuid?.let { expected ->
+            candidates.filterNotNull().firstOrNull { candidate ->
+                candidate.name.equals(expected, ignoreCase = true)
+            }
+        } ?: candidates.getOrNull(volumeIndex)
+    }
+}
+
 class LocalFileRepository(private val context: Context) {
     suspend fun roots(): List<StorageRoot> = withContext(Dispatchers.IO) {
         val storageManager = context.getSystemService(StorageManager::class.java)
-        val mountedVolumes = storageManager.storageVolumes.mapNotNull { volume ->
-            val directory = if (android.os.Build.VERSION.SDK_INT >= 30) volume.directory else null
-            directory
+        val volumes = storageManager.storageVolumes
+        val legacyCandidates = context.getExternalFilesDirs(null).map(LegacyStorageRootPolicy::fromAppExternalFilesDirectory)
+        val primaryRoot = Environment.getExternalStorageDirectory()
+        val mountedVolumes = volumes.mapIndexedNotNull { index, volume ->
+            val directory = if (Build.VERSION.SDK_INT >= 30) volume.directory else null
+            val resolvedDirectory = directory ?: LegacyStorageRootPolicy.chooseForVolume(
+                primary = volume.isPrimary,
+                uuid = volume.uuid,
+                volumeIndex = index,
+                primaryRoot = primaryRoot,
+                candidates = legacyCandidates,
+            )
+            resolvedDirectory
                 ?.takeIf { root -> StorageVolumeMountPolicy.isVisible(volume.state, root.exists()) }
                 ?.let { root -> volume to root }
         }
@@ -120,8 +158,8 @@ class LocalFileRepository(private val context: Context) {
             )
         }.toMutableList()
 
-        if (roots.none { it.path == Environment.getExternalStorageDirectory().absolutePath }) {
-            val root = Environment.getExternalStorageDirectory()
+        if (roots.none { it.path == primaryRoot.absolutePath }) {
+            val root = primaryRoot
             roots.add(
                 0,
                 StorageRoot(

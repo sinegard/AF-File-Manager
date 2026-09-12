@@ -3,6 +3,7 @@ package com.affilemanager.app.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.ContentFileEntry
@@ -49,6 +50,19 @@ class ContentFileRepository(private val context: Context) {
                 modifiedAtMillis = null,
                 isWritable = isWritable,
             )
+        }
+    }
+
+    suspend fun delete(uriText: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uri = Uri.parse(uriText)
+            require(uri.scheme == "content") { "Palaikomos tik Android content nuorodos" }
+            val deleted = if (DocumentsContract.isDocumentUri(context, uri)) {
+                DocumentsContract.deleteDocument(context.contentResolver, uri)
+            } else {
+                context.contentResolver.delete(uri, null, null) > 0
+            }
+            require(deleted) { "Android dokumentų teikėjas failo neištrynė" }
         }
     }
 

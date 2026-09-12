@@ -52,4 +52,26 @@ class PreviewActionsMenuTest {
         compose.onNodeWithTag("open-with-action").assertDoesNotExist()
         compose.runOnIdle { assertEquals(0, actions) }
     }
+
+    @Test fun deleteIsAnExplicitPreviewAction() {
+        var deleted = 0
+        compose.setContent { MaterialTheme {
+            PreviewActionsMenu(
+                sourceKey = "deletable-file",
+                editEnabled = true,
+                hashRunning = false,
+                onOpenWith = {},
+                onEditWith = null,
+                onSignPdf = null,
+                onShare = {},
+                onCalculateHash = {},
+                onDelete = { deleted += 1 },
+            )
+        } }
+
+        compose.onNodeWithTag("preview_actions_menu").performClick()
+        compose.onNodeWithTag("preview_delete_action").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, deleted) }
+        compose.onNodeWithTag("preview_delete_action").assertDoesNotExist()
+    }
 }

@@ -44,11 +44,13 @@ import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.HomeDisplayArea
+import com.affilemanager.app.data.TrashRepository
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.ui.theme.AppColorPalette
 import com.affilemanager.app.ui.theme.AppThemeMode
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProtocol
+import com.affilemanager.app.operations.OperationStatus
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -400,6 +402,50 @@ class MainActivityTest {
         compose.onNodeWithText("WebDAV").assertIsDisplayed()
         compose.onNodeWithTag("sharing_list").performScrollToNode(hasText("Start sharing"))
         compose.onNodeWithText("Start sharing").assertIsDisplayed()
+    }
+
+    @Test
+    fun movingMoreThanFiftyFilesToTrashRefreshesTheOpenFolderAfterCompletion() {
+        val directory = File(compose.activity.getExternalFilesDir(null), "delete-many-${System.nanoTime()}").apply { mkdirs() }
+        val files = (1..60).map { index -> File(directory, "file-${index.toString().padStart(2, '0')}.txt").apply { writeText("$index") } }
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val operationIdsBefore = viewModel.operations.value.mapTo(hashSetOf()) { it.id }
+        try {
+            compose.runOnUiThread { viewModel.navigate(PanelId.LEFT, directory.absolutePath, rememberHistory = false) }
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.leftPanel.value.entries.size == files.size }
+            compose.runOnUiThread {
+                viewModel.selectPaths(PanelId.LEFT, files.map(File::getAbsolutePath))
+            }
+            compose.onNodeWithContentDescription("Move to trash").performClick()
+            compose.onNodeWithTag("delete_confirmation_dialog").assertIsDisplayed()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onNodeWithTag("confirm_delete").fetchSemanticsNode().config
+                    .contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled).not()
+            }
+            compose.onNodeWithTag("confirm_delete").performClick()
+            compose.waitUntil(timeoutMillis = 15_000) {
+                viewModel.operations.value.any { operation ->
+                    operation.id !in operationIdsBefore && operation.status in setOf(
+                        OperationStatus.SUCCEEDED,
+                        OperationStatus.COMPLETED_WITH_ERRORS,
+                        OperationStatus.FAILED,
+                        OperationStatus.CANCELLED,
+                    )
+                }
+            }
+            compose.waitUntil(timeoutMillis = 5_000) { viewModel.leftPanel.value.entries.isEmpty() }
+            compose.runOnIdle {
+                assertTrue(files.none(File::exists))
+                assertTrue(viewModel.leftPanel.value.entries.isEmpty())
+            }
+        } finally {
+            runBlocking {
+                val trash = TrashRepository(compose.activity.applicationContext)
+                trash.list().filter { item -> item.originalPath.startsWith(directory.absolutePath + File.separator) }
+                    .forEach { item -> trash.deleteForever(item.id).getOrThrow() }
+            }
+            directory.deleteRecursively()
+        }
     }
 
     @Test
@@ -1122,7 +1168,12 @@ class MainActivityTest {
                 viewModel.setThemeMode(AppThemeMode.LIGHT)
                 viewModel.setColorPalette(AppColorPalette.DYNAMIC)
             }
-            val expectedLight = dynamicLightColorScheme(compose.activity).surfaceContainer.toArgb()
+            val lightColors = dynamicLightColorScheme(compose.activity)
+            val expectedLight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                lightColors.background.toArgb()
+            } else {
+                lightColors.surfaceContainer.toArgb()
+            }
             compose.waitUntil(timeoutMillis = 5_000) {
                 val settings = viewModel.appearanceSettings.value
                 settings.themeMode == AppThemeMode.LIGHT && settings.colorPalette == AppColorPalette.DYNAMIC
@@ -1139,7 +1190,12 @@ class MainActivityTest {
             )
 
             compose.runOnUiThread { viewModel.setThemeMode(AppThemeMode.DARK) }
-            val expectedDark = dynamicDarkColorScheme(compose.activity).surfaceContainer.toArgb()
+            val darkColors = dynamicDarkColorScheme(compose.activity)
+            val expectedDark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                darkColors.background.toArgb()
+            } else {
+                darkColors.surfaceContainer.toArgb()
+            }
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.appearanceSettings.value.themeMode == AppThemeMode.DARK
             }

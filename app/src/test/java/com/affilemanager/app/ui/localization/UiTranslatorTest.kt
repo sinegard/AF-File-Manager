@@ -240,6 +240,10 @@ class UiTranslatorTest {
         assertEquals("At least 4 files", UiTranslator.translate("Bent 4 failų", AppLanguageManager.ENGLISH))
         assertEquals("Similar-photo group 4", UiTranslator.translate("Panašių nuotraukų grupė 4", AppLanguageManager.ENGLISH))
         assertEquals("Connected · UID 2000", UiTranslator.translate("Prisijungta · UID 2000", AppLanguageManager.ENGLISH))
+        assertEquals(
+            "Reconnect to Office NAS before deleting",
+            UiTranslator.translate("Prieš trindami vėl prisijunkite prie Office NAS", AppLanguageManager.ENGLISH),
+        )
     }
 
     @Test

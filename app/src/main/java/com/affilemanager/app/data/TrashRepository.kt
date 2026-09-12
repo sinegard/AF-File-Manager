@@ -56,6 +56,11 @@ data class EmptyTrashResult(
     val failedItems: Int,
 )
 
+data class TrashMoveResult(
+    val movedItems: Int,
+    val failedItems: Int,
+)
+
 data class TrashStorageState(
     val storedItemCount: Int,
     val countComplete: Boolean,
@@ -93,6 +98,8 @@ class TrashRepository(
         private const val MAX_DIRECTORY_ENTRIES = 50_000
         private const val MAX_SCAN_ENTRIES = 200_000
         private const val COPY_BUFFER = 256 * 1_024
+        private const val MILLIS_PER_DAY = 24L * 60L * 60L * 1_000L
+        private val processMutationMutex = Mutex()
     }
 
     private data class RootSnapshot(
@@ -109,7 +116,7 @@ class TrashRepository(
         }
     }
 
-    private val mutationMutex = Mutex()
+    private val mutationMutex: Mutex get() = processMutationMutex
 
     private val root: File by lazy {
         (configuredRoot ?: requireNotNull(context.getExternalFilesDir("trash")) { "Šiukšliadėžės vieta nepasiekiama" })
@@ -167,61 +174,130 @@ class TrashRepository(
             }
     }
 
-    suspend fun moveToTrash(paths: List<String>, operation: OperationContext) = withContext(Dispatchers.IO) {
+    suspend fun moveToTrash(paths: List<String>, operation: OperationContext): TrashMoveResult = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             require(paths.isNotEmpty()) { "Nepasirinkta failų" }
-            val sources = paths.distinct().map { File(it).canonicalFile }
-            val scans = sources.associateWith { source ->
-                require(source.exists()) { "Failas nebeegzistuoja: ${source.name}" }
-                scan(source)
+            val requested = paths.asSequence()
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .distinct()
+                .take(MAX_TRASH_ITEMS + 1)
+                .toList()
+            require(requested.isNotEmpty()) { "Nepasirinkta failų" }
+            require(requested.size <= MAX_TRASH_ITEMS) { "Per daug elementų" }
+
+            val failures = mutableListOf<String>()
+            val canonicalSources = requested.mapNotNull { path ->
+                try {
+                    File(path).canonicalFile
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    failures += failureMessage(error)
+                    null
+                }
             }
-            operation.setTotals(
-                scans.values.sumOf { it.first },
-                scans.values.fold(0L) { total, value -> Math.addExact(total, value.second) },
-            )
+            val sources = compactSourceRoots(canonicalSources)
+            val scans = linkedMapOf<File, Pair<Int, Long>>()
+            var totalItems = 0
+            var totalBytes = 0L
             sources.forEach { source ->
                 operation.checkpoint()
-                val id = UUID.randomUUID().toString()
-                val stored = File(root, "$id.payload")
-                val partial = File(root, "$id.partial")
-                val sourceScan = requireNotNull(scans[source])
-                val sourceWasDirectory = source.isDirectory
-                val movedByRename = source.renameTo(stored)
-
-                if (movedByRename) {
-                    val item = trashItem(id, source, stored, sourceScan, sourceWasDirectory)
-                    try {
-                        writeMetadata(item)
-                    } catch (error: Throwable) {
-                        if (!source.exists() && stored.exists()) runCatching { stored.renameTo(source) }
-                        throw error
-                    }
-                } else {
-                    try {
-                        copyTree(source, partial, operation, 0)
-                        val copied = scan(partial)
-                        require(copied == sourceScan) { "Šiukšlinės kopija nepatikrinta" }
-                        require(partial.renameTo(stored)) { "Nepavyko užbaigti šiukšlinės kopijos" }
-                    } catch (error: Throwable) {
-                        cleanupQuietly(partial)
-                        throw error
-                    }
-
-                    val item = trashItem(id, source, stored, sourceScan, sourceWasDirectory)
-                    try {
-                        writeMetadata(item)
-                    } catch (error: Throwable) {
-                        cleanupQuietly(stored)
-                        throw error
-                    }
-                    // Keep the verified Trash copy and its metadata if source cleanup fails.
-                    // That is visible and recoverable instead of becoming an orphaned payload.
-                    deleteTree(source, source, 0, budget = EntryBudget(MAX_SCAN_ENTRIES))
+                operation.progress(currentName = source.name)
+                try {
+                    require(source.exists()) { "Failas nebeegzistuoja: ${source.name}" }
+                    val sourceScan = scan(source)
+                    totalItems = Math.addExact(totalItems, sourceScan.first)
+                    totalBytes = Math.addExact(totalBytes, sourceScan.second)
+                    scans[source] = sourceScan
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    failures += failureMessage(error)
                 }
-                operation.progress(itemDelta = sourceScan.first, byteDelta = sourceScan.second, currentName = source.name)
             }
+            operation.setTotals(
+                totalItems,
+                totalBytes,
+            )
+            var movedItems = 0
+            scans.forEach { (source, sourceScan) ->
+                operation.checkpoint()
+                try {
+                    movePreparedSource(source, sourceScan, operation)
+                    operation.progress(itemDelta = sourceScan.first, byteDelta = sourceScan.second, currentName = source.name)
+                    movedItems += 1
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    failures += failureMessage(error)
+                }
+            }
+            if (failures.isNotEmpty()) {
+                if (movedItems == 0) throw IllegalStateException(failures.first())
+                operation.completeWithErrors(failures.size, failures.first())
+            }
+            TrashMoveResult(movedItems = movedItems, failedItems = failures.size)
         }
     }
+
+    private suspend fun movePreparedSource(
+        source: File,
+        sourceScan: Pair<Int, Long>,
+        operation: OperationContext,
+    ) {
+        val id = UUID.randomUUID().toString()
+        val stored = File(root, "$id.payload")
+        val partial = File(root, "$id.partial")
+        val sourceWasDirectory = source.isDirectory
+        val movedByRename = source.renameTo(stored)
+
+        if (movedByRename) {
+            val item = trashItem(id, source, stored, sourceScan, sourceWasDirectory)
+            try {
+                writeMetadata(item)
+            } catch (error: Throwable) {
+                if (!source.exists() && stored.exists()) runCatching { stored.renameTo(source) }
+                throw error
+            }
+            return
+        }
+
+        try {
+            copyTree(source, partial, operation, 0)
+            val copied = scan(partial)
+            require(copied == sourceScan) { "Šiukšlinės kopija nepatikrinta" }
+            require(partial.renameTo(stored)) { "Nepavyko užbaigti šiukšlinės kopijos" }
+        } catch (error: Throwable) {
+            cleanupQuietly(partial)
+            throw error
+        }
+
+        val item = trashItem(id, source, stored, sourceScan, sourceWasDirectory)
+        try {
+            writeMetadata(item)
+        } catch (error: Throwable) {
+            cleanupQuietly(stored)
+            throw error
+        }
+        // Keep the verified Trash copy and its metadata if source cleanup fails.
+        // That is visible and recoverable instead of becoming an orphaned payload.
+        deleteTree(source, source, 0, budget = EntryBudget(MAX_SCAN_ENTRIES))
+    }
+
+    private fun compactSourceRoots(sources: List<File>): List<File> {
+        val ordered = sources.distinctBy(File::getPath)
+            .sortedWith(compareBy<File>({ it.toPath().nameCount }, { it.path }))
+        val accepted = ArrayList<File>(ordered.size)
+        ordered.forEach { candidate ->
+            val candidatePath = candidate.toPath().normalize()
+            if (accepted.none { parent -> candidatePath.startsWith(parent.toPath().normalize()) }) accepted += candidate
+        }
+        return accepted
+    }
+
+    private fun failureMessage(error: Throwable): String =
+        (error.message ?: error::class.java.simpleName).take(500)
 
     suspend fun restore(id: String): Result<String> = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
@@ -292,6 +368,33 @@ class TrashRepository(
                 if (snapshot.complete && snapshot.entries.all { logicalRootKey(it.name) in failedGroupKeys }) break
             }
             EmptyTrashResult(deletedItems = deleted, failedItems = failed)
+        }
+    }
+
+    suspend fun deleteExpired(
+        period: TrashRetentionPeriod,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): EmptyTrashResult = withContext(Dispatchers.IO) {
+        val days = period.days ?: return@withContext EmptyTrashResult(0, 0)
+        require(nowMillis >= 0L) { "Netinkamas dabartinis laikas" }
+        val cutoff = (nowMillis - days * MILLIS_PER_DAY).coerceAtLeast(0L)
+        mutationMutex.withLock {
+            var deleted = 0
+            var failed = 0
+            val budget = EntryBudget(MAX_SCAN_ENTRIES)
+            metadataItems()
+                .filter { (_, item) -> item.deletedAtMillis <= cutoff }
+                .forEach { (metadata, item) ->
+                    try {
+                        deleteTrackedItem(metadata, item, budget = budget)
+                        deleted += 1
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        failed += 1
+                    }
+                }
+            EmptyTrashResult(deleted, failed)
         }
     }
 

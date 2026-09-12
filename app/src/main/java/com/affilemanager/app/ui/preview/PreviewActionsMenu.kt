@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Calculate
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Share
@@ -37,6 +38,7 @@ internal fun PreviewActionsMenu(
     onShare: () -> Unit,
     onCalculateHash: () -> Unit,
     onDetails: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
 ) {
     var expanded by remember(sourceKey) { mutableStateOf(false) }
     fun invoke(action: () -> Unit) { expanded = false; action() }
@@ -82,6 +84,15 @@ internal fun PreviewActionsMenu(
                 },
                 enabled = !hashRunning, onClick = { invoke(onCalculateHash) }, modifier = Modifier.testTag("preview_hash_action"),
             )
+            onDelete?.let { action ->
+                DropdownMenuItem(
+                    text = { LText("Ištrinti") },
+                    leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+                    enabled = editEnabled,
+                    onClick = { invoke(action) },
+                    modifier = Modifier.testTag("preview_delete_action"),
+                )
+            }
         }
     }
 }

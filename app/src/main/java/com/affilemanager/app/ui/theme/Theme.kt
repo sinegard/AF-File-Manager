@@ -325,15 +325,20 @@ private fun SystemBarsTheme(colors: ColorScheme) {
     SideEffect {
         val activity = view.context as? Activity ?: return@SideEffect
         val window = activity.window
+        val navigationColor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            colors.surface
+        } else {
+            colors.surfaceContainer
+        }
         window.statusBarColor = colors.surface.toArgb()
-        window.navigationBarColor = colors.surfaceContainer.toArgb()
+        window.navigationBarColor = navigationColor.toArgb()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
         WindowCompat.getInsetsController(window, view).apply {
             isAppearanceLightStatusBars = CustomThemeRules.foreground(colors.surface) == Color.Black
-            isAppearanceLightNavigationBars = CustomThemeRules.foreground(colors.surfaceContainer) == Color.Black
+            isAppearanceLightNavigationBars = CustomThemeRules.foreground(navigationColor) == Color.Black
         }
     }
 }

@@ -10,6 +10,8 @@ import com.affilemanager.app.data.NavigationRepository
 import com.affilemanager.app.data.RecentFileRepository
 import com.affilemanager.app.data.SafFileRepository
 import com.affilemanager.app.data.TrashRepository
+import com.affilemanager.app.data.TrashRetentionSettings
+import com.affilemanager.app.data.TrashRetentionScheduler
 import com.affilemanager.app.data.UiPreferenceRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.cleanup.DeviceCleanupRepository
@@ -68,6 +70,7 @@ class AFFileManagerApplication : Application() {
             graph.syncSchedules.restoreWork()
             graph.durableTransfers.restore()
             graph.workflows.restore()
+            graph.trashRetentionScheduler.synchronize(graph.trashRetentionSettings.load())
         }
         graph.updates.check(automatic = true)
     }
@@ -101,6 +104,8 @@ class AppGraph(application: Application) {
     val durableTransferRepository = DurableTransferRepository(application)
     val durableTransfers = DurableTransferCoordinator(operationManager, durableTransferRepository)
     val trash = TrashRepository(application)
+    val trashRetentionSettings = TrashRetentionSettings(application)
+    val trashRetentionScheduler = TrashRetentionScheduler(application)
     val search = FileSearchEngine(localFiles)
     val similarImages = SimilarImageEngine()
     val archives = ArchiveEngine()

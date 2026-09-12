@@ -6,6 +6,7 @@ import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material.icons.rounded.Schedule
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CardDefaults
@@ -45,6 +47,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +69,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.TrashBrowserEntry
+import com.affilemanager.app.data.TrashRetentionPeriod
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
@@ -105,6 +109,7 @@ fun TrashBrowserDialog(
     var searchQuery by remember(state.itemId, state.relativePath) { mutableStateOf("") }
     var menu by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
+    var showRetention by remember { mutableStateOf(false) }
     val listState = androidx.compose.runtime.key(state.itemId, state.relativePath) { rememberLazyListState() }
     val gridState = androidx.compose.runtime.key(state.itemId, state.relativePath) { rememberLazyGridState() }
     LaunchedEffect(state.itemId, state.relativePath) {
@@ -181,6 +186,23 @@ fun TrashBrowserDialog(
                                 enabled = !state.loading && !state.emptying,
                                 onClick = { menu = false; viewModel.refreshTrashBrowser() },
                             )
+                            if (state.itemId == null) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            LText("Automatinis šiukšliadėžės valymas")
+                                            LText(
+                                                trashRetentionLabel(state.retentionPeriod),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                    leadingIcon = { Icon(Icons.Rounded.Schedule, contentDescription = null) },
+                                    modifier = Modifier.testTag("trash_retention_settings"),
+                                    onClick = { menu = false; showRetention = true },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { LText("Išvalyti visą šiukšliadėžę") },
                                 leadingIcon = { Icon(Icons.Rounded.DeleteForever, contentDescription = null) },
@@ -315,6 +337,53 @@ fun TrashBrowserDialog(
             },
         )
     }
+    if (showRetention) {
+        var draft by remember(state.retentionPeriod) { mutableStateOf(state.retentionPeriod) }
+        AfModalDialog(
+            title = "Automatinis šiukšliadėžės valymas",
+            subtitle = "Pasirinkite, kiek laiko ištrinti elementai turi būti saugomi.",
+            icon = Icons.Rounded.Schedule,
+            expandedContent = true,
+            onDismissRequest = { showRetention = false },
+            actions = {
+                TextButton(onClick = { showRetention = false }) { LText("Atšaukti") }
+                Button(
+                    onClick = {
+                        viewModel.setTrashRetentionPeriod(draft)
+                        showRetention = false
+                    },
+                    modifier = Modifier.testTag("trash_retention_save"),
+                ) { LText("Išsaugoti") }
+            },
+        ) {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(vertical = 8.dp)) {
+                items(TrashRetentionPeriod.entries, key = TrashRetentionPeriod::name) { period ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { draft = period }
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        RadioButton(selected = draft == period, onClick = { draft = period })
+                        LText(trashRetentionLabel(period))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun trashRetentionLabel(period: TrashRetentionPeriod): String = when (period) {
+    TrashRetentionPeriod.ONE_DAY -> "Po 1 dienos"
+    TrashRetentionPeriod.THREE_DAYS -> "Po 3 dienų"
+    TrashRetentionPeriod.SEVEN_DAYS -> "Po 7 dienų"
+    TrashRetentionPeriod.FOURTEEN_DAYS -> "Po 14 dienų"
+    TrashRetentionPeriod.THIRTY_DAYS -> "Po 30 dienų"
+    TrashRetentionPeriod.SIXTY_DAYS -> "Po 60 dienų"
+    TrashRetentionPeriod.NINETY_DAYS -> "Po 90 dienų"
+    TrashRetentionPeriod.NEVER -> "Niekada netrinti automatiškai"
 }
 
 @Composable

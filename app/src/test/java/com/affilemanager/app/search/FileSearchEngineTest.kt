@@ -47,6 +47,31 @@ class FileSearchEngineTest {
     }
 
     @Test
+    fun optionalExtensionAndTextContentSearchAddMatchingSurfaces() = runBlocking {
+        val root = temporary.newFolder("search-surfaces")
+        File(root, "unrelated.specialext").writeText("nothing here")
+        File(root, "ordinary.txt").writeText("The hidden needle is inside this file")
+        File(root, "binary.jpg").writeText("needle must not inspect binary formats")
+
+        val extension = engine().search(
+            listOf(root.absolutePath),
+            SearchFilters(query = "specialext", matchExtension = true),
+        )
+        val nameOnly = engine().search(
+            listOf(root.absolutePath),
+            SearchFilters(query = "hidden needle"),
+        )
+        val contents = engine().search(
+            listOf(root.absolutePath),
+            SearchFilters(query = "hidden needle", searchContents = true),
+        )
+
+        assertEquals(listOf("unrelated.specialext"), extension.entries.map(FileEntry::name))
+        assertTrue(nameOnly.entries.isEmpty())
+        assertEquals(listOf("ordinary.txt"), contents.entries.map(FileEntry::name))
+    }
+
+    @Test
     fun searchCombinesKindSizeAndModifiedDateFilters() = runBlocking {
         val root = temporary.newFolder("filters")
         val recentLarge = File(root, "recent-large.pdf").apply {

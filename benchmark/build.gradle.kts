@@ -28,6 +28,12 @@ android {
     experimentalProperties["android.experimental.self-instrumenting"] = true
 }
 
+androidComponents {
+    beforeVariants(selector().withBuildType("debug")) { variant ->
+        variant.enable = false
+    }
+}
+
 dependencies {
     implementation("androidx.benchmark:benchmark-macro-junit4:1.4.1")
     implementation("androidx.test.ext:junit:1.3.0")

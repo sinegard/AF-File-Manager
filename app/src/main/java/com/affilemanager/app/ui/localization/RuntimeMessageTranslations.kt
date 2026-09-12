@@ -4,6 +4,14 @@ package com.affilemanager.app.ui.localization
 internal object RuntimeMessageTranslations {
     val english = mapOf(
         "Failas pasikeitė po peržiūros" to "The file changed after the preview",
+        "Palaikomos tik Android content nuorodos" to "Only Android content URIs are supported",
+        "Android dokumentų teikėjas failo neištrynė" to "The Android document provider did not delete the file",
+        "Šiukšliadėžės saugojimo laikotarpio išsaugoti nepavyko" to "Could not save the Trash retention period",
+        "Netinkamas dabartinis laikas" to "Invalid current time",
+        "Pasenusių elementų ištrinti nepavyko" to "Could not delete expired items",
+        "Kai kurių pasenusių elementų ištrinti nepavyko" to "Could not delete some expired items",
+        "Automatinio šiukšliadėžės valymo pradėti nepavyko" to "Could not start automatic Trash cleanup",
+        "Serverio ryšys neaktyvus" to "The server connection is inactive",
         "Fono pritemdymas" to "Background shading",
         "Skaidrūs meniu ir dialogai" to "Transparent menus and dialogs",
         "Meniu ir dialogų spalva" to "Menu and dialog color",

@@ -362,11 +362,12 @@ class FilePreviewLifecycleTest {
                 compose.onAllNodesWithTag("pdf-page-2", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             val pdfPage = compose.onNodeWithTag("pdf-page-2", useUnmergedTree = true)
+            val pdfPageSize = pdfPage.fetchSemanticsNode().size
             pdfPage.performTouchInput {
                 longClick(
                     position = Offset(
-                        visibleSize.width * (62f / 595f),
-                        visibleSize.height * (108f / 842f),
+                        pdfPageSize.width * (62f / 595f),
+                        pdfPageSize.height * (108f / 842f),
                     ),
                 )
             }
@@ -379,8 +380,8 @@ class FilePreviewLifecycleTest {
             assertEquals("AF", initialSelection.text)
             pdfPage.performTouchInput {
                 val destination = Offset(
-                    visibleSize.width * (285f / 595f),
-                    visibleSize.height * (108f / 842f),
+                    pdfPageSize.width * (285f / 595f),
+                    pdfPageSize.height * (108f / 842f),
                 )
                 down(Offset(initialSelection.stopHandle.x, initialSelection.stopHandle.y))
                 moveTo(destination, delayMillis = 450)
@@ -508,12 +509,12 @@ class FilePreviewLifecycleTest {
             createWaveAudio(audio)
             compose.runOnUiThread { viewModel.open(LocalFileRepository(application).toEntry(audio)) }
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.onAllNodesWithTag("audio_player", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithTag("audio_seek").fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithTag("audio_seek").assertIsDisplayed()
+            compose.onNodeWithTag("audio_seek").performScrollTo().assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 10_000) {
                 runCatching {
-                    compose.onNodeWithTag("audio_play_pause").assertIsEnabled()
+                    compose.onNodeWithTag("audio_play_pause").performScrollTo().assertIsEnabled()
                     true
                 }.getOrDefault(false)
             }

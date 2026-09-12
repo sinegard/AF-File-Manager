@@ -223,4 +223,47 @@ class CleanupReviewDialogTest {
 
         assertEquals(setOf(group.paths[1], group.paths[2]), moved.get())
     }
+
+    @Test
+    fun emptyFoldersCanBeSelectedAndClearedTogether() {
+        val first = "/storage/emulated/0/empty-a"
+        val second = "/storage/emulated/0/empty-b"
+        compose.setContent {
+            MaterialTheme {
+                CleanupReviewDialog(
+                    analysis = StorageAnalysis(
+                        scannedFiles = 0,
+                        scannedDirectories = 2,
+                        totalBytes = 0,
+                        largestFiles = emptyList(),
+                        oldestFiles = emptyList(),
+                        emptyDirectories = listOf(first, second),
+                        truncated = false,
+                    ),
+                    duplicates = emptyList(),
+                    similarImages = emptyList(),
+                    similarImagesRunning = false,
+                    similarImagesAnalyzed = false,
+                    similarImagesError = null,
+                    initialCategory = CleanupCategory.EMPTY_FOLDERS,
+                    analysisRootPaths = listOf("/storage/emulated/0"),
+                    onAnalyzeSimilarImages = {},
+                    onMoveToTrash = {},
+                    onLoadFolder = { Result.failure(IllegalStateException("not used")) },
+                    onOpenFile = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        val checkboxes = compose.onAllNodesWithTag("cleanup_candidate_checkbox")
+        checkboxes[0].assertIsOff()
+        checkboxes[1].assertIsOff()
+        compose.onNodeWithTag("cleanup_select_all_empty_folders").performClick()
+        checkboxes[0].assertIsOn()
+        checkboxes[1].assertIsOn()
+        compose.onNodeWithTag("cleanup_select_all_empty_folders").performClick()
+        checkboxes[0].assertIsOff()
+        checkboxes[1].assertIsOff()
+    }
 }

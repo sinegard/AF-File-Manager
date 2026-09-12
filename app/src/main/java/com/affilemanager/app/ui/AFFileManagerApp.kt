@@ -410,6 +410,7 @@ fun AFFileManagerApp(
             archiveDisplayDefaults = archiveDisplayDefaults,
             onApplyArchiveDisplayToAll = viewModel::applyDirectoryDisplaySettingsToAll,
             onClose = viewModel::closePreview,
+            onDelete = (viewModel::deletePreviewTarget).takeIf { viewModel.canDeletePreview(target) },
             onPrepareEdit = viewModel::prepareFileEdit,
             onApplyPdfSignature = viewModel::applyPdfVisualSignature,
             onEditTextChanged = viewModel::updateEditText,
