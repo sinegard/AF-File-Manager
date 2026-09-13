@@ -66,6 +66,17 @@ class FileEntryOrderingTest {
     }
 
     @Test
+    fun nameSortingIsCaseInsensitiveAndStableForEquivalentNames() {
+        val first = entry("Alpha.txt", EntryKind.DOCUMENT)
+        val second = entry("alpha.TXT", EntryKind.DOCUMENT)
+
+        assertEquals(
+            listOf(first, second),
+            FileEntryOrdering.order(listOf(first, second), SortMode.NAME, SortDirection.ASCENDING),
+        )
+    }
+
+    @Test
     fun sizeAndModifiedSortingUseTheRequestedDirection() {
         val entries = listOf(
             entry("middle.txt", EntryKind.DOCUMENT, size = 50, modified = 500),

@@ -38,10 +38,16 @@ internal object ProgressiveListingPolicy {
     const val MAX_SCANNED_ENTRIES = 200_000
     private const val EARLY_BATCH = 256
     private const val LATER_BATCH = 4_096
+    private const val EARLY_METADATA_LIMIT = 2_048
+    private const val EARLY_METADATA_BATCH = 512
 
     fun shouldPublish(count: Int): Boolean = count == 1 ||
         (count <= LATER_BATCH && count % EARLY_BATCH == 0) ||
         count % LATER_BATCH == 0
+
+    fun shouldPublishMetadata(count: Int): Boolean =
+        (count <= EARLY_METADATA_LIMIT && count % EARLY_METADATA_BATCH == 0) ||
+            count % LATER_BATCH == 0
 }
 
 internal object DirectorySizePolicy {
@@ -209,8 +215,7 @@ class LocalFileRepository(private val context: Context) {
         try {
             val directory = File(directoryPath).canonicalFile
             require(directory.isDirectory) { "Tai nėra aplankas" }
-            val files = ArrayList<File>()
-            val basicEntries = ArrayList<FileEntry>()
+            val entries = ArrayList<FileEntry>()
             var scanned = 0
             var truncated = false
             var rootEnumerationError: Throwable? = null
@@ -227,16 +232,15 @@ class LocalFileRepository(private val context: Context) {
                             break
                         }
                         if (!includeHidden && child.isHidden) continue
-                        if (files.size >= ProgressiveListingPolicy.MAX_VISIBLE_ENTRIES) {
+                        if (entries.size >= ProgressiveListingPolicy.MAX_VISIBLE_ENTRIES) {
                             truncated = true
                             break
                         }
-                        files += child
-                        basicEntries += toBasicEntry(child)
-                        if (ProgressiveListingPolicy.shouldPublish(basicEntries.size)) {
+                        entries += toBasicEntry(child)
+                        if (ProgressiveListingPolicy.shouldPublish(entries.size)) {
                             onProgress(
                                 DirectoryListingUpdate(
-                                    entries = orderedSnapshot(basicEntries, sortMode, sortDirection),
+                                    entries = orderedSnapshot(entries, sortMode, sortDirection),
                                     scannedEntries = scanned,
                                     metadataEntries = 0,
                                     complete = false,
@@ -255,52 +259,52 @@ class LocalFileRepository(private val context: Context) {
                 rootEnumerationError = error
             }
 
-            if (directory.absolutePath == File.separator && basicEntries.isEmpty()) {
+            if (directory.absolutePath == File.separator && entries.isEmpty()) {
                 val detected = RootDirectoryFallback.existingChildren(directory)
                     .filter { includeHidden || !it.isHidden }
                 if (detected.isEmpty()) {
                     rootEnumerationError?.let { throw it }
                 } else {
-                    files.clear()
-                    basicEntries.clear()
-                    files.addAll(detected)
-                    basicEntries.addAll(detected.map(::toBasicEntry))
+                    entries.clear()
+                    entries.addAll(detected.map(::toBasicEntry))
                     scanned = detected.size
                     // The fallback is intentionally bounded and cannot claim to enumerate vendor-specific names.
                     truncated = true
                 }
             }
 
-            if (basicEntries.isNotEmpty()) {
+            if (entries.isNotEmpty()) {
+                val initiallyOrdered = orderedSnapshot(entries, sortMode, sortDirection)
                 onProgress(
                     DirectoryListingUpdate(
-                        entries = orderedSnapshot(basicEntries, sortMode, sortDirection),
+                        entries = initiallyOrdered,
                         scannedEntries = scanned,
                         metadataEntries = 0,
                         complete = false,
                         truncated = truncated,
                     ),
                 )
+                if (sortMode == SortMode.NAME || sortMode == SortMode.TYPE) {
+                    entries.clear()
+                    entries.addAll(initiallyOrdered)
+                }
             }
 
-            val entries = ArrayList<FileEntry>(files.size)
-            files.forEachIndexed { index, child ->
+            val metadataKeepsOrder = sortMode == SortMode.NAME || sortMode == SortMode.TYPE
+            entries.indices.forEach { index ->
                 if (index % 128 == 0) coroutineContext.ensureActive()
-                val entry = toEntry(child)
-                entries += if (sortMode == SortMode.SIZE && entry.isDirectory) {
+                val entry = toEntry(File(entries[index].absolutePath))
+                entries[index] = if (sortMode == SortMode.SIZE && entry.isDirectory) {
                     entry.copy(sizeBytes = 0L, metadataComplete = false)
                 } else {
                     entry
                 }
                 val ready = index + 1
-                if (ProgressiveListingPolicy.shouldPublish(ready)) {
-                    val combined = ArrayList<FileEntry>(files.size).apply {
-                        addAll(entries)
-                        for (pendingIndex in ready until basicEntries.size) add(basicEntries[pendingIndex])
-                    }
+                if (ProgressiveListingPolicy.shouldPublishMetadata(ready)) {
                     onProgress(
                         DirectoryListingUpdate(
-                            entries = orderedSnapshot(combined, sortMode, sortDirection),
+                            entries = if (metadataKeepsOrder) ArrayList(entries)
+                            else orderedSnapshot(entries, sortMode, sortDirection),
                             scannedEntries = scanned,
                             metadataEntries = ready,
                             complete = false,
@@ -311,9 +315,7 @@ class LocalFileRepository(private val context: Context) {
             }
 
             val finalEntries = if (sortMode == SortMode.SIZE && entries.any(FileEntry::isDirectory)) {
-                val sizeEntries = entries.mapTo(ArrayList(entries.size)) { entry ->
-                    if (entry.isDirectory) entry.copy(sizeBytes = 0L, metadataComplete = false) else entry
-                }
+                val sizeEntries = entries
                 onProgress(
                     DirectoryListingUpdate(
                         entries = orderedSnapshot(sizeEntries, sortMode, sortDirection),
@@ -362,7 +364,11 @@ class LocalFileRepository(private val context: Context) {
                 entries
             }
 
-            val ordered = orderEntries(finalEntries, sortMode, sortDirection)
+            val ordered = if (metadataKeepsOrder && finalEntries === entries) {
+                ArrayList(entries)
+            } else {
+                orderEntries(finalEntries, sortMode, sortDirection)
+            }
             onProgress(
                 DirectoryListingUpdate(
                     entries = ordered,
@@ -384,7 +390,7 @@ class LocalFileRepository(private val context: Context) {
         entries: List<FileEntry>,
         sortMode: SortMode,
         sortDirection: SortDirection,
-    ): List<FileEntry> = FileEntryOrdering.order(ArrayList(entries), sortMode, sortDirection)
+    ): List<FileEntry> = FileEntryOrdering.order(entries, sortMode, sortDirection)
 
     private fun orderEntries(
         entries: List<FileEntry>,

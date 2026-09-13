@@ -93,6 +93,10 @@ object LanTransferController {
         _state.update { current ->
             if (current.status == LanTransferStatus.RUNNING) current.copy(incomingUpload = progress) else current
         }
+        NearbyTransferHistoryController.recordReceive(
+            progress,
+            NearbyTransferController.connectedPairing()?.receiverName,
+        )
     }
 }
 
@@ -117,6 +121,7 @@ class LanTransferService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        NearbyTransferHistoryController.initialize(this)
         createChannel()
     }
 

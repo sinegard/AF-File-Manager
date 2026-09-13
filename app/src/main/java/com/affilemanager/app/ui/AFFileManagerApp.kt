@@ -474,6 +474,8 @@ fun AFFileManagerApp(
         OperationProgressDialog(
             operation = operation,
             onCancel = { viewModel.cancelOperation(operation.id) },
+            onPause = { viewModel.pauseOperation(operation.id) },
+            onResume = { viewModel.resumeOperation(operation.id) },
             onHide = {
                 hiddenOperationIds = hiddenOperationIds + operation.id
                 if (Build.VERSION.SDK_INT >= 33 &&

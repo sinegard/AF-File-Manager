@@ -78,6 +78,9 @@ import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.AdvancedBrowserUiState
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryEntryFilter
+import com.affilemanager.app.ui.components.DirectoryEntryFilterDialog
+import com.affilemanager.app.ui.components.DirectoryEntryFilterRules
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
@@ -109,13 +112,18 @@ fun AdvancedStorageBrowserDialog(
     var showDisplaySettings by remember { mutableStateOf(false) }
     var searchVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var entryFilters by remember(state.path) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    var showEntryFilter by remember(state.path) { mutableStateOf(false) }
     LaunchedEffect(state.path) {
         searchVisible = false
         searchQuery = ""
     }
-    val displayedEntries = remember(state.entries, searchQuery) {
+    val displayedEntries = remember(state.entries, searchQuery, entryFilters) {
         val query = searchQuery.trim()
-        if (query.isEmpty()) state.entries else state.entries.filter { it.name.contains(query, ignoreCase = true) }
+        state.entries.filter { entry ->
+            (query.isEmpty() || entry.name.contains(query, ignoreCase = true)) &&
+                DirectoryEntryFilterRules.matches(entry.kind, entryFilters)
+        }
     }
     val allSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.absolutePath in state.selectedPaths }
 
@@ -186,6 +194,8 @@ fun AdvancedStorageBrowserDialog(
                                     viewModel.setAdvancedSort(mode, direction)
                                 },
                                 onDismissMenu = { menu = false },
+                                filterActive = entryFilters.isNotEmpty(),
+                                onOpenFilter = { showEntryFilter = true },
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -215,6 +225,8 @@ fun AdvancedStorageBrowserDialog(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         onClose = { searchVisible = false; searchQuery = "" },
+                        filterActive = entryFilters.isNotEmpty(),
+                        onOpenFilter = { showEntryFilter = true },
                         modifier = Modifier.testTag("directory_search_field_advanced"),
                     )
                 }
@@ -340,6 +352,13 @@ fun AdvancedStorageBrowserDialog(
                 viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
                 showDisplaySettings = false
             },
+        )
+    }
+    if (showEntryFilter) {
+        DirectoryEntryFilterDialog(
+            selected = entryFilters,
+            onSelectedChange = { entryFilters = it },
+            onDismiss = { showEntryFilter = false },
         )
     }
 }

@@ -48,6 +48,13 @@ internal object FastScrollMapping {
 
 private data class FastScrollMetrics(val totalItems: Int, val visibleItems: Int, val firstVisibleItem: Int)
 
+internal object FastScrollVisibilityRules {
+    const val HIDE_DELAY_MILLIS = 1_500L
+
+    fun shouldRemainVisible(scrollInProgress: Boolean, dragging: Boolean): Boolean =
+        scrollInProgress || dragging
+}
+
 @Composable
 internal fun BoxScope.LazyListFastScroller(state: LazyListState, modifier: Modifier = Modifier) {
     val metrics by remember(state) { derivedStateOf {
@@ -79,11 +86,12 @@ private fun BoxScope.FastScroller(
     val scope = rememberCoroutineScope()
     val scrollingJob = remember { arrayOfNulls<Job>(1) }
     var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(scrollInProgress) {
-        if (scrollInProgress) {
+    var dragging by remember { mutableStateOf(false) }
+    LaunchedEffect(scrollInProgress, dragging) {
+        if (FastScrollVisibilityRules.shouldRemainVisible(scrollInProgress, dragging)) {
             visible = true
         } else {
-            delay(1_500)
+            delay(FastScrollVisibilityRules.HIDE_DELAY_MILLIS)
             visible = false
         }
     }
@@ -100,7 +108,13 @@ private fun BoxScope.FastScroller(
                 scrollingJob[0] = scope.launch { onScrollTo(target) }
             }
             detectVerticalDragGestures(
-                onDragStart = { offset -> go(offset.y) },
+                onDragStart = { offset ->
+                    dragging = true
+                    visible = true
+                    go(offset.y)
+                },
+                onDragEnd = { dragging = false },
+                onDragCancel = { dragging = false },
                 onVerticalDrag = { change, _ ->
                     change.consume()
                     go(change.position.y)

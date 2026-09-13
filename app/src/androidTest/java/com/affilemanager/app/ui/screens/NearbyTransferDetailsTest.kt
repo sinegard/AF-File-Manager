@@ -1,5 +1,6 @@
 package com.affilemanager.app.ui.screens
 
+import android.content.ClipboardManager
 import android.graphics.Bitmap
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
@@ -20,12 +21,15 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import com.affilemanager.app.AFFileManagerApplication
 import com.affilemanager.app.transfer.TransferFileProgress
 import com.affilemanager.app.transfer.TransferFileStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -147,6 +151,15 @@ class NearbyTransferDetailsTest {
         compose.onNodeWithText("Bob phone").assertIsDisplayed()
         compose.onNodeWithText("Already sent").assertIsDisplayed()
         compose.onNodeWithText("Received reply").assertIsDisplayed()
+        val outgoingBounds = compose.onNodeWithTag("nearby_chat_message_0").fetchSemanticsNode().boundsInRoot
+        val incomingBounds = compose.onNodeWithTag("nearby_chat_message_1").fetchSemanticsNode().boundsInRoot
+        assertTrue("outgoing message was not aligned to the right", outgoingBounds.left > incomingBounds.left)
+        compose.onNodeWithTag("nearby_chat_message_0").performTouchInput { longClick() }
+        val clipboard = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+            .getSystemService(ClipboardManager::class.java)
+        compose.waitUntil(5_000) {
+            clipboard.primaryClip?.getItemAt(0)?.text?.toString() == "Already sent"
+        }
         compose.onNodeWithTag("nearby_chat_input").performTextInput("New message")
         compose.onNodeWithTag("nearby_chat_send").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals("New message", sent) }
@@ -171,8 +184,9 @@ class NearbyTransferDetailsTest {
                 photo.length() + 12288, 3, { opened = it.absolutePath }, { closed++ }, { cancelled++ }) } }
             compose.onNodeWithTag("nearby_transfer_preview_0").assertIsEnabled().performClick()
             compose.runOnIdle { assertEquals(photo.path, opened) }
-            compose.onNodeWithTag("nearby_transfer_preview_1").assertIsNotEnabled()
-            compose.onNodeWithTag("nearby_transfer_preview_2").assertIsNotEnabled()
+            compose.onNodeWithTag("nearby_transfer_preview_1").assertDoesNotExist()
+            compose.onNodeWithTag("nearby_transfer_preview_2").assertDoesNotExist()
+            compose.onNodeWithTag("nearby_transfer_stop_1").assertIsEnabled()
             val evidence = requireNotNull(app.getExternalFilesDir("validation"))
             compose.onNodeWithTag("nearby_transfer_details").captureToImage().asAndroidBitmap().let {
                 File(evidence, "nearby-details-${app.resources.displayMetrics.widthPixels}.png").outputStream().use { out -> it.compress(Bitmap.CompressFormat.PNG, 100, out) }

@@ -22,6 +22,17 @@ class ProgressiveListingPolicyTest {
     }
 
     @Test
+    fun metadataUpdatesRemainResponsiveButBounded() {
+        assertTrue(ProgressiveListingPolicy.shouldPublishMetadata(512))
+        assertTrue(ProgressiveListingPolicy.shouldPublishMetadata(2_048))
+        assertTrue(ProgressiveListingPolicy.shouldPublishMetadata(4_096))
+        assertEquals(
+            6,
+            (1..10_000).count(ProgressiveListingPolicy::shouldPublishMetadata),
+        )
+    }
+
+    @Test
     fun hundredThousandEntriesHaveBoundedUpdateCount() {
         val updates = (1..ProgressiveListingPolicy.MAX_VISIBLE_ENTRIES)
             .count(ProgressiveListingPolicy::shouldPublish)

@@ -87,7 +87,7 @@ class AppearanceAndCleanupUiTest {
             DeviceCleanupDialog(
                 state = DeviceCleanupUiState(open = true, snapshot = DeviceCleanupSnapshot(true, listOf(fixture), listOf(fixture), 1, true)),
                 onDismiss = {}, onRefresh = {}, onGrantUsageAccess = {},
-                onOpenAppSettings = { settings = it }, onUninstall = { uninstall = it },
+                onOpenAppSettings = { settings = it }, onUninstall = { uninstall = it }, onForceStop = {},
             )
         } }
         compose.onNodeWithTag("cleanup_icon_${app.packageName}").assertIsDisplayed()
@@ -105,6 +105,36 @@ class AppearanceAndCleanupUiTest {
         compose.onNodeWithTag("cleanup_cache_settings").performClick()
         assertEquals(app.packageName, settings)
         assertEquals(0, compose.onAllNodesWithText("Old media and screenshots").fetchSemanticsNodes().size)
+    }
+
+    @Test fun runningAppsAreIndependentOfUsageAccessAndRequireConfirmationBeforeStopping() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixture = DeviceCleanupApp(app.packageName, "Running application", null, 0L, null, 16_384L)
+        var stopped: String? = null
+        compose.setContent { MaterialTheme {
+            DeviceCleanupDialog(
+                state = DeviceCleanupUiState(
+                    open = true,
+                    snapshot = DeviceCleanupSnapshot(
+                        usageAccessGranted = false,
+                        unusedApps = emptyList(),
+                        cachedApps = emptyList(),
+                        scannedApps = 0,
+                        cacheSizesAvailable = false,
+                        runningApps = listOf(fixture),
+                        privilegedAppAccessAvailable = true,
+                    ),
+                ),
+                onDismiss = {}, onRefresh = {}, onGrantUsageAccess = {},
+                onOpenAppSettings = {}, onUninstall = {}, onForceStop = { stopped = it },
+            )
+        } }
+        compose.onNodeWithTag("cleanup_running_tab").performClick()
+        compose.onNodeWithTag("cleanup_force_stop_${app.packageName}").performClick()
+        compose.onNodeWithTag("cleanup_force_stop_confirmation").assertIsDisplayed()
+        assertNull(stopped)
+        compose.onNodeWithTag("cleanup_force_stop_confirm").performClick()
+        assertEquals(app.packageName, stopped)
     }
 
     @Test fun failedCustomPaletteSaveStaysOpenAndShowsTheError() {

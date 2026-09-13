@@ -24,6 +24,7 @@ data class HomeShortcut(
     val path: String,
     val visible: Boolean = true,
     val builtIn: Boolean = false,
+    val section: HomeSection = HomeSection.QUICK_LOCATIONS,
 )
 
 data class HomeCustomization(
@@ -31,6 +32,9 @@ data class HomeCustomization(
     val shortcuts: List<HomeShortcut> = emptyList(),
     val storageOrder: List<String> = emptyList(),
     val hiddenStorageIds: Set<String> = emptySet(),
+    val hiddenSections: Set<HomeSection> = emptySet(),
+    val toolOrder: List<String> = emptyList(),
+    val hiddenToolIds: Set<String> = emptySet(),
 )
 
 /**
@@ -59,6 +63,8 @@ object HomeCustomizationRules {
     const val MAX_PATH_LENGTH = 4_096
     const val MAX_ID_LENGTH = 120
     const val ROOT_STORAGE_ID = "af.root"
+    val DEFAULT_TOOL_IDS = listOf("trash", "plans", "favorites", "tags", "cloud", "bookmarks")
+    val SHORTCUT_SECTIONS = setOf(HomeSection.STORAGE, HomeSection.QUICK_LOCATIONS, HomeSection.TOOLS)
 
     fun normalize(
         value: HomeCustomization,
@@ -78,7 +84,7 @@ object HomeCustomizationRules {
             value.shortcuts.distinctBy(HomeShortcut::id).forEach { saved ->
                 val currentDefault = defaults[saved.id]
                 if (currentDefault != null) {
-                    add(currentDefault.copy(visible = saved.visible))
+                    add(currentDefault.copy(visible = saved.visible, section = saved.section))
                 } else if (!saved.builtIn) {
                     add(validateShortcut(saved.copy(builtIn = false)))
                 }
@@ -90,11 +96,20 @@ object HomeCustomizationRules {
             .distinct().take(MAX_SHORTCUTS).toList()
         val hiddenStorageIds = value.hiddenStorageIds.asSequence().map(String::trim).filter(String::isNotEmpty)
             .take(MAX_SHORTCUTS).toSet()
+        val hiddenSections = value.hiddenSections.filterTo(linkedSetOf()) { it in HomeSection.entries }
+        val toolOrder = buildList {
+            value.toolOrder.filter { it in DEFAULT_TOOL_IDS }.distinct().forEach(::add)
+            DEFAULT_TOOL_IDS.filterNot(::contains).forEach(::add)
+        }
+        val hiddenToolIds = value.hiddenToolIds.filterTo(linkedSetOf()) { it in DEFAULT_TOOL_IDS }
         return HomeCustomization(
             sectionOrder = sections,
             shortcuts = shortcuts,
             storageOrder = storageOrder,
             hiddenStorageIds = hiddenStorageIds,
+            hiddenSections = hiddenSections,
+            toolOrder = toolOrder,
+            hiddenToolIds = hiddenToolIds,
         )
     }
 
@@ -120,6 +135,34 @@ object HomeCustomizationRules {
 
     fun setShortcutVisible(value: HomeCustomization, id: String, visible: Boolean): HomeCustomization =
         value.copy(shortcuts = value.shortcuts.map { if (it.id == id) it.copy(visible = visible) else it })
+
+    fun setShortcutSection(value: HomeCustomization, id: String, section: HomeSection): HomeCustomization {
+        require(section in SHORTCUT_SECTIONS) { "Shortcuts cannot be placed in this section" }
+        return value.copy(shortcuts = value.shortcuts.map { if (it.id == id) it.copy(section = section) else it })
+    }
+
+    fun setSectionVisible(value: HomeCustomization, section: HomeSection, visible: Boolean): HomeCustomization =
+        value.copy(hiddenSections = if (visible) value.hiddenSections - section else value.hiddenSections + section)
+
+    fun orderedToolIds(value: HomeCustomization): List<String> = buildList {
+        value.toolOrder.filter { it in DEFAULT_TOOL_IDS }.distinct().forEach(::add)
+        DEFAULT_TOOL_IDS.filterNot(::contains).forEach(::add)
+    }
+
+    fun moveTool(value: HomeCustomization, id: String, offset: Int): HomeCustomization {
+        val order = orderedToolIds(value).toMutableList()
+        val from = order.indexOf(id)
+        if (from == -1) return value
+        val to = (from + offset).coerceIn(0, order.lastIndex)
+        if (from == to) return value.copy(toolOrder = order)
+        order.add(to, order.removeAt(from))
+        return value.copy(toolOrder = order)
+    }
+
+    fun setToolVisible(value: HomeCustomization, id: String, visible: Boolean): HomeCustomization {
+        require(id in DEFAULT_TOOL_IDS) { "Unknown home tool" }
+        return value.copy(hiddenToolIds = if (visible) value.hiddenToolIds - id else value.hiddenToolIds + id)
+    }
 
     fun addShortcut(value: HomeCustomization, shortcut: HomeShortcut): HomeCustomization {
         require(value.shortcuts.size < MAX_SHORTCUTS) { "Quick-location limit reached" }
@@ -160,6 +203,7 @@ object HomeCustomizationRules {
         require(id.isNotEmpty() && id.length <= MAX_ID_LENGTH) { "Invalid shortcut ID" }
         require(title.isNotEmpty() && title.length <= MAX_TITLE_LENGTH) { "Invalid shortcut title" }
         require(path.isNotEmpty() && path.length <= MAX_PATH_LENGTH) { "Invalid shortcut path" }
+        require(value.section in SHORTCUT_SECTIONS) { "Invalid shortcut section" }
         return value.copy(id = id, title = title, path = path)
     }
 }

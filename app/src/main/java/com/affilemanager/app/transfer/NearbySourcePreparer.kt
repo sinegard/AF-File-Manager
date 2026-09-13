@@ -29,10 +29,10 @@ class NearbySourcePreparer(
     private val fileCategories: FileCategoryRepository,
 ) {
     companion object {
-        const val MAX_FILES = 1_000
-        const val MAX_DIRECTORIES = 2_000
-        const val MAX_TOTAL_BYTES = 5L * 1_024L * 1_024L * 1_024L
-        const val MAX_PATH_PAYLOAD_CHARS = 250_000
+        const val MAX_FILES = 8_000
+        const val MAX_DIRECTORIES = 16_000
+        const val MAX_TOTAL_BYTES = 60L * 1_024L * 1_024L * 1_024L
+        const val MAX_PATH_PAYLOAD_CHARS = 4_000_000
         private const val MAX_DEPTH = 64
         private const val BUFFER_SIZE = 256 * 1_024
     }
@@ -104,9 +104,9 @@ class NearbySourcePreparer(
                             val read = input.read(buffer)
                             if (read < 0) break
                             total = Math.addExact(total, read.toLong())
-                            require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą" }
+                            require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
                             batchBytes = Math.addExact(batchBytes, read.toLong())
-                            require(batchBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
+                            require(batchBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
                             output.write(buffer, 0, read)
                         }
                     } finally { buffer.fill(0) }
@@ -188,9 +188,9 @@ class NearbySourcePreparer(
         val canonical = files.map { file ->
             val source = file.canonicalFile
             require(source.isFile && source.canRead()) { "Failas nepasiekiamas: ${file.name}" }
-            require(source.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą: ${file.name}" }
+            require(source.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą: ${file.name}" }
             total = Math.addExact(total, source.length())
-            require(total <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
+            require(total <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
             source.absolutePath
         }
         val normalizedRelative = relativePaths.map(::normalizeRelative)

@@ -1,6 +1,7 @@
 package com.affilemanager.app.operations
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -29,5 +30,21 @@ class FileOperationManagerTest {
         assertTrue(result.isSuccess)
         runCurrent()
         assertEquals(OperationStatus.SUCCEEDED, manager.operations.value.single().status)
+    }
+
+    @Test fun largeFileProgressKeepsExactBytesWithoutPublishingEveryBuffer() {
+        var snapshot = OperationSnapshot("large", "copy", OperationStatus.RUNNING)
+        var publishes = 0
+        val context = OperationContext("large", MutableStateFlow(false)) { transform ->
+            snapshot = snapshot.transform()
+            publishes++
+        }
+
+        repeat(4_096) { context.progress(byteDelta = 256L * 1_024L, currentName = "large.bin") }
+        context.flushProgress()
+
+        assertEquals(1L * 1_024L * 1_024L * 1_024L, snapshot.completedBytes)
+        assertEquals("large.bin", snapshot.currentName)
+        assertTrue("progress updates were not throttled: $publishes", publishes < 128)
     }
 }

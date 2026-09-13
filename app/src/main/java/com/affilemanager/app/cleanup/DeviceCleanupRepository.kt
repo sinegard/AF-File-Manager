@@ -20,6 +20,7 @@ data class DeviceCleanupApp(
     val lastUsedMillis: Long?,
     val firstInstalledMillis: Long,
     val cacheBytes: Long?,
+    val ramBytes: Long? = null,
 )
 
 data class DeviceCleanupSnapshot(
@@ -30,6 +31,10 @@ data class DeviceCleanupSnapshot(
     val cacheSizesAvailable: Boolean,
     val appsTruncated: Boolean = false,
     val usageHistoryAvailable: Boolean = true,
+    val runningApps: List<DeviceCleanupApp> = emptyList(),
+    val privilegedAppAccessAvailable: Boolean = false,
+    val privilegedAppAccessError: String? = null,
+    val runningAppsTruncated: Boolean = false,
 )
 
 internal object DeviceCleanupRules {

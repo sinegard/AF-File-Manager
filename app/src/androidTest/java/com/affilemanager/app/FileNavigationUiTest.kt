@@ -23,6 +23,7 @@ import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.FileScrollKey
 import com.affilemanager.app.ui.PanelId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -361,8 +362,14 @@ class FileNavigationUiTest {
     private fun connectRootBackend(viewModel: MainViewModel) {
         val arguments = InstrumentationRegistry.getArguments()
         val useRoot = arguments.getString("afRoot") == "true"
-        assumeTrue(useRoot || arguments.getString("afShizukuRoot") == "true")
-        val expected = if (useRoot) AdvancedAccessBackend.ROOT else AdvancedAccessBackend.SHIZUKU_ROOT
+        val useShizukuRoot = arguments.getString("afShizukuRoot") == "true"
+        val useShizukuShell = arguments.getString("afShizukuShell") == "true"
+        assumeTrue(useRoot || useShizukuRoot || useShizukuShell)
+        val expected = when {
+            useRoot -> AdvancedAccessBackend.ROOT
+            useShizukuRoot -> AdvancedAccessBackend.SHIZUKU_ROOT
+            else -> AdvancedAccessBackend.SHIZUKU_SHELL
+        }
         compose.runOnUiThread {
             viewModel.setSection(AppSection.FILES)
             viewModel.setAdvancedAccessMode(if (useRoot) AdvancedAccessMode.ROOT else AdvancedAccessMode.SHIZUKU)
@@ -373,7 +380,44 @@ class FileNavigationUiTest {
             state.activeBackend == expected || (!state.connecting && state.error != null)
         }
         assertEquals("Root backend did not connect: ${viewModel.advancedAccess.value}", expected, viewModel.advancedAccess.value.activeBackend)
-        assertEquals(0, viewModel.advancedAccess.value.serviceUid)
+        assertEquals(if (expected == AdvancedAccessBackend.SHIZUKU_SHELL) 2_000 else 0, viewModel.advancedAccess.value.serviceUid)
+    }
+
+    @Test
+    fun rootBackendReportsRealRunningUserAppsAndRamWithoutUsageAccess() {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            connectRootBackend(viewModel)
+            compose.runOnUiThread { viewModel.openDeviceCleanup() }
+            compose.waitUntil(timeoutMillis = 20_000) {
+                val state = viewModel.deviceCleanup.value
+                !state.loading && state.snapshot?.privilegedAppAccessAvailable == true &&
+                    state.snapshot.privilegedAppAccessError == null
+            }
+            val snapshot = requireNotNull(viewModel.deviceCleanup.value.snapshot)
+            assertTrue(snapshot.runningApps.isNotEmpty())
+            assertTrue(snapshot.runningApps.none { it.packageName == compose.activity.packageName })
+            assertTrue(snapshot.runningApps.all { it.ramBytes != null && it.ramBytes >= 0L })
+            if (InstrumentationRegistry.getArguments().getString("afShizukuShell") == "true") {
+                val shizukuManager = snapshot.runningApps.firstOrNull {
+                    it.packageName == "moe.shizuku.privileged.api"
+                }
+                assertNotNull("The running Shizuku manager fixture was not reported", shizukuManager)
+                compose.runOnUiThread { viewModel.forceStopApplication(requireNotNull(shizukuManager).packageName) }
+                compose.waitUntil(timeoutMillis = 20_000) {
+                    val refreshed = viewModel.deviceCleanup.value
+                    !refreshed.loading && refreshed.snapshot?.runningApps?.none {
+                        it.packageName == "moe.shizuku.privileged.api"
+                    } == true
+                }
+            }
+        } finally {
+            compose.runOnUiThread {
+                viewModel.closeDeviceCleanup()
+                viewModel.setAdvancedAccessMode(AdvancedAccessMode.OFF)
+            }
+            compose.waitForIdle()
+        }
     }
 
     @Test

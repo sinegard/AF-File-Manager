@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Visibility
@@ -169,6 +170,8 @@ fun DirectoryQuickSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
+    filterActive: Boolean = false,
+    onOpenFilter: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     OutlinedTextField(
@@ -177,8 +180,19 @@ fun DirectoryQuickSearchField(
         modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
         leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
         trailingIcon = {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti greitą paiešką"))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onOpenFilter != null) {
+                    IconButton(onClick = onOpenFilter) {
+                        Icon(
+                            Icons.Rounded.FilterAlt,
+                            contentDescription = uiText(if (filterActive) "Filtras aktyvus" else "Filtras"),
+                            tint = if (filterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Rounded.Close, contentDescription = uiText("Uždaryti greitą paiešką"))
+                }
             }
         },
         placeholder = { LText("Filtruoti šį aplanką") },
@@ -203,7 +217,25 @@ fun DirectoryDisplayMenuItems(
     onOpenSettings: () -> Unit,
     onSort: (SortMode) -> Unit,
     onDismissMenu: () -> Unit,
+    filterActive: Boolean = false,
+    onOpenFilter: (() -> Unit)? = null,
 ) {
+    if (onOpenFilter != null) {
+        DropdownMenuItem(
+            text = { LText(if (filterActive) "Filtras aktyvus" else "Filtras") },
+            leadingIcon = {
+                Icon(
+                    Icons.Rounded.FilterAlt,
+                    contentDescription = null,
+                    tint = if (filterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            onClick = {
+                onDismissMenu()
+                onOpenFilter()
+            },
+        )
+    }
     if (hiddenFilesAvailable) {
         DropdownMenuItem(
             text = { LText(if (includeHidden) "Slėpti paslėptus failus" else "Rodyti paslėptus failus") },

@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
@@ -181,6 +182,9 @@ import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryEntryFilter
+import com.affilemanager.app.ui.components.DirectoryEntryFilterDialog
+import com.affilemanager.app.ui.components.DirectoryEntryFilterRules
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
@@ -273,6 +277,7 @@ fun FilesScreen(
     var createFor by remember { mutableStateOf<PanelId?>(null) }
     var renameTarget by remember { mutableStateOf<Pair<PanelId, FileEntry>?>(null) }
     var trashPanel by remember { mutableStateOf<PanelId?>(null) }
+    var permanentDeletePanel by remember { mutableStateOf<PanelId?>(null) }
     var archiveRequest by remember { mutableStateOf<ArchiveRequest?>(null) }
     var pastePanel by remember { mutableStateOf<PanelId?>(null) }
     var tagPanel by remember { mutableStateOf<PanelId?>(null) }
@@ -436,6 +441,7 @@ fun FilesScreen(
                     onAddSafLocation = onAddSafLocation,
                     onOpenSafLocation = viewModel::openSafLocation,
                     onOpenSystemFiles = onOpenSystemFiles,
+                    onCustomizeHome = { showHomeCustomization = true },
                 )
             } else if (dualPane) {
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -451,6 +457,7 @@ fun FilesScreen(
                         onCreate = { createFor = PanelId.LEFT },
                         onRename = { renameTarget = PanelId.LEFT to it },
                         onTrash = { trashPanel = PanelId.LEFT },
+                        onPermanentDelete = { permanentDeletePanel = PanelId.LEFT },
                         onTrashEntry = { entry -> viewModel.selectOnly(PanelId.LEFT, entry.absolutePath); trashPanel = PanelId.LEFT },
                         onInfo = { infoTargets = it },
                         onArchive = {
@@ -480,6 +487,7 @@ fun FilesScreen(
                         onCreate = { createFor = PanelId.RIGHT },
                         onRename = { renameTarget = PanelId.RIGHT to it },
                         onTrash = { trashPanel = PanelId.RIGHT },
+                        onPermanentDelete = { permanentDeletePanel = PanelId.RIGHT },
                         onTrashEntry = { entry -> viewModel.selectOnly(PanelId.RIGHT, entry.absolutePath); trashPanel = PanelId.RIGHT },
                         onInfo = { infoTargets = it },
                         onArchive = {
@@ -511,6 +519,7 @@ fun FilesScreen(
                     onCreate = { createFor = activePanel },
                     onRename = { renameTarget = activePanel to it },
                     onTrash = { trashPanel = activePanel },
+                    onPermanentDelete = { permanentDeletePanel = activePanel },
                     onTrashEntry = { entry -> viewModel.selectOnly(activePanel, entry.absolutePath); trashPanel = activePanel },
                     onInfo = { infoTargets = it },
                     onArchive = {
@@ -563,6 +572,18 @@ fun FilesScreen(
             permanent = false,
             onDismiss = { trashPanel = null },
             onConfirm = { viewModel.moveSelectionToTrash(panel); trashPanel = null },
+            loadSummary = { viewModel.loadFileSelectionInfo(paths) },
+        )
+    }
+    permanentDeletePanel?.let { panel ->
+        val selectedState = if (panel == PanelId.LEFT) left else right
+        val paths = selectedState.selectedPaths.toList()
+        val entries = selectedState.entries.filter { it.absolutePath in selectedState.selectedPaths }
+        DeleteConfirmationDialog(
+            names = entries.map(FileEntry::name).ifEmpty { paths.map { java.io.File(it).name } },
+            permanent = true,
+            onDismiss = { permanentDeletePanel = null },
+            onConfirm = { viewModel.deleteSelectionPermanently(panel); permanentDeletePanel = null },
             loadSummary = { viewModel.loadFileSelectionInfo(paths) },
         )
     }
@@ -722,6 +743,10 @@ fun FilesScreen(
             onMoveSection = viewModel::moveHomeSection,
             onMoveShortcut = viewModel::moveHomeShortcut,
             onSetShortcutVisible = viewModel::setHomeShortcutVisible,
+            onSetShortcutSection = viewModel::setHomeShortcutSection,
+            onSetSectionVisible = viewModel::setHomeSectionVisible,
+            onMoveTool = viewModel::moveHomeTool,
+            onSetToolVisible = viewModel::setHomeToolVisible,
             onMoveStorage = viewModel::moveHomeStorage,
             onSetStorageVisible = viewModel::setHomeStorageVisible,
             onRemoveShortcut = viewModel::removeHomeShortcut,
@@ -822,6 +847,7 @@ private fun FilePanel(
     onCreate: () -> Unit,
     onRename: (FileEntry) -> Unit,
     onTrash: () -> Unit,
+    onPermanentDelete: () -> Unit,
     onTrashEntry: (FileEntry) -> Unit,
     onInfo: (List<FileEntry>) -> Unit,
     onArchive: () -> Unit,
@@ -838,6 +864,8 @@ private fun FilePanel(
     var showFavoriteLocations by remember { mutableStateOf(false) }
     var searchVisible by remember(panelId) { mutableStateOf(false) }
     var searchQuery by remember(panelId) { mutableStateOf("") }
+    var entryFilters by remember(tabs.activeTabId, state.path) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    var showEntryFilter by remember(tabs.activeTabId, state.path) { mutableStateOf(false) }
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val favoritePaths = remember(favorites) { favorites.toSet() }
     val recents by viewModel.recents.collectAsStateWithLifecycle()
@@ -848,9 +876,8 @@ private fun FilePanel(
         searchVisible = false
         searchQuery = ""
     }
-    val displayedEntries = remember(state.entries, searchQuery) {
-        val query = searchQuery.trim()
-        if (query.isEmpty()) state.entries else state.entries.filter { it.name.contains(query, ignoreCase = true) }
+    val displayedEntries = remember(state.entries, searchQuery, entryFilters) {
+        DirectoryEntryFilterRules.visibleEntries(state.entries, searchQuery, entryFilters)
     }
     val displayedState = state.copy(entries = displayedEntries)
     val allEntriesSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.absolutePath in state.selectedPaths }
@@ -906,6 +933,8 @@ private fun FilePanel(
                     onDisplaySettings = onDisplaySettings,
                     onShowFavorites = { showFavoriteLocations = true },
                     onShowViewingHistory = { showViewingHistory = true },
+                    filterActive = entryFilters.isNotEmpty(),
+                    onOpenFilter = { showEntryFilter = true },
                 )
             }
         }
@@ -915,6 +944,8 @@ private fun FilePanel(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
                 onClose = { searchVisible = false; searchQuery = "" },
+                filterActive = entryFilters.isNotEmpty(),
+                onOpenFilter = { showEntryFilter = true },
                 modifier = Modifier.testTag("directory_search_field_local_$panelId"),
             )
         }
@@ -1028,6 +1059,13 @@ private fun FilePanel(
                     IconButton(onClick = onTrash) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error)
                     }
+                    IconButton(onClick = onPermanentDelete, modifier = Modifier.testTag("delete_permanently_local")) {
+                        Icon(
+                            Icons.Rounded.DeleteForever,
+                            contentDescription = uiText("Ištrinti visam laikui"),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             } else {
                 FloatingActionButton(
@@ -1061,6 +1099,13 @@ private fun FilePanel(
             onRefresh = viewModel::refreshNavigationState,
         )
     }
+    if (showEntryFilter) {
+        DirectoryEntryFilterDialog(
+            selected = entryFilters,
+            onSelectedChange = { entryFilters = it },
+            onDismiss = { showEntryFilter = false },
+        )
+    }
 }
 
 @Composable
@@ -1078,6 +1123,8 @@ private fun CompactPanelActions(
     onDisplaySettings: () -> Unit,
     onShowFavorites: () -> Unit,
     onShowViewingHistory: () -> Unit,
+    filterActive: Boolean,
+    onOpenFilter: () -> Unit,
 ) {
     Box {
         IconButton(onClick = { onExpandedChange(true) }) {
@@ -1134,6 +1181,15 @@ private fun CompactPanelActions(
                 leadingIcon = { Icon(Icons.Rounded.History, contentDescription = null) },
                 onClick = { onExpandedChange(false); onShowViewingHistory() },
             )
+            DropdownMenuItem(
+                text = { LText("Operacijų centras") },
+                leadingIcon = { Icon(Icons.Rounded.SwapHoriz, contentDescription = null) },
+                modifier = Modifier.testTag("open_operations_$panelId"),
+                onClick = {
+                    onExpandedChange(false)
+                    viewModel.setSection(AppSection.TOOLS)
+                },
+            )
             HorizontalDivider()
             DirectoryDisplayMenuItems(
                 grid = state.grid,
@@ -1149,6 +1205,8 @@ private fun CompactPanelActions(
                 onOpenSettings = onDisplaySettings,
                 onSort = { viewModel.setSort(panelId, it) },
                 onDismissMenu = { onExpandedChange(false) },
+                filterActive = filterActive,
+                onOpenFilter = onOpenFilter,
             )
             HorizontalDivider()
             DropdownMenuItem(

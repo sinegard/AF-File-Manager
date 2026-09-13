@@ -82,7 +82,7 @@ class LanHttpServer(
         const val MAX_REQUESTS_PER_SESSION = 10_000
         const val MAX_AUTH_FAILURES = 20
         const val MAX_HEADER_BYTES = 16 * 1_024
-        const val MAX_UPLOAD_BYTES = 1L * 1_024 * 1_024 * 1_024
+        const val MAX_UPLOAD_BYTES = 7L * 1_024 * 1_024 * 1_024
         const val MAX_NEARBY_MESSAGE_BYTES = NearbyChatController.MAX_MESSAGE_BYTES
         private const val SOCKET_TIMEOUT_MILLIS = 30_000
     }
@@ -370,7 +370,7 @@ class LanHttpServer(
 
     private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
         val length = request.contentLength
-        require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą" }
+        require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
         val directory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
         require(directory.canWrite()) { "Pasirinktas katalogas neleidžia įkelti" }
         val name = FileSystemRules.validateFileName(request.query["name"].orEmpty()).getOrThrow()
@@ -378,14 +378,15 @@ class LanHttpServer(
         val target = FileSystemRules.keepBothTarget(requested)
         require(FileSystemRules.isContained(root, target)) { "Tikslas išeina už pasirinkto katalogo" }
         val partial = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
-        val totalFiles = request.query["fileCount"]?.toIntOrNull()?.coerceIn(1, 1_000) ?: 1
+        val totalFiles = request.query["fileCount"]?.toIntOrNull()
+            ?.coerceIn(1, NearbySourcePreparer.MAX_FILES) ?: 1
         val fileIndex = request.query["fileIndex"]?.toIntOrNull()?.coerceIn(1, totalFiles) ?: 1
         val relativePath = directory.relativeTo(root).invariantSeparatorsPath
             .takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
         val batchId = request.headers["x-af-batch-id"]
         nearbyFiles.validate(fileIndex, relativePath, length, batchId)
         val totalBytes = request.query["batchBytes"]?.toLongOrNull()
-            ?.coerceIn(length, 5L * 1_024L * 1_024L * 1_024L) ?: length
+            ?.coerceIn(length, NearbySourcePreparer.MAX_TOTAL_BYTES) ?: length
         val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
         var remaining = length
         var received = 0L

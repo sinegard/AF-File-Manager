@@ -17,6 +17,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationSnapshot
+import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.theme.AfButton as Button
 
@@ -25,6 +26,8 @@ internal fun OperationProgressDialog(
     operation: OperationSnapshot,
     onCancel: () -> Unit,
     onHide: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
 ) {
     val progress = when {
         operation.totalBytes != null && operation.totalBytes > 0 ->
@@ -40,6 +43,11 @@ internal fun OperationProgressDialog(
         modifier = Modifier.testTag("operation_progress_dialog"),
         actions = {
             TextButton(onClick = onHide, modifier = Modifier.testTag("hide_operation")) { LText("Slėpti") }
+            if (operation.status == OperationStatus.PAUSED) {
+                TextButton(onClick = onResume, modifier = Modifier.testTag("resume_operation")) { LText("Tęsti") }
+            } else if (operation.status == OperationStatus.RUNNING) {
+                TextButton(onClick = onPause, modifier = Modifier.testTag("pause_operation")) { LText("Pristabdyti") }
+            }
             Button(onClick = onCancel, modifier = Modifier.testTag("cancel_operation")) { LText("Atšaukti") }
         },
     ) {

@@ -48,16 +48,26 @@ class NearbyTransferManifestTest {
         assertThrows(IllegalArgumentException::class.java) { NearbyTransferManifest.decode(ByteArray(NearbyTransferManifest.MAX_BYTES + 1)) }
         assertThrows(IllegalArgumentException::class.java) { NearbyTransferManifest.decode(("[".repeat(500) + "]".repeat(500)).toByteArray()) }
         assertThrows(IllegalArgumentException::class.java) {
-            NearbyTransferManifest.encode(List(1001) { TransferFileProgress("$it.txt", 0) })
+            NearbyTransferManifest.encode(List(NearbySourcePreparer.MAX_FILES + 1) { TransferFileProgress("$it.txt", 0) })
         }
         assertThrows(IllegalArgumentException::class.java) {
-            NearbyTransferManifest.encode(List(6) { TransferFileProgress("$it.txt", LanHttpServer.MAX_UPLOAD_BYTES) })
+            NearbyTransferManifest.encode(List(9) { TransferFileProgress("$it.txt", LanHttpServer.MAX_UPLOAD_BYTES) })
         }
-        listOf("-1", "1.5", "1073741825").forEach { size ->
+        listOf("-1", "1.5", (LanHttpServer.MAX_UPLOAD_BYTES + 1).toString()).forEach { size ->
             assertThrows(IllegalArgumentException::class.java) {
                 NearbyTransferManifest.decode("""{"version":1,"files":[{"path":"file.txt","size":$size}]}""".toByteArray())
             }
         }
+    }
+
+    @Test fun requestedLargeTransferLimitsStayExplicitAndLongBased() {
+        assertEquals(8_000, NearbySourcePreparer.MAX_FILES)
+        assertEquals(7L * 1_024L * 1_024L * 1_024L, LanHttpServer.MAX_UPLOAD_BYTES)
+        assertEquals(60L * 1_024L * 1_024L * 1_024L, NearbySourcePreparer.MAX_TOTAL_BYTES)
+        val maximumFile = NearbyTransferManifest.encode(
+            listOf(TransferFileProgress("large.bin", LanHttpServer.MAX_UPLOAD_BYTES)),
+        )
+        assertEquals(LanHttpServer.MAX_UPLOAD_BYTES, NearbyTransferManifest.decode(maximumFile).single().sizeBytes)
     }
 
     @Test fun duplicateNamesKeepSeparateIndicesAndOnlyCompletedReceiverFilesCanOpen() {

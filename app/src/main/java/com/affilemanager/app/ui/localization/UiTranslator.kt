@@ -18,6 +18,7 @@ object UiTranslator {
         "Šis telefonas" to "This phone",
         "Kitas telefonas" to "Other phone",
         "Žinutės" to "Messages",
+        "Žinutė nukopijuota" to "Message copied",
         "Žinutė" to "Message",
         "Siųsti žinutę" to "Send message",
         "Šio veiksmo nebus galima atšaukti." to "This action cannot be undone.",
@@ -68,6 +69,52 @@ object UiTranslator {
         "Atidaryti nustatymus" to "Open settings",
         "Android nustatymuose atverkite „Saugykla ir talpykla“, tada „Išvalyti talpyklą“. Nesirinkite duomenų išvalymo. AF kitų programų talpyklos tiesiogiai nevalo." to "In Android settings, open Storage and cache, then Clear cache. Do not choose Clear data. AF cannot clear other apps' caches directly.",
         "Programų nuskaityti nepavyko" to "Could not scan apps",
+        "Veikiančios programos" to "Running apps",
+        "Veikiančių programų atmintį ir jų stabdymą Android leidžia tik per aktyvią Root arba Shizuku prieigą." to
+            "Android allows app memory inspection and force stopping only through active Root or Shizuku access.",
+        "Įjunkite Root arba Shizuku skiltyje „Daugiau“, tada atnaujinkite šį sąrašą." to
+            "Enable Root or Shizuku under More, then refresh this list.",
+        "Rodomos pirmos 500 veikiančių programų" to "Showing the first 500 running apps",
+        "Veikiančių programų nuskaityti nepavyko" to "Could not scan running apps",
+        "Nėra veikiančių naudotojo programų" to "There are no running user apps",
+        "Sustabdyti programą?" to "Force stop app?",
+        "Sustabdyti programą" to "Force stop app",
+        "Programa sustabdyta" to "App stopped",
+        "Programos sustabdyti nepavyko" to "Could not stop the app",
+        "Programa bus priverstinai sustabdyta. Neišsaugotas jos darbas gali būti prarastas." to
+            "The app will be force stopped. Its unsaved work may be lost.",
+        "RAM dydis nepasiekiamas" to "RAM usage is unavailable",
+        "Root arba Shizuku prieiga neaktyvi" to "Root or Shizuku access is not active",
+        "Galima sustabdyti tik įdiegtą naudotojo programą" to "Only an installed user app can be stopped",
+        "AF File Manager negali sustabdyti savęs" to "AF File Manager cannot stop itself",
+        "Veikiančių programų sąrašas nepasiekiamas" to "The running app list is unavailable",
+        "Netinkamas paketo pavadinimas" to "Invalid package name",
+        "Privilegijuotos komandos išvesties skaitytuvas nesustojo" to
+            "The privileged command output reader did not stop",
+        "Atlikta" to "Done",
+        "Pristabdyti" to "Pause",
+        "Įrankiai" to "Tools",
+        "Rodyti skiltyje" to "Show under",
+        "Nepasirinkus nė vieno tipo rodomi visi elementai." to
+            "When no type is selected, all items are shown.",
+        "Perdavimų istorija" to "Transfer history",
+        "Duomenys saugomi tik šios programos privačioje saugykloje." to
+            "Data is stored only in this app's private storage.",
+        "Perdavimų istorija tuščia" to "Transfer history is empty",
+        "Perdavimų istorijos failas netinkamas" to "The transfer history file is invalid",
+        "Perdavimų istorijos versija nepalaikoma" to "The transfer history version is unsupported",
+        "Perdavimų istorija per didelė" to "Transfer history is too large",
+        "Perdavimų istorijos perskaityti nepavyko" to "Could not read transfer history",
+        "Perdavimų istorijos išsaugoti nepavyko" to "Could not save transfer history",
+        "Perdavimų istorijos išvalyti nepavyko" to "Could not clear transfer history",
+        "Išvalyti perdavimų istoriją?" to "Clear transfer history?",
+        "Bus pašalinti tik vietiniai istorijos įrašai. Išsiųsti ir gauti failai nebus trinami." to
+            "Only local history entries will be removed. Sent and received files will not be deleted.",
+        "Kontaktas" to "Contact",
+        "Pasirinkto kontakto perskaityti nepavyko" to "Could not read the selected contact",
+        "Kontakto paruošti nepavyko" to "Could not prepare the contact",
+        "Rūšiuoti" to "Sort",
+        "Slėpti paiešką" to "Hide search",
         "Rodomi pirmi 500 programų įrašų" to "Showing the first 500 apps",
         "Naudojimo statistika nepasiekiama" to "Usage statistics are unavailable",
         "Pasirinkta dokumentų vieta nepasiekiama" to "The selected document location is unavailable",
@@ -215,6 +262,7 @@ object UiTranslator {
         "Palaikomos tik Android dokumentų nuorodos" to "Only Android document URIs are supported",
         "Netinkamas siunčiamų failų skaičius" to "Invalid number of files to send",
         "Siuntimo rinkinys viršija 5 GB ribą" to "The transfer set exceeds the 5 GB limit",
+        "Siuntimo rinkinys viršija 60 GB ribą" to "The transfer set exceeds the 60 GB limit",
         "Ruošiamas tiesioginis vietinis siuntimas" to "Preparing a direct local transfer",
         "Perdavimas nėra šifruojamas. Naudokite tik savo telefono prieigos tašką arba patikimą privatų Wi-Fi tinklą." to "The transfer is not encrypted. Use only your own phone hotspot or a trusted private Wi-Fi network.",
         "Siunčiama tame pačiame privačiame tinkle" to "Sending on the same private network",
@@ -241,6 +289,7 @@ object UiTranslator {
         "Telefono perdavimo QR kodas" to "Phone transfer QR code",
         "Kopijuoti susiejimo kodą" to "Copy pairing code",
         "Sustabdyti gavimą" to "Stop receiving",
+        "Sustabdyti siuntimą" to "Stop sending",
         "Failų paruošti nepavyko" to "Could not prepare the files",
         "Failų sąrašo įkelti nepavyko" to "Could not load the file list",
         "QR skaitytuvas šiame lange nepasiekiamas" to "The QR scanner is unavailable in this window",
@@ -714,6 +763,7 @@ object UiTranslator {
         "Išvalyti visą šiukšliadėžę?" to "Empty all trash?",
         "Išvalyti viską" to "Delete all",
         "Ištrinti visam laikui" to "Delete permanently",
+        "Trinama visam laikui" to "Deleting permanently",
         "Ištrinti visam laikui?" to "Delete permanently?",
         "Ištrinti elementai bus rodomi čia." to "Deleted items appear here.",
         "Šiame kataloge nėra failų." to "There are no files in this folder.",
@@ -1575,6 +1625,9 @@ object UiTranslator {
             Regex("^Dar (\\d+) įrašų rasite eksportuotame kvite\\.$") to { match: MatchResult ->
                 "${match.groupValues[1]} more entries are available in the exported receipt."
             },
+            Regex("^Istorijoje išsaugota (\\d+) iš (\\d+) failų įrašų$") to { match: MatchResult ->
+                "History stores ${match.groupValues[1]} of ${match.groupValues[2]} file entries"
+            },
             Regex("^(.+) · (.+) · (.+)$") to { match: MatchResult ->
                 "${translate(match.groupValues[1], language)} · ${translate(match.groupValues[2], language)} · ${translate(match.groupValues[3], language)}"
             },
@@ -1597,6 +1650,7 @@ object UiTranslator {
             },
             Regex("^Failas nepasiekiamas: (.+)$") to { match: MatchResult -> "File unavailable: ${match.groupValues[1]}" },
             Regex("^Failas viršija 1 GB ribą: (.+)$") to { match: MatchResult -> "File exceeds the 1 GB limit: ${match.groupValues[1]}" },
+            Regex("^Failas viršija 7 GB ribą: (.+)$") to { match: MatchResult -> "File exceeds the 7 GB limit: ${match.groupValues[1]}" },
             Regex("^Nepavyko sukurti (.+)$") to { match: MatchResult -> "Could not create ${match.groupValues[1]}" },
             Regex("^Paskirties failas jau yra: (.+)$") to { match: MatchResult -> "The destination file already exists: ${match.groupValues[1]}" },
             Regex("^Archyvas išpakuotas į (.+)$") to { match: MatchResult -> "Archive extracted to ${match.groupValues[1]}" },

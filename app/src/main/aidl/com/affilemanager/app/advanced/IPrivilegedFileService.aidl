@@ -9,4 +9,6 @@ interface IPrivilegedFileService {
     int writeTerminal(long handle, in byte[] source, int offset, int length) = 5;
     void resizeTerminal(long handle, int rows, int columns) = 6;
     void closeTerminal(long handle) = 7;
+    String[] listRunningAppMemory() = 8;
+    boolean forceStopPackage(String packageName) = 9;
 }

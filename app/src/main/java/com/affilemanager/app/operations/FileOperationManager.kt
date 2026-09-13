@@ -50,14 +50,20 @@ class OperationContext internal constructor(
 ) {
     internal var completionStatus: OperationStatus = OperationStatus.SUCCEEDED
         private set
+    private var pendingItems = 0
+    private var pendingBytes = 0L
+    private var pendingName: String? = null
+    private var lastProgressPublishNanos = 0L
 
     companion object {
+        private const val PROGRESS_PUBLISH_INTERVAL_NANOS = 100_000_000L
         fun background(): OperationContext = OperationContext("background", MutableStateFlow(false)) { }
     }
 
     suspend fun checkpoint() {
         currentCoroutineContext().ensureActive()
         if (paused.value) {
+            flushProgress()
             publish { copy(status = OperationStatus.PAUSED) }
             paused.first { value -> !value }
             publish { copy(status = OperationStatus.RUNNING) }
@@ -69,7 +75,33 @@ class OperationContext internal constructor(
         publish { copy(totalItems = items, totalBytes = bytes) }
     }
 
+    @Synchronized
     fun progress(itemDelta: Int = 0, byteDelta: Long = 0, currentName: String? = null) {
+        pendingItems = Math.addExact(pendingItems, itemDelta)
+        pendingBytes = Math.addExact(pendingBytes, byteDelta)
+        if (currentName != null) pendingName = currentName
+        val now = System.nanoTime()
+        if (itemDelta != 0 || lastProgressPublishNanos == 0L ||
+            now - lastProgressPublishNanos >= PROGRESS_PUBLISH_INTERVAL_NANOS
+        ) {
+            flushProgressLocked(now)
+        }
+    }
+
+    @Synchronized
+    internal fun flushProgress() {
+        flushProgressLocked(System.nanoTime())
+    }
+
+    private fun flushProgressLocked(now: Long) {
+        if (pendingItems == 0 && pendingBytes == 0L && pendingName == null) return
+        val itemDelta = pendingItems
+        val byteDelta = pendingBytes
+        val currentName = pendingName
+        pendingItems = 0
+        pendingBytes = 0L
+        pendingName = null
+        lastProgressPublishNanos = now
         publish {
             copy(
                 completedItems = completedItems + itemDelta,
@@ -80,11 +112,13 @@ class OperationContext internal constructor(
     }
 
     fun note(message: String) {
+        flushProgress()
         publish { copy(message = message) }
     }
 
     fun completeWithErrors(errorCount: Int, message: String) {
         require(errorCount > 0) { "Klaidų skaičius turi būti teigiamas" }
+        flushProgress()
         completionStatus = OperationStatus.COMPLETED_WITH_ERRORS
         publish { copy(errorCount = errorCount, message = message, retryable = true) }
     }
@@ -128,6 +162,7 @@ class FileOperationManager(
                     try {
                         val context = OperationContext(request.id, paused) { transform -> update(request.id, transform) }
                         request.block(context)
+                        context.flushProgress()
                         update(request.id) {
                             copy(
                                 status = context.completionStatus,

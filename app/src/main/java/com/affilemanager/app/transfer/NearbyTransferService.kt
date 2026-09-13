@@ -81,21 +81,26 @@ object NearbyTransferController {
         return NearbyPairing.create(url.host, url.port, requireNotNull(current.code), name)
     }
     fun disconnect(context: Context) {
+        NearbyTransferHistoryController.initialize(context)
         context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_DISCONNECT))
     }
     internal fun peerDisconnected(context: Context) {
         connection.clear()
-        NearbyChatController.clear()
+        NearbyChatController.endSession()
         context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_DISCONNECT)
             .putExtra("notify_peer", false))
     }
     private val _state = MutableStateFlow(NearbyTransferState())
     val state: StateFlow<NearbyTransferState> = _state.asStateFlow()
 
-    internal val queue = NearbySendQueue { _state.value = it }
+    internal val queue = NearbySendQueue {
+        _state.value = it
+        NearbyTransferHistoryController.recordTransfer(it, outgoing = true)
+    }
 
     @Synchronized
     fun start(context: Context, pairing: NearbyPairing, prepared: PreparedNearbyTransfer, returnPairing: NearbyPairing? = null) {
+        NearbyTransferHistoryController.initialize(context)
         val validated = NearbyPairing.parse(pairing.encoded())
         val batch = queue.enqueue(validated, prepared, returnPairing)
         try {
@@ -170,6 +175,7 @@ class NearbyTransferService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        NearbyTransferHistoryController.initialize(this)
         createChannel()
     }
 
@@ -539,9 +545,9 @@ class NearbyTransferService : Service() {
             val file = File(path).canonicalFile
             require(file.isFile && file.canRead()) { "Failas nepasiekiamas: ${file.name}" }
             require(seenSources.add(file.absolutePath)) { "Tas pats failas siuntimo rinkinyje kartojasi" }
-            require(file.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą: ${file.name}" }
+            require(file.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą: ${file.name}" }
             total = Math.addExact(total, file.length())
-            require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
+            require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
             TransferFile(file, validateRelativePath(relativePath))
         }
     }
@@ -590,7 +596,7 @@ class NearbyTransferService : Service() {
         val cookie = peer?.let(NearbyTransferController.connection::cookieFor)
         cancelTransfer()
         NearbyTransferController.connection.clear()
-        NearbyChatController.clear()
+        NearbyChatController.endSession()
         scope.launch {
             try {
                 if (notifyPeer && peer != null) {

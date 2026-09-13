@@ -108,6 +108,9 @@ class NavigationRepository(context: Context) {
                     path = shortcut.getString("path"),
                     visible = shortcut.optBoolean("visible", true),
                     builtIn = shortcut.optBoolean("builtIn", false),
+                    section = runCatching {
+                        HomeSection.valueOf(shortcut.optString("section", HomeSection.QUICK_LOCATIONS.name))
+                    }.getOrDefault(HomeSection.QUICK_LOCATIONS),
                 )
             }
         }.orEmpty()
@@ -117,12 +120,26 @@ class NavigationRepository(context: Context) {
         val hiddenStorageIds = item.optJSONArray("hiddenStorageIds")?.let { array ->
             (0 until array.length()).mapTo(linkedSetOf(), array::getString)
         }.orEmpty()
+        val hiddenSections = item.optJSONArray("hiddenSections")?.let { array ->
+            (0 until array.length()).mapNotNullTo(linkedSetOf()) { index ->
+                runCatching { HomeSection.valueOf(array.getString(index)) }.getOrNull()
+            }
+        }.orEmpty()
+        val toolOrder = item.optJSONArray("toolOrder")?.let { array ->
+            (0 until array.length()).map(array::getString)
+        }.orEmpty()
+        val hiddenToolIds = item.optJSONArray("hiddenToolIds")?.let { array ->
+            (0 until array.length()).mapTo(linkedSetOf(), array::getString)
+        }.orEmpty()
         return HomeCustomizationRules.normalize(
             HomeCustomization(
                 sectionOrder = sections,
                 shortcuts = shortcuts,
                 storageOrder = storageOrder,
                 hiddenStorageIds = hiddenStorageIds,
+                hiddenSections = hiddenSections,
+                toolOrder = toolOrder,
+                hiddenToolIds = hiddenToolIds,
             ),
             builtInShortcuts,
         )
@@ -143,13 +160,17 @@ class NavigationRepository(context: Context) {
                                 .put("title", shortcut.title)
                                 .put("path", shortcut.path)
                                 .put("visible", shortcut.visible)
-                                .put("builtIn", shortcut.builtIn),
+                                .put("builtIn", shortcut.builtIn)
+                                .put("section", shortcut.section.name),
                         )
                     }
                 },
             )
             .put("storageOrder", JSONArray().apply { normalized.storageOrder.forEach(::put) })
             .put("hiddenStorageIds", JSONArray().apply { normalized.hiddenStorageIds.forEach(::put) })
+            .put("hiddenSections", JSONArray().apply { normalized.hiddenSections.forEach { put(it.name) } })
+            .put("toolOrder", JSONArray().apply { normalized.toolOrder.forEach(::put) })
+            .put("hiddenToolIds", JSONArray().apply { normalized.hiddenToolIds.forEach(::put) })
             .toString()
         require(encoded.length <= MAX_HOME_CUSTOMIZATION_BYTES) { "Home customization is too large" }
         check(preferences.edit().putString(KEY_HOME_CUSTOMIZATION, encoded).commit()) {

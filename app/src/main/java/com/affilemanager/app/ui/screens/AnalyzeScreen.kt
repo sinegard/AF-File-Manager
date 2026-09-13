@@ -974,6 +974,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         onGrantUsageAccess = viewModel::openUsageAccessSettings,
         onOpenAppSettings = viewModel::openApplicationSettings,
         onUninstall = viewModel::requestApplicationUninstall,
+        onForceStop = viewModel::forceStopApplication,
     )
 }
 

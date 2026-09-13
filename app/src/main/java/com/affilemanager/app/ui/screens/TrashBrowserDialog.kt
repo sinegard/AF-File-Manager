@@ -80,6 +80,9 @@ import com.affilemanager.app.ui.TrashBrowserUiState
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryEntryFilter
+import com.affilemanager.app.ui.components.DirectoryEntryFilterDialog
+import com.affilemanager.app.ui.components.DirectoryEntryFilterRules
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.AfPullToRefresh
@@ -107,6 +110,8 @@ fun TrashBrowserDialog(
     var deleteTarget by remember { mutableStateOf<TrashBrowserEntry?>(null) }
     var searchVisible by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
     var searchQuery by remember(state.itemId, state.relativePath) { mutableStateOf("") }
+    var entryFilters by remember(state.itemId, state.relativePath) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    var showEntryFilter by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
     var menu by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
     var showRetention by remember { mutableStateOf(false) }
@@ -118,14 +123,17 @@ fun TrashBrowserDialog(
     }
     var displayedEntries by remember(state.itemId, state.relativePath) { mutableStateOf<List<TrashBrowserEntry>>(emptyList()) }
     var transforming by remember(state.itemId, state.relativePath) { mutableStateOf(false) }
-    LaunchedEffect(state.entries, searchQuery, state.sortMode, state.sortDirection) {
+    LaunchedEffect(state.entries, searchQuery, entryFilters, state.sortMode, state.sortDirection) {
         val entries = state.entries
         val query = searchQuery.trim()
         transforming = true
         displayedEntries = emptyList()
         displayedEntries = withContext(Dispatchers.Default) {
             val ordered = orderTrashEntries(entries, state.sortMode, state.sortDirection)
-            if (query.isEmpty()) ordered else ordered.filter { it.name.contains(query, ignoreCase = true) }
+            ordered.filter { entry ->
+                (query.isEmpty() || entry.name.contains(query, ignoreCase = true)) &&
+                    DirectoryEntryFilterRules.matches(entry.kind, entryFilters)
+            }
         }
         transforming = false
     }
@@ -178,6 +186,8 @@ fun TrashBrowserDialog(
                                 onOpenSettings = { showDisplaySettings = true },
                                 onSort = { mode -> viewModel.setTrashSort(mode, state.sortDirection) },
                                 onDismissMenu = { menu = false },
+                                filterActive = entryFilters.isNotEmpty(),
+                                onOpenFilter = { showEntryFilter = true },
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -218,6 +228,8 @@ fun TrashBrowserDialog(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         onClose = { searchVisible = false; searchQuery = "" },
+                        filterActive = entryFilters.isNotEmpty(),
+                        onOpenFilter = { showEntryFilter = true },
                         modifier = Modifier.testTag("directory_search_field_trash"),
                     )
                 }
@@ -335,6 +347,13 @@ fun TrashBrowserDialog(
                 viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
                 showDisplaySettings = false
             },
+        )
+    }
+    if (showEntryFilter) {
+        DirectoryEntryFilterDialog(
+            selected = entryFilters,
+            onSelectedChange = { entryFilters = it },
+            onDismiss = { showEntryFilter = false },
         )
     }
     if (showRetention) {

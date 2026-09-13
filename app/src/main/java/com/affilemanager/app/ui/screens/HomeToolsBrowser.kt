@@ -561,8 +561,9 @@ internal fun FilesHome(
     onAddSafLocation: () -> Unit,
     onOpenSafLocation: (SafLocation) -> Unit,
     onOpenSystemFiles: () -> Unit,
+    onCustomizeHome: () -> Unit,
 ) {
-    val quickLocations = customization.shortcuts.filter(HomeShortcut::visible).map { shortcut ->
+    fun asLocation(shortcut: HomeShortcut) =
         QuickLocation(
             id = shortcut.id,
             title = shortcut.title,
@@ -570,7 +571,15 @@ internal fun FilesHome(
             icon = homeShortcutIcon(shortcut),
             virtual = HomeShortcutNavigationRules.isVirtualCategory(shortcut.id),
         )
-    }
+    val quickLocations = customization.shortcuts.filter {
+        it.visible && it.section == HomeSection.QUICK_LOCATIONS
+    }.map(::asLocation)
+    val storageShortcuts = customization.shortcuts.filter {
+        it.visible && it.section == HomeSection.STORAGE
+    }.map(::asLocation)
+    val toolShortcuts = customization.shortcuts.filter {
+        it.visible && it.section == HomeSection.TOOLS
+    }.map(::asLocation)
     var showAllRecent by remember { mutableStateOf(false) }
     var showCloudLocations by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
@@ -591,6 +600,9 @@ internal fun FilesHome(
                     )
                     IconButton(onClick = onOpenSystemFiles, modifier = Modifier.testTag("open_system_files")) {
                         Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Atidaryti Android sistemos failus"))
+                    }
+                    IconButton(onClick = onCustomizeHome, modifier = Modifier.testTag("home_customize_direct")) {
+                        Icon(Icons.Rounded.Edit, contentDescription = uiText("Tvarkyti pradžios ekraną"))
                     }
                 }
                 LText(
@@ -614,7 +626,7 @@ internal fun FilesHome(
                     modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-            customization.sectionOrder.forEach { section ->
+            customization.sectionOrder.filterNot(customization.hiddenSections::contains).forEach { section ->
                 when (section) {
                     HomeSection.RECENT_FILES -> RecentFilesHomeSection(
                         recentFiles = recentFiles,
@@ -632,6 +644,8 @@ internal fun FilesHome(
                         onOpen = onOpenStorage,
                         onOpenRoot = onOpenRoot,
                         onOpenCleanup = onOpenCleanup,
+                        shortcuts = storageShortcuts,
+                        onOpenShortcut = onOpen,
                         onToggleLayout = { onToggleLayout(HomeDisplayArea.STORAGE) },
                         onConfigureLayout = { onConfigureLayout(HomeDisplayArea.STORAGE) },
                     )
@@ -641,6 +655,8 @@ internal fun FilesHome(
                         tagsCount = tagSnapshot.definitions.size,
                         cloudCount = safLocations.size,
                         bookmarkCount = bookmarks.size,
+                        customization = customization,
+                        shortcuts = toolShortcuts,
                         onOpenTrash = onOpenTrash,
                         onOpenPlans = onOpenPlans,
                         onOpenFavorites = onOpenFavoritesPage,
@@ -649,6 +665,7 @@ internal fun FilesHome(
                         // still needs a visible route for adding a second cloud/provider account.
                         onOpenCloud = { showCloudLocations = true },
                         onOpenBookmarks = { showBookmarks = true },
+                        onOpenShortcut = onOpen,
                     )
                     HomeSection.QUICK_LOCATIONS -> QuickLocationsHomeSection(
                         locations = quickLocations,
@@ -843,6 +860,8 @@ private fun StorageHomeSection(
     onOpen: (StorageRoot) -> Unit,
     onOpenRoot: () -> Unit,
     onOpenCleanup: () -> Unit,
+    shortcuts: List<QuickLocation>,
+    onOpenShortcut: (QuickLocation) -> Unit,
     onToggleLayout: () -> Unit,
     onConfigureLayout: () -> Unit,
 ) {
@@ -928,6 +947,20 @@ private fun StorageHomeSection(
                 repeat(columns - rowLocations.size) { Spacer(Modifier.weight(1f)) }
             }
         }
+        shortcuts.chunked(columns).forEach { rowShortcuts ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                rowShortcuts.forEach { shortcut ->
+                    QuickLocationTile(
+                        location = shortcut,
+                        iconScalePercent = displaySettings.iconScalePercent,
+                        compact = columns >= 3,
+                        modifier = Modifier.weight(1f).testTag("storage_shortcut_${shortcut.id}"),
+                        onClick = { onOpenShortcut(shortcut) },
+                    )
+                }
+                repeat(columns - rowShortcuts.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
     } else {
         locations.forEach { location ->
             StorageLocationCard(
@@ -937,6 +970,15 @@ private fun StorageHomeSection(
                 usageFraction = location.usageFraction,
                 onClick = location.onClick,
                 modifier = if (location.id == HomeCustomizationRules.ROOT_STORAGE_ID) Modifier.testTag("root_storage_location") else Modifier,
+            )
+        }
+        shortcuts.forEach { shortcut ->
+            StorageLocationCard(
+                title = shortcut.title,
+                description = if (shortcut.virtual) "Visa saugykla" else shortcut.path,
+                icon = shortcut.icon,
+                modifier = Modifier.testTag("storage_shortcut_${shortcut.id}"),
+                onClick = { onOpenShortcut(shortcut) },
             )
         }
     }
@@ -1005,22 +1047,38 @@ private fun HomeToolsSection(
     tagsCount: Int,
     cloudCount: Int,
     bookmarkCount: Int,
+    customization: HomeCustomization,
+    shortcuts: List<QuickLocation>,
     onOpenTrash: () -> Unit,
     onOpenPlans: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenTags: () -> Unit,
     onOpenCloud: () -> Unit,
     onOpenBookmarks: () -> Unit,
+    onOpenShortcut: (QuickLocation) -> Unit,
 ) {
     LText("Įrankiai ir saugumas", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-    val tools = listOf(
+    val builtInTools = listOf(
         HomeToolLocation("trash", "Šiukšlinė", itemCountLabel(trashCount), Icons.Rounded.Delete, onOpenTrash),
         HomeToolLocation("plans", "AF planai", "AF planai ir operacijų istorija", Icons.AutoMirrored.Rounded.PlaylistAdd, onOpenPlans),
         HomeToolLocation("favorites", "Mėgstami", itemCountLabel(favoritesCount), Icons.Rounded.Star, onOpenFavorites),
         HomeToolLocation("tags", "Žymos", itemCountLabel(tagsCount), Icons.AutoMirrored.Rounded.Label, onOpenTags),
         HomeToolLocation("cloud", "Debesija", itemCountLabel(cloudCount), Icons.Rounded.Cloud, onOpenCloud),
         HomeToolLocation("bookmarks", "Žymelės", itemCountLabel(bookmarkCount), Icons.Rounded.Bookmark, onOpenBookmarks),
-    )
+    ).associateBy(HomeToolLocation::id)
+    val tools = HomeCustomizationRules.orderedToolIds(customization)
+        .asSequence()
+        .filterNot(customization.hiddenToolIds::contains)
+        .mapNotNull(builtInTools::get)
+        .toList() + shortcuts.map { shortcut ->
+        HomeToolLocation(
+            id = "shortcut.${shortcut.id}",
+            title = shortcut.title,
+            description = if (shortcut.virtual) "Visa saugykla" else shortcut.path,
+            icon = shortcut.icon,
+            onClick = { onOpenShortcut(shortcut) },
+        )
+    }
     tools.chunked(2).forEach { rowTools ->
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             rowTools.forEach { tool ->
@@ -1054,10 +1112,14 @@ internal fun HomeCustomizationDialog(
     onMoveSection: (HomeSection, Int) -> Unit,
     onMoveShortcut: (String, Int) -> Unit,
     onSetShortcutVisible: (String, Boolean) -> Unit,
+    onSetShortcutSection: (String, HomeSection) -> Unit,
+    onSetSectionVisible: (HomeSection, Boolean) -> Unit,
+    onMoveTool: (String, Int) -> Unit,
+    onSetToolVisible: (String, Boolean) -> Unit,
     onMoveStorage: (String, Int) -> Unit,
     onSetStorageVisible: (String, Boolean) -> Unit,
     onRemoveShortcut: (String) -> Unit,
-    onAddShortcut: (String, String) -> Boolean,
+    onAddShortcut: (String, String, HomeSection) -> Boolean,
 ) {
     var showAdd by remember { mutableStateOf(false) }
     val storageItems = remember(roots, customization.storageOrder) {
@@ -1099,11 +1161,34 @@ internal fun HomeCustomizationDialog(
                     val index = customization.sectionOrder.indexOf(section)
                     HomeOrderRow(
                         title = homeSectionTitle(section),
+                        visible = section !in customization.hiddenSections,
                         canMoveUp = index > 0,
                         canMoveDown = index < customization.sectionOrder.lastIndex,
+                        onVisibleChange = { onSetSectionVisible(section, it) },
                         onMoveUp = { onMoveSection(section, -1) },
                         onMoveDown = { onMoveSection(section, 1) },
                     )
+                }
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    LText("Įrankiai", style = MaterialTheme.typography.titleSmall)
+                }
+                items(HomeCustomizationRules.orderedToolIds(customization), key = { "tool.$it" }) { id ->
+                    val ordered = HomeCustomizationRules.orderedToolIds(customization)
+                    val index = ordered.indexOf(id)
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = id !in customization.hiddenToolIds,
+                            onCheckedChange = { onSetToolVisible(id, it) },
+                        )
+                        LText(homeToolTitle(id), modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+                        IconButton(onClick = { onMoveTool(id, -1) }, enabled = index > 0) {
+                            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Perkelti aukštyn"))
+                        }
+                        IconButton(onClick = { onMoveTool(id, 1) }, enabled = index < ordered.lastIndex) {
+                            Icon(Icons.Rounded.ArrowDownward, contentDescription = uiText("Perkelti žemyn"))
+                        }
+                    }
                 }
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -1131,6 +1216,7 @@ internal fun HomeCustomizationDialog(
                 }
                 items(customization.shortcuts, key = HomeShortcut::id) { shortcut ->
                     val index = customization.shortcuts.indexOfFirst { it.id == shortcut.id }
+                    var placementMenu by remember(shortcut.id) { mutableStateOf(false) }
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1149,6 +1235,22 @@ internal fun HomeCustomizationDialog(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                        }
+                        Box {
+                            TextButton(onClick = { placementMenu = true }) {
+                                LText(homeSectionTitle(shortcut.section), maxLines = 1)
+                            }
+                            DropdownMenu(expanded = placementMenu, onDismissRequest = { placementMenu = false }) {
+                                HomeCustomizationRules.SHORTCUT_SECTIONS.forEach { section ->
+                                    DropdownMenuItem(
+                                        text = { LText(homeSectionTitle(section)) },
+                                        onClick = {
+                                            placementMenu = false
+                                            onSetShortcutSection(shortcut.id, section)
+                                        },
+                                    )
+                                }
+                            }
                         }
                         IconButton(onClick = { onMoveShortcut(shortcut.id, -1) }, enabled = index > 0) {
                             Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Perkelti aukštyn"))
@@ -1173,6 +1275,7 @@ internal fun HomeCustomizationDialog(
     if (showAdd) {
         var title by remember { mutableStateOf("") }
         var path by remember(currentPath) { mutableStateOf(currentPath) }
+        var section by remember { mutableStateOf(HomeSection.QUICK_LOCATIONS) }
         AlertDialog(
             onDismissRequest = { showAdd = false },
             title = { LText("Pridėti greitą vietą") },
@@ -1190,11 +1293,21 @@ internal fun HomeCustomizationDialog(
                         label = { LText("Failo arba aplanko kelias") },
                         singleLine = true,
                     )
+                    LText("Rodyti skiltyje", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        HomeCustomizationRules.SHORTCUT_SECTIONS.forEach { destination ->
+                            FilterChip(
+                                selected = section == destination,
+                                onClick = { section = destination },
+                                label = { LText(homeSectionTitle(destination)) },
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Button(
-                    onClick = { if (onAddShortcut(title, path)) showAdd = false },
+                    onClick = { if (onAddShortcut(title, path, section)) showAdd = false },
                     enabled = path.isNotBlank(),
                 ) { LText("Pridėti") }
             },
@@ -1206,12 +1319,15 @@ internal fun HomeCustomizationDialog(
 @Composable
 private fun HomeOrderRow(
     title: String,
+    visible: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
+    onVisibleChange: (Boolean) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Switch(checked = visible, onCheckedChange = onVisibleChange)
         LText(title, modifier = Modifier.weight(1f))
         IconButton(onClick = onMoveUp, enabled = canMoveUp) {
             Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Perkelti aukštyn"))
@@ -1220,6 +1336,16 @@ private fun HomeOrderRow(
             Icon(Icons.Rounded.ArrowDownward, contentDescription = uiText("Perkelti žemyn"))
         }
     }
+}
+
+private fun homeToolTitle(id: String): String = when (id) {
+    "trash" -> "Šiukšlinė"
+    "plans" -> "AF planai"
+    "favorites" -> "Mėgstami"
+    "tags" -> "Žymos"
+    "cloud" -> "Debesija"
+    "bookmarks" -> "Žymelės"
+    else -> id
 }
 
 private fun homeSectionTitle(section: HomeSection): String = when (section) {

@@ -20,7 +20,7 @@ data class NearbyChatState(
     val error: String? = null,
 )
 
-/** Process-only chat for the explicitly paired phones. Messages are never persisted or logged. */
+/** Process-only chat for the explicitly paired phones. Messages survive a link drop, not a process restart. */
 object NearbyChatController {
     const val MAX_MESSAGE_CHARACTERS = 1_000
     const val MAX_MESSAGE_BYTES = 4_096
@@ -32,6 +32,7 @@ object NearbyChatController {
 
     @Synchronized
     fun beginSession(pairing: NearbyPairing) {
+        NearbyTransferHistoryController.beginSession(pairing)
         val identity = "${pairing.host}:${pairing.port}:${pairing.receiverName}"
         if (sessionIdentity != identity) {
             sessionIdentity = identity
@@ -43,6 +44,12 @@ object NearbyChatController {
     fun clear() {
         sessionIdentity = null
         mutableState.value = NearbyChatState()
+    }
+
+    @Synchronized
+    fun endSession() {
+        mutableState.value = mutableState.value.copy(sending = false, error = null)
+        NearbyTransferHistoryController.endSession()
     }
 
     @Synchronized
@@ -74,6 +81,7 @@ object NearbyChatController {
             sending = false,
             error = null,
         )
+        NearbyTransferHistoryController.recordMessage(next)
     }
 
     fun validate(raw: String): String {

@@ -29,4 +29,17 @@ class NearbyChatTest {
         assertThrows(IllegalArgumentException::class.java) { NearbyChatController.validate("hello\u0000world") }
         assertEquals("hello\nworld", NearbyChatController.validate("  hello\nworld  "))
     }
+
+    @Test fun linkDropKeepsMessagesForTheSamePeer() {
+        NearbyChatController.clear()
+        val peer = NearbyPairing("192.168.1.2", 8080, "12345678", "First")
+        NearbyChatController.beginSession(peer)
+        NearbyChatController.sent("This phone", "kept after disconnect")
+
+        NearbyChatController.endSession()
+        NearbyChatController.beginSession(peer)
+
+        assertEquals(listOf("kept after disconnect"), NearbyChatController.state.value.messages.map { it.body })
+        NearbyChatController.clear()
+    }
 }

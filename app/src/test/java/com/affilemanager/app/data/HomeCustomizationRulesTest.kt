@@ -74,6 +74,26 @@ class HomeCustomizationRulesTest {
     }
 
     @Test
+    fun sectionsToolsAndShortcutsHaveIndependentPlacementAndVisibility() {
+        var value = HomeCustomizationRules.normalize(HomeCustomization(), defaults)
+        value = HomeCustomizationRules.setSectionVisible(value, HomeSection.RECENT_FILES, false)
+        value = HomeCustomizationRules.moveTool(value, "cloud", -2)
+        value = HomeCustomizationRules.setToolVisible(value, "plans", false)
+        value = HomeCustomizationRules.setShortcutSection(value, "downloads", HomeSection.STORAGE)
+
+        assertTrue(HomeSection.RECENT_FILES in value.hiddenSections)
+        assertEquals("cloud", value.toolOrder[2])
+        assertTrue("plans" in value.hiddenToolIds)
+        assertEquals(HomeSection.STORAGE, value.shortcuts.single { it.id == "downloads" }.section)
+
+        val normalized = HomeCustomizationRules.normalize(value, defaults)
+        assertEquals(value.hiddenSections, normalized.hiddenSections)
+        assertEquals(value.toolOrder, normalized.toolOrder)
+        assertEquals(value.hiddenToolIds, normalized.hiddenToolIds)
+        assertEquals(HomeSection.STORAGE, normalized.shortcuts.single { it.id == "downloads" }.section)
+    }
+
+    @Test
     fun realQuickLocationFoldersUseStandardDirectoryNavigation() {
         val folderIds = listOf("builtin.downloads")
 

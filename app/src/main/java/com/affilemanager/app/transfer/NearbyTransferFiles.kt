@@ -21,7 +21,7 @@ data class TransferFileProgress(
 
 /** Optional, versioned metadata; never sends source absolute paths or thumbnails. */
 internal object NearbyTransferManifest {
-    const val MAX_BYTES = 1_048_576
+    const val MAX_BYTES = 8 * 1_048_576
 
     fun encode(files: List<TransferFileProgress>): ByteArray {
         val rows = JSONArray()
@@ -51,9 +51,9 @@ internal object NearbyTransferManifest {
             pathChars += path.length
             require(pathChars <= NearbySourcePreparer.MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
             val size = (row.opt("size") as? Number)?.toString()?.toLongOrNull()
-            require(size != null && size in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 1 GB ribą" }
+            require(size != null && size in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
             total = Math.addExact(total, size)
-            require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 5 GB ribą" }
+            require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
             TransferFileProgress(path, size)
         }
     }

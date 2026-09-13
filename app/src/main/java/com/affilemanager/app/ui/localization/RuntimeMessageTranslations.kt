@@ -296,6 +296,7 @@ internal object RuntimeMessageTranslations {
         "Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją." to "The code has expired. Stop and start a new session.",
         "Kataloge per daug elementų interneto peržiūrai" to "The folder contains too many items for web browsing",
         "Failas viršija 1 GB ribą" to "The file exceeds the 1 GB limit",
+        "Failas viršija 7 GB ribą" to "The file exceeds the 7 GB limit",
         "Pasirinktas katalogas neleidžia įkelti" to "The selected folder does not allow uploads",
         "Įkėlimas nutrūko" to "The upload was interrupted",
         "Įkėlimo užbaigti nepavyko" to "Could not finish the upload",

@@ -23,7 +23,10 @@ class NearbyPickerSelectionTest {
         selection = NearbyPickerSelection.toggle(selection, entry(10_001))
         selection = NearbyPickerSelection.togglePage(selection, firstPage)
         assertEquals(listOf(entry(10_001)), selection.values.toList())
-        selection = NearbyPickerSelection.togglePage(selection, (0 until 1_200).map(::entry))
+        selection = NearbyPickerSelection.togglePage(
+            selection,
+            (0 until NearbySourcePreparer.MAX_FILES + 200).map(::entry),
+        )
         assertEquals(NearbySourcePreparer.MAX_FILES, selection.size)
         assertTrue(entry(10_001).absolutePath in selection)
         assertEquals(selection, NearbyPickerSelection.toggle(selection, entry(50_000)))

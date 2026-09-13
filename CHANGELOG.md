@@ -4,6 +4,14 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.38.0] - 2026-09-13
+
+- The fast scroller stays visible for the entire drag and starts its hide delay only after the finger is released.
+- Extending a PDF text selection now previews handle movement locally and performs the expensive native text lookup once, after the drag ends.
+- Phone-to-phone sharing adds bounded transfer history, filter and sort controls, clearer transfer controls, and keeps the current file list reachable after a connection ends.
+- File operations update large-copy progress without flooding the UI and expose consistent operation controls across local and remote browsers.
+- Root and Shizuku cleanup can list running user apps with measured memory use and explicitly stop a selected app after confirmation.
+
 ## [0.37.1] - 2026-09-12
 
 - Preview deletion confirmation now counts the selected file and shows its actual size instead of an empty summary.

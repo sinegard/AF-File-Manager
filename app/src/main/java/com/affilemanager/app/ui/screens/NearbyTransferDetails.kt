@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -14,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -43,7 +49,10 @@ import com.affilemanager.app.transfer.NearbyChatController
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.localization.LText
+import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 import com.affilemanager.app.ui.localization.uiText
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 internal fun NearbyTransferDetails(
@@ -61,12 +70,15 @@ internal fun NearbyTransferDetails(
     outgoingCount: Int? = null,
     localName: String? = null,
     peerName: String? = null,
+    sessionStartedAtMillis: Long? = null,
     chatMessages: List<NearbyChatMessage> = emptyList(),
     chatSending: Boolean = false,
     chatError: String? = null,
     onSendMessage: ((String) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
+    val copiedMessage = uiText("Žinutė nukopijuota")
     val resolvedLocalName = localName ?: uiText("Šis telefonas")
     val resolvedPeerName = peerName ?: uiText("Kitas telefonas")
     AfModalDialog(
@@ -81,6 +93,15 @@ internal fun NearbyTransferDetails(
         },
     ) {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp)) {
+            if (sessionStartedAtMillis != null) {
+                val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
+                Text(
+                    "$resolvedPeerName · ${dateFormat.format(Date(sessionStartedAtMillis))}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
             LinearProgressIndicator(
                 progress = { if (totalBytes > 0) (transferredBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
                     else if (files.isNotEmpty() && files.all { it.status == TransferFileStatus.COMPLETED }) 1f else 0f },
@@ -103,7 +124,7 @@ internal fun NearbyTransferDetails(
                     if (outgoingCount != null && index == outgoingCount && index > 0) {
                         SenderCapsule(resolvedPeerName, outgoing = false)
                     }
-                    TransferFileRow(file, index, onPreview, outgoingCount?.let { index >= it })
+                    TransferFileRow(file, index, onPreview, outgoingCount?.let { index >= it }, onCancel)
                     HorizontalDivider()
                 }
                 if (chatMessages.isNotEmpty()) item("message_divider") {
@@ -115,15 +136,28 @@ internal fun NearbyTransferDetails(
                     if (prior?.senderName != chat.senderName || prior.outgoing != chat.outgoing) {
                         SenderCapsule(chat.senderName, chat.outgoing)
                     }
-                    Surface(
-                        color = if (chat.outgoing) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainerHighest,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .padding(vertical = 3.dp)
-                            .widthIn(max = 360.dp)
-                            .testTag("nearby_chat_message_$index"),
-                    ) { Text(chat.body, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (chat.outgoing) Arrangement.End else Arrangement.Start,
+                    ) {
+                        Surface(
+                            color = if (chat.outgoing) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .padding(vertical = 3.dp)
+                                .widthIn(max = 360.dp)
+                                .combinedClickable(
+                                    onClick = {},
+                                    onLongClick = {
+                                        context.getSystemService(ClipboardManager::class.java)
+                                            .setPrimaryClip(ClipData.newPlainText(chat.senderName, chat.body))
+                                        Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()
+                                    },
+                                )
+                                .testTag("nearby_chat_message_$index"),
+                        ) { Text(chat.body, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) }
+                    }
                 }
             }
             chatError?.let { LText(it, color = MaterialTheme.colorScheme.error,
@@ -156,7 +190,13 @@ private fun SenderCapsule(name: String, outgoing: Boolean) {
 }
 
 @Composable
-private fun TransferFileRow(file: TransferFileProgress, index: Int, onPreview: (FileEntry) -> Unit, incoming: Boolean? = null) {
+private fun TransferFileRow(
+    file: TransferFileProgress,
+    index: Int,
+    onPreview: (FileEntry) -> Unit,
+    incoming: Boolean? = null,
+    onStop: (() -> Unit)? = null,
+) {
     // Pure metadata mapping, no filesystem stat or decoding on the UI thread.
     val entry = remember(file.localPath, file.relativePath, file.sizeBytes, file.modifiedAtMillis) {
         val visibleName = file.localPath?.let { java.io.File(it).name } ?: file.name
@@ -189,9 +229,14 @@ private fun TransferFileRow(file: TransferFileProgress, index: Int, onPreview: (
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
         }
-        IconButton(onClick = { onPreview(entry) }, enabled = file.localPath != null,
-            modifier = Modifier.testTag("nearby_transfer_preview_$index")) {
-            Icon(Icons.Rounded.Visibility, contentDescription = uiText("Peržiūra"))
+        if (file.status == TransferFileStatus.COMPLETED && file.localPath != null) {
+            IconButton(onClick = { onPreview(entry) }, modifier = Modifier.testTag("nearby_transfer_preview_$index")) {
+                Icon(Icons.Rounded.Visibility, contentDescription = uiText("Peržiūra"))
+            }
+        } else if (file.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.TRANSFERRING) && onStop != null) {
+            IconButton(onClick = onStop, modifier = Modifier.testTag("nearby_transfer_stop_$index")) {
+                Icon(Icons.Rounded.Cancel, contentDescription = uiText("Sustabdyti siuntimą"), tint = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }

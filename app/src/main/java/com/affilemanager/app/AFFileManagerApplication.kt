@@ -15,6 +15,7 @@ import com.affilemanager.app.data.TrashRetentionScheduler
 import com.affilemanager.app.data.UiPreferenceRepository
 import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.cleanup.DeviceCleanupRepository
+import com.affilemanager.app.cleanup.PrivilegedAppProcessRepository
 import com.affilemanager.app.data.FileTagRepository
 import com.affilemanager.app.data.FileCategoryRepository
 import com.affilemanager.app.data.FileSelectionInfoScanner
@@ -84,20 +85,21 @@ class AppGraph(application: Application) {
     val localFiles = LocalFileRepository(application)
     val recentFiles = RecentFileRepository(application, localFiles)
     val fileCategories = FileCategoryRepository(application, localFiles)
-    val deviceCleanup = DeviceCleanupRepository(application)
-    val fileSelectionInfo = FileSelectionInfoScanner()
-    val contentFiles = ContentFileRepository(application)
+    val deviceCleanup by lazy { DeviceCleanupRepository(application) }
+    val privilegedApps by lazy { PrivilegedAppProcessRepository(application, advancedAccess) }
+    val fileSelectionInfo by lazy { FileSelectionInfoScanner() }
+    val contentFiles by lazy { ContentFileRepository(application) }
     val navigation = NavigationRepository(application)
     val uiPreferences = UiPreferenceRepository(application)
     val appearance = AppearanceRepository(application)
     val workspaceSession = WorkspaceSessionRepository(application)
     val fileTags = FileTagRepository.forApp(application)
-    val editSessions = EditSessionStore(application.cacheDir)
-    val pdfSignatures = PdfVisualSignatureEngine(application.cacheDir)
-    val remoteEdits = RemoteEditSaver(editSessions)
-    val textMerge = ThreeWayTextMerge()
-    val localFileOperator = LocalFileOperator()
-    val batchRename = BatchRenameEngine()
+    val editSessions by lazy { EditSessionStore(application.cacheDir) }
+    val pdfSignatures by lazy { PdfVisualSignatureEngine(application.cacheDir) }
+    val remoteEdits by lazy { RemoteEditSaver(editSessions) }
+    val textMerge by lazy { ThreeWayTextMerge() }
+    val localFileOperator by lazy { LocalFileOperator() }
+    val batchRename by lazy { BatchRenameEngine() }
     val operationManager = FileOperationManager(applicationScope) {
         FileOperationForegroundService.start(application)
     }
@@ -107,18 +109,18 @@ class AppGraph(application: Application) {
     val trashRetentionSettings = TrashRetentionSettings(application)
     val trashRetentionScheduler = TrashRetentionScheduler(application)
     val search = FileSearchEngine(localFiles)
-    val similarImages = SimilarImageEngine()
+    val similarImages by lazy { SimilarImageEngine() }
     val archives = ArchiveEngine()
-    val localShare = LocalShareManager(application, archives)
-    val nearbySources = NearbySourcePreparer(application, fileCategories)
+    val localShare by lazy { LocalShareManager(application, archives) }
+    val nearbySources by lazy { NearbySourcePreparer(application, fileCategories) }
     val credentialVault = CredentialVault()
     val appLock = AppLockRepository(application)
     val networkProfiles = NetworkProfileStore(application, credentialVault)
     val remoteClients = RemoteClientFactory()
-    val remoteCopies = RemoteCopyEngine()
+    val remoteCopies by lazy { RemoteCopyEngine() }
     val safFiles = SafFileRepository(application)
-    val fileVault = FileVaultEngine()
-    val sync = SyncEngine()
+    val fileVault by lazy { FileVaultEngine() }
+    val sync by lazy { SyncEngine() }
     val syncSchedules = SyncScheduleRepository(application)
     val updates = AppUpdateManager(application)
     val workflows: AfWorkflowCoordinator by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {

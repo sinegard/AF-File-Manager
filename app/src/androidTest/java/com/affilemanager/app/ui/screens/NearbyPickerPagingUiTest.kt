@@ -42,18 +42,17 @@ class NearbyPickerPagingUiTest {
             val vm = MainViewModel(application).also { store.put("test", it) }
             compose.setContent { MaterialTheme { NearbySendDialog(vm, null, {}, {}) } }
             compose.onNodeWithTag("nearby_category_Nuotraukos").performClick()
+            compose.onNodeWithTag("nearby_search_toggle").performClick()
             compose.onNodeWithTag("nearby_search").performTextInput(prefix)
-            // The search remains live while the keyboard is shown. Close the
-            // keyboard before asserting the relative positions of all three rows.
+            // The search remains live while the keyboard is shown. Close it so
+            // the first sorted row can be checked in a stable viewport.
             androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
                 .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-            compose.onNodeWithTag("nearby_sort_MODIFIED").performScrollTo().assertIsDisplayed().performClick()
-            waitFor(names.first())
-            fun top(name: String) = compose.onNodeWithText(name).fetchSemanticsNode().boundsInRoot.top
-            compose.waitUntil(10_000) { top(names.first()) < top(names.last()) }
+            compose.onNodeWithTag("nearby_sort_direction").performTouchInput { longClick() }
+            compose.onNodeWithTag("nearby_sort_MODIFIED").assertIsDisplayed().performClick()
+            waitForFirstEntry(names.first())
             compose.onNodeWithTag("nearby_sort_direction").assertIsDisplayed().performClick()
-            waitFor(names.last())
-            compose.waitUntil(10_000) { top(names.first()) > top(names.last()) }
+            waitForFirstEntry(names.last())
             compose.onNodeWithTag("nearby_select_all").performClick()
             compose.onNodeWithText("Next (3)").assertIsEnabled()
             compose.onNodeWithTag("nearby_select_all").performClick()
@@ -99,6 +98,7 @@ class NearbyPickerPagingUiTest {
             store.put("test", vm)
             compose.setContent { MaterialTheme { NearbySendDialog(vm, null, {}, {}) } }
             compose.onNodeWithTag("nearby_category_Nuotraukos").performClick()
+            compose.onNodeWithTag("nearby_search_toggle").performClick()
             compose.onNodeWithTag("nearby_search").performTextInput(prefix)
             waitFor("$prefix-000.jpg")
             compose.onNodeWithText("$prefix-000.jpg").performClick()
@@ -149,5 +149,20 @@ class NearbyPickerPagingUiTest {
             throw AssertionError("Waiting for $text\n" + compose.onNodeWithTag("nearby_send_dialog").printToString(), failure)
         }
         compose.onNode(result).assertIsDisplayed()
+    }
+
+    private fun waitForFirstEntry(text: String) {
+        val result = hasTestTag("nearby_first_entry") and hasText(text)
+        try {
+            compose.waitUntil(15_000) {
+                compose.onAllNodes(result, useUnmergedTree = true).fetchSemanticsNodes().size == 1
+            }
+        } catch (failure: Throwable) {
+            throw AssertionError(
+                "Waiting for first entry $text\n" + compose.onNodeWithTag("nearby_send_dialog").printToString(),
+                failure,
+            )
+        }
+        compose.onNode(result, useUnmergedTree = true).assertIsDisplayed()
     }
 }

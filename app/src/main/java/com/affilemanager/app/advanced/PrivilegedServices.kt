@@ -34,6 +34,10 @@ class ShizukuFileService : IPrivilegedFileService.Stub {
 
     override fun closeTerminal(handle: Long) = terminalHost.close(handle)
 
+    override fun listRunningAppMemory(): Array<String> = PrivilegedAppProcessTools.listRunningAppMemory()
+
+    override fun forceStopPackage(packageName: String): Boolean = PrivilegedAppProcessTools.forceStopPackage(packageName)
+
     override fun destroy() {
         terminalHost.closeAll()
         System.exit(0)
@@ -60,6 +64,10 @@ class RootFileService : RootService() {
             terminalHost.resize(handle, rows, columns)
 
         override fun closeTerminal(handle: Long) = terminalHost.close(handle)
+
+        override fun listRunningAppMemory(): Array<String> = PrivilegedAppProcessTools.listRunningAppMemory()
+
+        override fun forceStopPackage(packageName: String): Boolean = PrivilegedAppProcessTools.forceStopPackage(packageName)
 
         override fun destroy() = terminalHost.closeAll()
     }

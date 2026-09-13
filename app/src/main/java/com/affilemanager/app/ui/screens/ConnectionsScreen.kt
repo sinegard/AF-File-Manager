@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.Terminal
@@ -110,6 +111,9 @@ import com.affilemanager.app.ui.components.RemoteFileVisual
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryEntryFilter
+import com.affilemanager.app.ui.components.DirectoryEntryFilterDialog
+import com.affilemanager.app.ui.components.DirectoryEntryFilterRules
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryLayoutButton
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
@@ -241,6 +245,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onSort = viewModel::setRemoteSort,
                     onDisconnect = viewModel::disconnectNetwork,
                     onOpenTerminal = viewModel::openRemoteTerminal,
+                    onOpenOperations = { viewModel.setSection(com.affilemanager.app.ui.AppSection.TOOLS) },
                     onSelectPaths = viewModel::selectRemotePaths,
                     onSetSelection = viewModel::setRemoteSelection,
                 )
@@ -428,12 +433,15 @@ internal fun RemoteBrowser(
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit = {},
+    onOpenOperations: () -> Unit = {},
     onInfo: (RemoteEntry) -> Unit = {},
     onSelectPaths: (List<String>) -> Unit = { onSelectAll() },
     onSetSelection: (List<String>, Boolean) -> Unit = { _, _ -> },
 ) {
     var searchVisible by remember(state.connectedProfile?.id) { mutableStateOf(false) }
     var searchQuery by remember(state.connectedProfile?.id) { mutableStateOf("") }
+    var entryFilters by remember(state.connectedProfile?.id, state.path) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    var showEntryFilter by remember(state.connectedProfile?.id, state.path) { mutableStateOf(false) }
     LaunchedEffect(state.path) {
         searchVisible = false
         searchQuery = ""
@@ -446,9 +454,15 @@ internal fun RemoteBrowser(
             sortDirection = state.sortDirection,
         )
     }
-    val displayedEntries = remember(orderedEntries, searchQuery) {
+    val displayedEntries = remember(orderedEntries, searchQuery, entryFilters) {
         val query = searchQuery.trim()
-        if (query.isEmpty()) orderedEntries else orderedEntries.filter { it.name.contains(query, ignoreCase = true) }
+        orderedEntries.filter { entry ->
+            (query.isEmpty() || entry.name.contains(query, ignoreCase = true)) &&
+                DirectoryEntryFilterRules.matches(
+                    FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = entry.directory),
+                    entryFilters,
+                )
+        }
     }
     val selectableEntries = remember(displayedEntries) {
         displayedEntries.take(RemoteCopyEngine.MAX_SELECTED_ROOTS)
@@ -490,11 +504,14 @@ internal fun RemoteBrowser(
                 onSort = onSort,
                 onDisconnect = onDisconnect,
                 onOpenTerminal = onOpenTerminal,
+                onOpenOperations = onOpenOperations,
                 searchActive = searchVisible,
                 onToggleSearch = {
                     searchVisible = !searchVisible
                     if (!searchVisible) searchQuery = ""
                 },
+                filterActive = entryFilters.isNotEmpty(),
+                onOpenFilter = { showEntryFilter = true },
             )
         }
         if (searchVisible) {
@@ -502,6 +519,8 @@ internal fun RemoteBrowser(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
                 onClose = { searchVisible = false; searchQuery = "" },
+                filterActive = entryFilters.isNotEmpty(),
+                onOpenFilter = { showEntryFilter = true },
                 modifier = Modifier.testTag("directory_search_field_remote"),
             )
         }
@@ -603,6 +622,13 @@ internal fun RemoteBrowser(
             }
         }
     }
+    if (showEntryFilter) {
+        DirectoryEntryFilterDialog(
+            selected = entryFilters,
+            onSelectedChange = { entryFilters = it },
+            onDismiss = { showEntryFilter = false },
+        )
+    }
 }
 
 @Composable
@@ -625,8 +651,11 @@ private fun RemoteFolderToolbar(
     onSort: (SortMode) -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit,
+    onOpenOperations: () -> Unit,
     searchActive: Boolean,
     onToggleSearch: () -> Unit,
+    filterActive: Boolean,
+    onOpenFilter: () -> Unit,
 ) {
     DirectoryBrowserToolbar(
         title = state.path.substringAfterLast('/').ifBlank { state.connectedProfile?.name.orEmpty() },
@@ -660,6 +689,9 @@ private fun RemoteFolderToolbar(
             onRefresh = onRefresh,
             onDisconnect = onDisconnect,
             onOpenTerminal = onOpenTerminal,
+            onOpenOperations = onOpenOperations,
+            filterActive = filterActive,
+            onOpenFilter = onOpenFilter,
         )
     }
 }
@@ -681,6 +713,9 @@ private fun RemoteFolderActionsMenu(
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
     onOpenTerminal: () -> Unit,
+    onOpenOperations: () -> Unit,
+    filterActive: Boolean,
+    onOpenFilter: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -719,6 +754,12 @@ private fun RemoteFolderActionsMenu(
                 enabled = !state.loading,
                 onClick = { expanded = false; onSync() },
             )
+            DropdownMenuItem(
+                text = { LText("Operacijų centras") },
+                leadingIcon = { Icon(Icons.Rounded.SwapHoriz, contentDescription = null) },
+                modifier = Modifier.testTag("remote_open_operations"),
+                onClick = { expanded = false; onOpenOperations() },
+            )
             HorizontalDivider()
             DirectoryDisplayMenuItems(
                 grid = state.grid,
@@ -734,6 +775,8 @@ private fun RemoteFolderActionsMenu(
                 onOpenSettings = onDisplaySettings,
                 onSort = onSort,
                 onDismissMenu = { expanded = false },
+                filterActive = filterActive,
+                onOpenFilter = onOpenFilter,
             )
             HorizontalDivider()
             DropdownMenuItem(

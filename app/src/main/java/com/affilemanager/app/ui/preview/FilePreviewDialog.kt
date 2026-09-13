@@ -198,6 +198,9 @@ import com.affilemanager.app.ui.editor.EditSaveAsDialog
 import com.affilemanager.app.ui.editor.FullTextEditor
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryEntryFilter
+import com.affilemanager.app.ui.components.DirectoryEntryFilterDialog
+import com.affilemanager.app.ui.components.DirectoryEntryFilterRules
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
 import com.affilemanager.app.ui.components.AfPullToRefresh
@@ -207,6 +210,7 @@ import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.components.LazyGridFastScroller
 import com.affilemanager.app.ui.components.LazyListFastScroller
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -255,6 +259,12 @@ private data class PdfSelectionRequest(
     val start: PdfTextBoundary,
     val stop: PdfTextBoundary,
     val clearOnEmpty: Boolean,
+    val showProgress: Boolean,
+)
+
+private data class PdfSelectionDragPreview(
+    val handle: PdfSelectionHandle,
+    val point: PdfPagePoint,
 )
 
 private data class MediaPreviewInfo(
@@ -884,6 +894,7 @@ private fun PdfPreview(source: PreviewSource) {
     val copiedText = uiText("Nukopijuota")
     var directSelection by remember(source.key) { mutableStateOf<PdfPageTextSelection?>(null) }
     var selectionPendingPage by remember(source.key) { mutableStateOf<Int?>(null) }
+    var selectionRevision by remember(source.key) { mutableLongStateOf(0L) }
     var textSelectionPage by remember(source.key) { mutableStateOf<Int?>(null) }
     val updateScale: (Float) -> Unit = { scale = PreviewZoomRules.clamp(it, PreviewZoomRules.PDF_MAX_SCALE) }
     LaunchedEffect(source.key) {
@@ -905,10 +916,9 @@ private fun PdfPreview(source: PreviewSource) {
     LaunchedEffect(source.key, directSelectionSupported) {
         if (!directSelectionSupported) return@LaunchedEffect
         selectionRequests.receiveAsFlow().collectLatest { request ->
-            selectionPendingPage = request.pageIndex
-            if (!request.clearOnEmpty) delay(24)
-            val result = runCatching {
-                pdfRenderPermits.withPermit {
+            if (request.showProgress) selectionPendingPage = request.pageIndex
+            try {
+                val selected = pdfRenderPermits.withPermit {
                     runInterruptible(Dispatchers.IO) {
                         selectPdfPageText(
                             context = context,
@@ -919,13 +929,17 @@ private fun PdfPreview(source: PreviewSource) {
                         )
                     }
                 }
-            }
-            result.onSuccess { selected ->
                 if (selected != null || request.clearOnEmpty) directSelection = selected
-            }.onFailure {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
                 Toast.makeText(context, selectionFailureText, Toast.LENGTH_SHORT).show()
+            } finally {
+                if (request.showProgress && selectionPendingPage == request.pageIndex) {
+                    selectionPendingPage = null
+                }
+                selectionRevision++
             }
-            selectionPendingPage = null
         }
     }
 
@@ -1073,6 +1087,7 @@ private fun PdfPreview(source: PreviewSource) {
                                         directSelectionEnabled = directSelectionSupported,
                                         selection = directSelection?.takeIf { it.pageIndex == pageIndex },
                                         selectionPending = selectionPendingPage == pageIndex,
+                                        selectionRevision = selectionRevision,
                                         onSelectWord = { point ->
                                             directSelection = null
                                             selectionRequests.trySend(
@@ -1081,6 +1096,7 @@ private fun PdfPreview(source: PreviewSource) {
                                                     start = PdfTextBoundary.AtPoint(point),
                                                     stop = PdfTextBoundary.AtPoint(point),
                                                     clearOnEmpty = true,
+                                                    showProgress = true,
                                                 ),
                                             )
                                         },
@@ -1091,6 +1107,7 @@ private fun PdfPreview(source: PreviewSource) {
                                                     start = start,
                                                     stop = stop,
                                                     clearOnEmpty = false,
+                                                    showProgress = false,
                                                 ),
                                             )
                                         },
@@ -1123,6 +1140,7 @@ private fun PdfPageItem(
     directSelectionEnabled: Boolean,
     selection: PdfPageTextSelection?,
     selectionPending: Boolean,
+    selectionRevision: Long,
     onSelectWord: (PdfPagePoint) -> Unit,
     onMoveSelectionBoundary: (PdfTextBoundary, PdfTextBoundary) -> Unit,
 ) {
@@ -1130,6 +1148,7 @@ private fun PdfPageItem(
     var renderError by remember(source.key, pageIndex) { mutableStateOf<Throwable?>(null) }
     var rendering by remember(source.key, pageIndex) { mutableStateOf(true) }
     var displaySize by remember(source.key, pageIndex) { mutableStateOf(IntSize.Zero) }
+    var dragPreview by remember(source.key, pageIndex) { mutableStateOf<PdfSelectionDragPreview?>(null) }
     val currentSelection by rememberUpdatedState(selection)
     val currentMoveSelectionBoundary by rememberUpdatedState(onMoveSelectionBoundary)
     val handleHitRadius = with(LocalDensity.current) { 28.dp.toPx() }
@@ -1137,13 +1156,23 @@ private fun PdfPageItem(
     val handleStem = with(LocalDensity.current) { 10.dp.toPx() }
     val selectionColor = MaterialTheme.colorScheme.primary
     val selectionHighlight = selectionColor.copy(alpha = 0.28f)
+    LaunchedEffect(selectionRevision) { dragPreview = null }
     val selectionSnapshot = selection?.takeIf { displaySize.width > 0 && displaySize.height > 0 }?.let { selected ->
         val measured = PdfDisplaySize(displaySize.width.toFloat(), displaySize.height.toFloat())
+        val preview = dragPreview
         PdfTextSelectionSnapshot(
             text = selected.text,
             boundsCount = selected.bounds.size,
-            startHandle = PdfSelectionRules.displayPoint(selected.startHandle, measured, pageSize),
-            stopHandle = PdfSelectionRules.displayPoint(selected.stopHandle, measured, pageSize),
+            startHandle = PdfSelectionRules.displayPoint(
+                preview?.point?.takeIf { preview.handle == PdfSelectionHandle.START } ?: selected.startHandle,
+                measured,
+                pageSize,
+            ),
+            stopHandle = PdfSelectionRules.displayPoint(
+                preview?.point?.takeIf { preview.handle == PdfSelectionHandle.STOP } ?: selected.stopHandle,
+                measured,
+                pageSize,
+            ),
         )
     }
     LaunchedEffect(source.key, pageIndex, viewportWidthPx, renderScale) {
@@ -1202,25 +1231,34 @@ private fun PdfPageItem(
                                     PdfTextBoundary.AtPoint(selected.startHandle)
                                 }
                                 down.consume()
+                                var movingPoint: PdfPagePoint? = null
+                                var commitSelection = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    if (event.changes.count { it.pressed } > 1) break
+                                    if (event.changes.count { it.pressed } > 1) {
+                                        dragPreview = null
+                                        break
+                                    }
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                     if (!change.pressed) {
                                         change.consume()
+                                        commitSelection = movingPoint != null
                                         break
                                     }
-                                    val movingPoint = PdfSelectionRules.pagePoint(
+                                    movingPoint = PdfSelectionRules.pagePoint(
                                         displayPoint = PdfDisplayPoint(change.position.x, change.position.y),
                                         displaySize = measured,
                                         pageSize = pageSize,
                                     )
-                                    if (handle == PdfSelectionHandle.START) {
-                                        currentMoveSelectionBoundary(PdfTextBoundary.AtPoint(movingPoint), fixedBoundary)
-                                    } else {
-                                        currentMoveSelectionBoundary(fixedBoundary, PdfTextBoundary.AtPoint(movingPoint))
-                                    }
+                                    dragPreview = PdfSelectionDragPreview(handle, movingPoint)
                                     change.consume()
+                                }
+                                if (commitSelection) movingPoint?.let { finalPoint ->
+                                    if (handle == PdfSelectionHandle.START) {
+                                        currentMoveSelectionBoundary(PdfTextBoundary.AtPoint(finalPoint), fixedBoundary)
+                                    } else {
+                                        currentMoveSelectionBoundary(fixedBoundary, PdfTextBoundary.AtPoint(finalPoint))
+                                    }
                                 }
                             }
                         } else Modifier,
@@ -1269,8 +1307,15 @@ private fun PdfPageItem(
                                 ),
                             )
                         }
-                        val start = Offset(selected.startHandle.x * xScale, selected.startHandle.y * yScale)
-                        val stop = Offset(selected.stopHandle.x * xScale, selected.stopHandle.y * yScale)
+                        val preview = dragPreview
+                        val startPoint = preview?.point
+                            ?.takeIf { preview.handle == PdfSelectionHandle.START }
+                            ?: selected.startHandle
+                        val stopPoint = preview?.point
+                            ?.takeIf { preview.handle == PdfSelectionHandle.STOP }
+                            ?: selected.stopHandle
+                        val start = Offset(startPoint.x * xScale, startPoint.y * yScale)
+                        val stop = Offset(stopPoint.x * xScale, stopPoint.y * yScale)
                         val startKnob = start + Offset(0f, handleStem)
                         val stopKnob = stop + Offset(0f, handleStem)
                         drawLine(selectionColor, start, startKnob, strokeWidth = 3f)
@@ -2217,6 +2262,8 @@ private fun ArchivePreview(
     var extractSelectionRequested by remember { mutableStateOf<Set<String>?>(null) }
     var searchVisible by remember(file.absolutePath) { mutableStateOf(false) }
     var searchQuery by remember(file.absolutePath) { mutableStateOf("") }
+    var entryFilters by remember(file.absolutePath, currentPath) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    var showEntryFilter by remember(file.absolutePath, currentPath) { mutableStateOf(false) }
     var menu by remember(file.absolutePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(file.absolutePath) { mutableStateOf(false) }
     var displaySettings by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.settings) }
@@ -2251,14 +2298,20 @@ private fun ArchivePreview(
     val children = remember(browser, currentPath) { browser.children(currentPath) }
     var visibleEntries by remember(file.absolutePath, currentPath) { mutableStateOf<List<ArchiveBrowserItem>>(emptyList()) }
     var transforming by remember(file.absolutePath, currentPath) { mutableStateOf(false) }
-    LaunchedEffect(children, searchQuery, sortMode, sortDirection) {
+    LaunchedEffect(children, searchQuery, entryFilters, sortMode, sortDirection) {
         val requestedChildren = children
         val query = searchQuery.trim()
         transforming = true
         visibleEntries = emptyList()
         visibleEntries = withContext(Dispatchers.Default) {
             val ordered = orderArchiveEntries(requestedChildren, sortMode, sortDirection)
-            if (query.isEmpty()) ordered else ordered.filter { it.name.contains(query, ignoreCase = true) }
+            ordered.filter { entry ->
+                (query.isEmpty() || entry.name.contains(query, ignoreCase = true)) &&
+                    DirectoryEntryFilterRules.matches(
+                        FileSystemRules.detectKind(entry.name, mimeType = null, isDirectory = entry.directory),
+                        entryFilters,
+                    )
+            }
         }
         transforming = false
     }
@@ -2394,6 +2447,8 @@ private fun ArchivePreview(
                         onOpenSettings = { showDisplaySettings = true },
                         onSort = { sortMode = it },
                         onDismissMenu = { menu = false },
+                        filterActive = entryFilters.isNotEmpty(),
+                        onOpenFilter = { showEntryFilter = true },
                     )
                     HorizontalDivider()
                     DropdownMenuItem(
@@ -2411,6 +2466,8 @@ private fun ArchivePreview(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
                 onClose = { searchVisible = false; searchQuery = "" },
+                filterActive = entryFilters.isNotEmpty(),
+                onOpenFilter = { showEntryFilter = true },
                 modifier = Modifier.testTag("directory_search_field_archive"),
             )
         }
@@ -2511,6 +2568,13 @@ private fun ArchivePreview(
                 onApplyDisplayToAll(settings, mode, direction)
                 showDisplaySettings = false
             },
+        )
+    }
+    if (showEntryFilter) {
+        DirectoryEntryFilterDialog(
+            selected = entryFilters,
+            onSelectedChange = { entryFilters = it },
+            onDismiss = { showEntryFilter = false },
         )
     }
     if (extractAllRequested || extractSelectionRequested != null) {

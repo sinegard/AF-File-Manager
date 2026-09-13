@@ -79,6 +79,9 @@ import com.affilemanager.app.ui.SafBrowserUiState
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
 import com.affilemanager.app.ui.components.DirectoryGridItemContent
 import com.affilemanager.app.ui.components.DirectoryDisplayMenuItems
+import com.affilemanager.app.ui.components.DirectoryEntryFilter
+import com.affilemanager.app.ui.components.DirectoryEntryFilterDialog
+import com.affilemanager.app.ui.components.DirectoryEntryFilterRules
 import com.affilemanager.app.ui.components.DirectoryDisplaySettingsDialog
 import com.affilemanager.app.ui.components.SafFileVisual
 import com.affilemanager.app.ui.components.DirectoryQuickSearchField
@@ -109,6 +112,8 @@ fun SafBrowserDialog(
     var showDisplaySettings by remember(state.currentUri) { mutableStateOf(false) }
     var searchVisible by remember(state.location?.uri) { mutableStateOf(false) }
     var searchQuery by remember(state.location?.uri) { mutableStateOf("") }
+    var entryFilters by remember(state.currentUri) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    var showEntryFilter by remember(state.currentUri) { mutableStateOf(false) }
     val listState = androidx.compose.runtime.key(state.currentUri) { rememberLazyListState() }
     val gridState = androidx.compose.runtime.key(state.currentUri) { rememberLazyGridState() }
     LaunchedEffect(state.currentUri) {
@@ -117,14 +122,17 @@ fun SafBrowserDialog(
     }
     var displayedEntries by remember(state.currentUri) { mutableStateOf<List<SafEntry>>(emptyList()) }
     var transforming by remember(state.currentUri) { mutableStateOf(false) }
-    LaunchedEffect(state.entries, searchQuery, state.sortMode, state.sortDirection) {
+    LaunchedEffect(state.entries, searchQuery, entryFilters, state.sortMode, state.sortDirection) {
         val entries = state.entries
         val query = searchQuery.trim()
         transforming = true
         displayedEntries = emptyList()
         displayedEntries = withContext(Dispatchers.Default) {
             val ordered = orderSafEntries(entries, state.sortMode, state.sortDirection)
-            if (query.isEmpty()) ordered else ordered.filter { it.name.contains(query, ignoreCase = true) }
+            ordered.filter { entry ->
+                (query.isEmpty() || entry.name.contains(query, ignoreCase = true)) &&
+                    DirectoryEntryFilterRules.matches(entry.kind, entryFilters)
+            }
         }
         transforming = false
     }
@@ -179,6 +187,8 @@ fun SafBrowserDialog(
                                 onOpenSettings = { showDisplaySettings = true },
                                 onSort = { mode -> viewModel.setSafSort(mode, state.sortDirection) },
                                 onDismissMenu = { menu = false },
+                                filterActive = entryFilters.isNotEmpty(),
+                                onOpenFilter = { showEntryFilter = true },
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -195,6 +205,8 @@ fun SafBrowserDialog(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         onClose = { searchVisible = false; searchQuery = "" },
+                        filterActive = entryFilters.isNotEmpty(),
+                        onOpenFilter = { showEntryFilter = true },
                     )
                 }
                 HorizontalDivider()
@@ -327,6 +339,13 @@ fun SafBrowserDialog(
                 viewModel.applyDirectoryDisplaySettingsToAll(settings, mode, direction)
                 showDisplaySettings = false
             },
+        )
+    }
+    if (showEntryFilter) {
+        DirectoryEntryFilterDialog(
+            selected = entryFilters,
+            onSelectedChange = { entryFilters = it },
+            onDismiss = { showEntryFilter = false },
         )
     }
 }

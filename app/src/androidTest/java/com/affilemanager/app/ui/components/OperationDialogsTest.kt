@@ -95,6 +95,7 @@ class OperationDialogsTest {
     @Test fun operationProgressOffersHideAndCancelWithoutConflatingThem() {
         var hidden = 0
         var cancelled = 0
+        var paused = 0
         compose.setContent { MaterialTheme {
             OperationProgressDialog(
                 operation = OperationSnapshot(
@@ -104,16 +105,20 @@ class OperationDialogsTest {
                 ),
                 onCancel = { cancelled++ },
                 onHide = { hidden++ },
+                onPause = { paused++ },
+                onResume = {},
             )
         } }
         compose.onNodeWithText("current.txt").assertIsDisplayed()
         compose.onNodeWithTag("operation_bytes").assertIsDisplayed()
         compose.onNodeWithTag("operation_items").assertIsDisplayed()
         compose.onNodeWithTag("hide_operation").assertHasClickAction().performClick()
+        compose.onNodeWithTag("pause_operation").assertHasClickAction().performClick()
         compose.onNodeWithTag("cancel_operation").assertHasClickAction().performClick()
         compose.runOnIdle {
             assertEquals(1, hidden)
             assertEquals(1, cancelled)
+            assertEquals(1, paused)
         }
     }
 }

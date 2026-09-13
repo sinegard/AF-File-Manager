@@ -16,4 +16,10 @@ class FastScrollMappingTest {
         assertEquals(.5f, FastScrollMapping.thumbFraction(45, 100, 10))
         assertEquals(1f, FastScrollMapping.thumbFraction(90, 100, 10))
     }
+
+    @Test fun activeDragOwnsVisibilityEvenBetweenScrollUpdates() {
+        assertEquals(true, FastScrollVisibilityRules.shouldRemainVisible(scrollInProgress = true, dragging = false))
+        assertEquals(true, FastScrollVisibilityRules.shouldRemainVisible(scrollInProgress = false, dragging = true))
+        assertEquals(false, FastScrollVisibilityRules.shouldRemainVisible(scrollInProgress = false, dragging = false))
+    }
 }

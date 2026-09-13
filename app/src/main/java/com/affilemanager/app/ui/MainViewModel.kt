@@ -261,6 +261,11 @@ data class DeviceCleanupUiState(
     val error: String? = null,
 )
 
+private data class DeviceCleanupLoadResult(
+    val snapshot: DeviceCleanupSnapshot,
+    val standardScanError: String?,
+)
+
 data class FileCategoryUiState(
     val open: Boolean = false,
     val category: FileCategory? = null,
@@ -1363,6 +1368,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeCustomization { HomeCustomizationRules.setShortcutVisible(it, id, visible) }
     }
 
+    fun setHomeShortcutSection(id: String, section: HomeSection) {
+        updateHomeCustomization { HomeCustomizationRules.setShortcutSection(it, id, section) }
+    }
+
+    fun setHomeSectionVisible(section: HomeSection, visible: Boolean) {
+        updateHomeCustomization { HomeCustomizationRules.setSectionVisible(it, section, visible) }
+    }
+
+    fun moveHomeTool(id: String, offset: Int) {
+        updateHomeCustomization { HomeCustomizationRules.moveTool(it, id, offset) }
+    }
+
+    fun setHomeToolVisible(id: String, visible: Boolean) {
+        updateHomeCustomization { HomeCustomizationRules.setToolVisible(it, id, visible) }
+    }
+
     suspend fun loadAdvancedSelectionInfo(paths: Collection<String>): Result<FileSelectionSummary> =
         graph.privilegedFiles.selectionInfo(paths)
 
@@ -1432,7 +1453,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateHomeCustomization { HomeCustomizationRules.removeShortcut(it, id) }
     }
 
-    fun addHomeShortcut(title: String, path: String): Boolean {
+    fun addHomeShortcut(title: String, path: String, section: HomeSection = HomeSection.QUICK_LOCATIONS): Boolean {
         return runCatching {
             val file = File(path.trim()).canonicalFile
             require(file.exists()) { "Tokia failo ar aplanko vieta neegzistuoja" }
@@ -1441,6 +1462,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 id = "custom.${UUID.randomUUID()}",
                 title = shortcutTitle,
                 path = file.absolutePath,
+                section = section,
             )
             val updated = HomeCustomizationRules.addShortcut(_homeCustomization.value, shortcut)
             _homeCustomization.value = graph.navigation.setHomeCustomization(updated, homeBuiltInShortcuts)
@@ -2345,14 +2367,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_deviceCleanup.value.loading) return
         _deviceCleanup.update { it.copy(loading = true, error = null) }
         deviceCleanupJob = viewModelScope.launch {
-            runCatching { graph.deviceCleanup.scan() }.fold(
-                onSuccess = { snapshot -> _deviceCleanup.update { it.copy(loading = false, snapshot = snapshot) } },
+            runCatching { loadDeviceCleanupSnapshot() }.fold(
+                onSuccess = { result ->
+                    _deviceCleanup.update {
+                        it.copy(
+                            loading = false,
+                            snapshot = result.snapshot,
+                            error = result.standardScanError,
+                        )
+                    }
+                },
                 onFailure = { error ->
                     if (error is CancellationException) throw error
                     _deviceCleanup.update { it.copy(loading = false, error = error.message ?: "Programų nuskaityti nepavyko") }
                 },
             )
         }
+    }
+
+    fun forceStopApplication(packageName: String) {
+        if (_deviceCleanup.value.loading) return
+        _deviceCleanup.update { it.copy(loading = true, error = null) }
+        deviceCleanupJob = viewModelScope.launch {
+            runCatching { graph.privilegedApps.forceStop(packageName) }.fold(
+                onSuccess = {
+                    _deviceCleanup.update { it.copy(loading = false) }
+                    message("Programa sustabdyta")
+                    refreshDeviceCleanup()
+                },
+                onFailure = { error ->
+                    if (error is CancellationException) throw error
+                    _deviceCleanup.update {
+                        it.copy(loading = false, error = error.message ?: "Programos sustabdyti nepavyko")
+                    }
+                },
+            )
+        }
+    }
+
+    private suspend fun loadDeviceCleanupSnapshot(): DeviceCleanupLoadResult {
+        val standard = runCatching { graph.deviceCleanup.scan() }
+        standard.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        val privilegedAvailable = graph.advancedAccess.state.value.connected
+        val privileged = if (privilegedAvailable) runCatching { graph.privilegedApps.listRunningApps() } else null
+        privileged?.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        val snapshot = standard.getOrElse {
+            DeviceCleanupSnapshot(
+                usageAccessGranted = graph.deviceCleanup.hasUsageAccess(),
+                unusedApps = emptyList(),
+                cachedApps = emptyList(),
+                scannedApps = 0,
+                cacheSizesAvailable = false,
+                usageHistoryAvailable = false,
+            )
+        }
+        return DeviceCleanupLoadResult(
+            snapshot = snapshot.copy(
+                runningApps = privileged?.getOrNull()?.apps.orEmpty(),
+                privilegedAppAccessAvailable = privilegedAvailable,
+                privilegedAppAccessError = privileged?.exceptionOrNull()?.message,
+                runningAppsTruncated = privileged?.getOrNull()?.truncated == true,
+            ),
+            standardScanError = standard.exceptionOrNull()?.message?.takeIf(String::isNotBlank)
+                ?: standard.exceptionOrNull()?.let { "Programų nuskaityti nepavyko" },
+        )
     }
 
     fun openUsageAccessSettings() {
@@ -2522,6 +2600,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clearSelection(panel)
             if (panelFlow(panel).value.path == requestedState.path) refreshPanel(panel)
             refreshTrash()
+        }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
+    }
+
+    fun deleteSelectionPermanently(panel: PanelId) {
+        val requestedState = panelFlow(panel).value
+        val selected = requestedState.selectedPaths.toList()
+        if (selected.isEmpty()) return
+        graph.operationManager.submit("Trinama visam laikui") {
+            graph.localFileOperator.deletePermanently(selected, this)
+            clearSelection(panel)
+            if (panelFlow(panel).value.path == requestedState.path) refreshPanel(panel)
         }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
     }
 

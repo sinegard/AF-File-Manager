@@ -3,23 +3,28 @@ package com.affilemanager.app.data
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
-import java.util.Locale
-
 internal object FileEntryOrdering {
     fun order(
         entries: List<FileEntry>,
         sortMode: SortMode,
         sortDirection: SortDirection,
     ): List<FileEntry> {
+        val nameComparator = Comparator<FileEntry> { left, right ->
+            left.name.compareTo(right.name, ignoreCase = true)
+        }
         val baseComparator = when (sortMode) {
-            SortMode.NAME -> compareBy<FileEntry> { it.name.lowercase(Locale.ROOT) }
-            SortMode.SIZE -> compareBy<FileEntry> { it.sizeBytes }
-                .thenBy { it.name.lowercase(Locale.ROOT) }
-            SortMode.MODIFIED -> compareBy<FileEntry> { it.modifiedAtMillis }
-                .thenBy { it.name.lowercase(Locale.ROOT) }
+            SortMode.NAME -> nameComparator
+            SortMode.SIZE -> Comparator<FileEntry> { left, right ->
+                left.sizeBytes.compareTo(right.sizeBytes).takeIf { it != 0 }
+                    ?: nameComparator.compare(left, right)
+            }
+            SortMode.MODIFIED -> Comparator<FileEntry> { left, right ->
+                left.modifiedAtMillis.compareTo(right.modifiedAtMillis).takeIf { it != 0 }
+                    ?: nameComparator.compare(left, right)
+            }
             SortMode.TYPE -> compareBy<FileEntry> { it.kind }
                 .thenBy { if (it.isDirectory) "" else it.extension }
-                .thenBy { it.name.lowercase(Locale.ROOT) }
+                .then(nameComparator)
         }
         val metadataAware = sortMode == SortMode.SIZE || sortMode == SortMode.MODIFIED
         val selected = Comparator<FileEntry> { left, right ->
@@ -31,8 +36,9 @@ internal object FileEntryOrdering {
                 baseComparator.compare(right, left)
             }
         }
-        val directories = ArrayList<FileEntry>(entries.size)
-        val files = ArrayList<FileEntry>(entries.size)
+        val directoryCount = entries.count(FileEntry::isDirectory)
+        val directories = ArrayList<FileEntry>(directoryCount)
+        val files = ArrayList<FileEntry>(entries.size - directoryCount)
         entries.forEach { entry ->
             if (entry.isDirectory) directories += entry else files += entry
         }
