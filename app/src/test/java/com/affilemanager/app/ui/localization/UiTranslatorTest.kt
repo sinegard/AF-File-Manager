@@ -59,6 +59,8 @@ class UiTranslatorTest {
         assertEquals("Recent files", UiTranslator.translate("Naujausi failai", AppLanguageManager.ENGLISH))
         assertEquals("Analyze storage", UiTranslator.translate("Analizuoti saugyklą", AppLanguageManager.ENGLISH))
         assertEquals("Display settings", UiTranslator.translate("Rodinio nustatymai", AppLanguageManager.ENGLISH))
+        assertEquals("Filter", UiTranslator.translate("Filtras", AppLanguageManager.ENGLISH))
+        assertEquals("All files", UiTranslator.translate("Visi failai", AppLanguageManager.ENGLISH))
         assertEquals("Grid columns", UiTranslator.translate("Tinklelio stulpeliai", AppLanguageManager.ENGLISH))
         assertEquals("8.0 GB free of 9.7 GB", UiTranslator.translate("8.0 GB laisva iš 9.7 GB", AppLanguageManager.ENGLISH))
         assertEquals("74% used", UiTranslator.translate("74% užimta", AppLanguageManager.ENGLISH))
@@ -189,6 +191,14 @@ class UiTranslatorTest {
                 AppLanguageManager.ENGLISH,
             ),
         )
+        assertEquals(
+            "Plan: 3 actions · 12 MB · 1 conflicts",
+            UiTranslator.translate("Planas: 3 veiksmų · 12 MB · konfliktų 1", AppLanguageManager.ENGLISH),
+        )
+        assertEquals(
+            "In copy set: 4",
+            UiTranslator.translate("Kopijavimo rinkinyje: 4", AppLanguageManager.ENGLISH),
+        )
     }
 
     @Test
@@ -264,11 +274,138 @@ class UiTranslatorTest {
     }
 
     @Test
+    fun everyStaticUiTitleAndDialogActionHasAnEnglishEntry() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val literal = Regex(
+            """\b(?:title|subtitle|cancelLabel|confirmLabel)\s*=\s*\"((?:\\.|[^\"\\])*)\"""",
+        )
+        val deliberatelyLanguageNeutral = setOf("AF File Manager", "SHA-256")
+        val missing = File(sourceRoot, "com/affilemanager/app/ui").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                literal.findAll(file.readText()).map { match -> file.name to decodeKotlinLiteral(match.groupValues[1]) }
+            }
+            .filter { (_, text) ->
+                '$' !in text && text !in deliberatelyLanguageNeutral && !UiTranslator.hasEnglishEntry(text)
+            }
+            .distinct()
+            .toList()
+        assertTrue("Missing English title/action entries: $missing", missing.isEmpty())
+    }
+
+    @Test
+    fun staticComposeTextDoesNotBypassInterfaceLocalization() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val literal = Regex("""\bText\(\s*(?:text\s*=\s*)?\"((?:\\.|[^\"\\])*)\"""")
+        val deliberatelyLanguageNeutral = setOf("Alt", "Ctrl", "SHA-256")
+        val bypassed = File(sourceRoot, "com/affilemanager/app/ui").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                literal.findAll(file.readText()).map { match -> file.name to decodeKotlinLiteral(match.groupValues[1]) }
+            }
+            .filter { (_, text) -> '$' !in text && text !in deliberatelyLanguageNeutral }
+            .distinct()
+            .toList()
+        assertTrue("Static Compose Text bypasses localization: $bypassed", bypassed.isEmpty())
+    }
+
+    @Test
+    fun dynamicWhenBranchUiCopyIsRegisteredInsteadOfSilentlyLeakingASecondLanguage() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val outputLiteral = Regex("""->\s*\"((?:\\.|[^\"\\\r\n])*)\"""")
+        val languageNeutral = setOf(
+            "AF File Manager", "APK", "C / C++ / C#", "JSON", "Java", "JavaScript", "Kotlin",
+            "Markdown", "Plain text", "Python", "Root", "SHA-256", "SQL", "Shell", "Shizuku",
+            "TOML / INI", "TypeScript", "XML / HTML", "YAML", "Aura", "Catppuccin", "Tokyo", "Yin Yang",
+        )
+        val unresolved = File(sourceRoot, "com/affilemanager/app/ui").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && it.name != "UiTranslator.kt" }
+            .flatMap { file ->
+                outputLiteral.findAll(file.readText()).map { match -> file.name to decodeKotlinLiteral(match.groupValues[1]) }
+            }
+            .filter { (_, text) ->
+                text.isNotBlank() && '$' !in text && text !in languageNeutral &&
+                    (text.any { it.isWhitespace() } || text.first().isUpperCase() ||
+                        Regex("[ĄČĘĖĮŠŲŪŽąčęėįšųūž]").containsMatchIn(text)) &&
+                    !text.matches(Regex("[A-Z0-9_-]+")) &&
+                    !UiTranslator.hasKnownUiEntry(text) &&
+                    UiTranslator.translate(text, AppLanguageManager.ENGLISH) == text
+            }
+            .distinct()
+            .toList()
+        assertTrue("Unregistered dynamic UI branch copy: $unresolved", unresolved.isEmpty())
+    }
+
+    @Test
+    fun everyStaticLiteralInsideLocalizedCallBranchesIsRegistered() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val neutral = setOf(
+            "", "AF File Manager", "APK", "Ctrl", "Alt", "Root", "SHA-256", "Shizuku",
+            "Aura", "Catppuccin", "Tokyo", "Yin Yang",
+        )
+        val unresolved = File(sourceRoot, "com/affilemanager/app/ui").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && it.name != "UiTranslator.kt" }
+            .flatMap { file ->
+                sequenceOf("LText", "uiText").flatMap { call ->
+                    localizedCallBodies(file.readText(), call).flatMap { body ->
+                        kotlinStringLiterals(body).map { literal -> file.name to literal }
+                    }
+                }
+            }
+            .filter { (_, text) ->
+                '$' !in text && text == text.trim() && '}' !in text &&
+                    !text.matches(Regex("[a-z0-9_-]+")) && text !in neutral &&
+                    !UiTranslator.hasKnownUiEntry(text) &&
+                    UiTranslator.translate(text, AppLanguageManager.ENGLISH) == text
+            }
+            .distinct()
+            .toList()
+        assertTrue("Unregistered localized call branch copy: $unresolved", unresolved.isEmpty())
+    }
+
+    @Test
+    fun everyInterpolatedLocalizedUiLiteralHasAnEnglishPattern() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val deliberatelyLanguageNeutral = setOf(
+            "7 / 7", "7 ↔ 7", "7 %", "AF File Manager 7", "SHA-256  7", "SSH 7…",
+        )
+        val unresolved = File(sourceRoot, "com/affilemanager/app/ui").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && it.name != "UiTranslator.kt" }
+            .flatMap { file ->
+                sequenceOf("LText", "uiText").flatMap { call ->
+                    localizedCallBodies(file.readText(), call).flatMap { body ->
+                        sampledInterpolatedKotlinStrings(body).map { sample -> file.name to sample }
+                    }
+                }
+            }
+            .filter { (_, sample) ->
+                sample.any(Char::isLetter) && sample !in deliberatelyLanguageNeutral &&
+                    UiTranslator.translate(sample, AppLanguageManager.ENGLISH) == sample
+            }
+            .distinct()
+            .toList()
+        assertTrue("Unregistered interpolated UI copy: $unresolved", unresolved.isEmpty())
+    }
+
+    @Test
     fun staticLithuanianRuntimeMessagesHaveEnglishTranslations() {
         val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
             .firstOrNull(File::isDirectory)
             ?: error("Main source directory not found")
         val literal = Regex("""\"((?:\\.|[^\"\\])*)\"""")
+        val commonLithuanianWords = Regex(
+            """(?iu)(?:^|[^\p{L}])(?:failas|failai|failo|failų|aplankas|aplankai|aplanko|aplankų|katalogas|katalogo|kataloge|pasirinktas|pasirinkite|pasirinkti|netinkamas|netinkama|netinkami|negalima|nepavyko|nepasiekiamas|nepasiekiama|serveris|serverio|siuntimas|siuntimo|operacija|operacijos|kelias|kelio|vardas|vardo|saugykla|saugyklos|leidimas|leidimo|ryšys|ryšio|pranešimas|perdavimas|perdavimo|įrašas|įrašo|šaltinis|šaltinio|paskirtis|paskirties|atšaukti|atšauktas|pasiekta|viršija|tuščias|trūksta|nėra|rodoma|rodyti|sukurti|sustabdyti|pradėti|baigta|klaida|klaidos|dydis|elementas|elementai|elementų)(?:$|[^\p{L}])""",
+        )
         val untranslated = sourceRoot.walkTopDown()
             .filter {
                 it.isFile && it.extension == "kt" &&
@@ -279,7 +416,8 @@ class UiTranslatorTest {
             }
             .filter { (_, text) ->
                 '$' !in text && text != "Lietuvių" &&
-                    Regex("[ĄČĘĖĮŠŲŪŽąčęėįšųūž]").containsMatchIn(text) &&
+                    (Regex("[ĄČĘĖĮŠŲŪŽąčęėįšųūž]").containsMatchIn(text) ||
+                        commonLithuanianWords.containsMatchIn(text)) &&
                     UiTranslator.translate(text, AppLanguageManager.ENGLISH) == text
             }
             .distinct()
@@ -287,9 +425,212 @@ class UiTranslatorTest {
         assertTrue("Untranslated Lithuanian runtime messages: $untranslated", untranslated.isEmpty())
     }
 
+    @Test
+    fun interpolatedLithuanianRuntimeMessagesHaveEnglishTranslations() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val lithuanianCharacters = Regex("[ĄČĘĖĮŠŲŪŽąčęėįšųūž]")
+        val commonLithuanianWords = Regex(
+            """(?iu)(?:^|[^\p{L}])(?:failas|failai|failo|failų|aplankas|aplankai|aplanko|aplankų|katalogas|katalogo|kataloge|pasirinktas|pasirinkite|pasirinkti|netinkamas|netinkama|netinkami|negalima|nepavyko|nepasiekiamas|nepasiekiama|serveris|serverio|siuntimas|siuntimo|operacija|operacijos|kelias|kelio|vardas|vardo|saugykla|saugyklos|leidimas|leidimo|ryšys|ryšio|pranešimas|perdavimas|perdavimo|įrašas|įrašo|šaltinis|šaltinio|paskirtis|paskirties|atšaukti|atšauktas|pasiekta|viršija|tuščias|trūksta|nėra|rodoma|rodyti|sukurti|sustabdyti|pradėti|baigta|klaida|klaidos|dydis|elementas|elementai|elementų)(?:$|[^\p{L}])""",
+        )
+        val untranslated = sourceRoot.walkTopDown()
+            .filter {
+                it.isFile && it.extension == "kt" &&
+                    it.name !in setOf("UiTranslator.kt", "RuntimeMessageTranslations.kt", "AppLanguageManager.kt")
+            }
+            .flatMap { file ->
+                sampledInterpolatedKotlinStrings(file.readText()).map { sample -> file.name to sample }
+            }
+            .filter { (_, sample) ->
+                (lithuanianCharacters.containsMatchIn(sample) || commonLithuanianWords.containsMatchIn(sample)) &&
+                    UiTranslator.translate(sample, AppLanguageManager.ENGLISH) == sample
+            }
+            .distinct()
+            .toList()
+        assertTrue("Untranslated interpolated Lithuanian runtime messages: $untranslated", untranslated.isEmpty())
+    }
+
+    @Test
+    fun staticEnglishRuntimeMessagesHaveLithuanianTranslations() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val literal = Regex("""\"((?:\\.|[^\"\\])*)\"""")
+        val runtimeEnglish = Regex(
+            """(?iu)(?:^|[^\p{L}])(?:invalid|failed|failure|unavailable|unsupported|cannot|could not|must|too many|too large|not found|does not|is not|was not|already exists|already running|requires|missing|error|limit exceeded|is closed|is empty)(?:$|[^\p{L}])""",
+        )
+        val protocolResponseSources = setOf("LanFtpServer.kt", "LanHttpServer.kt", "LanWebDavServer.kt")
+        val untranslated = sourceRoot.walkTopDown()
+            .filter {
+                it.isFile && it.extension == "kt" &&
+                    it.name !in setOf("UiTranslator.kt", "RuntimeMessageTranslations.kt", "AppLanguageManager.kt")
+            }
+            .flatMap { file ->
+                literal.findAll(file.readText()).map { match -> file.name to decodeKotlinLiteral(match.groupValues[1]) }
+            }
+            .filter { (_, text) ->
+                '$' !in text && text == text.trim() && text.firstOrNull()?.isUpperCase() == true &&
+                    !text.matches(Regex("[A-Z0-9_-]+")) && !text.matches(Regex("[a-z0-9_-]+")) &&
+                    runtimeEnglish.containsMatchIn(text) &&
+                    UiTranslator.translate(text, AppLanguageManager.LITHUANIAN) == text
+            }
+            .filterNot { (fileName, _) -> fileName in protocolResponseSources }
+            .distinct()
+            .toList()
+        assertTrue("Untranslated English runtime messages: $untranslated", untranslated.isEmpty())
+    }
+
+    @Test
+    fun interpolatedEnglishRuntimeMessagesHaveLithuanianTranslations() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory)
+            ?: error("Main source directory not found")
+        val runtimeEnglish = Regex(
+            """(?iu)(?:^|[^\p{L}])(?:invalid|failed|failure|unavailable|unsupported|cannot|could not|must|too many|too large|not found|does not|is not|was not|already exists|already running|requires|missing|error|limit exceeded|is closed|is empty)(?:$|[^\p{L}])""",
+        )
+        val protocolResponseSources = setOf("LanFtpServer.kt", "LanHttpServer.kt", "LanWebDavServer.kt")
+        val untranslated = sourceRoot.walkTopDown()
+            .filter {
+                it.isFile && it.extension == "kt" &&
+                    it.name !in setOf(
+                        "UiTranslator.kt", "UiTranslationCatalog.kt", "RuntimeMessageTranslations.kt", "AppLanguageManager.kt",
+                    ) &&
+                    it.name !in protocolResponseSources
+            }
+            .flatMap { file ->
+                sampledInterpolatedKotlinStrings(file.readText()).map { sample -> file.name to sample }
+            }
+            .filter { (_, sample) ->
+                sample == sample.trim() && sample.firstOrNull()?.isUpperCase() == true &&
+                    runtimeEnglish.containsMatchIn(sample) &&
+                    UiTranslator.translate(sample, AppLanguageManager.LITHUANIAN) == sample
+            }
+            .distinct()
+            .toList()
+        assertTrue("Untranslated interpolated English runtime messages: $untranslated", untranslated.isEmpty())
+    }
+
     private fun decodeKotlinLiteral(value: String): String = value
         .replace("\\\"", "\"")
         .replace("\\n", "\n")
         .replace("\\t", "\t")
         .replace("\\\\", "\\")
+
+    private fun kotlinStringLiterals(source: String): Sequence<String> {
+        val literal = Regex("""\"((?:\\.|[^\"\\\r\n])*)\"""")
+        return literal.findAll(source).map { decodeKotlinLiteral(it.groupValues[1]) }
+    }
+
+    /**
+     * Produces runnable examples from Kotlin string templates without trying to evaluate source
+     * expressions. Braced expressions may themselves contain quoted strings, so a regular
+     * expression is not sufficient for this audit.
+     */
+    private fun sampledInterpolatedKotlinStrings(source: String): Sequence<String> = sequence {
+        var position = 0
+        while (position < source.length) {
+            if (source[position] != '"' || source.startsWith("\"\"\"", position)) {
+                position += 1
+                continue
+            }
+            var cursor = position + 1
+            val sample = StringBuilder()
+            var interpolated = false
+            var complete = false
+            while (cursor < source.length) {
+                when {
+                    source[cursor] == '\\' && cursor + 1 < source.length -> {
+                        sample.append(source[cursor]).append(source[cursor + 1])
+                        cursor += 2
+                    }
+                    source[cursor] == '"' -> {
+                        complete = true
+                        cursor += 1
+                        break
+                    }
+                    source[cursor] == '$' && cursor + 1 < source.length && source[cursor + 1] == '{' -> {
+                        val interpolationEnd = bracedInterpolationEnd(source, cursor + 2)
+                        if (interpolationEnd < 0) break
+                        val expression = source.substring(cursor + 2, interpolationEnd - 1)
+                        sample.append(if ("\"Taip\"" in expression) "Taip" else "7")
+                        interpolated = true
+                        cursor = interpolationEnd
+                    }
+                    source[cursor] == '$' && cursor + 1 < source.length &&
+                        (source[cursor + 1].isLetter() || source[cursor + 1] == '_') -> {
+                        cursor += 2
+                        while (cursor < source.length &&
+                            (source[cursor].isLetterOrDigit() || source[cursor] == '_')
+                        ) cursor += 1
+                        sample.append('7')
+                        interpolated = true
+                    }
+                    else -> {
+                        sample.append(source[cursor])
+                        cursor += 1
+                    }
+                }
+            }
+            if (complete && interpolated) yield(decodeKotlinLiteral(sample.toString()))
+            position = maxOf(cursor, position + 1)
+        }
+    }
+
+    private fun bracedInterpolationEnd(source: String, contentStart: Int): Int {
+        var cursor = contentStart
+        var depth = 1
+        var quote: Char? = null
+        var escaped = false
+        while (cursor < source.length) {
+            val character = source[cursor]
+            if (quote != null) {
+                when {
+                    escaped -> escaped = false
+                    character == '\\' -> escaped = true
+                    character == quote -> quote = null
+                }
+            } else {
+                when (character) {
+                    '"', '\'' -> quote = character
+                    '{' -> depth += 1
+                    '}' -> {
+                        depth -= 1
+                        if (depth == 0) return cursor + 1
+                    }
+                }
+            }
+            cursor += 1
+        }
+        return -1
+    }
+
+    private fun localizedCallBodies(source: String, callName: String): Sequence<String> = sequence {
+        val marker = "$callName("
+        var searchFrom = 0
+        while (true) {
+            val callStart = source.indexOf(marker, searchFrom)
+            if (callStart < 0) break
+            val contentStart = callStart + marker.length
+            var cursor = contentStart
+            var depth = 1
+            var quoted = false
+            var escaped = false
+            while (cursor < source.length && depth > 0) {
+                val character = source[cursor]
+                if (quoted) {
+                    if (escaped) escaped = false
+                    else if (character == '\\') escaped = true
+                    else if (character == '"') quoted = false
+                } else when (character) {
+                    '"' -> quoted = true
+                    '(' -> depth += 1
+                    ')' -> depth -= 1
+                }
+                cursor += 1
+            }
+            if (depth == 0) yield(source.substring(contentStart, cursor - 1))
+            searchFrom = maxOf(cursor, contentStart)
+        }
+    }
 }

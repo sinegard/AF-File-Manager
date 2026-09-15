@@ -28,7 +28,7 @@ class NearbyConnectionTest {
         assertNull(connection.pairing())
         assertNull(connection.cookieFor(peer))
     }
-    @Test fun changingPeerAndDisconnectForgetOldCredentialsAndLifetimeIsBounded() {
+    @Test fun changingPeerAndDisconnectForgetOldCredentialsWhileManualLifetimeNeedsExplicitClear() {
         var time = 0L
         val connection = NearbyConnection { time }
         val peer = NearbyPairing.create("192.168.1.2", 8080, "12345678")
@@ -39,6 +39,19 @@ class NearbyConnectionTest {
         assertNull(connection.pairing())
         connection.remember(peer, "af_session=private", expires = Long.MAX_VALUE)
         time = 15 * 60_000L
+        assertEquals("af_session=private", connection.cookieFor(peer))
+        connection.clear()
+        assertNull(connection.cookieFor(peer))
+    }
+
+    @Test fun aRemoteTimedLifetimeCannotExceedTwoHours() {
+        var time = 0L
+        val connection = NearbyConnection { time }
+        val peer = NearbyPairing.create("192.168.1.2", 8080, "12345678")
+        connection.remember(peer, "af_session=private", expires = Long.MAX_VALUE - 1)
+        time = LanSessionDuration.MAX_TIMED_MINUTES * 60_000L - 1
+        assertNotNull(connection.cookieFor(peer))
+        time += 1
         assertNull(connection.cookieFor(peer))
     }
 }

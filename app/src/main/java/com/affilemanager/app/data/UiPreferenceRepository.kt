@@ -3,6 +3,7 @@ package com.affilemanager.app.data
 import android.content.Context
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.transfer.LanTransferProtocol
+import com.affilemanager.app.transfer.LanSessionDuration
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -13,6 +14,7 @@ data class ShareScreenPreferences(
     val portText: String = "",
     val username: String = "",
     val readOnly: Boolean = false,
+    val anonymous: Boolean = false,
     val receiverName: String = "Android phone",
     val ftpPath: String = sharedPath,
     val webDavPath: String = sharedPath,
@@ -63,6 +65,7 @@ class UiPreferenceRepository(context: Context) {
                 portText = json.optString("portText"),
                 username = json.optString("username"),
                 readOnly = json.optBoolean("readOnly"),
+                anonymous = json.optBoolean("anonymous"),
                 receiverName = json.optString("receiverName", defaultReceiverName),
                 ftpPath = json.optString("ftpPath", json.optString("sharedPath", defaultPath)),
                 webDavPath = json.optString("webDavPath", json.optString("sharedPath", defaultPath)),
@@ -76,7 +79,7 @@ class UiPreferenceRepository(context: Context) {
     fun saveShare(value: ShareScreenPreferences, defaultPath: String, defaultReceiverName: String) {
         val normalized = UiPreferenceRules.normalizeShare(value, defaultPath, defaultReceiverName)
         val json = JSONObject()
-            .put("version", 2)
+            .put("version", 3)
             .put("sharedPath", normalized.sharedPath)
             .put("ftpPath", normalized.ftpPath)
             .put("webDavPath", normalized.webDavPath)
@@ -86,6 +89,7 @@ class UiPreferenceRepository(context: Context) {
             .put("portText", normalized.portText)
             .put("username", normalized.username)
             .put("readOnly", normalized.readOnly)
+            .put("anonymous", normalized.anonymous)
             .put("receiverName", normalized.receiverName)
         check(preferences.edit().putString(KEY_SHARE, json.toString()).commit()) {
             "Nustatymų įrašyti nepavyko"
@@ -189,7 +193,7 @@ internal object UiPreferenceRules {
             ftpPath = cleanSingleLine(value.ftpPath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
             webDavPath = cleanSingleLine(value.webDavPath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
             nearbyReceivePath = cleanSingleLine(value.nearbyReceivePath, MAX_PATH_LENGTH).ifBlank { safeDefaultPath },
-            durationMinutes = value.durationMinutes.coerceIn(5, 60),
+            durationMinutes = LanSessionDuration.normalize(value.durationMinutes),
             portText = value.portText.filter(Char::isDigit).take(5),
             username = cleanSingleLine(value.username, MAX_USERNAME_LENGTH),
             receiverName = cleanSingleLine(value.receiverName, MAX_RECEIVER_NAME_LENGTH).ifBlank { safeDefaultName },

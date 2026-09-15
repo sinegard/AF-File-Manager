@@ -119,6 +119,11 @@ def map_values(source: str, start_marker: str, end_marker: str) -> list[str]:
     return [kotlin_unescape(match.group(2)) for match in KOTLIN_PAIR.finditer(block)]
 
 
+def map_keys(source: str, start_marker: str, end_marker: str) -> list[str]:
+    block = map_block(source, start_marker, end_marker)
+    return [kotlin_unescape(match.group(1)) for match in KOTLIN_PAIR.finditer(block)]
+
+
 def normalize_kotlin_template(value: str) -> str | None:
     output: list[str] = []
     position = 0
@@ -179,6 +184,15 @@ def output_templates(ui_source: str) -> list[str]:
     return sorted(templates, key=lambda value: (-len(TEMPLATE_TOKEN.sub("", value)), value))
 
 
+def runtime_templates(runtime_source: str) -> list[str]:
+    block = map_block(
+        runtime_source,
+        "    val englishTemplates = listOf(",
+        "\n    )\n\n    /** English-originated library",
+    )
+    return [kotlin_unescape(match.group(1)) for match in KOTLIN_STRING.finditer(block)]
+
+
 def android_strings() -> dict[str, str]:
     root = ET.parse(DEFAULT_STRINGS).getroot()
     return {element.attrib["name"]: "".join(element.itertext()) for element in root.findall("string")}
@@ -194,11 +208,19 @@ def collect_catalog() -> CatalogSource:
     values.update(
         map_values(runtime_source, "    val english = mapOf(", "\n    val lithuanian = mapOf(")
     )
+    # These failures originate in English-only libraries and core components. They can surface in
+    # dialogs and snackbars, so every offline language pack must contain them as canonical English
+    # keys as well; otherwise a non-English interface can leak the original exception text.
+    values.update(
+        map_keys(runtime_source, "    val lithuanian = mapOf(", "\n    )\n}")
+    )
     values.update(resources.values())
     values.discard("")
+    templates = set(output_templates(ui_source))
+    templates.update(runtime_templates(runtime_source))
     return CatalogSource(
         exact=sorted(values),
-        templates=output_templates(ui_source),
+        templates=sorted(templates, key=lambda value: (-len(TEMPLATE_TOKEN.sub("", value)), value)),
         android_strings=resources,
     )
 

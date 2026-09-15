@@ -36,6 +36,7 @@ data class LanTransferState(
     val username: String? = null,
     val protocol: LanTransferProtocol = LanTransferProtocol.WEB,
     val readOnly: Boolean = false,
+    val anonymous: Boolean = false,
     val expiresAtMillis: Long? = null,
     val message: String? = null,
     val incomingUpload: LanUploadProgress? = null,
@@ -57,18 +58,31 @@ object LanTransferController {
         val intent = Intent(context, LanTransferService::class.java)
             .setAction(LanTransferService.ACTION_START)
             .putExtra(LanTransferService.EXTRA_ROOT, rootPath)
-            .putExtra(LanTransferService.EXTRA_DURATION_MINUTES, durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES))
+            .putExtra(LanTransferService.EXTRA_DURATION_MINUTES, LanSessionDuration.normalize(durationMinutes))
             .putExtra(LanTransferService.EXTRA_PROTOCOL, protocol.name)
             .putExtra(LanTransferService.EXTRA_PORT, validatedOptions.port)
             .putExtra(LanTransferService.EXTRA_USERNAME, validatedOptions.username)
             .putExtra(LanTransferService.EXTRA_PASSWORD, validatedOptions.password)
             .putExtra(LanTransferService.EXTRA_READ_ONLY, validatedOptions.readOnly)
+            .putExtra(LanTransferService.EXTRA_ANONYMOUS, validatedOptions.anonymous)
             .putExtra("bind_address", bindAddress)
         ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {
         context.startService(Intent(context, LanTransferService::class.java).setAction(LanTransferService.ACTION_STOP))
+    }
+
+    fun cancelIncomingFile(context: Context, batchId: String, fileIndex: Int) {
+        require(batchId.isNotBlank() && fileIndex in 1..NearbySourcePreparer.MAX_FILES) {
+            "Siuntimo rinkinio keliai nesutampa"
+        }
+        context.startService(
+            Intent(context, LanTransferService::class.java)
+                .setAction(LanTransferService.ACTION_CANCEL_NEARBY_FILE)
+                .putExtra(LanTransferService.EXTRA_BATCH_ID, batchId)
+                .putExtra(LanTransferService.EXTRA_FILE_INDEX, fileIndex),
+        )
     }
 
     internal fun publish(state: LanTransferState) {
@@ -104,6 +118,7 @@ class LanTransferService : Service() {
     companion object {
         const val ACTION_START = "com.affilemanager.app.action.START_LAN_TRANSFER"
         const val ACTION_STOP = "com.affilemanager.app.action.STOP_LAN_TRANSFER"
+        const val ACTION_CANCEL_NEARBY_FILE = "com.affilemanager.app.action.CANCEL_NEARBY_FILE"
         const val EXTRA_ROOT = "root"
         const val EXTRA_DURATION_MINUTES = "duration_minutes"
         const val EXTRA_PROTOCOL = "protocol"
@@ -111,6 +126,9 @@ class LanTransferService : Service() {
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PASSWORD = "password"
         const val EXTRA_READ_ONLY = "read_only"
+        const val EXTRA_ANONYMOUS = "anonymous"
+        const val EXTRA_BATCH_ID = "batch_id"
+        const val EXTRA_FILE_INDEX = "file_index"
         private const val CHANNEL_ID = "lan_transfer"
         private const val NOTIFICATION_ID = 41
     }
@@ -130,6 +148,14 @@ class LanTransferService : Service() {
             stopServer("Sustabdyta naudotojo")
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_CANCEL_NEARBY_FILE) {
+            val id = intent.getStringExtra(EXTRA_BATCH_ID).orEmpty()
+            val index = intent.getIntExtra(EXTRA_FILE_INDEX, 0)
+            if (id.isNotBlank() && index in 1..NearbySourcePreparer.MAX_FILES) {
+                server?.cancelNearbyFile(id, index)
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action != ACTION_START) return START_NOT_STICKY
         startAsForeground(startingNotification())
         if (server != null) {
@@ -138,7 +164,7 @@ class LanTransferService : Service() {
         }
 
         val rootPath = intent.getStringExtra(EXTRA_ROOT).orEmpty()
-        val duration = intent.getIntExtra(EXTRA_DURATION_MINUTES, 15).coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES)
+        val duration = LanSessionDuration.normalize(intent.getIntExtra(EXTRA_DURATION_MINUTES, 15))
         val protocol = runCatching {
             LanTransferProtocol.valueOf(intent.getStringExtra(EXTRA_PROTOCOL).orEmpty())
         }.getOrDefault(LanTransferProtocol.WEB)
@@ -147,6 +173,7 @@ class LanTransferService : Service() {
             username = intent.getStringExtra(EXTRA_USERNAME).orEmpty(),
             password = intent.getStringExtra(EXTRA_PASSWORD).orEmpty(),
             readOnly = intent.getBooleanExtra(EXTRA_READ_ONLY, false),
+            anonymous = intent.getBooleanExtra(EXTRA_ANONYMOUS, false),
         )
         val options = runCatching { rawOptions.validated(protocol) }.getOrElse { error ->
             LanTransferController.publish(
@@ -156,6 +183,7 @@ class LanTransferService : Service() {
                     rootName = File(rootPath).name,
                     protocol = protocol,
                     readOnly = rawOptions.readOnly,
+                    anonymous = rawOptions.anonymous,
                     message = error.message ?: "Netinkami bendrinimo nustatymai",
                 ),
             )
@@ -170,6 +198,7 @@ class LanTransferService : Service() {
                 rootName = File(rootPath).name,
                 protocol = protocol,
                 readOnly = options.readOnly,
+                anonymous = options.anonymous,
                 message = "Ieškomas privatus vietinio tinklo adresas",
             ),
         )
@@ -218,6 +247,7 @@ class LanTransferService : Service() {
                     requestedUsername = options.username.ifBlank { null },
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
+                    anonymous = options.anonymous,
                     onStopped = stopped,
                 )
                 LanTransferProtocol.WEBDAV -> LanWebDavServer(
@@ -228,6 +258,7 @@ class LanTransferService : Service() {
                     requestedUsername = options.username.ifBlank { null },
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
+                    anonymous = options.anonymous,
                     onStopped = stopped,
                 )
             }.also { server = it }.start()
@@ -238,10 +269,11 @@ class LanTransferService : Service() {
                     rootPath = rootPath,
                     rootName = session.rootName,
                     url = session.url,
-                    code = session.code,
+                    code = session.code.takeUnless { session.anonymous || it.isBlank() },
                     username = session.username,
                     protocol = protocol,
                     readOnly = session.readOnly,
+                    anonymous = session.anonymous,
                     expiresAtMillis = session.expiresAtMillis,
                     message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
                 ),
@@ -256,6 +288,7 @@ class LanTransferService : Service() {
                     rootName = File(rootPath).name,
                     protocol = protocol,
                     readOnly = options.readOnly,
+                    anonymous = options.anonymous,
                     message = error.message ?: "LAN serverio paleisti nepavyko",
                 ),
             )

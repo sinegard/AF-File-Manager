@@ -2,7 +2,11 @@ package com.affilemanager.app.ui.components
 
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
+import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.localization.UiTranslator
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -57,5 +61,15 @@ class DirectoryEntryFilterRulesTest {
         assertTrue(DirectoryEntryFilterRules.matches(EntryKind.APK, selected))
         assertFalse(DirectoryEntryFilterRules.matches(EntryKind.DOCUMENT, selected))
         assertFalse(DirectoryEntryFilterRules.matches(EntryKind.OTHER, selected))
+    }
+
+    @Test
+    fun `every dynamic filter label has an English interface translation`() {
+        DirectoryEntryFilter.entries.forEach { filter ->
+            if (filter.label != "APK") {
+                assertNotEquals(filter.label, UiTranslator.translate(filter.label, AppLanguageManager.ENGLISH))
+            }
+        }
+        assertEquals("Filter", UiTranslator.translate("Filtras", AppLanguageManager.ENGLISH))
     }
 }

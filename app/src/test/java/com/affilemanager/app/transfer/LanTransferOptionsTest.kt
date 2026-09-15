@@ -14,6 +14,7 @@ class LanTransferOptionsTest {
         assertEquals("", options.username)
         assertEquals("", options.password)
         assertTrue(!options.readOnly)
+        assertTrue(!options.anonymous)
     }
 
     @Test
@@ -42,5 +43,20 @@ class LanTransferOptionsTest {
         assertThrows(IllegalArgumentException::class.java) {
             LanTransferOptions(password = "short").validated(LanTransferProtocol.WEB)
         }
+    }
+
+    @Test
+    fun anonymousModeExistsOnlyForFtpAndWebDavAndClearsCredentials() {
+        val ftp = LanTransferOptions(
+            username = "owner",
+            password = "temporary-pass",
+            anonymous = true,
+        ).validated(LanTransferProtocol.FTP)
+        assertTrue(ftp.anonymous)
+        assertEquals("", ftp.username)
+        assertEquals("", ftp.password)
+
+        val web = LanTransferOptions(anonymous = true).validated(LanTransferProtocol.WEB)
+        assertTrue(!web.anonymous)
     }
 }

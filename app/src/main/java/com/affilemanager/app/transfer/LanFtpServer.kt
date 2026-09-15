@@ -37,6 +37,7 @@ class LanFtpServer(
     requestedUsername: String? = null,
     private val requestedCode: String? = null,
     private val readOnly: Boolean = false,
+    private val anonymous: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
@@ -56,8 +57,8 @@ class LanFtpServer(
     private val root = rootDirectory.canonicalFile.also {
         require(it.isDirectory && it.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
     }
-    private val durationMillis = durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES) * 60_000L
-    private val username = validateRequestedUsername(requestedUsername, USERNAME)
+    private val normalizedDurationMinutes = LanSessionDuration.normalize(durationMinutes)
+    private val username = if (anonymous) null else validateRequestedUsername(requestedUsername, USERNAME)
     private val running = AtomicBoolean(false)
     private val commandCount = AtomicInteger(0)
     private val authGuard = Any()
@@ -87,16 +88,17 @@ class LanFtpServer(
             bind(InetSocketAddress(bindAddress, validateRequestedPort(requestedPort)), MAX_QUEUE)
         }
         controlSocket = socket
-        val code = validateRequestedSecret(requestedCode) ?: randomCode()
+        val code = if (anonymous) "" else validateRequestedSecret(requestedCode) ?: randomCode()
         val created = LanServerSession(
             address = requireNotNull(bindAddress.hostAddress),
             port = socket.localPort,
             code = code,
-            expiresAtMillis = Math.addExact(nowMillis(), durationMillis),
+            expiresAtMillis = LanSessionDuration.expiresAt(nowMillis(), normalizedDurationMinutes),
             rootName = root.name.ifBlank { "Pasirinktas katalogas" },
             scheme = "ftp",
             username = username,
             readOnly = readOnly,
+            anonymous = anonymous,
         )
         session = created
         acceptThread = Thread({ acceptLoop(created) }, "af-ftp-accept").apply { isDaemon = true; start() }
@@ -117,7 +119,7 @@ class LanFtpServer(
     private fun acceptLoop(active: LanServerSession) {
         try {
             while (running.get()) {
-                if (nowMillis() >= active.expiresAtMillis) return stop("FTP sesijos laikas baigėsi")
+                if (LanSessionDuration.isExpired(nowMillis(), active.expiresAtMillis)) return stop("FTP sesijos laikas baigėsi")
                 if (commandCount.get() >= MAX_COMMANDS_PER_SESSION) return stop("FTP sesijos komandų riba pasiekta")
                 try {
                     val client = controlSocket?.accept() ?: break
@@ -135,8 +137,8 @@ class LanFtpServer(
     private fun handleClient(socket: Socket, active: LanServerSession) {
         val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8), 8 * 1_024)
         val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), 8 * 1_024)
-        var authenticated = false
-        var acceptedUser = false
+        var authenticated = active.anonymous
+        var acceptedUser = active.anonymous
         var cwd = root
         var passive: ServerSocket? = null
         var activeTarget: InetSocketAddress? = null
@@ -207,7 +209,7 @@ class LanFtpServer(
 
         reply(220, "AF File Manager temporary FTP server")
         try {
-            while (running.get() && nowMillis() < active.expiresAtMillis) {
+            while (running.get() && !LanSessionDuration.isExpired(nowMillis(), active.expiresAtMillis)) {
                 val line = reader.readLine() ?: break
                 require(line.toByteArray(StandardCharsets.UTF_8).size <= MAX_COMMAND_BYTES) { "FTP komanda per ilga" }
                 if (commandCount.incrementAndGet() > MAX_COMMANDS_PER_SESSION) break
@@ -217,11 +219,20 @@ class LanFtpServer(
                 try {
                     when (command) {
                     "USER" -> {
-                        acceptedUser = argument == active.username
-                        reply(if (acceptedUser) 331 else 530, if (acceptedUser) "Password required" else "Unknown user")
+                        if (active.anonymous) {
+                            acceptedUser = true
+                            authenticated = true
+                            reply(230, "Anonymous login enabled")
+                        } else {
+                            acceptedUser = argument == active.username
+                            reply(if (acceptedUser) 331 else 530, if (acceptedUser) "Password required" else "Unknown user")
+                        }
                     }
                     "PASS" -> {
-                        when (verifyCredentials(acceptedUser, argument, active.code)) {
+                        if (active.anonymous) {
+                            authenticated = true
+                            reply(230, "Anonymous login enabled")
+                        } else when (verifyCredentials(acceptedUser, argument, active.code)) {
                             AuthResult.ACCEPTED -> {
                                 authenticated = true
                                 reply(230, "Logged in")

@@ -166,6 +166,31 @@ class LanFtpServerTest {
         }
     }
 
+    @Test
+    fun anonymousModeCanBrowseWithoutUserOrPassword() {
+        val root = temporary.newFolder("ftp-anonymous").apply { resolve("visible.txt").writeText("visible") }
+        LanFtpServer(
+            rootDirectory = root,
+            bindAddress = InetAddress.getLoopbackAddress(),
+            anonymous = true,
+            durationMinutes = 0,
+        ).use { server ->
+            val session = server.start()
+            assertTrue(session.anonymous)
+            assertEquals(null, session.username)
+            assertEquals("", session.code)
+            assertEquals(Long.MAX_VALUE, session.expiresAtMillis)
+            Socket(InetAddress.getLoopbackAddress(), session.port).use { socket ->
+                socket.soTimeout = 5_000
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
+                assertTrue(reader.readLine().startsWith("220"))
+                command(writer, "PWD")
+                assertTrue(reader.readLine().startsWith("257"))
+            }
+        }
+    }
+
     private fun login(reader: BufferedReader, writer: PrintWriter) {
         command(writer, "USER af")
         assertTrue(reader.readLine().startsWith("331"))

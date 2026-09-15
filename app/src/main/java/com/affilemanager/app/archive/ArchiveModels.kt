@@ -20,6 +20,30 @@ object ArchiveCompressionRules {
     }
 }
 
+/** Bounded user-facing target for formats whose compression strength AF controls. */
+object ArchiveTargetSizeRules {
+    const val MIN_MIB = 1L
+    const val MAX_MIB = 8_192L
+    private const val BYTES_PER_MIB = 1_024L * 1_024L
+
+    fun parseMib(value: String): Long? {
+        val normalized = value.trim()
+        if (normalized.isEmpty()) return null
+        require(normalized.all(Char::isDigit)) { "Netinkama archyvo dydžio riba" }
+        val mib = normalized.toLongOrNull() ?: throw IllegalArgumentException("Netinkama archyvo dydžio riba")
+        require(mib in MIN_MIB..MAX_MIB) { "Archyvo dydžio riba turi būti nuo 1 iki 8192 MiB" }
+        return Math.multiplyExact(mib, BYTES_PER_MIB)
+    }
+
+    fun validatedBytes(value: Long, limits: ArchiveLimits): Long {
+        require(value in BYTES_PER_MIB..limits.maxExpandedBytes) { "Netinkama archyvo dydžio riba" }
+        return value
+    }
+
+    fun supported(format: ArchiveFormat): Boolean =
+        format == ArchiveFormat.ZIP || format == ArchiveFormat.TAR_GZ
+}
+
 data class ArchiveEntryInfo(
     val name: String,
     val directory: Boolean,

@@ -724,7 +724,7 @@ internal fun FilesHome(
             expandedContent = true,
             modifier = Modifier.testTag("cloud_locations_dialog"),
             actions = {
-                TextButton(onClick = onAddSafLocation) { LText("Pridėti vietą") }
+                TextButton(onClick = onAddSafLocation) { LText("Pridėti teikėjo aplanką") }
                 TextButton(onClick = { showCloudLocations = false }) { LText("Uždaryti") }
             },
         ) {
@@ -735,8 +735,13 @@ internal fun FilesHome(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     LText("Teikėjo vietų dar nepridėta")
-                    LText("Pridėkite Google Drive, Nextcloud, Files arba bet kurį Android įdiegtą teikėją.", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onAddSafLocation, modifier = Modifier.padding(top = 12.dp)) { LText("Pridėti vietą") }
+                    LText(
+                        "Android suteikia AF prieigą tik prie čia pasirinkto teikėjo aplanko. Visai Google Drive paskyrai reikalingas atskiras Google prisijungimas.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = onAddSafLocation, modifier = Modifier.padding(top = 12.dp)) {
+                        LText("Pridėti teikėjo aplanką")
+                    }
                 }
             } else {
                 LazyColumn(
@@ -1364,6 +1369,7 @@ private fun homeShortcutIcon(shortcut: HomeShortcut): ImageVector = when (shortc
     "builtin.archives" -> Icons.Rounded.Archive
     "builtin.apps" -> Icons.Rounded.Android
     "builtin.installed_apps" -> Icons.Rounded.Apps
+    "builtin.cloned_apps" -> Icons.Rounded.Apps
     else -> if (File(shortcut.path).isDirectory) Icons.Rounded.Folder else Icons.Rounded.Description
 }
 

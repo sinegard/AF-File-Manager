@@ -15,6 +15,7 @@ import com.affilemanager.app.R
 import com.affilemanager.app.advanced.AdvancedAccessMode
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.advanced.AdvancedAccessState
+import com.affilemanager.app.advanced.ClonedAppStorage
 import com.affilemanager.app.advanced.PrivilegedPathRules
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveFormat
@@ -568,6 +569,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             path = initialPrimaryPath,
             builtIn = true,
         ),
+    ) + listOfNotNull(
+        if (ClonedAppStorage.shouldOffer(Build.MANUFACTURER, File(initialPrimaryPath))) {
+            HomeShortcut(
+                id = ClonedAppStorage.SHORTCUT_ID,
+                title = "Klonuotų programų failai",
+                path = initialPrimaryPath,
+                builtIn = true,
+            )
+        } else null,
     )
 
     private val _section = MutableStateFlow(AppSection.FILES)
@@ -2238,8 +2248,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         installedApps: Boolean,
     ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareEntries(entries, installedApps)
 
-    suspend fun prepareNearbyTransferDocuments(uris: Collection<Uri>): Result<PreparedNearbyTransfer> =
-        graph.nearbySources.prepareContentUris(uris)
+    suspend fun prepareNearbyTransferDocuments(
+        uris: Collection<Uri>,
+        copyToPrivateStage: Boolean = true,
+    ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareContentUris(uris, copyToPrivateStage)
+
+    suspend fun loadNearbyContacts(): Result<com.affilemanager.app.transfer.NearbyContactPage> =
+        graph.nearbySources.loadContacts()
+
+    suspend fun prepareNearbyTransferContacts(
+        contacts: Collection<com.affilemanager.app.transfer.NearbyContact>,
+    ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareContacts(contacts)
 
     suspend fun prepareNearbyTransferPaths(paths: Collection<String>): Result<PreparedNearbyTransfer> =
         graph.nearbySources.prepareLocalPaths(paths)
@@ -3928,6 +3947,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         password: CharArray? = null,
         sourcePaths: Collection<String>? = null,
         compressionLevel: Int = ArchiveCompressionRules.DEFAULT_LEVEL,
+        maxOutputBytes: Long? = null,
     ) {
         val state = panelFlow(panel).value
         val createEmpty = sourcePaths != null && sourcePaths.isEmpty()
@@ -3990,7 +4010,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         graph.operationManager.submit("Kuriamas ${output.name}") {
-            graph.archives.create(format, output, sources, password, this, validatedCompressionLevel)
+            graph.archives.create(
+                format = format,
+                outputFile = output,
+                sources = sources,
+                password = password,
+                operation = this,
+                compressionLevel = validatedCompressionLevel,
+                maxOutputBytes = maxOutputBytes,
+            )
         }.onSuccess { clearSelection(panel) }
             .onFailure {
                 password?.fill('\u0000')
@@ -4915,6 +4943,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openHomeShortcut(shortcutId: String, path: String, panel: PanelId = _activePanel.value) {
+        if (shortcutId == ClonedAppStorage.SHORTCUT_ID) {
+            openClonedAppStorage(panel)
+            return
+        }
         val category = HomeShortcutNavigationRules.categoryFor(shortcutId)
         _homeToolPage.value = null
         if (category != null) openFileCategory(category) else openQuickPathFromHome(path, panel)
@@ -5014,6 +5046,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onFailure = { message(it.message ?: "Ištrinti nepavyko", true) },
             )
         }.onFailure { message(it.message ?: "Trynimo pradėti nepavyko", true) }
+    }
+
+    private fun openClonedAppStorage(panel: PanelId) {
+        val normalLocation = ClonedAppStorage.normalLocation(File(initialPrimaryPath))
+        if (normalLocation != null) {
+            openLocalDirectoryFromHome(panel, normalLocation.absolutePath)
+            return
+        }
+        if (graph.advancedAccess.state.value.activeBackend in setOf(
+                AdvancedAccessBackend.ROOT,
+                AdvancedAccessBackend.SHIZUKU_ROOT,
+            )
+        ) {
+            openAdvancedBrowser(ClonedAppStorage.PRIVILEGED_PROFILE_ROOT)
+            return
+        }
+        message(
+            "Klonuotų programų saugykla priklauso kitam Android profiliui. Jai reikia Root arba Shizuku su root teisėmis.",
+            true,
+        )
     }
 
     fun refreshSafLocations() {

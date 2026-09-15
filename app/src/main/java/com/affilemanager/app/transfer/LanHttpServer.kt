@@ -35,6 +35,7 @@ data class LanServerSession(
     val scheme: String = "http",
     val username: String? = null,
     val readOnly: Boolean = false,
+    val anonymous: Boolean = false,
 ) {
     val url: String get() = "$scheme://$address:$port/"
 }
@@ -54,6 +55,7 @@ data class LanUploadProgress(
 internal interface TemporaryLanServer : AutoCloseable {
     fun start(): LanServerSession
     fun stop(reason: String)
+    fun cancelNearbyFile(batchId: String, fileIndex: Int): Boolean = false
 }
 
 class LanHttpServer(
@@ -74,9 +76,10 @@ class LanHttpServer(
     private val nearbyFiles = NearbyReceiveFiles()
     private val nearbyProgressLock = Any()
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
-    private val uploadClients = java.util.concurrent.ConcurrentHashMap<Socket, String>()
+    private data class NearbyUploadKey(val batchId: String?, val fileIndex: Int)
+    private val uploadClients = java.util.concurrent.ConcurrentHashMap<Socket, NearbyUploadKey>()
     companion object {
-        const val MAX_SESSION_MINUTES = 60
+        const val MAX_SESSION_MINUTES = LanSessionDuration.MAX_TIMED_MINUTES
         const val MAX_CONCURRENT_REQUESTS = 4
         const val MAX_QUEUED_REQUESTS = 16
         const val MAX_REQUESTS_PER_SESSION = 10_000
@@ -85,12 +88,13 @@ class LanHttpServer(
         const val MAX_UPLOAD_BYTES = 7L * 1_024 * 1_024 * 1_024
         const val MAX_NEARBY_MESSAGE_BYTES = NearbyChatController.MAX_MESSAGE_BYTES
         private const val SOCKET_TIMEOUT_MILLIS = 30_000
+        private const val UPLOAD_SOCKET_TIMEOUT_MILLIS = 120_000
     }
 
     private val root = rootDirectory.canonicalFile.also {
         require(it.isDirectory && it.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
     }
-    private val durationMillis = durationMinutes.coerceIn(1, MAX_SESSION_MINUTES) * 60_000L
+    private val normalizedDurationMinutes = LanSessionDuration.normalize(durationMinutes)
     private val running = AtomicBoolean(false)
     private val requests = AtomicInteger(0)
     private val authFailures = AtomicInteger(0)
@@ -125,7 +129,7 @@ class LanHttpServer(
             address = bindAddress.hostAddress ?: error("Tinklo adresas nepasiekiamas"),
             port = socket.localPort,
             code = code,
-            expiresAtMillis = Math.addExact(nowMillis(), durationMillis),
+            expiresAtMillis = LanSessionDuration.expiresAt(nowMillis(), normalizedDurationMinutes),
             rootName = root.name.ifBlank { "Pasirinktas katalogas" },
             readOnly = readOnly,
         )
@@ -152,10 +156,21 @@ class LanHttpServer(
         onStopped(t(reason).take(200))
     }
 
+    override fun cancelNearbyFile(batchId: String, fileIndex: Int): Boolean {
+        val status = nearbyFiles.status(batchId, fileIndex) ?: return false
+        if (status == TransferFileStatus.COMPLETED) return false
+        nearbyFiles.cancelFile(batchId, fileIndex)
+        uploadClients.entries
+            .filter { it.value == NearbyUploadKey(batchId, fileIndex) }
+            .forEach { runCatching { it.key.close() } }
+        publishNearbyFiles()
+        return true
+    }
+
     private fun acceptLoop(activeSession: LanServerSession) {
         try {
             while (running.get()) {
-                if (nowMillis() >= activeSession.expiresAtMillis) {
+                if (LanSessionDuration.isExpired(nowMillis(), activeSession.expiresAtMillis)) {
                     stop("LAN sesijos laikas baigėsi")
                     break
                 }
@@ -165,6 +180,7 @@ class LanHttpServer(
                 }
                 try {
                     val client = serverSocket?.accept() ?: break
+                    runCatching { client.receiveBufferSize = NearbyTransferTuning.SOCKET_BUFFER_BYTES }
                     client.soTimeout = SOCKET_TIMEOUT_MILLIS
                     clients.add(client)
                     requests.incrementAndGet()
@@ -180,7 +196,7 @@ class LanHttpServer(
     }
 
     private fun handle(socket: Socket) {
-        val input = BufferedInputStream(socket.getInputStream(), 64 * 1_024)
+        val input = BufferedInputStream(socket.getInputStream(), NearbyTransferTuning.IO_BUFFER_BYTES)
         val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1_024)
         try {
             handleRequest(input, output, socket)
@@ -205,7 +221,7 @@ class LanHttpServer(
             return
         }
         val active = session
-        if (!running.get() || active == null || nowMillis() >= active.expiresAtMillis) {
+        if (!running.get() || active == null || LanSessionDuration.isExpired(nowMillis(), active.expiresAtMillis)) {
             writeText(output, 410, t("Sesija baigėsi"), "text/plain; charset=utf-8")
             return
         }
@@ -229,9 +245,31 @@ class LanHttpServer(
                 require(!readOnly && request.contentLength == 0L) { "Užklausa atmesta" }
                 nearbyFiles.cancel(request.headers["x-af-batch-id"])
                 val cancelledId = request.headers["x-af-batch-id"]
-                uploadClients.entries.filter { it.value == cancelledId }.forEach { runCatching { it.key.close() } }
+                uploadClients.entries.filter { it.value.batchId == cancelledId }.forEach { runCatching { it.key.close() } }
                 publishNearbyFiles()
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            }
+            request.method == "POST" && request.path == "/nearby/cancel-file" -> {
+                require(!readOnly && request.contentLength == 0L) { "Užklausa atmesta" }
+                val batchId = request.headers["x-af-batch-id"]
+                    ?: throw IllegalArgumentException("Gavimo sesija nepatvirtinta")
+                val fileIndex = request.query["fileIndex"]?.toIntOrNull()
+                    ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
+                nearbyFiles.cancelFile(batchId, fileIndex)
+                uploadClients.entries
+                    .filter { it.value == NearbyUploadKey(batchId, fileIndex) }
+                    .forEach { runCatching { it.key.close() } }
+                publishNearbyFiles()
+                writeText(output, 200, "CANCELLED", "text/plain; charset=utf-8")
+            }
+            request.method == "GET" && request.path == "/nearby/file-status" -> {
+                val batchId = request.headers["x-af-batch-id"]
+                    ?: throw IllegalArgumentException("Gavimo sesija nepatvirtinta")
+                val fileIndex = request.query["fileIndex"]?.toIntOrNull()
+                    ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
+                val status = nearbyFiles.status(batchId, fileIndex)
+                    ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
+                writeText(output, 200, status.name, "text/plain; charset=utf-8")
             }
             request.method == "POST" && request.path == "/nearby/peer" -> {
                 require(!readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) { "Užklausa atmesta" }
@@ -269,7 +307,9 @@ class LanHttpServer(
                 createDirectory(request, output)
             }
             request.method == "POST" && request.path == "/upload" -> {
-                request.headers["x-af-batch-id"]?.let { uploadClients[socket] = it }
+                socket.soTimeout = UPLOAD_SOCKET_TIMEOUT_MILLIS
+                val fileIndex = request.query["fileIndex"]?.toIntOrNull() ?: 1
+                uploadClients[socket] = NearbyUploadKey(request.headers["x-af-batch-id"], fileIndex)
                 try { upload(request, input, output) } finally { uploadClients.remove(socket) }
             }
             else -> writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
@@ -425,18 +465,23 @@ class LanHttpServer(
         var committed = false
         try {
             FileOutputStream(partial).use { fileOutput ->
-                val buffer = ByteArray(256 * 1_024)
-                while (remaining > 0) {
-                    check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }
-                    val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                    if (read < 0) throw IllegalStateException("Įkėlimas nutrūko")
-                    fileOutput.write(buffer, 0, read)
-                    remaining -= read
-                    received = Math.addExact(received, read.toLong())
-                    publishProgress()
+                val bufferedFileOutput = BufferedOutputStream(fileOutput, NearbyTransferTuning.IO_BUFFER_BYTES)
+                val buffer = ByteArray(NearbyTransferTuning.IO_BUFFER_BYTES)
+                try {
+                    while (remaining > 0) {
+                        check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }
+                        val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                        if (read < 0) throw IllegalStateException("Įkėlimas nutrūko")
+                        bufferedFileOutput.write(buffer, 0, read)
+                        remaining -= read
+                        received = Math.addExact(received, read.toLong())
+                        publishProgress()
+                    }
+                    bufferedFileOutput.flush()
+                    fileOutput.fd.sync()
+                } finally {
+                    buffer.fill(0)
                 }
-                fileOutput.fd.sync()
-                buffer.fill(0)
             }
             require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
             check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }

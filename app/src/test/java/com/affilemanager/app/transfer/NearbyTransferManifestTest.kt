@@ -7,6 +7,47 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class NearbyTransferManifestTest {
+    @Test fun emptyManifestRoundTripSupportsPairingWithoutFiles() {
+        assertEquals(emptyList<TransferFileProgress>(), NearbyTransferManifest.decode(NearbyTransferManifest.encode(emptyList())))
+    }
+
+    @Test fun multiGigabyteFileSizeRoundTripsWithoutIntegerOverflow() {
+        val size = 4L * 1_024 * 1_024 * 1_024
+
+        val decoded = NearbyTransferManifest.decode(
+            NearbyTransferManifest.encode(listOf(TransferFileProgress("video-2160p.mp4", size))),
+        )
+
+        assertEquals(size, decoded.single().sizeBytes)
+    }
+
+    @Test fun transferNotificationLocalizesStatusButNeverTranslatesAFileName() {
+        assertEquals(
+            "Sending on the same private network",
+            nearbyTransferNotificationText(
+                NearbyTransferState(message = "Siunčiama tame pačiame privačiame tinkle"),
+                "en",
+                "Preparing transfer…",
+            ),
+        )
+        assertEquals(
+            "Siuntimas nepavyko",
+            nearbyTransferNotificationText(
+                NearbyTransferState(message = "Transfer failed"),
+                "lt",
+                "Ruošiamas siuntimas…",
+            ),
+        )
+        assertEquals(
+            "Nuotrauka lietuvišku vardu.jpg",
+            nearbyTransferNotificationText(
+                NearbyTransferState(currentFile = "Nuotrauka lietuvišku vardu.jpg", message = "Siuntimas nepavyko"),
+                "en",
+                "Preparing transfer…",
+            ),
+        )
+    }
+
     @Test fun addingPendingFilesPreservesTheActiveBatchAndBothStayVisible() {
         val tracker = NearbyReceiveFiles()
         val first = java.util.UUID.randomUUID().toString()
@@ -84,5 +125,18 @@ class NearbyTransferManifestTest {
         assertEquals(completed, tracker.announce(files)) // A repeated manifest must not reset progress.
         tracker.validate(2, "same.jpg", 5)
         assertThrows(IllegalArgumentException::class.java) { tracker.announce(listOf(TransferFileProgress("other.txt", 1))) }
+    }
+
+    @Test fun cancellingOneReceiverIndexLeavesTheOtherDuplicateTransferable() {
+        val tracker = NearbyReceiveFiles()
+        val batch = java.util.UUID.randomUUID().toString()
+        val files = listOf(TransferFileProgress("same.txt", 5), TransferFileProgress("same.txt", 5))
+        tracker.announce(files, batch)
+
+        val cancelled = tracker.cancelFile(batch, 1)
+
+        assertEquals(listOf(TransferFileStatus.CANCELLED, TransferFileStatus.WAITING), cancelled.map { it.status })
+        tracker.validate(2, "same.txt", 5, batch)
+        assertEquals(TransferFileStatus.TRANSFERRING, tracker.status(batch, 2))
     }
 }

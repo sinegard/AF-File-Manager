@@ -31,6 +31,8 @@ class PrivilegedPtyBackendTest {
             override fun readTerminal(handle: Long, destination: ByteArray): Int = 0
             override fun resizeTerminal(handle: Long, rows: Int, columns: Int) = Unit
             override fun closeTerminal(handle: Long) = Unit
+            override fun listRunningAppMemory(): Array<String> = emptyArray()
+            override fun forceStopPackage(packageName: String): Boolean = false
             override fun destroy() = Unit
             override fun writeTerminal(handle: Long, source: ByteArray, offset: Int, length: Int): Int {
                 assertTrue(source.size <= TerminalLimits.TRANSPORT_WRITE_CHUNK_BYTES)

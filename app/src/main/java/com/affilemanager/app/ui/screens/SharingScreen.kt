@@ -57,6 +57,7 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.transfer.LanTransferController
 import com.affilemanager.app.transfer.LanTransferOptions
 import com.affilemanager.app.transfer.LanTransferProtocol
+import com.affilemanager.app.transfer.LanSessionDuration
 import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
@@ -65,6 +66,7 @@ import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import java.io.File
+import kotlin.math.roundToInt
 
 @Composable
 fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
@@ -84,6 +86,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val portText = preferences.portText
     val username = preferences.username
     val readOnly = preferences.readOnly
+    val anonymous = preferences.anonymous
     var pickerStartPath by remember { mutableStateOf<String?>(null) }
     var pickerProtocol by remember { mutableStateOf<LanTransferProtocol?>(protocol) }
     var password by remember { mutableStateOf("") }
@@ -94,6 +97,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             username = username,
             password = password,
             readOnly = readOnly,
+            anonymous = anonymous,
         ).validated(protocol)
     }
 
@@ -136,6 +140,10 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 receiverName = preferences.receiverName,
                 onReceiverNameChange = { receiverName ->
                     viewModel.updateShareScreenPreferences { it.copy(receiverName = receiverName) }
+                },
+                durationMinutes = duration,
+                onDurationMinutesChange = { minutes ->
+                    viewModel.updateShareScreenPreferences { it.copy(durationMinutes = minutes) }
                 },
             )
         }
@@ -210,7 +218,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                 }
                             },
                             label = { LText("Naudotojo vardas (tuščias = af)") },
-                            enabled = !running,
+                            enabled = !running && !anonymous,
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("share_username"),
                         )
@@ -219,7 +227,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         value = password,
                         onValueChange = { password = it.take(LanTransferOptions.MAX_PASSWORD_LENGTH) },
                         label = { LText("Laikinas slaptažodis (tuščias = sugeneruotas)") },
-                        enabled = !running,
+                        enabled = !running && !anonymous,
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth().testTag("share_password"),
@@ -238,6 +246,30 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             modifier = Modifier.testTag("share_read_only"),
                         )
                     }
+                    if (protocol != LanTransferProtocol.WEB) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                LText("Anoniminė prieiga", fontWeight = FontWeight.Medium)
+                                LText("Leisti prisijungti be naudotojo vardo ir slaptažodžio", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = anonymous,
+                                onCheckedChange = { selected ->
+                                    viewModel.updateShareScreenPreferences { it.copy(anonymous = selected) }
+                                    if (selected) password = ""
+                                },
+                                enabled = !running,
+                                modifier = Modifier.testTag("share_anonymous"),
+                            )
+                        }
+                        if (anonymous) {
+                            LText(
+                                "Visi šiame privačiame tinkle galės pasiekti bendrinamą aplanką be slaptažodžio.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                     if (protocol == LanTransferProtocol.WEBDAV) {
                         LText("WebDAV naudoja HTTP. HTTPS/TLS šiame leidime dar nepalaikomas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -248,16 +280,22 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    LText("Sesijos trukmė · $duration min.", fontWeight = FontWeight.SemiBold)
+                    LText(
+                        if (duration == LanSessionDuration.MANUAL_MINUTES) "Sesijos trukmė · rankinis sustabdymas"
+                        else "Sesijos trukmė · $duration min.",
+                        fontWeight = FontWeight.SemiBold,
+                    )
                     Slider(
-                        value = duration.toFloat(),
+                        value = if (duration == LanSessionDuration.MANUAL_MINUTES) 0f
+                            else (duration / LanSessionDuration.STEP_MINUTES).toFloat(),
                         onValueChange = { value ->
                             viewModel.updateShareScreenPreferences {
-                                it.copy(durationMinutes = value.toInt().coerceIn(5, 60))
+                                val index = value.roundToInt().coerceIn(0, LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES)
+                                it.copy(durationMinutes = if (index == 0) LanSessionDuration.MANUAL_MINUTES else index * LanSessionDuration.STEP_MINUTES)
                             }
                         },
-                        valueRange = 5f..60f,
-                        steps = 10,
+                        valueRange = 0f..(LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES).toFloat(),
+                        steps = (LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES) - 1,
                         enabled = !running,
                     )
                 }
@@ -272,9 +310,9 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     }
                     LText(
                         when (protocol) {
-                            LanTransferProtocol.WEB -> "Prisijungimui naudojamas vienkartinis 8 skaitmenų kodas. Sesija automatiškai baigsis."
-                            LanTransferProtocol.FTP -> "FTP srautas nėra šifruojamas. Naudokite tik patikimame privačiame tinkle; prisijungimas ribojamas laikinu vardu ir kodu."
-                            LanTransferProtocol.WEBDAV -> "Ši laikina WebDAV sesija naudoja HTTP Basic prisijungimą be TLS. Naudokite tik patikimame privačiame tinkle."
+                            LanTransferProtocol.WEB -> "Prisijungimui naudojamas vienkartinis 8 skaitmenų kodas. Sesija baigsis pasirinktu laiku arba ją sustabdžius."
+                            LanTransferProtocol.FTP -> if (anonymous) "FTP srautas nėra šifruojamas, o anoniminė sesija neturi slaptažodžio. Naudokite tik patikimame privačiame tinkle." else "FTP srautas nėra šifruojamas. Naudokite tik patikimame privačiame tinkle; prisijungimas ribojamas laikinu vardu ir kodu."
+                            LanTransferProtocol.WEBDAV -> if (anonymous) "WebDAV srautas nėra šifruojamas, o anoniminė sesija neturi slaptažodžio. Naudokite tik patikimame privačiame tinkle." else "Ši laikina WebDAV sesija naudoja HTTP Basic prisijungimą be TLS. Naudokite tik patikimame privačiame tinkle."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -437,6 +475,10 @@ private fun RunningShareCard(context: Context, state: com.affilemanager.app.tran
             state.username?.let { LText("Naudotojas: $it") }
             state.code?.let { LText("Kodas: $it", fontWeight = FontWeight.Bold) }
             if (state.readOnly) LText("Tik skaityti", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+            if (state.anonymous) LText("Anoniminė prieiga", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+            if (state.expiresAtMillis == LanSessionDuration.MANUAL_EXPIRY) {
+                LText("Veiks iki rankinio sustabdymo", style = MaterialTheme.typography.bodySmall)
+            }
             Text(state.rootPath.orEmpty(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             AfActionRow {
                 OutlinedButton(onClick = {

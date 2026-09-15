@@ -56,7 +56,10 @@ class NearbyPickerPagingUiTest {
             compose.onNodeWithTag("nearby_select_all").performClick()
             compose.onNodeWithText("Next (3)").assertIsEnabled()
             compose.onNodeWithTag("nearby_select_all").performClick()
-            compose.onNodeWithText("Next (0)").assertIsNotEnabled()
+            compose.onNodeWithTag("nearby_continue").assertIsEnabled().performClick()
+            waitFor("Pair the receiving phone")
+            compose.onNodeWithText("Back").performClick()
+            compose.onNodeWithTag("nearby_continue").assertIsEnabled()
             compose.onNodeWithTag("nearby_open_storage").assertIsDisplayed()
         } finally {
             compose.runOnUiThread { store.clear() }

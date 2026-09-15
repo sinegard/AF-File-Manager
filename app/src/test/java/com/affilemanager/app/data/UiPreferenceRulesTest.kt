@@ -40,12 +40,23 @@ class UiPreferenceRulesTest {
 
         assertEquals("/storage/emulated/0/Download", normalized.sharedPath)
         assertEquals(LanTransferProtocol.WEBDAV, normalized.protocol)
-        assertEquals(60, normalized.durationMinutes)
+        assertEquals(120, normalized.durationMinutes)
         assertEquals("8080", normalized.portText)
         assertEquals("username", normalized.username)
         assertEquals("My phone", normalized.receiverName)
         assertFalse(ShareScreenPreferences::class.java.declaredFields.any { it.name.contains("password", ignoreCase = true) })
         assertFalse(ShareScreenPreferences::class.java.declaredFields.any { it.name.contains("code", ignoreCase = true) })
+    }
+
+    @Test
+    fun manualDurationAndAnonymousChoiceRemainExplicit() {
+        val normalized = UiPreferenceRules.normalizeShare(
+            ShareScreenPreferences("/storage", durationMinutes = 0, anonymous = true),
+            defaultPath = "/default",
+            defaultReceiverName = "Phone",
+        )
+        assertEquals(0, normalized.durationMinutes)
+        assertEquals(true, normalized.anonymous)
     }
 
     @Test

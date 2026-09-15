@@ -95,7 +95,7 @@ class HomeCustomizationRulesTest {
 
     @Test
     fun realQuickLocationFoldersUseStandardDirectoryNavigation() {
-        val folderIds = listOf("builtin.downloads")
+        val folderIds = listOf("builtin.downloads", "builtin.cloned_apps")
 
         folderIds.forEach { id ->
             assertEquals(null, HomeShortcutNavigationRules.categoryFor(id))

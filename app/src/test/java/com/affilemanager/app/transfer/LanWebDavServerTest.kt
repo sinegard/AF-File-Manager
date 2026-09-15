@@ -245,6 +245,29 @@ class LanWebDavServerTest {
         }
     }
 
+    @Test
+    fun anonymousModeAcceptsRequestsWithoutAuthorizationHeader() {
+        val root = temporary.newFolder("dav-anonymous").apply { resolve("visible.txt").writeText("visible") }
+        LanWebDavServer(
+            rootDirectory = root,
+            bindAddress = InetAddress.getLoopbackAddress(),
+            anonymous = true,
+            durationMinutes = 0,
+        ).use { server ->
+            val session = server.start()
+            assertTrue(session.anonymous)
+            assertEquals(null, session.username)
+            assertEquals("", session.code)
+            assertEquals(Long.MAX_VALUE, session.expiresAtMillis)
+            val listing = request(
+                session.port,
+                "PROPFIND / HTTP/1.1\r\nHost: localhost\r\nDepth: 1\r\n\r\n",
+            )
+            assertTrue(listing.startsWith("HTTP/1.1 207"))
+            assertTrue(listing.contains("visible.txt"))
+        }
+    }
+
     private fun authenticated(firstLines: String): String {
         val token = Base64.getEncoder().encodeToString("af:12345678".toByteArray(StandardCharsets.UTF_8))
         return firstLines.trimEnd('\r', '\n') + "\r\nAuthorization: Basic $token\r\n\r\n"

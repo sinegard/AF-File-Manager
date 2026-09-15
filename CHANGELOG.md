@@ -4,6 +4,17 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.39.0] - 2026-09-15
+
+- Phone-to-phone sharing can stream large Android-picked files without first duplicating them in app cache, queue another batch during the same connection, cancel one file without stopping the rest, and pick contacts directly inside AF.
+- Nearby AF receivers can be found on the private Wi-Fi network without scanning a QR code. Receive sessions can run until manually stopped or disconnect after a selected 5–120 minute duration, and the transfer receipt has a compact status summary.
+- FTP and WebDAV sharing can optionally allow anonymous access while still respecting read-only mode. The app makes the unencrypted, password-free LAN exposure explicit before use.
+- Transfer history keeps bounded sent and received results, restores previews only when the local file is still verifiably available, and keeps Close separate from Disconnect.
+- Filter controls wrap on narrow screens, stale background-playback notifications are removed explicitly, and cloud-provider locations now state that Android grants only the selected folder rather than implying whole-account access.
+- ZIP and TAR.GZ creation can use a maximum output size. AF applies the strongest supported compression and keeps no incomplete archive when the requested limit cannot be reached.
+- Honor, Huawei and Samsung devices now expose a cloned-app files shortcut. Owner-profile folders open normally; storage isolated in another Android profile opens through active Root or Shizuku access instead of being presented as an ordinary readable folder.
+- Large phone-to-phone uploads use a bounded 1 MiB streaming buffer and less frequent UI progress work. This improves the transfer path without claiming a fixed speed that the phones and Wi-Fi link cannot guarantee.
+
 ## [0.38.0] - 2026-09-13
 
 - The fast scroller stays visible for the entire drag and starts its hide delay only after the finger is released.

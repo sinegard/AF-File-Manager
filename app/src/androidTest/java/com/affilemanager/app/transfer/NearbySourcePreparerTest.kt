@@ -59,4 +59,29 @@ class NearbySourcePreparerTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun systemDocumentIsStreamedDirectlyWithoutASecondLargeCacheCopy() = runBlocking {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val source = File(application.cacheDir, "direct-video-${UUID.randomUUID()}.mp4")
+        val stageRoot = File(application.cacheDir, "nearby-send-staging")
+        val before = stageRoot.listFiles().orEmpty().map(File::getName).toSet()
+        val payload = ByteArray(4 * 1_024 * 1_024) { index -> (index and 0xff).toByte() }
+        source.outputStream().use { it.write(payload) }
+        payload.fill(0)
+        val uri = androidx.core.content.FileProvider.getUriForFile(application, "${application.packageName}.files", source)
+        try {
+            val prepared = application.graph.nearbySources
+                .prepareContentUris(listOf(uri), copyToPrivateStage = false)
+                .getOrThrow()
+
+            assertEquals(listOf(""), prepared.paths)
+            assertEquals(listOf(uri.toString()), prepared.sourceUris)
+            assertEquals(listOf(source.length()), prepared.fileSizes)
+            assertEquals(null, prepared.cleanupRootPath)
+            assertTrue(stageRoot.listFiles().orEmpty().all { it.name in before })
+        } finally {
+            source.delete()
+        }
+    }
 }

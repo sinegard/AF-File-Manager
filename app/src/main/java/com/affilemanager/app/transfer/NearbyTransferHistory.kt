@@ -17,6 +17,7 @@ data class NearbyTransferHistoryFile(
     val transferredBytes: Long,
     val status: TransferFileStatus,
     val outgoing: Boolean,
+    val localPath: String? = null,
 )
 
 data class NearbyTransferHistorySession(
@@ -37,6 +38,7 @@ internal object NearbyTransferHistoryRules {
     const val MAX_FILES_PER_SESSION = 2_000
     const val MAX_MESSAGES_PER_SESSION = NearbyChatController.MAX_VISIBLE_MESSAGES
     const val MAX_STORED_PATH_CHARS = 512
+    const val MAX_LOCAL_PATH_CHARS = 4_096
 
     fun mergeFiles(
         session: NearbyTransferHistorySession,
@@ -55,6 +57,11 @@ internal object NearbyTransferHistoryRules {
                     transferredBytes = file.transferredBytes.coerceIn(0L, file.sizeBytes.coerceAtLeast(0L)),
                     status = file.status,
                     outgoing = outgoing,
+                    localPath = file.localPath?.takeIf {
+                        file.status == TransferFileStatus.COMPLETED &&
+                            it.length in 1..MAX_LOCAL_PATH_CHARS &&
+                            it.none(Char::isISOControl)
+                    },
                 )
             }
         }
@@ -90,7 +97,15 @@ internal object NearbyTransferHistoryRules {
         .map { session ->
             session.copy(
                 peerName = session.peerName.take(NearbyPairing.MAX_NAME_LENGTH),
-                files = session.files.take(MAX_FILES_PER_SESSION),
+                files = session.files.take(MAX_FILES_PER_SESSION).map { file ->
+                    file.copy(
+                        localPath = file.localPath?.takeIf {
+                            file.status == TransferFileStatus.COMPLETED &&
+                                it.length in 1..MAX_LOCAL_PATH_CHARS &&
+                                it.none(Char::isISOControl)
+                        },
+                    )
+                },
                 messages = session.messages.takeLast(MAX_MESSAGES_PER_SESSION),
             )
         }
@@ -109,17 +124,18 @@ private class NearbyTransferHistoryRepository(context: Context) {
         if (!base.exists()) return emptyList()
         require(base.isFile && base.length() in 1..MAX_FILE_BYTES) { "Perdavimų istorijos failas netinkamas" }
         val root = file.openRead().use { input -> JSONObject(input.readBytes().toString(Charsets.UTF_8)) }
-        require(root.optInt("version") == 1) { "Perdavimų istorijos versija nepalaikoma" }
+        val version = root.optInt("version")
+        require(version in 1..2) { "Perdavimų istorijos versija nepalaikoma" }
         val rows = root.optJSONArray("sessions") ?: return emptyList()
         require(rows.length() <= NearbyTransferHistoryRules.MAX_SESSIONS) { "Perdavimų istorija per didelė" }
-        return NearbyTransferHistoryRules.normalize(List(rows.length()) { index -> decodeSession(rows.getJSONObject(index)) })
+        return NearbyTransferHistoryRules.normalize(List(rows.length()) { index -> decodeSession(rows.getJSONObject(index), version) })
     }
 
     fun save(sessions: List<NearbyTransferHistorySession>) {
         val normalized = NearbyTransferHistoryRules.normalize(sessions)
         val rows = JSONArray()
         normalized.forEach { rows.put(encodeSession(it)) }
-        val bytes = JSONObject().put("version", 1).put("sessions", rows).toString().toByteArray(Charsets.UTF_8)
+        val bytes = JSONObject().put("version", 2).put("sessions", rows).toString().toByteArray(Charsets.UTF_8)
         require(bytes.size.toLong() <= MAX_FILE_BYTES) { "Perdavimų istorija per didelė" }
         val output = file.startWrite()
         try {
@@ -150,7 +166,8 @@ private class NearbyTransferHistoryRepository(context: Context) {
         .put("files", JSONArray().apply {
             session.files.forEach { file ->
                 put(JSONObject().put("id", file.id).put("path", file.relativePath).put("size", file.sizeBytes)
-                    .put("transferred", file.transferredBytes).put("status", file.status.name).put("outgoing", file.outgoing))
+                    .put("transferred", file.transferredBytes).put("status", file.status.name).put("outgoing", file.outgoing)
+                    .put("localPath", file.localPath ?: JSONObject.NULL))
             }
         })
         .put("messages", JSONArray().apply {
@@ -160,7 +177,7 @@ private class NearbyTransferHistoryRepository(context: Context) {
             }
         })
 
-    private fun decodeSession(row: JSONObject): NearbyTransferHistorySession {
+    private fun decodeSession(row: JSONObject, version: Int): NearbyTransferHistorySession {
         val files = row.optJSONArray("files") ?: JSONArray()
         val messages = row.optJSONArray("messages") ?: JSONArray()
         require(files.length() <= NearbyTransferHistoryRules.MAX_FILES_PER_SESSION) { "Perdavimų istorija per didelė" }
@@ -183,6 +200,11 @@ private class NearbyTransferHistoryRepository(context: Context) {
                     transferredBytes = item.getLong("transferred").coerceAtLeast(0L),
                     status = runCatching { TransferFileStatus.valueOf(item.getString("status")) }.getOrDefault(TransferFileStatus.FAILED),
                     outgoing = item.optBoolean("outgoing"),
+                    localPath = if (version >= 2 && !item.isNull("localPath")) {
+                        item.optString("localPath").takeIf {
+                            it.length in 1..NearbyTransferHistoryRules.MAX_LOCAL_PATH_CHARS && it.none(Char::isISOControl)
+                        }
+                    } else null,
                 )
             },
             messages = List(messages.length()) { index ->
@@ -252,7 +274,8 @@ object NearbyTransferHistoryController {
         if (state.status == NearbyTransferStatus.IDLE || state.files.isEmpty()) return
         ensureSession(state.receiverName)
         val terminalCount = state.files.count { it.status.isHistoryTerminal() }
-        val signature = "$terminalCount:${state.files.size}:${state.status}"
+        val previewableCount = state.files.count { it.status.isHistoryTerminal() && it.localPath != null }
+        val signature = "$terminalCount:${state.files.size}:${state.status}:$previewableCount"
         if (outgoing && signature == lastOutgoingSignature) return
         if (!outgoing && signature == lastIncomingSignature) return
         if (outgoing) lastOutgoingSignature = signature else lastIncomingSignature = signature
@@ -316,7 +339,7 @@ object NearbyTransferHistoryController {
         currentIdentity = peerName.orEmpty()
         val session = NearbyTransferHistorySession(
             id = requireNotNull(currentSessionId),
-            peerName = peerName?.takeIf(String::isNotBlank) ?: "Other phone",
+            peerName = peerName?.takeIf(String::isNotBlank) ?: "Kitas telefonas",
             startedAtMillis = now,
             updatedAtMillis = now,
         )

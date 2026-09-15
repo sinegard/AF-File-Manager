@@ -352,14 +352,26 @@ fun AFFileManagerApp(
                                         context = context,
                                         title = UiTranslator.translate("Įjungti AF File Manager užraktą", interfaceLanguage),
                                         onSuccess = { viewModel.setAppLockEnabled(true); unlocked = true },
-                                        onError = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
+                                        onError = { text ->
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    UiTranslator.translate(text, interfaceLanguage),
+                                                )
+                                            }
+                                        },
                                     )
                                 } else {
                                     authenticate(
                                         context = context,
                                         title = UiTranslator.translate("Išjungti AF File Manager užraktą", interfaceLanguage),
                                         onSuccess = { viewModel.setAppLockEnabled(false); unlocked = true },
-                                        onError = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
+                                        onError = { text ->
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    UiTranslator.translate(text, interfaceLanguage),
+                                                )
+                                            }
+                                        },
                                     )
                                 }
                             },
@@ -526,7 +538,13 @@ fun AFFileManagerApp(
                     context = context,
                     title = UiTranslator.translate("Atrakinti AF File Manager", interfaceLanguage),
                     onSuccess = { unlocked = true },
-                    onError = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
+                    onError = { text ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                UiTranslator.translate(text, interfaceLanguage),
+                            )
+                        }
+                    },
                 )
             },
         )

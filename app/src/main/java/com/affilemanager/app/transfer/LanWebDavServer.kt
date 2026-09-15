@@ -43,6 +43,7 @@ class LanWebDavServer(
     requestedUsername: String? = null,
     private val requestedCode: String? = null,
     private val readOnly: Boolean = false,
+    private val anonymous: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
@@ -69,8 +70,8 @@ class LanWebDavServer(
     private val root = rootDirectory.canonicalFile.also {
         require(it.isDirectory && it.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
     }
-    private val durationMillis = durationMinutes.coerceIn(1, LanHttpServer.MAX_SESSION_MINUTES) * 60_000L
-    private val username = validateRequestedUsername(requestedUsername, USERNAME)
+    private val normalizedDurationMinutes = LanSessionDuration.normalize(durationMinutes)
+    private val username = if (anonymous) null else validateRequestedUsername(requestedUsername, USERNAME)
     private val running = AtomicBoolean(false)
     private val requestCount = AtomicInteger(0)
     private val authGuard = Any()
@@ -102,16 +103,17 @@ class LanWebDavServer(
             bind(InetSocketAddress(bindAddress, validateRequestedPort(requestedPort)), MAX_QUEUE)
         }
         serverSocket = socket
-        val code = validateRequestedSecret(requestedCode) ?: randomCode()
+        val code = if (anonymous) "" else validateRequestedSecret(requestedCode) ?: randomCode()
         val created = LanServerSession(
             address = requireNotNull(bindAddress.hostAddress),
             port = socket.localPort,
             code = code,
-            expiresAtMillis = Math.addExact(nowMillis(), durationMillis),
+            expiresAtMillis = LanSessionDuration.expiresAt(nowMillis(), normalizedDurationMinutes),
             rootName = root.name.ifBlank { "Pasirinktas katalogas" },
             scheme = "http",
             username = username,
             readOnly = readOnly,
+            anonymous = anonymous,
         )
         session = created
         acceptThread = Thread({ acceptLoop(created) }, "af-webdav-accept").apply { isDaemon = true; start() }
@@ -133,7 +135,7 @@ class LanWebDavServer(
     private fun acceptLoop(active: LanServerSession) {
         try {
             while (running.get()) {
-                if (nowMillis() >= active.expiresAtMillis) return stop("WebDAV sesijos laikas baigėsi")
+                if (LanSessionDuration.isExpired(nowMillis(), active.expiresAtMillis)) return stop("WebDAV sesijos laikas baigėsi")
                 if (requestCount.get() >= MAX_REQUESTS) return stop("WebDAV sesijos užklausų riba pasiekta")
                 try {
                     val socket = serverSocket?.accept() ?: break
@@ -158,7 +160,7 @@ class LanWebDavServer(
             return writeError(output, 400, error.message ?: "Bad request")
         } ?: return writeError(output, 400, "Bad request")
         val active = session
-        if (!running.get() || active == null || nowMillis() >= active.expiresAtMillis) {
+        if (!running.get() || active == null || LanSessionDuration.isExpired(nowMillis(), active.expiresAtMillis)) {
             return writeError(output, 410, "Session expired")
         }
         when (authenticate(request, active)) {
@@ -335,6 +337,7 @@ class LanWebDavServer(
     }
 
     private fun authenticate(request: Request, active: LanServerSession): AuthResult = synchronized(authGuard) {
+        if (active.anonymous) return@synchronized AuthResult.ACCEPTED
         val now = nowMillis()
         if (now < authLockedUntilMillis) return@synchronized AuthResult.LOCKED
         if (authLockedUntilMillis != 0L) {

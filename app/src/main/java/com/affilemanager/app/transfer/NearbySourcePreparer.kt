@@ -1,8 +1,11 @@
 package com.affilemanager.app.transfer
 
 import android.app.Application
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.ContactsContract
 import android.provider.OpenableColumns
+import androidx.core.content.ContextCompat
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategoryRepository
 import com.affilemanager.app.model.FileEntry
@@ -22,6 +25,29 @@ data class PreparedNearbyTransfer(
     val cleanupRootPath: String? = null,
     val fileSizes: List<Long> = emptyList(),
     val totalBytes: Long = fileSizes.sum(),
+    /** A non-null entry is streamed from ContentResolver instead of being duplicated in cache. */
+    val sourceUris: List<String?> = List(paths.size) { null },
+) {
+    init {
+        require(paths.size == relativePaths.size && paths.size == sourceUris.size) {
+            "Siuntimo rinkinio keliai nesutampa"
+        }
+    }
+
+    companion object {
+        fun empty(): PreparedNearbyTransfer = PreparedNearbyTransfer(emptyList(), emptyList())
+    }
+}
+
+data class NearbyContact(
+    val lookupKey: String,
+    val displayName: String,
+    val photoUri: String? = null,
+)
+
+data class NearbyContactPage(
+    val contacts: List<NearbyContact>,
+    val truncated: Boolean,
 )
 
 class NearbySourcePreparer(
@@ -33,6 +59,7 @@ class NearbySourcePreparer(
         const val MAX_DIRECTORIES = 16_000
         const val MAX_TOTAL_BYTES = 60L * 1_024L * 1_024L * 1_024L
         const val MAX_PATH_PAYLOAD_CHARS = 4_000_000
+        const val MAX_CONTACTS = 1_000
         private const val MAX_DEPTH = 64
         private const val BUFFER_SIZE = 256 * 1_024
     }
@@ -66,7 +93,10 @@ class NearbySourcePreparer(
             }
         }
 
-    suspend fun prepareContentUris(uris: Collection<Uri>): Result<PreparedNearbyTransfer> {
+    suspend fun prepareContentUris(
+        uris: Collection<Uri>,
+        copyToPrivateStage: Boolean = true,
+    ): Result<PreparedNearbyTransfer> {
         var ownedStage: File? = null
         var delivered = false
         try {
@@ -75,8 +105,12 @@ class NearbySourcePreparer(
                     val selected = uris.distinctBy(Uri::toString)
                     require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą" }
                     require(selected.size <= MAX_FILES) { "Vienu kartu galima siųsti iki $MAX_FILES failų" }
-                    val stage = newStage().also { ownedStage = it }
-                    copyContentUris(selected, stage)
+                    if (copyToPrivateStage) {
+                        val stage = newStage().also { ownedStage = it }
+                        copyContentUris(selected, stage)
+                    } else {
+                        prepareDirectContentUris(selected) { stage -> ownedStage = stage }
+                    }
                 }
             }
             delivered = result.isSuccess
@@ -88,33 +122,200 @@ class NearbySourcePreparer(
         }
     }
 
+    suspend fun loadContacts(): Result<NearbyContactPage> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(
+                ContextCompat.checkSelfPermission(application, android.Manifest.permission.READ_CONTACTS) ==
+                    PackageManager.PERMISSION_GRANTED,
+            ) { "Kontaktų leidimas nesuteiktas" }
+            val projection = arrayOf(
+                ContactsContract.Contacts.LOOKUP_KEY,
+                ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
+                ContactsContract.Contacts.PHOTO_THUMBNAIL_URI,
+            )
+            val contacts = ArrayList<NearbyContact>(MAX_CONTACTS)
+            var truncated = false
+            application.contentResolver.query(
+                ContactsContract.Contacts.CONTENT_URI,
+                projection,
+                null,
+                null,
+                "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} COLLATE LOCALIZED ASC",
+            )?.use { cursor ->
+                val lookupIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.LOOKUP_KEY)
+                val nameIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+                val photoIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.PHOTO_THUMBNAIL_URI)
+                val seen = HashSet<String>()
+                while (cursor.moveToNext()) {
+                    coroutineContext.ensureActive()
+                    val lookup = cursor.getString(lookupIndex)?.trim()?.takeIf(String::isNotBlank) ?: continue
+                    if (!seen.add(lookup)) continue
+                    if (contacts.size >= MAX_CONTACTS) {
+                        truncated = true
+                        break
+                    }
+                    // Keep missing names as data, not as Lithuanian UI copy. The composable renders
+                    // its translated fallback while exported files use a stable neutral name.
+                    val name = cursor.getString(nameIndex)?.trim().orEmpty()
+                    contacts += NearbyContact(
+                        lookupKey = lookup.take(1_024),
+                        displayName = name.take(200),
+                        photoUri = cursor.getString(photoIndex)?.takeIf(String::isNotBlank)?.take(2_048),
+                    )
+                }
+            } ?: throw IllegalStateException("Kontaktų sąrašo perskaityti nepavyko")
+            NearbyContactPage(contacts, truncated)
+        }
+    }
+
+    suspend fun prepareContacts(contacts: Collection<NearbyContact>): Result<PreparedNearbyTransfer> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                require(
+                    ContextCompat.checkSelfPermission(application, android.Manifest.permission.READ_CONTACTS) ==
+                        PackageManager.PERMISSION_GRANTED,
+                ) { "Kontaktų leidimas nesuteiktas" }
+                val selected = contacts.distinctBy(NearbyContact::lookupKey)
+                require(selected.isNotEmpty()) { "Pasirinkite bent vieną kontaktą" }
+                require(selected.size <= MAX_CONTACTS) { "Vienu kartu galima siųsti iki $MAX_CONTACTS kontaktų" }
+                val stage = newStage()
+                try {
+                    var batchBytes = 0L
+                    val files = selected.mapIndexed { index, contact ->
+                        coroutineContext.ensureActive()
+                        require(
+                            contact.lookupKey.isNotBlank() && contact.lookupKey.length <= 1_024 &&
+                                contact.lookupKey.none(Char::isISOControl),
+                        ) { "Kontakto duomenys netinkami" }
+                        val baseName = contact.displayName
+                            .replace(Regex("[\\p{Cc}\\p{Cf}/\\\\]"), "_")
+                            .trim()
+                            .take(180)
+                            .ifBlank { "contact-${index + 1}" }
+                        val target = uniqueFile(stage, "$baseName.vcf")
+                        val uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_VCARD_URI, contact.lookupKey)
+                        batchBytes = copyContentUri(uri, target, batchBytes)
+                        target
+                    }
+                    validatedFiles(files, files.map(File::getName), emptyList(), stage)
+                } catch (failure: Throwable) {
+                    stage.deleteRecursively()
+                    throw failure
+                }
+            }
+        }
+
     private suspend fun copyContentUris(uris: List<Uri>, stage: File): PreparedNearbyTransfer {
         var batchBytes = 0L
         val files = uris.mapIndexed { index, uri ->
             coroutineContext.ensureActive()
             require(uri.scheme == "content") { "Palaikomos tik Android dokumentų nuorodos" }
             val target = uniqueFile(stage, contentName(uri, index))
-            application.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
-                target.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(BUFFER_SIZE)
-                    var total = 0L
-                    try {
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            total = Math.addExact(total, read.toLong())
-                            require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
-                            batchBytes = Math.addExact(batchBytes, read.toLong())
-                            require(batchBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
-                            output.write(buffer, 0, read)
-                        }
-                    } finally { buffer.fill(0) }
-                }
-            } ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
+            batchBytes = copyContentUri(uri, target, batchBytes)
             target
         }
         return validatedFiles(files, files.map(File::getName), emptyList(), stage)
+    }
+
+    /**
+     * Keeps seekable Android documents at their provider. Unknown-length streams are the only
+     * entries copied into a private stage because HTTP upload admission needs an exact length.
+     */
+    private suspend fun prepareDirectContentUris(
+        uris: List<Uri>,
+        onStageCreated: (File) -> Unit,
+    ): PreparedNearbyTransfer {
+        val paths = ArrayList<String>(uris.size)
+        val sourceUris = ArrayList<String?>(uris.size)
+        val relativePaths = ArrayList<String>(uris.size)
+        val sizes = ArrayList<Long>(uris.size)
+        val usedNames = HashSet<String>()
+        var totalBytes = 0L
+        var stage: File? = null
+        try {
+            uris.forEachIndexed { index, uri ->
+                coroutineContext.ensureActive()
+                require(uri.scheme == "content") { "Palaikomos tik Android dokumentų nuorodos" }
+                val name = uniqueName(contentName(uri, index), usedNames)
+                val knownSize = contentLength(uri)
+                if (knownSize != null) {
+                    require(knownSize in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą: $name" }
+                    application.contentResolver.openInputStream(uri)?.use { Unit }
+                        ?: throw IllegalArgumentException("Failo srautas nepasiekiamas: $name")
+                    totalBytes = Math.addExact(totalBytes, knownSize)
+                    require(totalBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
+                    paths += ""
+                    sourceUris += uri.toString()
+                    relativePaths += name
+                    sizes += knownSize
+                } else {
+                    val ownedStage = stage ?: newStage().also { created -> stage = created; onStageCreated(created) }
+                    val target = uniqueFile(ownedStage, name)
+                    totalBytes = copyContentUri(uri, target, totalBytes)
+                    paths += target.canonicalPath
+                    sourceUris += null
+                    relativePaths += target.name
+                    sizes += target.length()
+                }
+            }
+            val payloadChars = paths.sumOf(String::length) + sourceUris.filterNotNull().sumOf(String::length) +
+                relativePaths.sumOf(String::length)
+            require(payloadChars <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+            return PreparedNearbyTransfer(
+                paths = paths,
+                relativePaths = relativePaths.map(::normalizeRelative),
+                cleanupRootPath = stage?.canonicalPath,
+                fileSizes = sizes,
+                totalBytes = totalBytes,
+                sourceUris = sourceUris,
+            )
+        } catch (failure: Throwable) {
+            stage?.deleteRecursively()
+            throw failure
+        }
+    }
+
+    private suspend fun copyContentUri(uri: Uri, target: File, batchBytesBefore: Long): Long {
+        var batchBytes = batchBytesBefore
+        application.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
+            target.outputStream().buffered().use { output ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var total = 0L
+                try {
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total = Math.addExact(total, read.toLong())
+                        require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
+                        batchBytes = Math.addExact(batchBytes, read.toLong())
+                        require(batchBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
+                        output.write(buffer, 0, read)
+                    }
+                } finally { buffer.fill(0) }
+            }
+        } ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
+        return batchBytes
+    }
+
+    private fun contentLength(uri: Uri): Long? {
+        val descriptorSize = runCatching {
+            application.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.length.takeIf { it >= 0L }
+            }
+        }.getOrNull()
+        var providerSize: Long? = null
+        runCatching {
+            application.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+        }.getOrNull()?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 && !cursor.isNull(it) }
+                    ?.let { index -> providerSize = cursor.getLong(index).takeIf { it >= 0L } }
+            }
+        }
+        // A seekable descriptor reflects the actual stream better than a provider's occasionally
+        // stale metadata column, especially for large videos replaced in place.
+        return descriptorSize ?: providerSize
     }
 
     suspend fun discard(prepared: PreparedNearbyTransfer) = withContext(Dispatchers.IO) {
@@ -204,6 +405,7 @@ class NearbySourcePreparer(
             directories = normalizedDirectories,
             cleanupRootPath = cleanupRoot?.canonicalPath,
             fileSizes = files.map { it.length() },
+            sourceUris = List(files.size) { null },
         )
     }
 
@@ -249,6 +451,18 @@ class NearbySourcePreparer(
         var suffix = 1
         while (candidate.exists()) {
             candidate = File(parent, "$stem ($suffix)$extension")
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private fun uniqueName(name: String, used: MutableSet<String>): String {
+        val stem = name.substringBeforeLast('.', name)
+        val extension = name.substringAfterLast('.', "").takeIf(String::isNotEmpty)?.let { ".$it" }.orEmpty()
+        var candidate = name
+        var suffix = 1
+        while (!used.add(candidate.lowercase(java.util.Locale.ROOT))) {
+            candidate = "$stem ($suffix)$extension"
             suffix += 1
         }
         return candidate

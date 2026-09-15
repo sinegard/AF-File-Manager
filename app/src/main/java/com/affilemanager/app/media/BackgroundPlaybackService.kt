@@ -220,8 +220,12 @@ class BackgroundPlaybackService : Service() {
         releasePlayer()
         playlist = emptyList()
         session.isActive = false
-        current.value = if (failed) current.value?.copy(phase = BackgroundPlaybackPhase.ERROR) else null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // Removing the foreground service is asynchronous on some Android builds. Explicitly
+        // cancel the same notification before publishing the terminal state so observers never
+        // see an ERROR/idle player paired with a stale, non-dismissible playback notification.
+        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        current.value = if (failed) current.value?.copy(phase = BackgroundPlaybackPhase.ERROR) else null
         stopSelf()
     }
 
@@ -254,6 +258,9 @@ class BackgroundPlaybackService : Service() {
         session.release()
         if (current.value?.phase != BackgroundPlaybackPhase.ERROR) current.value = null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // A service can also be destroyed by Android after stopSelf(), so repeat the idempotent
+        // removal here instead of relying on the foreground transition having settled already.
+        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         super.onDestroy()
     }
 

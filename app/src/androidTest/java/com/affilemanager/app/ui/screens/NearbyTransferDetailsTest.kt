@@ -28,6 +28,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.affilemanager.app.AFFileManagerApplication
 import com.affilemanager.app.transfer.TransferFileProgress
 import com.affilemanager.app.transfer.TransferFileStatus
+import com.affilemanager.app.transfer.NearbyContact
+import com.affilemanager.app.transfer.NearbyTransferHistoryFile
+import com.affilemanager.app.transfer.NearbyTransferHistorySession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -50,7 +53,8 @@ class NearbyTransferDetailsTest {
         try {
             val vm = com.affilemanager.app.ui.MainViewModel(app).also { store.put("test", it) }
             compose.setContent { MaterialTheme { NearbyPhoneTransferCard(vm, app.cacheDir.path, state.value,
-                receiverName = "Test receiver", onReceiverNameChange = {}) } }
+                receiverName = "Test receiver", onReceiverNameChange = {},
+                durationMinutes = 15, onDurationMinutesChange = {}) } }
             compose.onNodeWithText("Receive").performClick()
             compose.onNodeWithTag("nearby_receive_dialog").assertIsDisplayed()
             compose.runOnIdle {
@@ -87,7 +91,15 @@ class NearbyTransferDetailsTest {
                 incomingUpload = com.affilemanager.app.transfer.LanUploadProgress("", 0, 1, 0, 0, 0, 30,
                     files = listOf(TransferFileProgress("receiving.txt", 30))))
             compose.setContent { com.affilemanager.app.ui.theme.AFFileManagerTheme {
-                NearbyPhoneTransferCard(vm, app.cacheDir.path, lan, receiverName = "Test", onReceiverNameChange = {})
+                NearbyPhoneTransferCard(
+                    viewModel = vm,
+                    receiveDirectory = app.cacheDir.path,
+                    lanState = lan,
+                    receiverName = "Test",
+                    onReceiverNameChange = {},
+                    durationMinutes = 15,
+                    onDurationMinutesChange = {},
+                )
             } }
             compose.onNodeWithText("Receive").assertDoesNotExist()
             compose.onNodeWithText("Send").assertDoesNotExist()
@@ -174,19 +186,31 @@ class NearbyTransferDetailsTest {
         var opened: String? = null
         var closed = 0
         var cancelled = 0
+        var cancelledFileIndex = -1
         val details = mutableStateOf(listOf(
-            TransferFileProgress("Pictures/ready.png", photo.length(), photo.length(), TransferFileStatus.COMPLETED, photo.path),
-            TransferFileProgress("Pictures/still-receiving.png", 4096, 2048, TransferFileStatus.TRANSFERRING),
-            TransferFileProgress("Documents/this-is-a-long-document-name-that-must-stay-inside-the-row.pdf", 8192),
+            TransferFileProgress("Pictures/ready.png", photo.length(), photo.length(), TransferFileStatus.COMPLETED, photo.path, batchId = "batch"),
+            TransferFileProgress("Pictures/still-receiving.png", 4096, 2048, TransferFileStatus.TRANSFERRING, batchId = "batch"),
+            TransferFileProgress("Documents/this-is-a-long-document-name-that-must-stay-inside-the-row.pdf", 8192, batchId = "batch"),
         ))
         try {
-            compose.setContent { MaterialTheme { NearbyTransferDetails(details.value, photo.length() + 2048,
-                photo.length() + 12288, 3, { opened = it.absolutePath }, { closed++ }, { cancelled++ }) } }
+            compose.setContent { MaterialTheme {
+                NearbyTransferDetails(
+                    files = details.value,
+                    transferredBytes = photo.length() + 2048,
+                    totalBytes = photo.length() + 12288,
+                    totalFiles = 3,
+                    onPreview = { opened = it.absolutePath },
+                    onDismiss = { closed++ },
+                    onCancel = { cancelled++ },
+                    onCancelFile = { _, index -> cancelledFileIndex = index },
+                )
+            } }
             compose.onNodeWithTag("nearby_transfer_preview_0").assertIsEnabled().performClick()
             compose.runOnIdle { assertEquals(photo.path, opened) }
             compose.onNodeWithTag("nearby_transfer_preview_1").assertDoesNotExist()
             compose.onNodeWithTag("nearby_transfer_preview_2").assertDoesNotExist()
-            compose.onNodeWithTag("nearby_transfer_stop_1").assertIsEnabled()
+            compose.onNodeWithTag("nearby_transfer_stop_1").assertIsEnabled().performClick()
+            compose.runOnIdle { assertEquals(1, cancelledFileIndex); assertEquals(0, cancelled) }
             val evidence = requireNotNull(app.getExternalFilesDir("validation"))
             compose.onNodeWithTag("nearby_transfer_details").captureToImage().asAndroidBitmap().let {
                 File(evidence, "nearby-details-${app.resources.displayMetrics.widthPixels}.png").outputStream().use { out -> it.compress(Bitmap.CompressFormat.PNG, 100, out) }
@@ -196,5 +220,66 @@ class NearbyTransferDetailsTest {
             compose.onNodeWithText("Cancel").performClick()
             compose.runOnIdle { assertEquals(1, cancelled) }
         } finally { photo.delete() }
+    }
+
+    @Test fun transferHistoryRestoresARealPreviewInsteadOfAFalseLock() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val photo = File(app.cacheDir, "history-preview-${System.nanoTime()}.png")
+        val bitmap = Bitmap.createBitmap(32, 24, Bitmap.Config.ARGB_8888).apply { eraseColor(0xff00695c.toInt()) }
+        photo.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        var opened: String? = null
+        val session = NearbyTransferHistorySession(
+            id = "history",
+            peerName = "History phone",
+            startedAtMillis = System.currentTimeMillis(),
+            updatedAtMillis = System.currentTimeMillis(),
+            files = listOf(
+                NearbyTransferHistoryFile(
+                    id = "incoming-photo",
+                    relativePath = "Pictures/photo.png",
+                    sizeBytes = photo.length(),
+                    transferredBytes = photo.length(),
+                    status = TransferFileStatus.COMPLETED,
+                    outgoing = false,
+                    localPath = photo.path,
+                ),
+            ),
+            totalFileCount = 1,
+            totalBytes = photo.length(),
+        )
+        try {
+            compose.setContent { MaterialTheme {
+                NearbyTransferHistoryDialog(
+                    sessions = listOf(session),
+                    error = null,
+                    onDismiss = {},
+                    onClear = {},
+                    onPreview = { opened = it.absolutePath },
+                )
+            } }
+            compose.onNodeWithText("History phone").performClick()
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithTag("nearby_transfer_preview_0").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("nearby_transfer_preview_0").assertIsEnabled().performClick()
+            compose.runOnIdle { assertEquals(photo.canonicalPath, opened) }
+        } finally {
+            photo.delete()
+        }
+    }
+
+    @Test fun internalContactRowShowsTheNameAndTogglesItsOwnSelection() {
+        var toggles = 0
+        compose.setContent { MaterialTheme {
+            NearbyContactRow(
+                contact = NearbyContact("lookup-key", "Ada Example"),
+                selected = false,
+                onToggle = { toggles++ },
+            )
+        } }
+
+        compose.onNodeWithText("Ada Example").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, toggles) }
     }
 }

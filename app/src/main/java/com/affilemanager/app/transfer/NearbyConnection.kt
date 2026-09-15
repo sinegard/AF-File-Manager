@@ -23,7 +23,12 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
             require(sessionCookie.length <= 256 && sessionCookie.startsWith("af_session=") && sessionCookie.none(Char::isISOControl))
             cookie = sessionCookie
         }
-        expiresAt = minOf(expires, now() + 15 * 60_000L)
+        val maximumTimedExpiry = Math.addExact(now(), LanSessionDuration.MAX_TIMED_MINUTES * 60_000L)
+        expiresAt = if (expires == LanSessionDuration.MANUAL_EXPIRY) {
+            LanSessionDuration.MANUAL_EXPIRY
+        } else {
+            minOf(expires, maximumTimedExpiry)
+        }
         mutablePeer.value = peer
     }
     @Synchronized fun clear() { peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; mutablePeer.value = null }
@@ -32,5 +37,5 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
         if (peer == pairing) clear()
         return true
     }
-    private fun expire() { if (now() >= expiresAt) clear() }
+    private fun expire() { if (LanSessionDuration.isExpired(now(), expiresAt)) clear() }
 }

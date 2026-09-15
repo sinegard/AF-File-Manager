@@ -324,6 +324,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         password: CharArray? = null,
         operation: OperationContext? = null,
         compressionLevel: Int = ArchiveCompressionRules.DEFAULT_LEVEL,
+        maxOutputBytes: Long? = null,
     ) = withContext(Dispatchers.IO) {
         var partial: File? = null
         try {
@@ -332,6 +333,18 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             require(password == null || format == ArchiveFormat.ZIP) { "Šifravimas palaikomas kuriant ZIP" }
             require(sources.isNotEmpty() || password == null) { "Tuščias archyvas negali būti užšifruotas" }
             val validatedCompressionLevel = ArchiveCompressionRules.validated(compressionLevel)
+            val validatedTarget = maxOutputBytes?.let { ArchiveTargetSizeRules.validatedBytes(it, limits) }
+            require(validatedTarget == null || ArchiveTargetSizeRules.supported(format)) {
+                "Pasirinkto formato archyvo dydžio riboti negalima"
+            }
+            // A size target is a maximum, not an exact promise. Go directly to the strongest
+            // supported compression instead of rewriting a potentially multi-gigabyte archive
+            // once for every intermediate level.
+            val effectiveCompressionLevel = if (validatedTarget == null) {
+                validatedCompressionLevel
+            } else {
+                ArchiveCompressionRules.MAX_LEVEL
+            }
             require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
             val parent = outputFile.parentFile
             require(parent != null && (parent.isDirectory || parent.mkdirs())) { "Archyvo aplankas nepasiekiamas" }
@@ -345,14 +358,17 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
                     sources,
                     password,
                     operation,
-                    validatedCompressionLevel,
+                    effectiveCompressionLevel,
                 )
                 ArchiveFormat.SEVEN_Z -> createSevenZ(partialFile, sources, operation)
-                ArchiveFormat.TAR -> createTar(partialFile, sources, gzip = false, operation, validatedCompressionLevel)
-                ArchiveFormat.TAR_GZ -> createTar(partialFile, sources, gzip = true, operation, validatedCompressionLevel)
+                ArchiveFormat.TAR -> createTar(partialFile, sources, gzip = false, operation, effectiveCompressionLevel)
+                ArchiveFormat.TAR_GZ -> createTar(partialFile, sources, gzip = true, operation, effectiveCompressionLevel)
                 ArchiveFormat.RAR, ArchiveFormat.GZIP -> error("Nepalaikomas kūrimo formatas")
             }
             require(partialFile.isFile && partialFile.length() > 0) { "Archyvas nesukurtas" }
+            require(validatedTarget == null || partialFile.length() <= validatedTarget) {
+                "Archyvo nepavyko suspausti iki pasirinkto dydžio"
+            }
             require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
             require(partialFile.renameTo(outputFile)) { "Archyvo užbaigti nepavyko" }
         } finally {

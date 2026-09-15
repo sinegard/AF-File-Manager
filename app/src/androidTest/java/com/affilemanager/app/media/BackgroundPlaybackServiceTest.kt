@@ -32,7 +32,9 @@ class BackgroundPlaybackServiceTest {
 
     @After fun cleanup() {
         compose.runOnUiThread { BackgroundPlaybackService.stop(context) }
-        compose.waitUntil(5_000) { BackgroundPlaybackService.state.value == null }
+        // NotificationManager applies foreground-notification removal asynchronously. Waiting for
+        // both surfaces prevents one test's notification from leaking into the next test.
+        compose.waitUntil(5_000) { BackgroundPlaybackService.state.value == null && notification() == null }
         fixtures.deleteRecursively()
     }
 
@@ -99,6 +101,7 @@ class BackgroundPlaybackServiceTest {
         val corrupt = File(fixtures, "corrupt.wav").apply { writeText("not a WAV file") }
         start(corrupt)
         waitFor(BackgroundPlaybackPhase.ERROR)
+        compose.waitUntil(5_000) { notification() == null }
         assertNull(notification())
         compose.onNodeWithTag("background_stop").assertIsDisplayed().performClick()
         waitForStopped()

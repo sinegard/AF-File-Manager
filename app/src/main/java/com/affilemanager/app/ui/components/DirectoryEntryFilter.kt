@@ -1,7 +1,7 @@
 package com.affilemanager.app.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -10,6 +10,7 @@ import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
@@ -72,26 +73,39 @@ fun DirectoryEntryFilterDialog(
             TextButton(onClick = onDismiss) { LText("Atlikta") }
         },
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            DirectoryEntryFilter.entries.forEach { option ->
-                FilterChip(
-                    selected = option in selected,
-                    onClick = {
-                        onSelectedChange(
-                            if (option in selected) selected - option else selected + option,
-                        )
-                    },
-                    label = { LText(option.label) },
-                )
-            }
+        DirectoryEntryFilterChoices(selected, onSelectedChange)
+    }
+}
+
+/** Shared wrapping surface; tests inject already translated labels without cloning the layout. */
+@Composable
+internal fun DirectoryEntryFilterChoices(
+    selected: Set<DirectoryEntryFilter>,
+    onSelectedChange: (Set<DirectoryEntryFilter>) -> Unit,
+    modifier: Modifier = Modifier,
+    label: @Composable (DirectoryEntryFilter) -> Unit = { option -> LText(option.label) },
+) {
+    FlowRow(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        DirectoryEntryFilter.entries.forEach { option ->
+            FilterChip(
+                modifier = Modifier.testTag("directory_filter_${option.name.lowercase()}"),
+                selected = option in selected,
+                onClick = {
+                    onSelectedChange(
+                        if (option in selected) selected - option else selected + option,
+                    )
+                },
+                label = { label(option) },
+            )
         }
     }
 }
 
-private val DirectoryEntryFilter.label: String
+internal val DirectoryEntryFilter.label: String
     get() = when (this) {
         DirectoryEntryFilter.FOLDERS -> "Aplankai"
         DirectoryEntryFilter.FILES -> "Visi failai"

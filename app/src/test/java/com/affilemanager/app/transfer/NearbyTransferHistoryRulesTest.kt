@@ -56,6 +56,52 @@ class NearbyTransferHistoryRulesTest {
         assertEquals((NearbyTransferHistoryRules.MAX_SESSIONS + 4).toString(), normalized.first().id)
     }
 
+    @Test
+    fun `only a completed readable-reference candidate is retained and a later cleanup clears it`() {
+        val completed = NearbyTransferHistoryRules.mergeFiles(
+            session(),
+            listOf(
+                TransferFileProgress(
+                    relativePath = "photo.jpg",
+                    sizeBytes = 20,
+                    transferredBytes = 20,
+                    status = TransferFileStatus.COMPLETED,
+                    localPath = "/received/photo.jpg",
+                    batchId = "batch",
+                ),
+                TransferFileProgress(
+                    relativePath = "failed.jpg",
+                    sizeBytes = 10,
+                    transferredBytes = 2,
+                    status = TransferFileStatus.FAILED,
+                    localPath = "/partial/failed.jpg",
+                    batchId = "batch",
+                ),
+            ),
+            outgoing = false,
+            nowMillis = 2,
+        )
+        assertEquals("/received/photo.jpg", completed.files.first { it.relativePath == "photo.jpg" }.localPath)
+        assertEquals(null, completed.files.first { it.relativePath == "failed.jpg" }.localPath)
+
+        val afterPrivateStageCleanup = NearbyTransferHistoryRules.mergeFiles(
+            completed,
+            listOf(
+                TransferFileProgress(
+                    relativePath = "photo.jpg",
+                    sizeBytes = 20,
+                    transferredBytes = 20,
+                    status = TransferFileStatus.COMPLETED,
+                    localPath = null,
+                    batchId = "batch",
+                ),
+            ),
+            outgoing = false,
+            nowMillis = 3,
+        )
+        assertEquals(null, afterPrivateStageCleanup.files.first { it.relativePath == "photo.jpg" }.localPath)
+    }
+
     private fun session(id: String = "session", updated: Long = 1) = NearbyTransferHistorySession(
         id = id,
         peerName = "Peer",

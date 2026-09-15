@@ -5,10 +5,13 @@ data class LanTransferOptions(
     val username: String = "",
     val password: String = "",
     val readOnly: Boolean = false,
+    val anonymous: Boolean = false,
 ) {
     fun validated(protocol: LanTransferProtocol): LanTransferOptions {
-        val normalizedUsername = username.trim()
-        val normalizedPassword = password.takeUnless(String::isBlank).orEmpty()
+        val supportsAnonymous = protocol == LanTransferProtocol.FTP || protocol == LanTransferProtocol.WEBDAV
+        val normalizedAnonymous = supportsAnonymous && anonymous
+        val normalizedUsername = if (normalizedAnonymous) "" else username.trim()
+        val normalizedPassword = if (normalizedAnonymous) "" else password.takeUnless(String::isBlank).orEmpty()
         require(port == 0 || port in MIN_CUSTOM_PORT..MAX_PORT) {
             "Prievadas turi būti nuo $MIN_CUSTOM_PORT iki $MAX_PORT arba 0 automatiniam parinkimui"
         }
@@ -27,6 +30,7 @@ data class LanTransferOptions(
         return copy(
             username = if (protocol == LanTransferProtocol.WEB) "" else normalizedUsername,
             password = normalizedPassword,
+            anonymous = normalizedAnonymous,
         )
     }
 

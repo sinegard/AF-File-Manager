@@ -14,6 +14,16 @@ class ArchiveEngineTest {
     val temporary = TemporaryFolder()
 
     @Test
+    fun archiveTargetSizeParsingIsOptionalAndBounded() {
+        assertEquals(null, ArchiveTargetSizeRules.parseMib(""))
+        assertEquals(1L * 1_024 * 1_024, ArchiveTargetSizeRules.parseMib("1"))
+        assertEquals(8_192L * 1_024 * 1_024, ArchiveTargetSizeRules.parseMib("8192"))
+        assertTrue(runCatching { ArchiveTargetSizeRules.parseMib("0") }.isFailure)
+        assertTrue(runCatching { ArchiveTargetSizeRules.parseMib("8193") }.isFailure)
+        assertTrue(runCatching { ArchiveTargetSizeRules.parseMib("1.5") }.isFailure)
+    }
+
+    @Test
     fun extractionFolderNameRemovesCompoundArchiveSuffix() {
         assertEquals("backup", ArchiveMutationRules.extractionBaseName("backup.tar.gz", "extracted"))
         assertEquals("backup", ArchiveMutationRules.extractionBaseName("backup.TGZ", "extracted"))
@@ -233,5 +243,65 @@ class ArchiveEngineTest {
                 engine.create(ArchiveFormat.ZIP, File(temporary.root, "invalid.zip"), listOf(source), compressionLevel = 10)
             }.isFailure,
         )
+    }
+
+    @Test
+    fun archiveSizeTargetUsesStrongestCompressionAndPublishesOnlyWhenItFits() = runBlocking {
+        val source = temporary.newFile("target-source.txt").apply {
+            outputStream().buffered().use { output -> repeat(100_000) { output.write("compress-me\n".toByteArray()) } }
+        }
+        val fitted = File(temporary.root, "fitted.zip")
+        val engine = ArchiveEngine()
+
+        engine.create(
+            ArchiveFormat.ZIP,
+            fitted,
+            listOf(source),
+            compressionLevel = 0,
+            maxOutputBytes = 1L * 1_024 * 1_024,
+        )
+
+        assertTrue(fitted.length() <= 1L * 1_024 * 1_024)
+    }
+
+    @Test
+    fun archiveSizeTargetRemovesPartialOutputWhenStrongestCompressionCannotFit() = runBlocking {
+        val source = temporary.newFile("random-source.bin").apply {
+            val bytes = ByteArray(2 * 1_024 * 1_024)
+            java.util.Random(42L).nextBytes(bytes)
+            writeBytes(bytes)
+        }
+        val output = File(temporary.root, "too-small.zip")
+
+        val result = runCatching {
+            ArchiveEngine().create(
+                ArchiveFormat.ZIP,
+                output,
+                listOf(source),
+                maxOutputBytes = 1L * 1_024 * 1_024,
+            )
+        }
+
+        assertTrue(result.isFailure)
+        assertFalse(output.exists())
+        assertFalse(File(temporary.root, ".too-small.zip.partial").exists())
+    }
+
+    @Test
+    fun archiveSizeTargetRejectsUnsupportedFormatWithoutLeavingOutput() = runBlocking {
+        val source = temporary.newFile("target.tar.source").apply { writeText("data") }
+        val output = File(temporary.root, "target.tar")
+
+        val result = runCatching {
+            ArchiveEngine().create(
+                ArchiveFormat.TAR,
+                output,
+                listOf(source),
+                maxOutputBytes = 1L * 1_024 * 1_024,
+            )
+        }
+
+        assertTrue(result.isFailure)
+        assertFalse(output.exists())
     }
 }

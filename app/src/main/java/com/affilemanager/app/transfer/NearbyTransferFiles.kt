@@ -148,6 +148,21 @@ internal class NearbyReceiveFiles {
         return snapshot()
     }
 
+    @Synchronized fun cancelFile(id: String?, index: Int): List<TransferFileProgress> {
+        requireBatch(id)
+        val files = batches[id] ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
+        val current = files.getOrNull(index - 1) ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
+        if (current.status != TransferFileStatus.COMPLETED) {
+            batches[id] = files.toMutableList().apply {
+                this[index - 1] = current.copy(status = TransferFileStatus.CANCELLED, localPath = null)
+            }
+        }
+        return snapshot()
+    }
+
+    @Synchronized fun status(id: String?, index: Int): TransferFileStatus? =
+        batches[id]?.getOrNull(index - 1)?.status
+
     @Synchronized fun isCancelled(id: String?, index: Int): Boolean = batches[id]?.getOrNull(index - 1)?.status == TransferFileStatus.CANCELLED
 }
 

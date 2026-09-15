@@ -83,6 +83,69 @@ class LanHttpServerTest {
         }
     }
 
+    @Test fun cancellingOneActiveFileKeepsTheRemainingManifestFilesTransferable() {
+        val root = temporary.newFolder("single-file-cancel")
+        val updates = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
+        val started = java.util.concurrent.CountDownLatch(1)
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678", onUploadProgress = {
+            updates += it
+            if (it.files.firstOrNull()?.status == TransferFileStatus.TRANSFERRING) started.countDown()
+        }).use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            val batch = java.util.UUID.randomUUID().toString()
+            val manifest = NearbyTransferManifest.encode(
+                listOf(TransferFileProgress("one.txt", 100), TransferFileProgress("two.txt", 2)),
+            ).toString(Charsets.UTF_8)
+            assertTrue(
+                request(
+                    port,
+                    "POST /nearby/manifest HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n" +
+                        "X-AF-Batch-ID: $batch\r\nContent-Length: ${manifest.toByteArray().size}\r\n\r\n$manifest",
+                ).startsWith("HTTP/1.1 200"),
+            )
+
+            Socket(InetAddress.getLoopbackAddress(), port).use { upload ->
+                upload.soTimeout = 4_000
+                upload.getOutputStream().write(
+                    (
+                        "POST /upload?name=one.txt&fileCount=2&fileIndex=1 HTTP/1.1\r\n" +
+                            "Host: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $batch\r\n" +
+                            "Content-Length: 100\r\n\r\npartial"
+                        ).toByteArray(),
+                )
+                assertTrue(started.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                val cancelled = request(
+                    port,
+                    "POST /nearby/cancel-file?fileIndex=1 HTTP/1.1\r\nHost: localhost\r\n" +
+                        "Cookie: $cookie\r\nX-AF-Batch-ID: $batch\r\nContent-Length: 0\r\n\r\n",
+                )
+                assertTrue(cancelled.startsWith("HTTP/1.1 200"))
+                assertEquals(-1, upload.getInputStream().read())
+            }
+
+            val firstStatus = request(
+                port,
+                "GET /nearby/file-status?fileIndex=1 HTTP/1.1\r\nHost: localhost\r\n" +
+                    "Cookie: $cookie\r\nX-AF-Batch-ID: $batch\r\n\r\n",
+            )
+            assertTrue(firstStatus.startsWith("HTTP/1.1 200"))
+            assertTrue(firstStatus.endsWith("CANCELLED"))
+            val second = request(
+                port,
+                "POST /upload?name=two.txt&fileCount=2&fileIndex=2 HTTP/1.1\r\nHost: localhost\r\n" +
+                    "Cookie: $cookie\r\nX-AF-Batch-ID: $batch\r\nContent-Length: 2\r\n\r\nok",
+            )
+            assertTrue(second.startsWith("HTTP/1.1 201"))
+            assertFalse(root.resolve("one.txt").exists())
+            assertEquals("ok", root.resolve("two.txt").readText())
+            assertEquals(
+                listOf(TransferFileStatus.CANCELLED, TransferFileStatus.COMPLETED),
+                updates.last().files.map { it.status },
+            )
+        }
+    }
+
     @Test fun nearbyManifestRequiresAuthenticationAndPublishesOnlyCommittedKeepBothPaths() {
         val root = temporary.newFolder("manifest").apply { resolve("photo.txt").writeText("original") }
         val updates = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
@@ -314,7 +377,7 @@ class LanHttpServerTest {
         assertEquals(16, LanHttpServer.MAX_QUEUED_REQUESTS)
         assertEquals(10_000, LanHttpServer.MAX_REQUESTS_PER_SESSION)
         assertEquals(20, LanHttpServer.MAX_AUTH_FAILURES)
-        assertEquals(60, LanHttpServer.MAX_SESSION_MINUTES)
+        assertEquals(120, LanHttpServer.MAX_SESSION_MINUTES)
     }
 
     @Test

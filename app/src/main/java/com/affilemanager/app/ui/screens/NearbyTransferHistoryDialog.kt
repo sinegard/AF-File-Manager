@@ -18,6 +18,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.transfer.NearbyTransferHistorySession
 import com.affilemanager.app.transfer.TransferFileProgress
 import com.affilemanager.app.ui.components.AfModalDialog
@@ -37,6 +39,9 @@ import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
 import java.text.DateFormat
 import java.util.Date
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun NearbyTransferHistoryDialog(
@@ -44,11 +49,25 @@ internal fun NearbyTransferHistoryDialog(
     error: String?,
     onDismiss: () -> Unit,
     onClear: () -> Unit,
+    onPreview: (FileEntry) -> Unit,
 ) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     val selected = sessions.firstOrNull { it.id == selectedId }
     if (selected != null) {
+        val availablePaths by produceState<Map<String, String>>(
+            initialValue = emptyMap(),
+            key1 = selected.id,
+            key2 = selected.updatedAtMillis,
+        ) {
+            value = withContext(Dispatchers.IO) {
+                selected.files.mapNotNull { historyFile ->
+                    val path = historyFile.localPath ?: return@mapNotNull null
+                    val local = runCatching { File(path).canonicalFile }.getOrNull() ?: return@mapNotNull null
+                    if (local.isFile && local.canRead()) historyFile.id to local.absolutePath else null
+                }.toMap()
+            }
+        }
         val outgoing = selected.files.filter { it.outgoing }
         val incoming = selected.files.filterNot { it.outgoing }
         val files = (outgoing + incoming).map { file ->
@@ -57,6 +76,7 @@ internal fun NearbyTransferHistoryDialog(
                 sizeBytes = file.sizeBytes,
                 transferredBytes = file.transferredBytes,
                 status = file.status,
+                localPath = availablePaths[file.id],
                 batchId = file.id,
             )
         }
@@ -65,13 +85,12 @@ internal fun NearbyTransferHistoryDialog(
             transferredBytes = files.sumOf(TransferFileProgress::transferredBytes),
             totalBytes = selected.totalBytes,
             totalFiles = selected.totalFileCount,
-            onPreview = {},
+            onPreview = onPreview,
             onDismiss = { selectedId = null },
             message = if (selected.filesTruncated) {
                 "Istorijoje išsaugota ${selected.files.size} iš ${selected.totalFileCount} failų įrašų"
             } else null,
             outgoingCount = outgoing.size,
-            localName = "Šis telefonas",
             peerName = selected.peerName,
             sessionStartedAtMillis = selected.startedAtMillis,
             chatMessages = selected.messages,
@@ -121,7 +140,11 @@ internal fun NearbyTransferHistoryDialog(
                             ) {
                                 Icon(Icons.Rounded.History, contentDescription = null)
                                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                                    Text(session.peerName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (session.peerName in setOf("Kitas telefonas", "Other phone")) {
+                                        LText("Kitas telefonas", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    } else {
+                                        Text(session.peerName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
                                     Text(dateFormat.format(Date(session.startedAtMillis)), style = MaterialTheme.typography.bodySmall)
                                     Text(
                                         "${session.totalFileCount} · ${FileSystemRules.humanBytes(session.totalBytes)} · ${session.messages.size}",

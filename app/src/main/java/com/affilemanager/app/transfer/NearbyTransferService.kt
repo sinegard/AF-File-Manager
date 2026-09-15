@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -16,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.ui.localization.UiTranslator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +42,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okio.BufferedSink
 import java.io.File
 import java.io.FileInputStream
+import java.io.InputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -60,7 +63,13 @@ data class NearbyTransferState(
 object NearbyTransferController {
     internal val connection = NearbyConnection()
     fun connectedPairing(): NearbyPairing? = connection.pairing()
-    suspend fun prepareReturnPairing(context: Context, root: String, name: String, peer: NearbyPairing): NearbyPairing {
+    suspend fun prepareReturnPairing(
+        context: Context,
+        root: String,
+        name: String,
+        peer: NearbyPairing,
+        durationMinutes: Int,
+    ): NearbyPairing {
         var current = LanTransferController.state.value
         if (current.status !in setOf(LanTransferStatus.RUNNING, LanTransferStatus.STARTING)) {
             val before = current
@@ -70,7 +79,12 @@ object NearbyTransferController {
                     socket.localAddress.hostAddress
                 }
             }
-            LanTransferController.start(context, root, bindAddress = address)
+            LanTransferController.start(
+                context = context,
+                rootPath = root,
+                durationMinutes = durationMinutes,
+                bindAddress = address,
+            )
             current = withTimeout(8_000L) { LanTransferController.state.first {
                 it !== before && it.status in setOf(LanTransferStatus.RUNNING, LanTransferStatus.ERROR)
             } }
@@ -116,6 +130,18 @@ object NearbyTransferController {
         context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_CANCEL))
     }
 
+    fun cancelFile(context: Context, batchId: String, fileIndex: Int) {
+        require(batchId.isNotBlank() && fileIndex in 1..NearbySourcePreparer.MAX_FILES) {
+            "Siuntimo rinkinio keliai nesutampa"
+        }
+        context.startService(
+            Intent(context, NearbyTransferService::class.java)
+                .setAction(NearbyTransferService.ACTION_CANCEL_FILE)
+                .putExtra(NearbyTransferService.EXTRA_BATCH_ID, batchId)
+                .putExtra(NearbyTransferService.EXTRA_FILE_INDEX, fileIndex),
+        )
+    }
+
     fun sendMessage(context: Context, body: String, senderName: String) {
         val validated = NearbyChatController.validate(body)
         require(connection.pairing() != null) { "Telefonas nebeprisijungęs" }
@@ -140,6 +166,7 @@ class NearbyTransferService : Service() {
     companion object {
         const val ACTION_START = "com.affilemanager.app.action.START_NEARBY_TRANSFER"
         const val ACTION_CANCEL = "com.affilemanager.app.action.CANCEL_NEARBY_TRANSFER"
+        const val ACTION_CANCEL_FILE = "com.affilemanager.app.action.CANCEL_NEARBY_FILE"
         const val ACTION_DISCONNECT = "com.affilemanager.app.action.DISCONNECT_NEARBY_TRANSFER"
         const val ACTION_SEND_MESSAGE = "com.affilemanager.app.action.SEND_NEARBY_MESSAGE"
         const val EXTRA_MESSAGE = "message"
@@ -149,15 +176,19 @@ class NearbyTransferService : Service() {
         const val EXTRA_RELATIVE_PATHS = "relative_paths"
         const val EXTRA_DIRECTORIES = "directories"
         const val EXTRA_CLEANUP_ROOT = "cleanup_root"
+        const val EXTRA_BATCH_ID = "batch_id"
+        const val EXTRA_FILE_INDEX = "file_index"
         private const val CHANNEL_ID = "nearby_transfer"
         private const val NOTIFICATION_ID = 42
-        private const val PROGRESS_INTERVAL_MILLIS = 150L
+        private const val PROGRESS_INTERVAL_MILLIS = NearbyTransferTuning.PROGRESS_INTERVAL_MILLIS
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var transferJob: Job? = null
     @Volatile private var activeCall: Call? = null
     @Volatile private var cancelledByUser = false
+    @Volatile private var activeFileKey: String? = null
+    private val cancelledFileKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val preparationJobs = mutableMapOf<String, Job>()
     private val metadataLock = kotlinx.coroutines.sync.Mutex()
     private var currentBatchId: String? = null
@@ -185,6 +216,10 @@ class NearbyTransferService : Service() {
         lastStartId = startId
         when (intent?.action) {
             ACTION_CANCEL -> cancelTransfer()
+            ACTION_CANCEL_FILE -> cancelFile(
+                intent.getStringExtra(EXTRA_BATCH_ID).orEmpty(),
+                intent.getIntExtra(EXTRA_FILE_INDEX, 0),
+            )
             ACTION_DISCONNECT -> disconnectPeer(intent.getBooleanExtra("notify_peer", true))
             ACTION_SEND_MESSAGE -> sendMessage(
                 intent.getStringExtra(EXTRA_MESSAGE).orEmpty(),
@@ -209,9 +244,16 @@ class NearbyTransferService : Service() {
                 val batch = NearbyTransferController.queue.nextToPrepare() ?: break
                 ownedIds.add(batch.id)
             try {
-                val files = validateFiles(batch.sources.paths, batch.sources.relativePaths, batch.sources.directories.isNotEmpty())
-                val details = files.map { TransferFileProgress(it.relativePath, it.file.length(),
-                    localPath = it.file.path, modifiedAtMillis = it.file.lastModified()) }
+                val files = validateFiles(
+                    batch.sources,
+                    allowEmpty = batch.sources.directories.isNotEmpty() || batch.sources.paths.isEmpty(),
+                )
+                val details = files.map { TransferFileProgress(
+                    it.relativePath,
+                    it.length,
+                    localPath = it.localPath,
+                    modifiedAtMillis = it.modifiedAtMillis,
+                ) }
                 metadataLock.lock()
                 val announced: Boolean
                 try {
@@ -220,6 +262,11 @@ class NearbyTransferService : Service() {
                     batch.returnPairing?.let { announceReturnPeer(batch.pairing, cookie, it) }
                     announced = NearbyTransferController.connection.supportsQueue(batch.pairing)
                     if (announced) announceFiles(batch.pairing, cookie, details, batch.id)
+                    details.forEachIndexed { index, file ->
+                        if (file.status == TransferFileStatus.CANCELLED || fileKey(batch.id, index + 1) in cancelledFileKeys) {
+                            runCatching { sendFileControl(batch.pairing, cookie, "/nearby/cancel-file", batch.id, index + 1) }
+                        }
+                    }
                 } finally { metadataLock.unlock() }
                 NearbyTransferController.queue.ready(batch.id, details, announced)
             } catch (failure: Exception) {
@@ -279,8 +326,6 @@ class NearbyTransferService : Service() {
 
     private suspend fun runTransfer(batch: NearbySendBatch) {
         val pairing = batch.pairing
-        val paths = batch.sources.paths
-        val relativePaths = batch.sources.relativePaths
         val directories = batch.sources.directories
         val cleanupRoot = batch.sources.cleanupRootPath
         var terminalState: NearbyTransferState? = null
@@ -289,11 +334,20 @@ class NearbyTransferService : Service() {
             require(validatedDirectories.size <= NearbySourcePreparer.MAX_DIRECTORIES) {
                 "Siunčiamame rinkinyje per daug aplankų"
             }
-            val files = validateFiles(paths, relativePaths, allowEmpty = validatedDirectories.isNotEmpty())
-            var details = files.map { TransferFileProgress(it.relativePath, it.file.length(),
-                localPath = it.file.absolutePath, modifiedAtMillis = it.file.lastModified()) }
-            val totalBytes = files.sumOf { it.file.length() }
-            require(files.map { it.file.length() } == batch.state.files.map { it.sizeBytes }) { "Failas pasikeitė po peržiūros" }
+            val files = validateFiles(batch.sources, allowEmpty = validatedDirectories.isNotEmpty() || batch.sources.paths.isEmpty())
+            var details = files.mapIndexed { index, file ->
+                TransferFileProgress(
+                    file.relativePath,
+                    file.length,
+                    status = batch.state.files.getOrNull(index)?.status
+                        ?.takeIf { it == TransferFileStatus.CANCELLED }
+                        ?: TransferFileStatus.WAITING,
+                    localPath = file.localPath,
+                    modifiedAtMillis = file.modifiedAtMillis,
+                )
+            }
+            val totalBytes = files.sumOf(TransferFile::length)
+            require(files.map(TransferFile::length) == batch.state.files.map { it.sizeBytes }) { "Failas pasikeitė po peržiūros" }
             var completedBytes = 0L
             var completedFiles = 0
             publish(
@@ -302,7 +356,7 @@ class NearbyTransferService : Service() {
                     receiverName = pairing.receiverName,
                     fileCount = files.size,
                     totalBytes = totalBytes,
-                    message = "Siunčiama tame pačiame privačiame tinkle",
+                    message = if (files.isEmpty()) "Siejami telefonai" else "Siunčiama tame pačiame privačiame tinkle",
                     files = details,
                 ),
             )
@@ -312,58 +366,98 @@ class NearbyTransferService : Service() {
             validatedDirectories.sortedBy { it.count { char -> char == '/' } }
                 .forEach { relative -> createRemoteDirectory(pairing, cookie, relative, batchId) }
             files.forEachIndexed { index, transferFile ->
-                val file = transferFile.file
                 if (cancelledByUser) throw CancellationException("Siuntimas atšauktas")
-                var lastPublished = 0L
-                upload(
-                    pairing = pairing,
-                    batchId = batchId,
-                    cookie = cookie,
-                    file = file,
-                    relativePath = transferFile.relativePath,
-                    fileIndex = index + 1,
-                    fileCount = files.size,
-                    totalBytes = totalBytes,
-                    completedBytes = completedBytes,
-                ) { fileBytes ->
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastPublished >= PROGRESS_INTERVAL_MILLIS || fileBytes == file.length()) {
-                        lastPublished = now
-                        details = details.toMutableList().apply {
-                            this[index] = this[index].copy(transferredBytes = fileBytes, status = TransferFileStatus.TRANSFERRING)
-                        }
-                        publish(
-                            NearbyTransferState(
-                                status = NearbyTransferStatus.RUNNING,
-                                receiverName = pairing.receiverName,
-                                fileCount = files.size,
-                                completedFiles = completedFiles,
-                                totalBytes = totalBytes,
-                                sentBytes = (completedBytes + fileBytes).coerceAtMost(totalBytes),
-                                currentFile = file.name,
-                                message = "Siunčiama tame pačiame privačiame tinkle",
-                                files = details,
-                            ),
-                        )
+                val key = fileKey(batchId, index + 1)
+                if (key in cancelledFileKeys || details[index].status == TransferFileStatus.CANCELLED) {
+                    cancelledFileKeys += key
+                    if (batch.announced) {
+                        runCatching { sendFileControl(pairing, cookie, "/nearby/cancel-file", batchId, index + 1) }
                     }
+                    details = details.toMutableList().apply {
+                        this[index] = this[index].copy(status = TransferFileStatus.CANCELLED)
+                    }
+                    publish(requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
+                        completedFiles = completedFiles,
+                        sentBytes = completedBytes,
+                        files = details,
+                    ))
+                    return@forEachIndexed
                 }
-                completedBytes = Math.addExact(completedBytes, file.length())
+                var lastPublished = 0L
+                activeFileKey = key
+                try {
+                    upload(
+                        pairing = pairing,
+                        batchId = batchId,
+                        cookie = cookie,
+                        source = transferFile,
+                        fileIndex = index + 1,
+                        fileCount = files.size,
+                        totalBytes = totalBytes,
+                        completedBytes = completedBytes,
+                    ) { fileBytes ->
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastPublished >= PROGRESS_INTERVAL_MILLIS || fileBytes == transferFile.length) {
+                            lastPublished = now
+                            details = details.toMutableList().apply {
+                                this[index] = this[index].copy(transferredBytes = fileBytes, status = TransferFileStatus.TRANSFERRING)
+                            }
+                            publish(
+                                NearbyTransferState(
+                                    status = NearbyTransferStatus.RUNNING,
+                                    receiverName = pairing.receiverName,
+                                    fileCount = files.size,
+                                    completedFiles = completedFiles,
+                                    totalBytes = totalBytes,
+                                    sentBytes = (completedBytes + fileBytes).coerceAtMost(totalBytes),
+                                    currentFile = transferFile.name,
+                                    message = "Siunčiama tame pačiame privačiame tinkle",
+                                    files = details,
+                                ),
+                            )
+                        }
+                    }
+                } catch (failure: Throwable) {
+                    val cancelled = key in cancelledFileKeys || runCatching {
+                        remoteFileStatus(pairing, cookie, batchId, index + 1) == TransferFileStatus.CANCELLED
+                    }.getOrDefault(false)
+                    if (!cancelled) throw failure
+                    cancelledFileKeys += key
+                    details = details.toMutableList().apply {
+                        this[index] = this[index].copy(status = TransferFileStatus.CANCELLED)
+                    }
+                    publish(requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
+                        completedFiles = completedFiles,
+                        sentBytes = completedBytes,
+                        files = details,
+                    ))
+                    return@forEachIndexed
+                } finally {
+                    activeFileKey = null
+                }
+                completedBytes = Math.addExact(completedBytes, transferFile.length)
                 completedFiles += 1
                 details = details.toMutableList().apply {
-                    this[index] = this[index].copy(transferredBytes = file.length(), status = TransferFileStatus.COMPLETED)
+                    this[index] = this[index].copy(transferredBytes = transferFile.length, status = TransferFileStatus.COMPLETED)
                 }
                 publish(requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
                     completedFiles = completedFiles, sentBytes = completedBytes, files = details,
                 ))
             }
+            val allCancelled = details.isNotEmpty() && details.all { it.status == TransferFileStatus.CANCELLED }
             val completed = NearbyTransferState(
-                status = NearbyTransferStatus.COMPLETED,
+                status = if (allCancelled) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.COMPLETED,
                 receiverName = pairing.receiverName,
                 fileCount = files.size,
-                completedFiles = files.size,
+                completedFiles = completedFiles,
                 totalBytes = totalBytes,
-                sentBytes = totalBytes,
-                message = "Siuntimas baigtas",
+                sentBytes = completedBytes,
+                message = when {
+                    files.isEmpty() -> "Telefonai susieti"
+                    allCancelled -> "Siuntimas atšauktas"
+                    details.any { it.status == TransferFileStatus.CANCELLED } -> "Siuntimas baigtas, dalis failų atšaukta"
+                    else -> "Siuntimas baigtas"
+                },
                 files = details,
             )
             terminalState = completed
@@ -383,12 +477,14 @@ class NearbyTransferService : Service() {
             terminalState = state
         } finally {
             activeCall = null
+            activeFileKey = null
             if (terminalState?.status in setOf(NearbyTransferStatus.ERROR, NearbyTransferStatus.CANCELLED) &&
                 NearbyTransferController.connection.supportsQueue(pairing)) {
                 val cookie = NearbyTransferController.connection.cookieFor(pairing)
                 if (cookie != null) runCatching { sendControl(pairing, cookie, "/nearby/cancel", batch.id) }
             }
             cleanupRoot?.let(::safeDeleteStage)
+            cancelledFileKeys.removeIf { it.startsWith("${batch.id}:") }
             terminalState?.let { state -> NearbyTransferController.queue.update(batch.id,
                 if (cleanupRoot == null) state else state.copy(files = state.files.map { it.copy(localPath = null) })) }
             synchronized(this@NearbyTransferService) { transferJob = null; currentBatchId = null }
@@ -462,14 +558,14 @@ class NearbyTransferService : Service() {
         pairing: NearbyPairing,
         batchId: String,
         cookie: String,
-        file: File,
-        relativePath: String,
+        source: TransferFile,
         fileIndex: Int,
         fileCount: Int,
         totalBytes: Long,
         completedBytes: Long,
         onProgress: (Long) -> Unit,
     ) {
+        val relativePath = source.relativePath
         val directory = relativePath.substringBeforeLast('/', "")
         val name = relativePath.substringAfterLast('/')
         val url = "http://${pairing.host}:${pairing.port}/".toHttpUrl().newBuilder()
@@ -483,7 +579,7 @@ class NearbyTransferService : Service() {
             .build()
         val request = Request.Builder()
             .url(url)
-            .post(ProgressFileRequestBody(file, onProgress))
+            .post(ProgressSourceRequestBody(source, onProgress))
             .header("Cookie", cookie)
             .header("X-AF-Batch-ID", batchId)
             .header("User-Agent", "AF-File-Manager/Nearby")
@@ -527,28 +623,61 @@ class NearbyTransferService : Service() {
         check(!NearbyTransferController.connection.clearIfRejected(pairing, status)) { "Gavimo sesija nepatvirtinta" }
     }
 
-    private fun validateFiles(
-        paths: List<String>,
-        relativePaths: List<String>,
-        allowEmpty: Boolean,
-    ): List<TransferFile> {
+    private fun validateFiles(sources: PreparedNearbyTransfer, allowEmpty: Boolean): List<TransferFile> {
+        val paths = sources.paths
+        val relativePaths = sources.relativePaths
+        val sourceUris = sources.sourceUris
         require(
             paths.size <= NearbySourcePreparer.MAX_FILES &&
                 paths.size == relativePaths.size &&
+                paths.size == sourceUris.size &&
+                (sources.fileSizes.isEmpty() || sources.fileSizes.size == paths.size) &&
                 (paths.isNotEmpty() || allowEmpty),
         ) {
             "Netinkamas siunčiamų failų skaičius"
         }
         var total = 0L
         val seenSources = HashSet<String>()
-        return paths.zip(relativePaths).map { (path, relativePath) ->
-            val file = File(path).canonicalFile
-            require(file.isFile && file.canRead()) { "Failas nepasiekiamas: ${file.name}" }
-            require(seenSources.add(file.absolutePath)) { "Tas pats failas siuntimo rinkinyje kartojasi" }
-            require(file.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą: ${file.name}" }
-            total = Math.addExact(total, file.length())
+        return relativePaths.indices.map { index ->
+            val relativePath = validateRelativePath(relativePaths[index])
+            val uriValue = sourceUris[index]
+            val transfer = if (uriValue == null) {
+                val file = File(paths[index]).canonicalFile
+                require(file.isFile && file.canRead()) { "Failas nepasiekiamas: ${file.name}" }
+                require(seenSources.add("file:${file.absolutePath}")) { "Tas pats failas siuntimo rinkinyje kartojasi" }
+                TransferFile(
+                    file = file,
+                    contentUri = null,
+                    relativePath = relativePath,
+                    length = file.length(),
+                    modifiedAtMillis = file.lastModified(),
+                )
+            } else {
+                require(paths[index].isBlank()) { "Siuntimo rinkinio keliai nesutampa" }
+                val uri = Uri.parse(uriValue)
+                require(uri.scheme == "content" && seenSources.add("uri:$uri")) {
+                    "Palaikomos tik Android dokumentų nuorodos"
+                }
+                val expected = sources.fileSizes.getOrNull(index)
+                    ?: throw IllegalArgumentException("Failo dydis nepasiekiamas: ${relativePath.substringAfterLast('/')}")
+                val measured = contentLength(uri) ?: expected
+                require(measured == expected) { "Failas pasikeitė po peržiūros" }
+                contentResolver.openInputStream(uri)?.use { Unit }
+                    ?: throw IllegalArgumentException("Failo srautas nepasiekiamas: ${relativePath.substringAfterLast('/')}")
+                TransferFile(
+                    file = null,
+                    contentUri = uri,
+                    relativePath = relativePath,
+                    length = measured,
+                    modifiedAtMillis = 0L,
+                )
+            }
+            require(transfer.length in 0..LanHttpServer.MAX_UPLOAD_BYTES) {
+                "Failas viršija 7 GB ribą: ${transfer.name}"
+            }
+            total = Math.addExact(total, transfer.length)
             require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
-            TransferFile(file, validateRelativePath(relativePath))
+            transfer
         }
     }
 
@@ -562,7 +691,37 @@ class NearbyTransferService : Service() {
         return parts.joinToString("/") { FileSystemRules.validateFileName(it).getOrThrow() }
     }
 
-    private data class TransferFile(val file: File, val relativePath: String)
+    private fun contentLength(uri: Uri): Long? {
+        val descriptorSize = runCatching {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.length.takeIf { it >= 0L }
+            }
+        }.getOrNull()
+        var providerSize: Long? = null
+        runCatching {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+        }.getOrNull()?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 && !cursor.isNull(it) }
+                    ?.let { index -> providerSize = cursor.getLong(index).takeIf { it >= 0L } }
+            }
+        }
+        return descriptorSize ?: providerSize
+    }
+
+    private inner class TransferFile(
+        val file: File?,
+        val contentUri: Uri?,
+        val relativePath: String,
+        val length: Long,
+        val modifiedAtMillis: Long,
+    ) {
+        val name: String get() = relativePath.substringAfterLast('/')
+        val localPath: String? get() = file?.absolutePath
+        fun openInput(): InputStream = file?.let(::FileInputStream)
+            ?: contentResolver.openInputStream(requireNotNull(contentUri))
+            ?: throw IOException("Failo srautas nepasiekiamas: $name")
+    }
 
     private fun cancelTransfer() {
         cancelledByUser = true
@@ -582,6 +741,25 @@ class NearbyTransferService : Service() {
                     runCatching { sendControl(batch.pairing, cookie, "/nearby/cancel", batch.id) }
                 }
             }
+            } finally {
+                synchronized(this@NearbyTransferService) { controlJobs-- }
+                finishIfIdle()
+            }
+        }
+    }
+
+    private fun cancelFile(batchId: String, fileIndex: Int) {
+        if (!NearbyTransferController.queue.cancelFile(batchId, fileIndex)) return
+        val key = fileKey(batchId, fileIndex)
+        cancelledFileKeys += key
+        if (activeFileKey == key) activeCall?.cancel()
+        val batch = NearbyTransferController.queue.get(batchId) ?: return
+        val cookie = NearbyTransferController.connection.cookieFor(batch.pairing) ?: return
+        if (!NearbyTransferController.connection.supportsQueue(batch.pairing)) return
+        synchronized(this) { controlJobs++ }
+        scope.launch {
+            try {
+                runCatching { sendFileControl(batch.pairing, cookie, "/nearby/cancel-file", batchId, fileIndex) }
             } finally {
                 synchronized(this@NearbyTransferService) { controlJobs-- }
                 finishIfIdle()
@@ -642,7 +820,14 @@ class NearbyTransferService : Service() {
                 }
                 NearbyChatController.sent(senderName.ifBlank { "Šis telefonas" }, message)
             } catch (failure: Exception) {
-                NearbyChatController.failed(failure.message ?: "Žinutės išsiųsti nepavyko")
+                NearbyChatController.failed(
+                    if (failure is IllegalArgumentException || failure is IllegalStateException) {
+                        failure.message?.take(240) ?: "Žinutės išsiųsti nepavyko"
+                    } else {
+                        // Socket/provider messages are platform copy and may use another language.
+                        "Žinutės išsiųsti nepavyko"
+                    },
+                )
             } finally {
                 synchronized(this@NearbyTransferService) { controlJobs-- }
                 finishIfIdle()
@@ -657,6 +842,43 @@ class NearbyTransferService : Service() {
         call.timeout().timeout(3, TimeUnit.SECONDS)
         call.execute().use { require(it.isSuccessful || it.code == 404) { "Gavimo sesija nepatvirtinta" } }
     }
+
+    private fun sendFileControl(
+        peer: NearbyPairing,
+        cookie: String,
+        path: String,
+        batchId: String,
+        fileIndex: Int,
+    ) {
+        val url = "http://${peer.host}:${peer.port}$path".toHttpUrl().newBuilder()
+            .addQueryParameter("fileIndex", fileIndex.toString())
+            .build()
+        val request = Request.Builder().url(url).header("Cookie", cookie).header("X-AF-Batch-ID", batchId)
+            .post(ByteArray(0).toRequestBody(null)).build()
+        client.newCall(request).apply { timeout().timeout(3, TimeUnit.SECONDS) }.execute().use {
+            require(it.isSuccessful || it.code == 404) { "Gavimo sesija nepatvirtinta" }
+        }
+    }
+
+    private fun remoteFileStatus(
+        peer: NearbyPairing,
+        cookie: String,
+        batchId: String,
+        fileIndex: Int,
+    ): TransferFileStatus? {
+        if (!NearbyTransferController.connection.supportsQueue(peer)) return null
+        val url = "http://${peer.host}:${peer.port}/nearby/file-status".toHttpUrl().newBuilder()
+            .addQueryParameter("fileIndex", fileIndex.toString())
+            .build()
+        val request = Request.Builder().url(url).header("Cookie", cookie).header("X-AF-Batch-ID", batchId).get().build()
+        return client.newCall(request).apply { timeout().timeout(3, TimeUnit.SECONDS) }.execute().use { response ->
+            checkSessionResponse(peer, response.code)
+            if (!response.isSuccessful) return@use null
+            runCatching { TransferFileStatus.valueOf(response.body?.string().orEmpty()) }.getOrNull()
+        }
+    }
+
+    private fun fileKey(batchId: String, fileIndex: Int): String = "$batchId:$fileIndex"
 
     private fun publish(state: NearbyTransferState) {
         NearbyTransferController.queue.update(requireNotNull(currentBatchId), state)
@@ -695,7 +917,13 @@ class NearbyTransferService : Service() {
             ((state.sentBytes.toDouble() / state.totalBytes.toDouble()) * max).toInt().coerceIn(0, max)
         return notificationBuilder()
             .setContentTitle(getString(R.string.nearby_transfer_notification_title))
-            .setContentText(state.currentFile ?: state.message ?: getString(R.string.nearby_transfer_starting_text))
+            .setContentText(
+                nearbyTransferNotificationText(
+                    state,
+                    resources.configuration.locales[0].language,
+                    getString(R.string.nearby_transfer_starting_text),
+                ),
+            )
             .setProgress(max.coerceAtLeast(1), progress, state.totalBytes <= 0)
             .setOngoing(state.status in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING))
             .addAction(0, getString(R.string.stop), cancelPendingIntent())
@@ -725,27 +953,39 @@ class NearbyTransferService : Service() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    private class ProgressFileRequestBody(
-        private val file: File,
+    private inner class ProgressSourceRequestBody(
+        private val source: TransferFile,
         private val onProgress: (Long) -> Unit,
     ) : RequestBody() {
         override fun isOneShot() = true
         override fun contentType() = "application/octet-stream".toMediaType()
-        override fun contentLength(): Long = file.length()
+        override fun contentLength(): Long = source.length
 
         override fun writeTo(sink: BufferedSink) {
-            FileInputStream(file).use { input ->
-                val buffer = ByteArray(256 * 1_024)
+            source.openInput().use { input ->
+                val buffer = ByteArray(NearbyTransferTuning.IO_BUFFER_BYTES)
                 var sent = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    sink.write(buffer, 0, read)
-                    sent = Math.addExact(sent, read.toLong())
-                    onProgress(sent)
+                try {
+                    while (sent < source.length) {
+                        val read = input.read(buffer, 0, minOf(buffer.size.toLong(), source.length - sent).toInt())
+                        if (read < 0) throw IOException("Failo srautas nutrūko: ${source.name}")
+                        sink.write(buffer, 0, read)
+                        sent = Math.addExact(sent, read.toLong())
+                        onProgress(sent)
+                    }
+                } finally {
+                    buffer.fill(0)
                 }
-                buffer.fill(0)
             }
         }
     }
 }
+
+/** Keeps user file names untouched while localizing only app-owned notification status copy. */
+internal fun nearbyTransferNotificationText(
+    state: NearbyTransferState,
+    language: String,
+    startingText: String,
+): String = state.currentFile
+    ?: state.message?.let { UiTranslator.translate(it, language) }
+    ?: startingText

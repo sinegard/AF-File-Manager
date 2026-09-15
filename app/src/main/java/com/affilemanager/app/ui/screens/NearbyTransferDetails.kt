@@ -63,6 +63,7 @@ internal fun NearbyTransferDetails(
     onPreview: (FileEntry) -> Unit,
     onDismiss: () -> Unit,
     onCancel: (() -> Unit)? = null,
+    onCancelFile: ((TransferFileProgress, Int) -> Unit)? = null,
     message: String? = null,
     cancelLabel: String = "Atšaukti",
     onSendMore: (() -> Unit)? = null,
@@ -79,8 +80,14 @@ internal fun NearbyTransferDetails(
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
     val copiedMessage = uiText("Žinutė nukopijuota")
-    val resolvedLocalName = localName ?: uiText("Šis telefonas")
-    val resolvedPeerName = peerName ?: uiText("Kitas telefonas")
+    val resolvedLocalName = when (localName) {
+        null, "Šis telefonas", "This phone" -> uiText("Šis telefonas")
+        else -> localName
+    }
+    val resolvedPeerName = when (peerName) {
+        null, "Kitas telefonas", "Other phone" -> uiText("Kitas telefonas")
+        else -> peerName
+    }
     AfModalDialog(
         title = "Perdavimas tarp telefonų", icon = Icons.Rounded.PhoneAndroid,
         onDismissRequest = onDismiss, expandedContent = true,
@@ -101,6 +108,26 @@ internal fun NearbyTransferDetails(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
+            }
+            if (files.isNotEmpty()) {
+                val completed = files.count { it.status == TransferFileStatus.COMPLETED }
+                val failed = files.count { it.status == TransferFileStatus.FAILED }
+                val cancelled = files.count { it.status == TransferFileStatus.CANCELLED }
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        LText("Perdavimo kvitas", style = MaterialTheme.typography.titleSmall)
+                        Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                            ReceiptMetric("Failai", totalFiles, Modifier.weight(1f))
+                            ReceiptMetric("Baigta", completed, Modifier.weight(1f))
+                            ReceiptMetric("Nepavyko", failed, Modifier.weight(1f))
+                            ReceiptMetric("Atšaukta", cancelled, Modifier.weight(1f))
+                        }
+                    }
+                }
             }
             LinearProgressIndicator(
                 progress = { if (totalBytes > 0) (transferredBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
@@ -124,7 +151,13 @@ internal fun NearbyTransferDetails(
                     if (outgoingCount != null && index == outgoingCount && index > 0) {
                         SenderCapsule(resolvedPeerName, outgoing = false)
                     }
-                    TransferFileRow(file, index, onPreview, outgoingCount?.let { index >= it }, onCancel)
+                    TransferFileRow(
+                        file,
+                        index,
+                        onPreview,
+                        outgoingCount?.let { index >= it },
+                        onCancelFile?.let { stop -> ({ stop(file, index) }) },
+                    )
                     HorizontalDivider()
                 }
                 if (chatMessages.isNotEmpty()) item("message_divider") {
@@ -134,7 +167,10 @@ internal fun NearbyTransferDetails(
                 itemsIndexed(chatMessages, key = { _, chat -> chat.id }) { index, chat ->
                     val prior = chatMessages.getOrNull(index - 1)
                     if (prior?.senderName != chat.senderName || prior.outgoing != chat.outgoing) {
-                        SenderCapsule(chat.senderName, chat.outgoing)
+                        SenderCapsule(
+                            if (chat.outgoing) resolvedLocalName else chat.senderName.ifBlank { resolvedPeerName },
+                            chat.outgoing,
+                        )
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -179,6 +215,14 @@ internal fun NearbyTransferDetails(
 }
 
 @Composable
+private fun ReceiptMetric(label: String, value: Int, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value.toString(), style = MaterialTheme.typography.titleMedium)
+        LText(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
+}
+
+@Composable
 private fun SenderCapsule(name: String, outgoing: Boolean) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 3.dp),
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
@@ -201,7 +245,7 @@ private fun TransferFileRow(
     val entry = remember(file.localPath, file.relativePath, file.sizeBytes, file.modifiedAtMillis) {
         val visibleName = file.localPath?.let { java.io.File(it).name } ?: file.name
         FileEntry(file.localPath.orEmpty(), visibleName, FileSystemRules.detectKind(file.name, null),
-            file.sizeBytes, file.modifiedAtMillis, false, file.localPath != null, false)
+            file.sizeBytes, file.modifiedAtMillis, false, true, false)
     }
     val visiblePath = file.relativePath.substringBeforeLast('/', "").takeIf(String::isNotEmpty)
         ?.let { "$it/${entry.name}" } ?: entry.name
@@ -233,7 +277,11 @@ private fun TransferFileRow(
             IconButton(onClick = { onPreview(entry) }, modifier = Modifier.testTag("nearby_transfer_preview_$index")) {
                 Icon(Icons.Rounded.Visibility, contentDescription = uiText("Peržiūra"))
             }
-        } else if (file.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.TRANSFERRING) && onStop != null) {
+        } else if (
+            file.batchId.isNotBlank() &&
+            file.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.TRANSFERRING) &&
+            onStop != null
+        ) {
             IconButton(onClick = onStop, modifier = Modifier.testTag("nearby_transfer_stop_$index")) {
                 Icon(Icons.Rounded.Cancel, contentDescription = uiText("Sustabdyti siuntimą"), tint = MaterialTheme.colorScheme.error)
             }

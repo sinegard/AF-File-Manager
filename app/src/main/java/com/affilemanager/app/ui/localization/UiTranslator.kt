@@ -111,8 +111,39 @@ object UiTranslator {
         "Bus pašalinti tik vietiniai istorijos įrašai. Išsiųsti ir gauti failai nebus trinami." to
             "Only local history entries will be removed. Sent and received files will not be deleted.",
         "Kontaktas" to "Contact",
+        "Kontaktai" to "Contacts",
+        "Kontaktas be vardo" to "Unnamed contact",
+        "Kontaktų leidimas nesuteiktas" to "Contacts permission was not granted",
+        "Kontaktų sąrašo perskaityti nepavyko" to "Could not read the contact list",
+        "Pasirinkite bent vieną kontaktą" to "Select at least one contact",
+        "Kontakto duomenys netinkami" to "The contact data is invalid",
+        "Ieškoti kontaktų" to "Search contacts",
+        "Leisti pasiekti kontaktus" to "Allow contact access",
+        "Atitinkančių kontaktų nerasta" to "No matching contacts were found",
+        "Kontaktų leidimas nesuteiktas. Failus vis tiek galite siųsti be šio leidimo." to
+            "Contacts permission was not granted. You can still send files without it.",
+        "Kontaktų leidimas reikalingas tik pasirinktiems kontaktams parodyti ir išsiųsti." to
+            "Contacts permission is used only to show and send the contacts you select.",
         "Pasirinkto kontakto perskaityti nepavyko" to "Could not read the selected contact",
         "Kontakto paruošti nepavyko" to "Could not prepare the contact",
+        "Siejami telefonai" to "Connecting phones",
+        "Susieti telefonus" to "Connect phones",
+        "Telefonai susieti" to "Phones connected",
+        "Siuntimas baigtas" to "Transfer complete",
+        "Siuntimas nepavyko" to "Transfer failed",
+        "Siuntimas baigtas, dalis failų atšaukta" to "Transfer finished; some files were cancelled",
+        "Filtras" to "Filter",
+        "Filtras aktyvus" to "Filter active",
+        "Visi failai" to "All files",
+        "Sujungti pakeitimus" to "Merge changes",
+        "Ryškumas" to "Brightness",
+        "Bet kada" to "Any time",
+        "Neriboti" to "No limit",
+        "Privatus raktas PEM / OpenSSH" to "Private key PEM / OpenSSH",
+        "Naujas privatus raktas PEM / OpenSSH" to "New private key PEM / OpenSSH",
+        "Tvarkyti greitas vietas" to "Manage quick locations",
+        "Pasirinkta vieta" to "Selected location",
+        "Tik skaitymui" to "Read only",
         "Rūšiuoti" to "Sort",
         "Slėpti paiešką" to "Hide search",
         "Rodomi pirmi 500 programų įrašų" to "Showing the first 500 apps",
@@ -332,8 +363,10 @@ object UiTranslator {
         "Debesija ir teikėjų vietos" to "Cloud and provider locations",
         "Atidaryti Android sistemos failus" to "Open Android system files",
         "Pridėti vietą" to "Add location",
+        "Pridėti teikėjo aplanką" to "Add provider folder",
         "Teikėjo vietų dar nepridėta" to "No provider locations added",
         "Pridėkite Google Drive, Nextcloud, Files arba bet kurį Android įdiegtą teikėją." to "Add Google Drive, Nextcloud, Files or any provider installed on Android.",
+        "Android suteikia AF prieigą tik prie čia pasirinkto teikėjo aplanko. Visai Google Drive paskyrai reikalingas atskiras Google prisijungimas." to "Android gives AF access only to the provider folder selected here. A separate Google sign-in is required for the whole Google Drive account.",
         "Naudokite „Pridėti žymelę“ bet kurio failo ar aplanko meniu." to "Use ‘Add bookmark’ in any file or folder menu.",
         "Pasirinkta" to "Selected",
         "Analizė" to "Analyze",
@@ -363,10 +396,14 @@ object UiTranslator {
         "Laikinas slaptažodis (tuščias = sugeneruotas)" to "Temporary password (blank = generated)",
         "Tik skaityti" to "Read only",
         "Neleisti įkelti, pervadinti ar trinti" to "Do not allow uploads, renaming, or deletion",
+        "Anoniminė prieiga" to "Anonymous access",
+        "Leisti prisijungti be naudotojo vardo ir slaptažodžio" to "Allow access without a username or password",
+        "Visi šiame privačiame tinkle galės pasiekti bendrinamą aplanką be slaptažodžio." to "Anyone on this private network can access the shared folder without a password.",
         "Ši sesija leidžia tik skaityti" to "This session is read-only",
         "WebDAV naudoja HTTP. HTTPS/TLS šiame leidime dar nepalaikomas." to "WebDAV uses HTTP. HTTPS/TLS is not supported in this release yet.",
         "Laikina ir aiškiai valdoma sesija" to "Temporary, explicitly controlled session",
         "Prisijungimui naudojamas vienkartinis 8 skaitmenų kodas. Sesija automatiškai baigsis." to "Sign in with a one-time 8-digit code. The session will end automatically.",
+        "Prisijungimui naudojamas vienkartinis 8 skaitmenų kodas. Sesija baigsis pasirinktu laiku arba ją sustabdžius." to "Sign in with a one-time 8-digit code. The session ends at the selected time or when you stop it.",
         "Įveskite telefone nustatytą laikiną slaptažodį." to "Enter the temporary password set on your phone.",
         "Naudotojo varde negali būti tarpų, dvitaškio ar valdymo ženklų" to "The username cannot contain spaces, a colon, or control characters",
         "Netinkamas naudotojo vardas" to "Invalid username",
@@ -374,9 +411,27 @@ object UiTranslator {
         "Slaptažodyje negali būti valdymo ženklų" to "The password cannot contain control characters",
         "Netinkamas laikinas slaptažodis" to "Invalid temporary password",
         "FTP srautas nėra šifruojamas. Naudokite tik patikimame privačiame tinkle; prisijungimas ribojamas laikinu vardu ir kodu." to "FTP traffic is not encrypted. Use it only on a trusted private network; access is limited by a temporary username and code.",
+        "FTP srautas nėra šifruojamas, o anoniminė sesija neturi slaptažodžio. Naudokite tik patikimame privačiame tinkle." to "FTP traffic is not encrypted, and an anonymous session has no password. Use it only on a trusted private network.",
         "Ši laikina WebDAV sesija naudoja HTTP Basic prisijungimą be TLS. Naudokite tik patikimame privačiame tinkle." to "This temporary WebDAV session uses HTTP Basic authentication without TLS. Use it only on a trusted private network.",
+        "WebDAV srautas nėra šifruojamas, o anoniminė sesija neturi slaptažodžio. Naudokite tik patikimame privačiame tinkle." to "WebDAV traffic is not encrypted, and an anonymous session has no password. Use it only on a trusted private network.",
+        "Sesijos trukmė · rankinis sustabdymas" to "Session duration · manual stop",
+        "Veiks iki rankinio sustabdymo" to "Runs until stopped manually",
+        "Atsijungimas · rankinis" to "Disconnect · manual",
+        "Artimų įrenginių paieška išjungta. QR kodas ir rankinis susiejimas vis tiek veikia." to "Nearby device search is off. QR code and manual pairing still work.",
+        "Artimų įrenginių leidimas nesuteiktas. Galite nuskaityti QR kodą arba įklijuoti susiejimo kodą." to "Nearby devices permission was not granted. You can scan the QR code or paste the pairing code.",
+        "Rasti artimus AF įrenginius" to "Find nearby AF devices",
+        "Artimi AF įrenginiai" to "Nearby AF devices",
+        "Ieškoti dar kartą" to "Search again",
+        "Artimų AF įrenginių nerasta. Abiejuose telefonuose įjunkite Wi-Fi ir gavėjo telefone palikite atvertą gavimo langą." to "No nearby AF devices were found. Turn on Wi-Fi on both phones and keep the receive screen open on the receiving phone.",
+        "Artimų įrenginių rodymo paleisti nepavyko" to "Could not make this phone visible to nearby devices",
+        "Artimų įrenginių paieška nepavyko" to "Nearby device search failed",
+        "Nepalaikoma radimo versija" to "Unsupported discovery version",
+        "Privatus gavėjo adresas nerastas" to "The receiver's private address was not found",
+        "Trūksta radimo duomenų" to "Discovery data is missing",
+        "Radimo duomenys per ilgi" to "Discovery data is too long",
         "Paleisti bendrinimą" to "Start sharing",
         "Bendrinimas veikia" to "Sharing is active",
+        "Perdavimo kvitas" to "Transfer receipt",
         "Kopijuoti duomenis" to "Copy details",
         "Prisijungimo duomenys nukopijuoti" to "Connection details copied",
         "Kodas" to "Code",
@@ -888,6 +943,11 @@ object UiTranslator {
         "Perkelti į šiukšlinę" to "Move to trash",
         "Perkelti į šiukšlinę?" to "Move to trash?",
         "Sukurti archyvą" to "Create archive",
+        "Didžiausias archyvo dydis MiB (nebūtinas)" to "Maximum archive size in MiB (optional)",
+        "Įveskite skaičių nuo 1 iki 8192" to "Enter a number from 1 to 8192",
+        "Jei ribos pasiekti nepavyks, archyvas nebus paliktas" to "If the limit cannot be reached, no archive will be kept",
+        "Bus naudojamas stipriausias suspaudimas" to "The strongest compression will be used",
+        "Klonuotų programų failai" to "Cloned app files",
         "Formatas" to "Format",
         "Slaptažodis (nebūtinas, AES-256)" to "Password (optional, AES-256)",
         "Patikimai kopijuoti" to "Reliable copy",
@@ -1537,6 +1597,21 @@ object UiTranslator {
         "Pasiekta AF plano paskirčių riba" to "AF Plan destination limit reached",
     )
 
+    /**
+     * Some Android/library surfaces originate in English while most Compose copy is authored in
+     * Lithuanian. Keep one reverse index so either canonical form resolves to Lithuanian without
+     * a linear scan on every recomposition.
+     */
+    private val lithuanianByEnglish: Map<String, String> = buildMap {
+        english.forEach { (lithuanian, canonicalEnglish) -> putIfAbsent(canonicalEnglish, lithuanian) }
+        RuntimeMessageTranslations.english.forEach { (lithuanian, canonicalEnglish) ->
+            putIfAbsent(canonicalEnglish, lithuanian)
+        }
+        RuntimeMessageTranslations.lithuanian.forEach { (canonicalEnglish, lithuanian) ->
+            putIfAbsent(canonicalEnglish, lithuanian)
+        }
+    }
+
     fun translate(text: String, language: String): String {
         if (text.isBlank()) return text
         val normalizedLanguage = AppLanguageManager.normalizeLanguageTag(language)
@@ -1549,6 +1624,7 @@ object UiTranslator {
         }
         if (normalizedLanguage == AppLanguageManager.LITHUANIAN) {
             RuntimeMessageTranslations.lithuanian[text]?.let { return it }
+            lithuanianByEnglish[text]?.let { return it }
             lithuanianPatterns.firstNotNullOfOrNull { (pattern, transform) ->
                 pattern.matchEntire(text)?.let(transform)
             }?.let { return it }
@@ -1628,9 +1704,6 @@ object UiTranslator {
             Regex("^Istorijoje išsaugota (\\d+) iš (\\d+) failų įrašų$") to { match: MatchResult ->
                 "History stores ${match.groupValues[1]} of ${match.groupValues[2]} file entries"
             },
-            Regex("^(.+) · (.+) · (.+)$") to { match: MatchResult ->
-                "${translate(match.groupValues[1], language)} · ${translate(match.groupValues[2], language)} · ${translate(match.groupValues[3], language)}"
-            },
             Regex("^Prisijungta · UID (\\d+)$") to { match: MatchResult -> "Connected · UID ${match.groupValues[1]}" },
             Regex("^Aplanke daugiau nei (\\d+) elementų$") to { match: MatchResult -> "The folder contains more than ${match.groupValues[1]} items" },
             Regex("^Bus sukurta: (.+)$") to { match: MatchResult -> "Will create: ${match.groupValues[1]}" },
@@ -1664,11 +1737,125 @@ object UiTranslator {
             Regex("^Bendrinimui paruošta: (\\d+)$") to { match: MatchResult -> "Prepared for sharing: ${match.groupValues[1]}" },
             Regex("^Pašalinti nepavyko: (.+)$") to { match: MatchResult -> "Could not remove: ${match.groupValues[1]}" },
             Regex("^Netikėtas Shizuku tarnybos UID: (\\d+)$") to { match: MatchResult -> "Unexpected Shizuku service UID: ${match.groupValues[1]}" },
+            Regex("^Netikėtas root tarnybos UID: (\\d+)$") to { match: MatchResult ->
+                "Unexpected root service UID: ${match.groupValues[1]}"
+            },
             Regex("^(Shizuku failų tarnybos paleisti nepavyko|Shizuku leidimo paprašyti nepavyko|Shizuku failų tarnyba neatsakė laiku|Root failų tarnybos paleisti nepavyko|Root leidimo paprašyti nepavyko|Root failų tarnyba neatsakė laiku): (.+)$") to { match: MatchResult ->
                 "${translate(match.groupValues[1], language)}: ${translate(match.groupValues[2], language)}"
             },
             Regex("^(\\d+) s ryšio laukimo riba$") to { match: MatchResult -> "${match.groupValues[1]} s connection timeout" },
             Regex("^Paskirtyje jau yra „(.+)“$") to { match: MatchResult -> "The destination already contains “${match.groupValues[1]}”" },
+            Regex("^(\\d+) archyvo įrašų nerodoma: viršyta saugi kelio arba naršymo riba$") to { match: MatchResult ->
+                "${match.groupValues[1]} archive entries are hidden: the safe path or browsing limit was exceeded"
+            },
+            Regex("^Failui (.+) žymų riba viršyta$") to { match: MatchResult ->
+                "The tag limit was exceeded for ${match.groupValues[1]}"
+            },
+            Regex("^Vienai paieškai galima išsaugoti iki (\\d+) vietų$") to { match: MatchResult ->
+                "A search can contain up to ${match.groupValues[1]} locations"
+            },
+            Regex("^Pasiektas (\\d+) profilių limitas$") to { match: MatchResult ->
+                "The ${match.groupValues[1]} profile limit was reached"
+            },
+            Regex("^Pasirinkite nuo 1 iki (\\d+) failų ar aplankų$") to { match: MatchResult ->
+                "Select 1 to ${match.groupValues[1]} files or folders"
+            },
+            Regex("^Numeravimo pradžia turi būti nuo 0 iki (\\d+)$") to { match: MatchResult ->
+                "The numbering start must be from 0 to ${match.groupValues[1]}"
+            },
+            Regex("^Skaitmenų skaičius turi būti nuo 1 iki (\\d+)$") to { match: MatchResult ->
+                "The number of digits must be from 1 to ${match.groupValues[1]}"
+            },
+            Regex("^Netinkama reguliarioji išraiška: (.+)$") to { match: MatchResult ->
+                "Invalid regular expression: ${match.groupValues[1]}"
+            },
+            Regex("^Pervadinimas nepavyko, o (\\d+) elementų automatiškai grąžinti nepavyko$") to { match: MatchResult ->
+                "Renaming failed, and ${match.groupValues[1]} items could not be restored automatically"
+            },
+            Regex("^Failo tipas pasikeitė: (.+)$") to { match: MatchResult ->
+                "The file type changed: ${match.groupValues[1]}"
+            },
+            Regex("^Failas pasikeitė po peržiūros: (.+)$") to { match: MatchResult ->
+                "The file changed after the preview: ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko grąžinti: (.+)$") to { match: MatchResult ->
+                "Could not restore: ${match.groupValues[1]}"
+            },
+            Regex("^Numeravimas viršijo (\\d+)$") to { match: MatchResult ->
+                "Numbering exceeded ${match.groupValues[1]}"
+            },
+            Regex("^Pasirinkta daugiau kaip (\\d+) pradinių kelių$") to { match: MatchResult ->
+                "More than ${match.groupValues[1]} source paths were selected"
+            },
+            Regex("^Simbolinės nuorodos nepalaikomos: (.+)$") to { match: MatchResult ->
+                "Symbolic links are not supported: ${match.groupValues[1]}"
+            },
+            Regex("^Aplankų gylis viršija (\\d+) ribą$") to { match: MatchResult ->
+                "Folder depth exceeds the ${match.groupValues[1]} limit"
+            },
+            Regex("^Keli šaltiniai planuoja tą patį tikslą: (.+); pasirinkite „Palikti abu“$") to { match: MatchResult ->
+                "Multiple sources target the same destination: ${match.groupValues[1]}; choose ‘Keep both’"
+            },
+            Regex("^Operacija viršija (\\d+) elementų ribą$") to { match: MatchResult ->
+                "The operation exceeds the ${match.groupValues[1]} item limit"
+            },
+            Regex("^Nepavyko (\\d+) elementų$") to { match: MatchResult ->
+                "${match.groupValues[1]} items failed"
+            },
+            Regex("^Tikslas pasikeitė prieš šaltinio pašalinimą: (.+)$") to { match: MatchResult ->
+                "The destination changed before removing the source: ${match.groupValues[1]}"
+            },
+            Regex("^Tikslas pasikeitė po plano patvirtinimo: (.+)$") to { match: MatchResult ->
+                "The destination changed after the plan was confirmed: ${match.groupValues[1]}"
+            },
+            Regex("^Vienu kartu galima pasirinkti iki (\\d+) pradinių elementų$") to { match: MatchResult ->
+                "You can select up to ${match.groupValues[1]} source items at a time"
+            },
+            Regex("^Siunčiamame rinkinyje daugiau nei (\\d+) failų$") to { match: MatchResult ->
+                "The transfer set contains more than ${match.groupValues[1]} files"
+            },
+            Regex("^Gavęs telefonas atmetė failą \\((\\d+)\\)$") to { match: MatchResult ->
+                "The receiving phone rejected the file (${match.groupValues[1]})"
+            },
+            Regex("^Gavęs telefonas neatvėrė aplanko \\((\\d+)\\)$") to { match: MatchResult ->
+                "The receiving phone did not open the folder (${match.groupValues[1]})"
+            },
+            Regex("^Žinutės išsiųsti nepavyko \\((\\d+)\\)$") to { match: MatchResult ->
+                "Could not send the message (${match.groupValues[1]})"
+            },
+            Regex("^Failo srautas nutrūko: (.+)$") to { match: MatchResult ->
+                "The file stream ended unexpectedly: ${match.groupValues[1]}"
+            },
+            Regex("^Vėl prisijunkite prie (.+)$") to { match: MatchResult ->
+                "Reconnect to ${match.groupValues[1]}"
+            },
+            Regex("^Šalinama iš serverio: (\\d+)$") to { match: MatchResult ->
+                "Deleting from server: ${match.groupValues[1]}"
+            },
+            Regex("^Šalinamas (.+)$") to { match: MatchResult ->
+                "Deleting ${match.groupValues[1]}"
+            },
+            Regex("^PDF viršijo (\\d+) puslapių saugos ribą$") to { match: MatchResult ->
+                "The PDF exceeded the ${match.groupValues[1]}-page safety limit"
+            },
+            Regex("^Šifruoti (.+)$") to { match: MatchResult ->
+                "Encrypt ${match.groupValues[1]}"
+            },
+            Regex("^GitHub atsakė HTTP (\\d+)$") to { match: MatchResult ->
+                "GitHub returned HTTP ${match.groupValues[1]}"
+            },
+            Regex("^APK serveris atsakė HTTP (\\d+)$") to { match: MatchResult ->
+                "The APK server returned HTTP ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko ištrinti (.+)$") to { match: MatchResult ->
+                "Could not delete ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko pašalinti (.+)$") to { match: MatchResult ->
+                "Could not remove ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko užbaigti (.+)$") to { match: MatchResult ->
+                "Could not finish ${match.groupValues[1]}"
+            },
             Regex("^Nukopijuota: (\\d+) · praleista: (\\d+)$") to { match: MatchResult -> "Copied: ${match.groupValues[1]} · skipped: ${match.groupValues[2]}" },
             Regex("^Į privilegijuotą iškarpinę įtraukta: (\\d+) · iš viso: (\\d+)$") to { match: MatchResult -> "Added to the privileged clipboard: ${match.groupValues[1]} · total: ${match.groupValues[2]}" },
             Regex("^Galima atlaisvinti: (.+)$") to { match: MatchResult -> "Can free: ${match.groupValues[1]}" },
@@ -1812,6 +1999,12 @@ object UiTranslator {
             },
             Regex("^Bent (\\d+) failų$") to { match: MatchResult -> "At least ${match.groupValues[1]} files" },
             Regex("^(\\d+) failų$") to { match: MatchResult -> "${match.groupValues[1]} files" },
+            Regex("^Vienu kartu galima siųsti iki (\\d+) kontaktų$") to { match: MatchResult ->
+                "You can send up to ${match.groupValues[1]} contacts at a time"
+            },
+            Regex("^Rodomi pirmi (\\d+) kontaktų$") to { match: MatchResult ->
+                "Showing the first ${match.groupValues[1]} contacts"
+            },
             Regex("^(\\d+) elementų$") to { match: MatchResult -> "${match.groupValues[1]} items" },
             Regex("^Vienu metu galima išsaugoti iki (\\d+) programų$") to { match: MatchResult -> "You can save up to ${match.groupValues[1]} apps at a time" },
             Regex("^Išsaugota programų: (\\d+)$") to { match: MatchResult -> "Apps saved: ${match.groupValues[1]}" },
@@ -1822,8 +2015,15 @@ object UiTranslator {
             Regex("^Rodomi pirmi (\\d+) failai pagal pasirinktą tvarką$") to { match: MatchResult -> "Showing the first ${match.groupValues[1]} files in the selected order" },
             Regex("^(\\d+) failų visoje saugykloje$") to { match: MatchResult -> "${match.groupValues[1]} files across storage" },
             Regex("^Sesijos trukmė · (\\d+) min\\.$") to { match: MatchResult -> "Session duration · ${match.groupValues[1]} min" },
+            Regex("^Atsijungimas · (\\d+) min\\.$") to { match: MatchResult -> "Disconnect · ${match.groupValues[1]} min" },
+            Regex("^Artimų įrenginių (rodymo paleisti nepavyko|paieška nepavyko) \\((\\d+)\\)$") to { match: MatchResult ->
+                "${translate("Artimų įrenginių ${match.groupValues[1]}", language)} (${match.groupValues[2]})"
+            },
             Regex("^Naudotojas: (.+)$") to { match: MatchResult -> "User: ${match.groupValues[1]}" },
             Regex("^Kodas: (.+)$") to { match: MatchResult -> "Code: ${match.groupValues[1]}" },
+            Regex("^Kopijavimo rinkinyje: (\\d+)$") to { match: MatchResult ->
+                "In copy set: ${match.groupValues[1]}"
+            },
             Regex("^(\\d+) elementų · galima atkurti arba išvalyti viską$") to { match: MatchResult ->
                 "${match.groupValues[1]} items · restore them or empty the trash"
             },
@@ -1896,6 +2096,48 @@ object UiTranslator {
             Regex("^„(.+)“ bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę\\.$") to { match: MatchResult ->
                 "“${match.groupValues[1]}” will be deleted through Android's document provider and will not enter AF File Manager trash."
             },
+            Regex("^Failas nebeegzistuoja: (.+)$") to { match: MatchResult ->
+                "File no longer exists: ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko laikinai pervadinti (.+)$") to { match: MatchResult ->
+                "Could not temporarily rename ${match.groupValues[1]}"
+            },
+            Regex("^Aplanko negalima keisti: (.+)$") to { match: MatchResult ->
+                "Folder cannot be modified: ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko atkurti tarpinio vardo: (.+)$") to { match: MatchResult ->
+                "Could not restore the intermediate name: ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko perskaityti (.+)$") to { match: MatchResult ->
+                "Could not read ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko parinkti unikalaus vardo: (.+)$") to { match: MatchResult ->
+                "Could not choose a unique name: ${match.groupValues[1]}"
+            },
+            Regex("^Kopijos dydis nesutampa: (.+)$") to { match: MatchResult ->
+                "Copy size does not match: ${match.groupValues[1]}"
+            },
+            Regex("^Nepavyko pakeisti (.+)$") to { match: MatchResult ->
+                "Could not replace ${match.groupValues[1]}"
+            },
+            Regex("^Aplankas neperskaitomas: (.+)$") to { match: MatchResult ->
+                "The folder is not readable: ${match.groupValues[1]}"
+            },
+            Regex("^Failo srautas nepasiekiamas: (.+)$") to { match: MatchResult ->
+                "File stream unavailable: ${match.groupValues[1]}"
+            },
+            Regex("^Aplankas nepasiekiamas: (.+)$") to { match: MatchResult ->
+                "Folder unavailable: ${match.groupValues[1]}"
+            },
+            Regex("^Nepalaikomas elementas: (.+)$") to { match: MatchResult ->
+                "Unsupported item: ${match.groupValues[1]}"
+            },
+            Regex("^Failo dydis nepasiekiamas: (.+)$") to { match: MatchResult ->
+                "File size unavailable: ${match.groupValues[1]}"
+            },
+            Regex("^(.+) · (.+) · (.+)$") to { match: MatchResult ->
+                "${translate(match.groupValues[1], language)} · ${translate(match.groupValues[2], language)} · ${translate(match.groupValues[3], language)}"
+            },
         )
         patterns.firstNotNullOfOrNull { (pattern, replacement) ->
             pattern.matchEntire(text)?.let(replacement)
@@ -1943,7 +2185,26 @@ object UiTranslator {
         Regex("^Failed: (.+)$") to { match: MatchResult -> "Nepavyko: ${match.groupValues[1]}" },
         Regex("^Undo: (.+)$") to { match: MatchResult -> "Atšaukti: ${match.groupValues[1]}" },
         Regex("^AF Plan: (.+)$") to { match: MatchResult -> "AF planas: ${match.groupValues[1]}" },
+        Regex("^File was saved and verified, but the recovery backup could not be removed: (.+)$") to { match: MatchResult ->
+            "Failas išsaugotas ir patikrintas, bet atkūrimo kopijos pašalinti nepavyko: ${match.groupValues[1]}"
+        },
+        Regex("^Remote save failed and automatic recovery also failed\\. Previous data remains at (.+)$") to { match: MatchResult ->
+            "Nuotolinis išsaugojimas ir automatinis atkūrimas nepavyko. Ankstesni duomenys liko čia: ${match.groupValues[1]}"
+        },
+        Regex("^AF Plan must contain (\\d+)–(\\d+) sources$") to { match: MatchResult ->
+            "AF plane turi būti nuo ${match.groupValues[1]} iki ${match.groupValues[2]} šaltinių"
+        },
+        Regex("^AF Plan must contain (\\d+)–(\\d+) destinations$") to { match: MatchResult ->
+            "AF plane turi būti nuo ${match.groupValues[1]} iki ${match.groupValues[2]} paskirčių"
+        },
+        Regex("^Error: (.+)$") to { match: MatchResult -> "Klaida: ${match.groupValues[1]}" },
+        Regex("^Unsupported (.+) version$") to { match: MatchResult -> "Nepalaikoma ${match.groupValues[1]} versija" },
     )
 
     internal fun hasEnglishEntry(text: String): Boolean = english.containsKey(text) || RuntimeMessageTranslations.english.containsKey(text)
+
+    internal fun hasKnownUiEntry(text: String): Boolean =
+        text in english || text in english.values ||
+            text in RuntimeMessageTranslations.english || text in RuntimeMessageTranslations.english.values ||
+            text in RuntimeMessageTranslations.lithuanian || text in RuntimeMessageTranslations.lithuanian.values
 }

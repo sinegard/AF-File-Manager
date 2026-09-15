@@ -144,6 +144,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.archive.ArchiveFormat
 import com.affilemanager.app.archive.ArchiveCompressionRules
+import com.affilemanager.app.archive.ArchiveTargetSizeRules
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.ClipboardMode
@@ -593,7 +594,7 @@ fun FilesScreen(
             sourcePaths = request.sourcePaths,
             loadSummary = viewModel::loadFileSelectionInfo,
             onDismiss = { archiveRequest = null },
-            onCreate = { name, format, password, compressionLevel ->
+            onCreate = { name, format, password, compressionLevel, maxOutputBytes ->
                 viewModel.createArchive(
                     request.panel,
                     name,
@@ -601,6 +602,7 @@ fun FilesScreen(
                     password,
                     request.sourcePaths,
                     compressionLevel,
+                    maxOutputBytes,
                 )
                 archiveRequest = null
             },
@@ -2279,12 +2281,18 @@ private fun ArchiveDialog(
     sourcePaths: List<String>,
     loadSummary: suspend (Collection<String>) -> Result<FileSelectionSummary>,
     onDismiss: () -> Unit,
-    onCreate: (String, ArchiveFormat, CharArray?, Int) -> Unit,
+    onCreate: (String, ArchiveFormat, CharArray?, Int, Long?) -> Unit,
 ) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     var format by remember { mutableStateOf(ArchiveFormat.ZIP) }
     var password by remember { mutableStateOf("") }
     var compressionLevel by remember { mutableStateOf(ArchiveCompressionRules.DEFAULT_LEVEL) }
+    var maximumSizeMib by remember { mutableStateOf("") }
+    val adjustableCompression = format == ArchiveFormat.ZIP || format == ArchiveFormat.TAR_GZ
+    val maximumBytes = if (adjustableCompression) {
+        runCatching { ArchiveTargetSizeRules.parseMib(maximumSizeMib) }.getOrNull()
+    } else null
+    val maximumSizeValid = !adjustableCompression || maximumSizeMib.isBlank() || maximumBytes != null
     val selectionSummary by produceState<FileSelectionSummary?>(initialValue = null, sourcePaths) {
         value = loadSummary(sourcePaths).getOrNull()
     }
@@ -2297,9 +2305,15 @@ private fun ArchiveDialog(
             TextButton(onClick = onDismiss) { LText("Atšaukti") }
             Button(
                 onClick = {
-                    onCreate(name, format, password.takeIf(String::isNotBlank)?.toCharArray(), compressionLevel)
+                    onCreate(
+                        name,
+                        format,
+                        password.takeIf { format == ArchiveFormat.ZIP && it.isNotBlank() }?.toCharArray(),
+                        compressionLevel,
+                        maximumBytes,
+                    )
                 },
-                enabled = name.isNotBlank(),
+                enabled = name.isNotBlank() && maximumSizeValid,
             ) {
                 LText("Kurti")
             }
@@ -2336,9 +2350,9 @@ private fun ArchiveDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                val adjustableCompression = format == ArchiveFormat.ZIP || format == ArchiveFormat.TAR_GZ
                 LText(
-                    if (adjustableCompression) "Suspaudimo lygis: $compressionLevel iš 9"
+                    if (adjustableCompression && maximumBytes != null) "Bus naudojamas stipriausias suspaudimas"
+                    else if (adjustableCompression) "Suspaudimo lygis: $compressionLevel iš 9"
                     else "Šiam formatui naudojamas numatytasis suspaudimas",
                     style = MaterialTheme.typography.labelLarge,
                 )
@@ -2347,9 +2361,23 @@ private fun ArchiveDialog(
                     onValueChange = { compressionLevel = it.roundToInt().coerceIn(0, 9) },
                     valueRange = 0f..9f,
                     steps = 8,
-                    enabled = adjustableCompression,
+                    enabled = adjustableCompression && maximumBytes == null,
                     modifier = Modifier.fillMaxWidth().testTag("archive_compression_level"),
                 )
+                if (adjustableCompression) {
+                    OutlinedTextField(
+                        value = maximumSizeMib,
+                        onValueChange = { value -> maximumSizeMib = value.filter(Char::isDigit).take(4) },
+                        label = { LText("Didžiausias archyvo dydis MiB (nebūtinas)") },
+                        supportingText = {
+                            if (!maximumSizeValid) LText("Įveskite skaičių nuo 1 iki 8192")
+                            else LText("Jei ribos pasiekti nepavyks, archyvas nebus paliktas")
+                        },
+                        isError = !maximumSizeValid,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("archive_maximum_size_mib"),
+                    )
+                }
                 selectionSummary?.let { summary ->
                     LText(
                         "Šaltinio dydis: ${FileSystemRules.humanBytes(summary.totalBytes)} · failų: ${summary.fileCount}",
