@@ -29,4 +29,13 @@ class AppearanceRulesTest {
     fun addingOptionalPalettesDoesNotChangeTheDefault() {
         assertEquals(AppColorPalette.DEFAULT, AppearanceSettings().colorPalette)
     }
+
+    @Test
+    fun interfaceScaleIsBoundedAndSnappedToFivePercentSteps() {
+        assertEquals(75, AppearanceRules.normalizeInterfaceScale(20))
+        assertEquals(75, AppearanceRules.normalizeInterfaceScale(77))
+        assertEquals(80, AppearanceRules.normalizeInterfaceScale(78))
+        assertEquals(100, AppearanceRules.normalizeInterfaceScale(100))
+        assertEquals(125, AppearanceRules.normalizeInterfaceScale(999))
+    }
 }

@@ -54,6 +54,7 @@ class SyncEngineTest {
         }
 
         override suspend fun createDirectory(path: String) = Unit
+        override suspend fun createFile(path: String) { files[path] = ByteArray(0) }
         override suspend fun rename(fromPath: String, toPath: String) { files[toPath] = requireNotNull(files.remove(fromPath)) }
         override suspend fun delete(path: String, recursive: Boolean) { files.remove(path) }
         override suspend fun close() = Unit

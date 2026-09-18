@@ -560,6 +560,8 @@ internal fun FilesHome(
     onConfigureLayout: (HomeDisplayArea) -> Unit,
     onAddSafLocation: () -> Unit,
     onOpenSafLocation: (SafLocation) -> Unit,
+    onRenameSafLocation: (String, String) -> Unit,
+    onRemoveSafLocation: (String) -> Unit,
     onOpenSystemFiles: () -> Unit,
     onCustomizeHome: () -> Unit,
 ) {
@@ -582,6 +584,8 @@ internal fun FilesHome(
     }.map(::asLocation)
     var showAllRecent by remember { mutableStateOf(false) }
     var showCloudLocations by remember { mutableStateOf(false) }
+    var editCloudLocation by remember { mutableStateOf<SafLocation?>(null) }
+    var removeCloudLocation by remember { mutableStateOf<SafLocation?>(null) }
     var showBookmarks by remember { mutableStateOf(false) }
     val bookmarks = remember(customization.shortcuts) { customization.shortcuts.filter { !it.builtIn } }
     Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -758,7 +762,7 @@ internal fun FilesHome(
                                     modifier = Modifier.size(28.dp),
                                 )
                                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                                    Text(location.providerLabel ?: location.title, fontWeight = FontWeight.SemiBold)
+                                    Text(location.title, fontWeight = FontWeight.SemiBold)
                                     Text(
                                         location.folderName ?: uiText(if (location.canWrite) "Pasirinkta vieta" else "Tik skaitymui"),
                                         style = MaterialTheme.typography.labelSmall,
@@ -766,12 +770,39 @@ internal fun FilesHome(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                                SafLocationActionButtons(
+                                    location = location,
+                                    onEdit = { editCloudLocation = location },
+                                    onRemove = { removeCloudLocation = location },
+                                )
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    editCloudLocation?.let { location ->
+        SafLocationEditDialog(
+            location = location,
+            onDismiss = { editCloudLocation = null },
+            onSave = { title ->
+                onRenameSafLocation(location.uri, title)
+                editCloudLocation = null
+            },
+        )
+    }
+
+    removeCloudLocation?.let { location ->
+        SafLocationRemovalDialog(
+            location = location,
+            onDismiss = { removeCloudLocation = null },
+            onRemove = {
+                onRemoveSafLocation(location.uri)
+                removeCloudLocation = null
+            },
+        )
     }
 
     if (showBookmarks) {

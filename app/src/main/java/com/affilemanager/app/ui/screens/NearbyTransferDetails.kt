@@ -7,19 +7,24 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Cancel
-import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
@@ -30,6 +35,7 @@ import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +52,7 @@ import com.affilemanager.app.transfer.TransferFileProgress
 import com.affilemanager.app.transfer.TransferFileStatus
 import com.affilemanager.app.transfer.NearbyChatMessage
 import com.affilemanager.app.transfer.NearbyChatController
+import com.affilemanager.app.transfer.TransferProgressEstimator
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.LocalFileVisual
 import com.affilemanager.app.ui.localization.LText
@@ -76,9 +83,17 @@ internal fun NearbyTransferDetails(
     chatSending: Boolean = false,
     chatError: String? = null,
     onSendMessage: ((String) -> Unit)? = null,
+    bytesPerSecond: Long = 0L,
+    remainingMillis: Long? = null,
 ) {
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    var scrollInitialized by remember { mutableStateOf(false) }
+    var previousMessageId by remember { mutableStateOf<String?>(null) }
+    var previousFileKey by remember { mutableStateOf<String?>(null) }
+    var gridMode by remember { mutableStateOf(false) }
+    var previousGridMode by remember { mutableStateOf(false) }
     val copiedMessage = uiText("Žinutė nukopijuota")
     val resolvedLocalName = when (localName) {
         null, "Šis telefonas", "This phone" -> uiText("Šis telefonas")
@@ -87,6 +102,41 @@ internal fun NearbyTransferDetails(
     val resolvedPeerName = when (peerName) {
         null, "Kitas telefonas", "Other phone" -> uiText("Kitas telefonas")
         else -> peerName
+    }
+    val focusFileIndex = files.indexOfFirst { it.status == TransferFileStatus.TRANSFERRING }
+        .takeIf { it >= 0 }
+        ?: files.indexOfLast { it.status == TransferFileStatus.WAITING }.takeIf { it >= 0 }
+        ?: files.lastIndex.takeIf { it >= 0 }
+    val focusFileKey = focusFileIndex?.let { index ->
+        files[index].let { "${it.batchId}:${it.relativePath}:${it.status}" }
+    }
+    val latestMessageId = chatMessages.lastOrNull()?.id
+    val outgoingFileCount = (outgoingCount ?: files.size).coerceIn(0, files.size)
+    val incomingFileCount = files.size - outgoingFileCount
+    val gridFileItemCount = (if (outgoingFileCount > 0) 1 + (outgoingFileCount + 3) / 4 else 0) +
+        (if (incomingFileCount > 0) 1 + (incomingFileCount + 3) / 4 else 0)
+    val fileItemCount = if (gridMode) gridFileItemCount else if (files.isNotEmpty()) 1 + files.size else 0
+    val focusedListIndex = focusFileIndex?.let { index ->
+        if (!gridMode) 1 + index
+        else if (index < outgoingFileCount) 1 + index / 4
+        else (if (outgoingFileCount > 0) 1 + (outgoingFileCount + 3) / 4 else 0) +
+            1 + (index - outgoingFileCount) / 4
+    }
+    LaunchedEffect(latestMessageId, focusFileKey, gridMode) {
+        val messageChanged = latestMessageId != null && latestMessageId != previousMessageId
+        val fileChanged = focusFileKey != null && focusFileKey != previousFileKey
+        val target = when {
+            !scrollInitialized && focusedListIndex != null -> focusedListIndex
+            !scrollInitialized && latestMessageId != null -> fileItemCount + chatMessages.size
+            messageChanged -> fileItemCount + chatMessages.size
+            fileChanged || gridMode != previousGridMode -> focusedListIndex
+            else -> null
+        }
+        scrollInitialized = true
+        previousMessageId = latestMessageId
+        previousFileKey = focusFileKey
+        previousGridMode = gridMode
+        target?.let { listState.animateScrollToItem(it.coerceAtLeast(0)) }
     }
     AfModalDialog(
         title = "Perdavimas tarp telefonų", icon = Icons.Rounded.PhoneAndroid,
@@ -134,31 +184,64 @@ internal fun NearbyTransferDetails(
                     else if (files.isNotEmpty() && files.all { it.status == TransferFileStatus.COMPLETED }) 1f else 0f },
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text("${files.count { it.status == TransferFileStatus.COMPLETED }}/$totalFiles · " +
-                "${FileSystemRules.humanBytes(transferredBytes)} / ${FileSystemRules.humanBytes(totalBytes)}",
-                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
-            message?.let { LText(it, modifier = Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall) }
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f).testTag("nearby_transfer_files")) {
-                if (files.isNotEmpty()) item("outgoing_header") {
-                    SenderCapsule(if ((outgoingCount ?: files.size) > 0) resolvedLocalName else resolvedPeerName,
-                        outgoing = (outgoingCount ?: files.size) > 0)
-                }
-                itemsIndexed(files, key = { index, file ->
-                    val incoming = outgoingCount?.let { index >= it } == true
-                    val localIndex = if (incoming) index - requireNotNull(outgoingCount) else index
-                    "$incoming:${file.batchId}:$localIndex:${file.relativePath}"
-                }) { index, file ->
-                    if (outgoingCount != null && index == outgoingCount && index > 0) {
-                        SenderCapsule(resolvedPeerName, outgoing = false)
-                    }
-                    TransferFileRow(
-                        file,
-                        index,
-                        onPreview,
-                        outgoingCount?.let { index >= it },
-                        onCancelFile?.let { stop -> ({ stop(file, index) }) },
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("${files.count { it.status == TransferFileStatus.COMPLETED }}/$totalFiles · " +
+                    "${FileSystemRules.humanBytes(transferredBytes)} / ${FileSystemRules.humanBytes(totalBytes)}",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                if (files.isNotEmpty()) IconButton(
+                    onClick = { gridMode = !gridMode },
+                    modifier = Modifier.testTag("nearby_files_view_toggle"),
+                ) {
+                    Icon(
+                        if (gridMode) Icons.AutoMirrored.Rounded.List else Icons.Rounded.GridView,
+                        contentDescription = uiText(if (gridMode) "Rodyti sąrašą" else "Rodyti tinklelį"),
                     )
-                    HorizontalDivider()
+                }
+            }
+            TransferRateAndEta(bytesPerSecond, remainingMillis)
+            message?.let { LText(it, modifier = Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall) }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth().weight(1f).testTag("nearby_transfer_files"),
+            ) {
+                if (gridMode) {
+                    if (outgoingFileCount > 0) {
+                        item("outgoing_header") { SenderCapsule(resolvedLocalName, outgoing = true) }
+                        items((outgoingFileCount + 3) / 4, key = { "outgoing_grid_$it" }) { row ->
+                            TransferGridRow(files, row * 4, minOf(outgoingFileCount, (row + 1) * 4),
+                                incoming = false, onPreview = onPreview, onCancelFile = onCancelFile)
+                        }
+                    }
+                    if (incomingFileCount > 0) {
+                        item("incoming_header") { SenderCapsule(resolvedPeerName, outgoing = false) }
+                        items((incomingFileCount + 3) / 4, key = { "incoming_grid_$it" }) { row ->
+                            val start = outgoingFileCount + row * 4
+                            TransferGridRow(files, start, minOf(files.size, start + 4),
+                                incoming = true, onPreview = onPreview, onCancelFile = onCancelFile)
+                        }
+                    }
+                } else {
+                    if (files.isNotEmpty()) item("outgoing_header") {
+                        SenderCapsule(if (outgoingFileCount > 0) resolvedLocalName else resolvedPeerName,
+                            outgoing = outgoingFileCount > 0)
+                    }
+                    itemsIndexed(files, key = { index, file ->
+                        val incoming = outgoingCount?.let { index >= it } == true
+                        val localIndex = if (incoming) index - requireNotNull(outgoingCount) else index
+                        "$incoming:${file.batchId}:$localIndex:${file.relativePath}"
+                    }) { index, file ->
+                        if (outgoingCount != null && index == outgoingCount && index > 0) {
+                            SenderCapsule(resolvedPeerName, outgoing = false)
+                        }
+                        TransferFileRow(
+                            file,
+                            index,
+                            onPreview,
+                            outgoingCount?.let { index >= it },
+                            onCancelFile?.let { stop -> ({ stop(file, index) }) },
+                        )
+                        HorizontalDivider()
+                    }
                 }
                 if (chatMessages.isNotEmpty()) item("message_divider") {
                     LText("Žinutės", style = MaterialTheme.typography.titleSmall,
@@ -234,6 +317,77 @@ private fun SenderCapsule(name: String, outgoing: Boolean) {
 }
 
 @Composable
+private fun TransferGridRow(
+    files: List<TransferFileProgress>,
+    start: Int,
+    endExclusive: Int,
+    incoming: Boolean,
+    onPreview: (FileEntry) -> Unit,
+    onCancelFile: ((TransferFileProgress, Int) -> Unit)?,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (index in start until endExclusive) {
+            val file = files[index]
+            TransferGridFileCard(file, index, incoming, onPreview,
+                onCancelFile?.let { stop -> ({ stop(file, index) }) }, Modifier.weight(1f))
+        }
+        repeat(4 - (endExclusive - start)) { Spacer(Modifier.weight(1f)) }
+    }
+}
+
+@Composable
+private fun TransferGridFileCard(
+    file: TransferFileProgress,
+    index: Int,
+    incoming: Boolean,
+    onPreview: (FileEntry) -> Unit,
+    onStop: (() -> Unit)?,
+    modifier: Modifier,
+) {
+    val entry = remember(file.localPath, file.name, file.sizeBytes, file.modifiedAtMillis) {
+        FileEntry(file.localPath.orEmpty(), file.localPath?.let { java.io.File(it).name } ?: file.name,
+            FileSystemRules.detectKind(file.name, null), file.sizeBytes, file.modifiedAtMillis,
+            false, true, false)
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier.padding(vertical = 3.dp).testTag("nearby_transfer_file_$index"),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            LocalFileVisual(entry, 44.dp, 44.dp, showThumbnails = file.localPath != null,
+                modifier = Modifier.size(44.dp))
+            Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall)
+            LText(if (incoming) "Gaunami failai" else "Siunčiami failai",
+                maxLines = 1, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinearProgressIndicator(
+                progress = { if (file.sizeBytes > 0) (file.transferredBytes.toFloat() / file.sizeBytes).coerceIn(0f, 1f)
+                    else if (file.status == TransferFileStatus.COMPLETED) 1f else 0f },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            )
+            when {
+                file.status == TransferFileStatus.COMPLETED && file.localPath != null ->
+                    IconButton(onClick = { onPreview(entry) }, modifier = Modifier.size(36.dp)
+                        .testTag("nearby_transfer_preview_$index")) {
+                        Icon(Icons.AutoMirrored.Rounded.OpenInNew,
+                            contentDescription = uiText("Atidaryti"), modifier = Modifier.size(18.dp))
+                    }
+                file.batchId.isNotBlank() &&
+                    file.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.TRANSFERRING) &&
+                    onStop != null ->
+                    IconButton(onClick = onStop, modifier = Modifier.size(36.dp)
+                        .testTag("nearby_transfer_stop_$index")) {
+                        Icon(Icons.Rounded.Cancel, contentDescription = uiText("Sustabdyti siuntimą"),
+                            tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                    }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TransferFileRow(
     file: TransferFileProgress,
     index: Int,
@@ -274,9 +428,10 @@ private fun TransferFileRow(
             )
         }
         if (file.status == TransferFileStatus.COMPLETED && file.localPath != null) {
-            IconButton(onClick = { onPreview(entry) }, modifier = Modifier.testTag("nearby_transfer_preview_$index")) {
-                Icon(Icons.Rounded.Visibility, contentDescription = uiText("Peržiūra"))
-            }
+            TextButton(
+                onClick = { onPreview(entry) },
+                modifier = Modifier.testTag("nearby_transfer_preview_$index"),
+            ) { LText("Atidaryti", maxLines = 1) }
         } else if (
             file.batchId.isNotBlank() &&
             file.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.TRANSFERRING) &&
@@ -287,4 +442,14 @@ private fun TransferFileRow(
             }
         }
     }
+}
+
+@Composable
+internal fun TransferRateAndEta(bytesPerSecond: Long, remainingMillis: Long?) {
+    if (bytesPerSecond <= 0L || remainingMillis == null) return
+    LText(
+        "${FileSystemRules.humanBytes(bytesPerSecond)}/s · liko apie ${TransferProgressEstimator.remainingSeconds(remainingMillis)}s",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.testTag("transfer_rate_eta"),
+    )
 }

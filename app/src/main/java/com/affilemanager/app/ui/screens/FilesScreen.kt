@@ -441,6 +441,8 @@ fun FilesScreen(
                     onConfigureLayout = { area -> homeDisplayArea = area },
                     onAddSafLocation = onAddSafLocation,
                     onOpenSafLocation = viewModel::openSafLocation,
+                    onRenameSafLocation = viewModel::renameSafLocation,
+                    onRemoveSafLocation = viewModel::removeSafLocation,
                     onOpenSystemFiles = onOpenSystemFiles,
                     onCustomizeHome = { showHomeCustomization = true },
                 )
@@ -2153,11 +2155,11 @@ private fun EmptyPanel(title: String, description: String) {
 private enum class CreateItemType { FOLDER, FILE, ARCHIVE }
 
 @Composable
-private fun CreateItemDialog(
+internal fun CreateItemDialog(
     onDismiss: () -> Unit,
     onCreateFolder: (String) -> Unit,
     onCreateFile: (String) -> Unit,
-    onCreateArchive: (String, ArchiveFormat) -> Unit,
+    onCreateArchive: ((String, ArchiveFormat) -> Unit)? = null,
 ) {
     var name by remember { mutableStateOf("") }
     var itemType by remember { mutableStateOf(CreateItemType.FOLDER) }
@@ -2184,7 +2186,7 @@ private fun CreateItemDialog(
                     when (itemType) {
                         CreateItemType.FOLDER -> onCreateFolder(name)
                         CreateItemType.FILE -> onCreateFile(name)
-                        CreateItemType.ARCHIVE -> onCreateArchive(name, archiveFormat)
+                        CreateItemType.ARCHIVE -> onCreateArchive?.invoke(name, archiveFormat)
                     }
                 },
                 enabled = name.isNotBlank(),
@@ -2211,12 +2213,14 @@ private fun CreateItemDialog(
                         label = { LText("Failas") },
                         modifier = Modifier.testTag("create_type_file"),
                     )
-                    FilterChip(
-                        selected = itemType == CreateItemType.ARCHIVE,
-                        onClick = { itemType = CreateItemType.ARCHIVE },
-                        label = { LText("Archyvas") },
-                        modifier = Modifier.testTag("create_type_archive"),
-                    )
+                    if (onCreateArchive != null) {
+                        FilterChip(
+                            selected = itemType == CreateItemType.ARCHIVE,
+                            onClick = { itemType = CreateItemType.ARCHIVE },
+                            label = { LText("Archyvas") },
+                            modifier = Modifier.testTag("create_type_archive"),
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = name,

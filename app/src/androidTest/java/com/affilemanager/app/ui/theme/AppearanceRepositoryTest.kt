@@ -45,15 +45,22 @@ class AppearanceRepositoryTest {
             repository.setThemeMode(AppThemeMode.DARK)
             repository.setColorPalette(AppColorPalette.MATERIAL_BLUE)
             repository.setAmoledBlack(true)
+            repository.setInterfaceScalePercent(117)
 
             assertEquals(
-                AppearanceSettings(AppThemeMode.DARK, AppColorPalette.MATERIAL_BLUE, amoledBlack = true),
+                AppearanceSettings(
+                    AppThemeMode.DARK,
+                    AppColorPalette.MATERIAL_BLUE,
+                    amoledBlack = true,
+                    interfaceScalePercent = 115,
+                ),
                 AppearanceRepository(application).settings.value,
             )
         } finally {
             repository.setThemeMode(AppThemeMode.SYSTEM)
             repository.setColorPalette(AppColorPalette.DEFAULT)
             repository.setAmoledBlack(false)
+            repository.setInterfaceScalePercent(AppearanceRules.DEFAULT_INTERFACE_SCALE_PERCENT)
         }
     }
 }

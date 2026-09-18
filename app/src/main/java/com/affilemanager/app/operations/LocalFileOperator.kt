@@ -12,7 +12,7 @@ class LocalFileOperator {
     companion object {
         const val MAX_OPERATION_ENTRIES = 200_000
         const val MAX_TREE_DEPTH = 64
-        private const val BUFFER_SIZE = 256 * 1_024
+        private const val BUFFER_SIZE = 1 * 1_024 * 1_024
     }
 
     private data class Scan(val items: Int, val bytes: Long)

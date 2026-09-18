@@ -184,6 +184,7 @@ class RemoteEditSaverTest {
         }
 
         override suspend fun createDirectory(path: String) = error("Not used")
+        override suspend fun createFile(path: String) = error("Not used")
         override suspend fun rename(fromPath: String, toPath: String) {
             val from = RemotePath.normalize(fromPath)
             val to = RemotePath.normalize(toPath)

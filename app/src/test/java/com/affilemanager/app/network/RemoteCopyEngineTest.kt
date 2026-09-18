@@ -175,6 +175,13 @@ class RemoteCopyEngineTest {
             directories += normalized
         }
 
+        override suspend fun createFile(path: String) {
+            val normalized = RemotePath.normalize(path)
+            require(normalized !in directories && normalized !in files) { "Already exists" }
+            require(parent(normalized) in directories)
+            files[normalized] = ByteArray(0)
+        }
+
         override suspend fun rename(fromPath: String, toPath: String) {
             val from = RemotePath.normalize(fromPath)
             val to = RemotePath.normalize(toPath)

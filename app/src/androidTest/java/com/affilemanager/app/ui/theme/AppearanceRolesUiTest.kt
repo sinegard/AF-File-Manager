@@ -1,6 +1,8 @@
 package com.affilemanager.app.ui.theme
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.runtime.mutableStateOf
@@ -11,6 +13,7 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -89,6 +92,22 @@ class AppearanceRolesUiTest {
             compose.runOnIdle { popup.value = false; selected.value = selected.value.copy(background = 0xffffffff.toInt(),
                 surface = 0xff000000.toInt(), popup = 0xffffffff.toInt(), controls = 0xff000000.toInt()) }
         }
+    }
+
+    @Test fun interfaceScaleChangesDpAndTextDensityForTheWholeTheme() {
+        val scale = mutableStateOf(100)
+        compose.setContent {
+            AFFileManagerTheme(AppearanceSettings(interfaceScalePercent = scale.value)) {
+                Box(Modifier.size(100.dp).testTag("scaled_box"))
+            }
+        }
+        val normal = compose.onNodeWithTag("scaled_box").fetchSemanticsNode().boundsInRoot.width
+        compose.runOnIdle { scale.value = 125 }
+        val enlarged = compose.onNodeWithTag("scaled_box").fetchSemanticsNode().boundsInRoot.width
+        compose.runOnIdle { scale.value = 75 }
+        val reduced = compose.onNodeWithTag("scaled_box").fetchSemanticsNode().boundsInRoot.width
+        assertEquals(normal * 1.25f, enlarged, 2f)
+        assertEquals(normal * .75f, reduced, 2f)
     }
 
     private fun assertReadable(tag: String, fill: Color) {

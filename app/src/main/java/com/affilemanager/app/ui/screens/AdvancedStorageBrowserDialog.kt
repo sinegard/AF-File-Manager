@@ -1,6 +1,5 @@
 package com.affilemanager.app.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -127,9 +126,8 @@ fun AdvancedStorageBrowserDialog(
     }
     val allSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.absolutePath in state.selectedPaths }
 
-    BackHandler { viewModel.navigateAdvancedBack() }
     Dialog(
-        onDismissRequest = viewModel::closeAdvancedBrowser,
+        onDismissRequest = { viewModel.navigateAdvancedBack() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {

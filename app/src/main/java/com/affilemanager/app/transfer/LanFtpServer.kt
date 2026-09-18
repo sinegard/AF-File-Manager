@@ -318,7 +318,7 @@ class LanFtpServer(
                                         val read = input.read(buffer)
                                         if (read < 0) break
                                         total = Math.addExact(total, read.toLong())
-                                        require(total <= MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
+                                        require(total <= MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
                                         output.write(buffer, 0, read)
                                     }
                                 }

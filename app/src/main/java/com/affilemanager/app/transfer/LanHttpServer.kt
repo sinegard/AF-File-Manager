@@ -50,6 +50,8 @@ data class LanUploadProgress(
     val totalBytes: Long,
     val completed: Boolean = false,
     val files: List<TransferFileProgress> = emptyList(),
+    val bytesPerSecond: Long = 0L,
+    val remainingMillis: Long? = null,
 )
 
 internal interface TemporaryLanServer : AutoCloseable {
@@ -85,7 +87,7 @@ class LanHttpServer(
         const val MAX_REQUESTS_PER_SESSION = 10_000
         const val MAX_AUTH_FAILURES = 20
         const val MAX_HEADER_BYTES = 16 * 1_024
-        const val MAX_UPLOAD_BYTES = 7L * 1_024 * 1_024 * 1_024
+        const val MAX_UPLOAD_BYTES = 32L * 1_024 * 1_024 * 1_024
         const val MAX_NEARBY_MESSAGE_BYTES = NearbyChatController.MAX_MESSAGE_BYTES
         private const val SOCKET_TIMEOUT_MILLIS = 30_000
         private const val UPLOAD_SOCKET_TIMEOUT_MILLIS = 120_000
@@ -316,12 +318,16 @@ class LanHttpServer(
         }
     }
 
-    private fun publishNearbyFiles() = synchronized(nearbyProgressLock) {
+    private fun publishNearbyFiles(
+        bytesPerSecond: Long = 0L,
+        remainingMillis: Long? = null,
+    ) = synchronized(nearbyProgressLock) {
         val files = nearbyFiles.snapshot()
         val active = files.firstOrNull { it.status == TransferFileStatus.TRANSFERRING }
         onUploadProgress(LanUploadProgress(active?.name.orEmpty(), 0, files.size,
             active?.transferredBytes ?: 0L, active?.sizeBytes ?: 0L, files.sumOf { it.transferredBytes },
-            files.sumOf { it.sizeBytes }, completed = files.all { it.status.isTerminal() }, files = files))
+            files.sumOf { it.sizeBytes }, completed = files.all { it.status.isTerminal() }, files = files,
+            bytesPerSecond = bytesPerSecond, remainingMillis = remainingMillis))
     }
 
     private fun handleLogin(request: Request, input: BufferedInputStream, output: BufferedOutputStream, active: LanServerSession) {
@@ -410,7 +416,7 @@ class LanHttpServer(
 
     private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
         val length = request.contentLength
-        require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
+        require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
         val directory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
         require(directory.canWrite()) { "Pasirinktas katalogas neleidžia įkelti" }
         val name = FileSystemRules.validateFileName(request.query["name"].orEmpty()).getOrThrow()
@@ -431,6 +437,7 @@ class LanHttpServer(
         var remaining = length
         var received = 0L
         var lastProgressAt = 0L
+        val uploadStartedAt = System.nanoTime()
         fun publishProgress(completed: Boolean = false, failed: Boolean = false) {
             val now = System.nanoTime()
             if (!completed && !failed && received > 0L && now - lastProgressAt < 150_000_000L) return
@@ -445,8 +452,23 @@ class LanHttpServer(
                 localPath = if (completed) target.absolutePath else null,
                 modifiedAtMillis = if (completed) target.lastModified() else 0,
             ), batchId)
+            val receivedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.transferredBytes }
+                else (batchOffset + received).coerceAtMost(totalBytes)
+            val expectedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.sizeBytes } else totalBytes
+            val metrics = TransferProgressEstimator.calculate(
+                transferredBytes = received,
+                totalBytes = (expectedTotal - batchOffset).coerceAtLeast(received),
+                elapsedMillis = ((now - uploadStartedAt).coerceAtLeast(0L) / 1_000_000L),
+            )
+            val remainingMillis = TransferProgressEstimator.remainingMillis(
+                (expectedTotal - receivedTotal).coerceAtLeast(0L),
+                metrics.bytesPerSecond,
+            )
             val announced = nearbyFiles.hasManifest()
-            if (announced) { publishNearbyFiles(); return }
+            if (announced) {
+                publishNearbyFiles(metrics.bytesPerSecond, if (completed && receivedTotal >= expectedTotal) 0L else remainingMillis)
+                return
+            }
             onUploadProgress(
                 LanUploadProgress(
                     currentFile = name,
@@ -454,10 +476,12 @@ class LanHttpServer(
                     totalFiles = if (announced) files.size else totalFiles,
                     currentFileBytes = received,
                     currentFileSize = length,
-                    receivedBytes = if (announced) files.sumOf { it.transferredBytes } else (batchOffset + received).coerceAtMost(totalBytes),
-                    totalBytes = if (announced) files.sumOf { it.sizeBytes } else totalBytes,
+                    receivedBytes = receivedTotal,
+                    totalBytes = expectedTotal,
                     completed = completed,
                     files = files,
+                    bytesPerSecond = metrics.bytesPerSecond,
+                    remainingMillis = if (completed && receivedTotal >= expectedTotal) 0L else remainingMillis,
                 ),
             )
         }

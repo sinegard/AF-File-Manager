@@ -16,6 +16,7 @@ interface RemoteClient {
     )
     suspend fun upload(localSource: File, remotePath: String, operation: OperationContext? = null)
     suspend fun createDirectory(path: String)
+    suspend fun createFile(path: String)
     suspend fun rename(fromPath: String, toPath: String)
     suspend fun delete(path: String, recursive: Boolean = false)
     suspend fun close()
@@ -41,6 +42,8 @@ class SerializedRemoteClient(private val delegate: RemoteClient) : RemoteClient 
         guarded { delegate.upload(localSource, remotePath, operation) }
 
     override suspend fun createDirectory(path: String) = guarded { delegate.createDirectory(path) }
+
+    override suspend fun createFile(path: String) = guarded { delegate.createFile(path) }
 
     override suspend fun rename(fromPath: String, toPath: String) = guarded { delegate.rename(fromPath, toPath) }
 

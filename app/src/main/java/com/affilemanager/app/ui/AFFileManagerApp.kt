@@ -394,7 +394,6 @@ fun AFFileManagerApp(
             state = trashBrowser,
             itemCount = trashItems.size,
             viewModel = viewModel,
-            onDismiss = viewModel::closeTrashBrowser,
         )
     }
 

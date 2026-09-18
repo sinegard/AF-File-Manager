@@ -58,6 +58,8 @@ data class NearbyTransferState(
     val currentFile: String? = null,
     val message: String? = null,
     val files: List<TransferFileProgress> = emptyList(),
+    val bytesPerSecond: Long = 0L,
+    val remainingMillis: Long? = null,
 )
 
 object NearbyTransferController {
@@ -365,6 +367,7 @@ class NearbyTransferService : Service() {
             if (!batch.announced) announceFiles(pairing, cookie, details, batchId)
             validatedDirectories.sortedBy { it.count { char -> char == '/' } }
                 .forEach { relative -> createRemoteDirectory(pairing, cookie, relative, batchId) }
+            val payloadStartedAt = SystemClock.elapsedRealtime()
             files.forEachIndexed { index, transferFile ->
                 if (cancelledByUser) throw CancellationException("Siuntimas atšauktas")
                 val key = fileKey(batchId, index + 1)
@@ -402,6 +405,11 @@ class NearbyTransferService : Service() {
                             details = details.toMutableList().apply {
                                 this[index] = this[index].copy(transferredBytes = fileBytes, status = TransferFileStatus.TRANSFERRING)
                             }
+                            val metrics = TransferProgressEstimator.calculate(
+                                transferredBytes = (completedBytes + fileBytes).coerceAtMost(totalBytes),
+                                totalBytes = totalBytes,
+                                elapsedMillis = (now - payloadStartedAt).coerceAtLeast(0L),
+                            )
                             publish(
                                 NearbyTransferState(
                                     status = NearbyTransferStatus.RUNNING,
@@ -413,6 +421,8 @@ class NearbyTransferService : Service() {
                                     currentFile = transferFile.name,
                                     message = "Siunčiama tame pačiame privačiame tinkle",
                                     files = details,
+                                    bytesPerSecond = metrics.bytesPerSecond,
+                                    remainingMillis = metrics.remainingMillis,
                                 ),
                             )
                         }
@@ -440,8 +450,16 @@ class NearbyTransferService : Service() {
                 details = details.toMutableList().apply {
                     this[index] = this[index].copy(transferredBytes = transferFile.length, status = TransferFileStatus.COMPLETED)
                 }
-                publish(requireNotNull(NearbyTransferController.queue.get(batch.id)).state.copy(
-                    completedFiles = completedFiles, sentBytes = completedBytes, files = details,
+                val progressState = requireNotNull(NearbyTransferController.queue.get(batch.id)).state
+                publish(progressState.copy(
+                    completedFiles = completedFiles,
+                    sentBytes = completedBytes,
+                    files = details,
+                    remainingMillis = if (completedBytes >= totalBytes) 0L else
+                        TransferProgressEstimator.remainingMillis(
+                            (totalBytes - completedBytes).coerceAtLeast(0L),
+                            progressState.bytesPerSecond,
+                        ),
                 ))
             }
             val allCancelled = details.isNotEmpty() && details.all { it.status == TransferFileStatus.CANCELLED }
@@ -459,6 +477,7 @@ class NearbyTransferService : Service() {
                     else -> "Siuntimas baigtas"
                 },
                 files = details,
+                remainingMillis = 0L,
             )
             terminalState = completed
         } catch (cancelled: CancellationException) {
@@ -673,7 +692,7 @@ class NearbyTransferService : Service() {
                 )
             }
             require(transfer.length in 0..LanHttpServer.MAX_UPLOAD_BYTES) {
-                "Failas viršija 7 GB ribą: ${transfer.name}"
+                "Failas viršija saugyklos ribą"
             }
             total = Math.addExact(total, transfer.length)
             require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
@@ -697,6 +716,11 @@ class NearbyTransferService : Service() {
                 descriptor.length.takeIf { it >= 0L }
             }
         }.getOrNull()
+        val statSize = runCatching {
+            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.statSize.takeIf { it >= 0L }
+            }
+        }.getOrNull()
         var providerSize: Long? = null
         runCatching {
             contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
@@ -706,7 +730,7 @@ class NearbyTransferService : Service() {
                     ?.let { index -> providerSize = cursor.getLong(index).takeIf { it >= 0L } }
             }
         }
-        return descriptorSize ?: providerSize
+        return descriptorSize ?: statSize ?: providerSize
     }
 
     private inner class TransferFile(

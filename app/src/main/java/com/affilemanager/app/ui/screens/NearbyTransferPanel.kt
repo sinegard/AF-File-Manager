@@ -171,6 +171,11 @@ internal fun NearbyPhoneTransferCard(
     var receivedDetailsShown by remember(lanState.url) { mutableStateOf(false) }
     val incoming = lanState.incomingUpload?.files.orEmpty()
     val allFiles = remember(nearbyState.files, incoming) { nearbyState.files + incoming }
+    val incomingProgress = lanState.incomingUpload
+    val activeBytesPerSecond = if (nearbyState.isActive()) nearbyState.bytesPerSecond
+        else incomingProgress?.bytesPerSecond ?: 0L
+    val activeRemainingMillis = if (nearbyState.isActive()) nearbyState.remainingMillis
+        else incomingProgress?.remainingMillis
     val hasCurrentSessionDetails = allFiles.isNotEmpty() || chatState.messages.isNotEmpty()
     val receiving = incoming.any { it.status in setOf(com.affilemanager.app.transfer.TransferFileStatus.WAITING,
         com.affilemanager.app.transfer.TransferFileStatus.TRANSFERRING) }
@@ -285,6 +290,8 @@ internal fun NearbyPhoneTransferCard(
         chatMessages = chatState.messages,
         chatSending = chatState.sending,
         chatError = chatState.error,
+        bytesPerSecond = activeBytesPerSecond,
+        remainingMillis = activeRemainingMillis,
         onSendMessage = if (peer != null) ({ text ->
             runCatching { NearbyTransferController.sendMessage(context, text, receiverName) }
                 .onFailure { failure ->
@@ -338,6 +345,7 @@ private fun NearbyProgress(state: NearbyTransferState, onCancel: () -> Unit) {
                 "${state.completedFiles}/${state.fileCount} · ${FileSystemRules.humanBytes(state.sentBytes)} / ${FileSystemRules.humanBytes(state.totalBytes)}",
                 style = MaterialTheme.typography.bodySmall,
             )
+            TransferRateAndEta(state.bytesPerSecond, state.remainingMillis)
         } else if (state.isActive()) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
@@ -526,6 +534,7 @@ private fun NearbyReceiveDialog(
                         "${progress.currentFileIndex}/${progress.totalFiles} · ${FileSystemRules.humanBytes(progress.receivedBytes)} / ${FileSystemRules.humanBytes(progress.totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    TransferRateAndEta(progress.bytesPerSecond, progress.remainingMillis)
                     Text(
                         "${progress.currentFile} · ${FileSystemRules.humanBytes(progress.currentFileBytes)} / ${FileSystemRules.humanBytes(progress.currentFileSize)}",
                         style = MaterialTheme.typography.bodySmall,
@@ -1206,6 +1215,14 @@ internal fun NearbySendDialog(
                 pairingPayload = device.pairing.encoded()
                 error = null
                 showNearbyDiscovery = false
+                // Selecting a discovered receiver is the user's explicit send/pair action.
+                // Reuse the same authenticated path as the manual Start button; an empty
+                // prepared batch establishes the two-way session without sending a file.
+                val sources = prepared
+                if (sources != null && !loading) {
+                    loading = true
+                    scope.launch { startPreparedTransfer(device.pairing, sources) }
+                }
             },
         )
     }

@@ -11,6 +11,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.ImageDecoder
 import android.graphics.pdf.PdfRenderer
 import android.media.MediaMetadataRetriever
@@ -20,6 +22,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.view.View
 import android.widget.TextView
+import android.widget.ImageView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -775,10 +778,10 @@ private fun FileContentPreview(
 }
 
 @Composable
-private fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPrevious: () -> Unit, onNext: () -> Unit) {
+internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPrevious: () -> Unit, onNext: () -> Unit) {
     val context = LocalContext.current
-    val result by produceState<Result<Bitmap>?>(initialValue = null, source.key) {
-        value = withContext(Dispatchers.IO) { runCatching { decodeBoundedBitmap(context, source) } }
+    val result by produceState<Result<DecodedPreviewImage>?>(initialValue = null, source.key) {
+        value = withContext(Dispatchers.IO) { runCatching { decodePreviewImage(context, source) } }
     }
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     var offset by remember(source.key) { mutableStateOf(Offset.Zero) }
@@ -801,8 +804,8 @@ private fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPrevious
         when (val loaded = result) {
             null -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             else -> {
-                val bitmap = loaded.getOrNull()
-                if (bitmap != null) {
+                val decoded = loaded.getOrNull()
+                if (decoded != null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -846,19 +849,39 @@ private fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPrevious
                                 lockRotationOnZoomPan = true,
                             ),
                     ) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = source.name,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    scaleX = scale
-                                    scaleY = scale
-                                    translationX = offset.x
-                                    translationY = offset.y
-                                },
-                            contentScale = ContentScale.Fit,
-                        )
+                        val imageModifier = Modifier.fillMaxSize().graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        }
+                        when (decoded) {
+                            is DecodedPreviewImage.Still -> Image(
+                                bitmap = decoded.bitmap.asImageBitmap(),
+                                contentDescription = source.name,
+                                modifier = imageModifier,
+                                contentScale = ContentScale.Fit,
+                            )
+                            is DecodedPreviewImage.DrawableImage -> {
+                                DisposableEffect(decoded.drawable) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                                        decoded.drawable is AnimatedImageDrawable) decoded.drawable.start()
+                                    onDispose {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                                            decoded.drawable is AnimatedImageDrawable) decoded.drawable.stop()
+                                    }
+                                }
+                                AndroidView(
+                                    factory = { viewContext -> ImageView(viewContext).apply {
+                                        scaleType = ImageView.ScaleType.FIT_CENTER
+                                        contentDescription = source.name
+                                        setImageDrawable(decoded.drawable)
+                                    } },
+                                    update = { image -> if (image.drawable !== decoded.drawable) image.setImageDrawable(decoded.drawable) },
+                                    modifier = imageModifier.testTag("animated_image_preview"),
+                                )
+                            }
+                        }
                     }
                 } else {
                     PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
@@ -1127,6 +1150,27 @@ private fun PdfPreview(source: PreviewSource) {
             onDismiss = { textSelectionPage = null },
         )
     }
+}
+
+internal sealed interface DecodedPreviewImage {
+    data class Still(val bitmap: Bitmap) : DecodedPreviewImage
+    data class DrawableImage(val drawable: Drawable) : DecodedPreviewImage
+}
+
+internal fun decodePreviewImage(context: android.content.Context, source: PreviewSource): DecodedPreviewImage {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+        source.extension.lowercase(java.util.Locale.ROOT) in setOf("gif", "webp", "apng")) {
+        runCatching {
+            val imageSource = source.localFile?.let { ImageDecoder.createSource(it) }
+                ?: ImageDecoder.createSource(context.contentResolver, source.uri(context))
+            ImageDecoder.decodeDrawable(imageSource) { decoder, info, _ ->
+                var sample = 1
+                while (info.size.width / sample > 2_048 || info.size.height / sample > 2_048) sample *= 2
+                decoder.setTargetSampleSize(sample)
+            }
+        }.getOrNull()?.let { return DecodedPreviewImage.DrawableImage(it) }
+    }
+    return DecodedPreviewImage.Still(decodeBoundedBitmap(context, source))
 }
 
 @Composable
@@ -2194,6 +2238,7 @@ private fun EditSaveAsConflictDialog(
 private fun ApkPreview(file: File) {
     val context = LocalContext.current
     var confirmInstall by remember(file.absolutePath) { mutableStateOf(false) }
+    var showContents by remember(file.absolutePath) { mutableStateOf(false) }
     val info = remember(file.absolutePath) {
         @Suppress("DEPRECATION")
         context.packageManager.getPackageArchiveInfo(
@@ -2222,11 +2267,15 @@ private fun ApkPreview(file: File) {
             }
         }
         LText("Diegimą visada patvirtina Android sistema. Programa negali jo atlikti tyliai.", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { showContents = true }, modifier = Modifier.testTag("apk_open_contents")) {
+            LText("Atidaryti archyvą")
+        }
         Button(onClick = { confirmInstall = true }) {
             Icon(Icons.Rounded.InstallMobile, contentDescription = null)
             LText("Atidaryti diegimo lange", modifier = Modifier.padding(start = 8.dp))
         }
     }
+    if (showContents) ApkContentsDialog(file, onDismiss = { showContents = false })
     if (confirmInstall) ApkInstallConfirmationDialog(
         cacheKey = "${file.absolutePath}:${file.lastModified()}:${file.length()}",
         load = { com.affilemanager.app.apk.ApkInstallMetadataReader.standalone(context, file) },

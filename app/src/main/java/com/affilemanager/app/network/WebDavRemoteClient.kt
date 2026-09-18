@@ -166,6 +166,17 @@ class WebDavRemoteClient private constructor(
         ).close()
     }
 
+    override suspend fun createFile(path: String) = withContext(Dispatchers.IO) {
+        execute(
+            Request.Builder()
+                .url(url(RemotePath.normalize(path)))
+                .header("If-None-Match", "*")
+                .put(ByteArray(0).toRequestBody("application/octet-stream".toMediaType()))
+                .build(),
+            expected = setOf(200, 201, 204),
+        ).close()
+    }
+
     override suspend fun rename(fromPath: String, toPath: String) = withContext(Dispatchers.IO) {
         moveRemote(RemotePath.normalize(fromPath), RemotePath.normalize(toPath), overwrite = false)
     }

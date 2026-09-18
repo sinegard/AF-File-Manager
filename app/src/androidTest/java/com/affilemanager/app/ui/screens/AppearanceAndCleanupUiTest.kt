@@ -6,15 +6,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -58,6 +62,37 @@ class AppearanceAndCleanupUiTest {
         capture("palette-custom-amoled")
     }
 
+    @Test fun interfaceScaleSliderAppliesBothSupportedEndpoints() {
+        val settings = mutableStateOf(AppearanceSettings())
+        var applied: Int? = null
+        compose.setContent { AFFileManagerTheme(settings.value) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                AppearanceSettingsCard(
+                    settings = settings.value,
+                    onThemeMode = {},
+                    onPalette = {},
+                    onAmoledBlack = {},
+                    onCustomColors = { true },
+                    onInterfaceScale = { percent ->
+                        applied = percent
+                        settings.value = settings.value.copy(interfaceScalePercent = percent)
+                    },
+                )
+            }
+        } }
+        val slider = compose.onNodeWithTag("interface_scale").performScrollTo()
+        slider.performSemanticsAction(SemanticsActions.SetProgress) { setProgress -> setProgress(125f) }
+        compose.runOnIdle { assertEquals(125, applied) }
+        compose.onNodeWithText("125%").assertIsDisplayed()
+        capture("interface-scale-125")
+
+        compose.onNodeWithTag("interface_scale").performScrollTo()
+            .performSemanticsAction(SemanticsActions.SetProgress) { setProgress -> setProgress(75f) }
+        compose.runOnIdle { assertEquals(75, applied) }
+        compose.onNodeWithText("75%").assertIsDisplayed()
+        capture("interface-scale-75")
+    }
+
     @Test fun customPaletteDraftValidatesResetsAndCancelsWithoutChangingSettings() {
         var saved: CustomThemeColors? = null
         val show = mutableStateOf(true)
@@ -72,9 +107,12 @@ class AppearanceAndCleanupUiTest {
         capture("custom-palette")
         compose.onNodeWithText("Cancel").performClick()
         assertNull(saved)
+        compose.waitUntil {
+            compose.onAllNodesWithTag("custom_palette_dialog").fetchSemanticsNodes().isEmpty()
+        }
         compose.runOnIdle { show.value = true }
         compose.onNodeWithTag("custom_color_0").performTextReplacement("#BA1428")
-        compose.onNodeWithTag("custom_palette_save").performClick()
+        compose.onNodeWithTag("custom_palette_save").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(0xFFBA1428.toInt(), saved?.primary) }
     }
 

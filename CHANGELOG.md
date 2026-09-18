@@ -4,6 +4,15 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.40.0] - 2026-09-18
+
+- Remote connections can create a file or folder through the same choice used for local storage. Saved cloud/document locations can be renamed or removed without deleting their files.
+- Android's Back action follows the browser's Up/Back path in protected storage, document-provider locations and Trash instead of unexpectedly returning home.
+- Choose a 75–125% interface scale, and see file sizes with two decimal places. Transfer details show measured speed and an estimated remaining time when enough data is available.
+- Phone-to-phone transfer details have list and grid views. Selecting a discovered device starts the existing pairing flow, and large Android-picked files can stream without an extra cached copy.
+- Animated GIF and WebP previews play on Android 9 and newer. APK, APKS, APKM and XAPK contents can be browsed as read-only folders; AF does not edit or re-sign app packages.
+- Local transfer history can reopen a completed file that is still available. Copying and LAN transfer paths use bounded larger buffers to reduce overhead.
+
 ## [0.39.0] - 2026-09-15
 
 - Phone-to-phone sharing can stream large Android-picked files without first duplicating them in app cache, queue another batch during the same connection, cancel one file without stopping the rest, and pick contacts directly inside AF.

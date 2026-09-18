@@ -51,6 +51,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
@@ -64,6 +65,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,6 +97,7 @@ import com.affilemanager.app.ui.theme.CustomThemeColors
 import com.affilemanager.app.update.AppUpdateState
 import java.io.File
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun ToolsScreen(
@@ -122,6 +129,7 @@ fun ToolsScreen(
     var encryptTarget by remember { mutableStateOf(selectedEntry) }
     var showEncrypt by remember { mutableStateOf(false) }
     var showLanguagePicker by remember { mutableStateOf(false) }
+    var editSaf by remember { mutableStateOf<com.affilemanager.app.data.SafLocation?>(null) }
     var removeSaf by remember { mutableStateOf<com.affilemanager.app.data.SafLocation?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
@@ -185,6 +193,7 @@ fun ToolsScreen(
                 onCardTransparency = viewModel::setCardTransparency,
                 onWallpaperShading = viewModel::setWallpaperShading,
                 onTransparentMenus = viewModel::setTransparentMenus,
+                onInterfaceScale = viewModel::setInterfaceScalePercent,
             )
         }
 
@@ -280,7 +289,7 @@ fun ToolsScreen(
                         modifier = Modifier.size(28.dp),
                     )
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(location.providerLabel ?: location.title, fontWeight = FontWeight.SemiBold)
+                        Text(location.title, fontWeight = FontWeight.SemiBold)
                         Text(
                             location.folderName ?: uiText(if (location.canWrite) "Pasirinkta vieta" else "Tik skaitymui"),
                             style = MaterialTheme.typography.bodySmall,
@@ -288,9 +297,11 @@ fun ToolsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    IconButton(onClick = { removeSaf = location }) {
-                        Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti vietą"))
-                    }
+                    SafLocationActionButtons(
+                        location = location,
+                        onEdit = { editSaf = location },
+                        onRemove = { removeSaf = location },
+                    )
                 }
             }
         }
@@ -450,15 +461,25 @@ fun ToolsScreen(
         )
     }
 
-    removeSaf?.let { location ->
-        AlertDialog(
-            onDismissRequest = { removeSaf = null },
-            title = { LText("Pašalinti pasirinktą vietą?") },
-            text = { LText("Bus atšauktas AF File Manager ilgalaikis leidimas vietai „${location.title}“. Failai nebus trinami.") },
-            confirmButton = {
-                Button(onClick = { viewModel.removeSafLocation(location.uri); removeSaf = null }) { LText("Pašalinti") }
+    editSaf?.let { location ->
+        SafLocationEditDialog(
+            location = location,
+            onDismiss = { editSaf = null },
+            onSave = { title ->
+                viewModel.renameSafLocation(location.uri, title)
+                editSaf = null
             },
-            dismissButton = { TextButton(onClick = { removeSaf = null }) { LText("Atšaukti") } },
+        )
+    }
+
+    removeSaf?.let { location ->
+        SafLocationRemovalDialog(
+            location = location,
+            onDismiss = { removeSaf = null },
+            onRemove = {
+                viewModel.removeSafLocation(location.uri)
+                removeSaf = null
+            },
         )
     }
 
@@ -588,8 +609,12 @@ internal fun AppearanceSettingsCard(
     onCardTransparency: (Int) -> Unit = {},
     onWallpaperShading: (Int) -> Unit = {},
     onTransparentMenus: (Boolean) -> Unit = {},
+    onInterfaceScale: (Int) -> Unit = {},
 ) {
     var editCustom by remember { mutableStateOf(false) }
+    var interfaceScaleDraft by remember(settings.interfaceScalePercent) {
+        mutableStateOf(settings.interfaceScalePercent.toFloat())
+    }
     if (editCustom) CustomPaletteDialog(settings.customColors, onCustomColors, onDismiss = { editCustom = false })
     Card(
         modifier = Modifier.fillMaxWidth().testTag("appearance_settings"),
@@ -601,6 +626,42 @@ internal fun AppearanceSettingsCard(
         ) {
             LText("Išvaizda", fontWeight = FontWeight.SemiBold)
             WallpaperSettings(settings, onWallpaper, onCardTransparency, onWallpaperShading, onTransparentMenus)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                LText("Dydis", style = MaterialTheme.typography.labelLarge)
+                Text("${interfaceScaleDraft.roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+            }
+            val scaleRange = AppearanceRules.MIN_INTERFACE_SCALE_PERCENT.toFloat()..
+                AppearanceRules.MAX_INTERFACE_SCALE_PERCENT.toFloat()
+            val scaleSteps = ((AppearanceRules.MAX_INTERFACE_SCALE_PERCENT - AppearanceRules.MIN_INTERFACE_SCALE_PERCENT) /
+                AppearanceRules.INTERFACE_SCALE_STEP_PERCENT) - 1
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("interface_scale")
+                    .semantics {
+                        progressBarRangeInfo = ProgressBarRangeInfo(interfaceScaleDraft, scaleRange, scaleSteps)
+                        setProgress { requested ->
+                            val normalized = AppearanceRules.normalizeInterfaceScale(requested.roundToInt())
+                            val changed = normalized.toFloat() != interfaceScaleDraft
+                            if (changed) {
+                                interfaceScaleDraft = normalized.toFloat()
+                                onInterfaceScale(normalized)
+                            }
+                            changed
+                        }
+                    },
+            ) {
+                Slider(
+                    value = interfaceScaleDraft,
+                    onValueChange = { value ->
+                        interfaceScaleDraft = AppearanceRules.normalizeInterfaceScale(value.roundToInt()).toFloat()
+                    },
+                    onValueChangeFinished = { onInterfaceScale(interfaceScaleDraft.roundToInt()) },
+                    valueRange = scaleRange,
+                    steps = scaleSteps,
+                    modifier = Modifier.fillMaxWidth().clearAndSetSemantics {},
+                )
+            }
             LText("Temos režimas", style = MaterialTheme.typography.labelLarge)
             AfActionRow {
                 AppThemeMode.entries.forEach { mode ->

@@ -21,6 +21,7 @@ enum class RemoteOperation(val diagnosticPart: String) {
     CONNECT("CONNECT"),
     LIST("LIST"),
     CREATE_DIRECTORY("CREATE"),
+    CREATE_FILE("CREATE_FILE"),
     RENAME("RENAME"),
     DELETE("DELETE"),
 }

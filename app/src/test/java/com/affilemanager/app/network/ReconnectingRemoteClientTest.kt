@@ -61,6 +61,19 @@ class ReconnectingRemoteClientTest {
     }
 
     @Test
+    fun createFileWhoseReplyBreaksIsRecognizedAfterReconnect() = runBlocking {
+        val state = RemoteState()
+        val initial = FakeClient(state, breakAfterCreateFile = true)
+        val replacement = FakeClient(state)
+        val client = ReconnectingRemoteClient(initial, reconnect = { replacement })
+
+        client.createFile("/created.txt")
+
+        assertEquals(0, state.files.getValue("/created.txt").size)
+        assertEquals(0, replacement.createFileCalls)
+    }
+
+    @Test
     fun renameWhoseReplyBreaksIsRecognizedAfterReconnect() = runBlocking {
         val state = RemoteState().apply { files["/old.txt"] = "old".toByteArray() }
         val initial = FakeClient(state, breakAfterRename = true)
@@ -105,11 +118,13 @@ class ReconnectingRemoteClientTest {
         private val state: RemoteState,
         private var failNextList: Throwable? = null,
         private val breakAfterCreate: Boolean = false,
+        private val breakAfterCreateFile: Boolean = false,
         private val breakAfterRename: Boolean = false,
         private var failNextUpload: Throwable? = null,
     ) : RemoteClient {
         var closed = false
         var createCalls = 0
+        var createFileCalls = 0
         var renameCalls = 0
         var uploadCalls = 0
 
@@ -140,6 +155,14 @@ class ReconnectingRemoteClientTest {
             createCalls += 1
             state.directories += RemotePath.normalize(path)
             if (breakAfterCreate) throw SocketException("Broken pipe")
+        }
+
+        override suspend fun createFile(path: String) {
+            createFileCalls += 1
+            val normalized = RemotePath.normalize(path)
+            require(normalized !in state.directories && normalized !in state.files) { "Already exists" }
+            state.files[normalized] = ByteArray(0)
+            if (breakAfterCreateFile) throw SocketException("Broken pipe")
         }
 
         override suspend fun rename(fromPath: String, toPath: String) {

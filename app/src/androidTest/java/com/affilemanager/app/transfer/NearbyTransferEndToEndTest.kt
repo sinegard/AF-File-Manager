@@ -13,8 +13,76 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicReference
 
 class NearbyTransferEndToEndTest {
+    @Test fun emptyPreparedBatchAuthenticatesAndPairsWithoutSendingFiles() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "nearby-pair-${UUID.randomUUID()}").apply { check(mkdir()) }
+        val address = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
+            .first { it is Inet4Address && it.isSiteLocalAddress }
+        val returnPeer = AtomicReference<NearbyPairing?>()
+        try {
+            LanHttpServer(root, address, requestedCode = "12345678",
+                onNearbyPeer = { peer, _ -> returnPeer.set(peer) }).use { server ->
+                val session = server.start()
+                val pairing = NearbyPairing.create(session.address, session.port, session.code, "Test receiver")
+                val ownPairing = NearbyPairing.create(session.address, session.port, "87654321", "This phone")
+                NearbyTransferController.clearFinished()
+                NearbyTransferController.start(app, pairing, PreparedNearbyTransfer.empty(), ownPairing)
+                val finished = withTimeout(20_000) {
+                    while (NearbyTransferController.state.value.status in
+                        setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) delay(50)
+                    NearbyTransferController.state.value
+                }
+                assertEquals(finished.message, NearbyTransferStatus.COMPLETED, finished.status)
+                assertEquals(pairing, NearbyTransferController.connectedPairing())
+                assertEquals(ownPairing, returnPeer.get())
+                assertTrue(root.listFiles().orEmpty().isEmpty())
+            }
+        } finally {
+            NearbyTransferController.connection.clear()
+            NearbyTransferController.clearFinished()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test fun largeDocumentUriStreamsToReceiverWithoutStoppingOrKeepingAPartialFile() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "nearby-large-${UUID.randomUUID()}").apply { check(mkdir()) }
+        val source = File(root, "source.mp4")
+        val destination = File(root, "destination").apply { check(mkdir()) }
+        val block = ByteArray(256 * 1_024) { index -> (index * 31).toByte() }
+        source.outputStream().buffered().use { output -> repeat(256) { output.write(block) } }
+        block.fill(0)
+        val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.files", source)
+        val address = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
+            .first { it is Inet4Address && it.isSiteLocalAddress }
+        try {
+            LanHttpServer(destination, address, requestedCode = "12345678").use { server ->
+                val session = server.start()
+                val prepared = app.graph.nearbySources.prepareContentUris(listOf(uri), copyToPrivateStage = false).getOrThrow()
+                assertEquals(listOf(uri.toString()), prepared.sourceUris)
+                assertEquals(null, prepared.cleanupRootPath)
+                NearbyTransferController.clearFinished()
+                NearbyTransferController.start(app,
+                    NearbyPairing.create(session.address, session.port, session.code, "Test receiver"), prepared)
+                val finished = withTimeout(90_000) {
+                    while (NearbyTransferController.state.value.status in
+                        setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) delay(100)
+                    NearbyTransferController.state.value
+                }
+                assertEquals(finished.message, NearbyTransferStatus.COMPLETED, finished.status)
+                assertEquals(source.length(), File(destination, source.name).length())
+                assertTrue(destination.listFiles().orEmpty().none { it.name.endsWith(".partial") })
+            }
+        } finally {
+            NearbyTransferController.connection.clear()
+            NearbyTransferController.clearFinished()
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun senderStillWorksWithAnOlderReceiverWithoutTheMetadataEndpoint() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val source = File(app.cacheDir, "legacy-${UUID.randomUUID()}.txt").apply { writeText("legacy-compatible") }

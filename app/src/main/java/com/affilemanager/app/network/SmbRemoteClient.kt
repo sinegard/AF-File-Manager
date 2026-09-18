@@ -168,6 +168,17 @@ class SmbRemoteClient private constructor(
         share.mkdir(toSmbPath(RemotePath.normalize(path)))
     }
 
+    override suspend fun createFile(path: String) = withContext(Dispatchers.IO) {
+        share.openFile(
+            toSmbPath(RemotePath.normalize(path)),
+            EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.GENERIC_READ),
+            EnumSet.of(FileAttributes.FILE_ATTRIBUTE_NORMAL),
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_CREATE,
+            EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
+        ).use { remote -> remote.flush() }
+    }
+
     override suspend fun rename(fromPath: String, toPath: String) = withContext(Dispatchers.IO) {
         renameInternal(RemotePath.normalize(fromPath), RemotePath.normalize(toPath), replace = false)
     }

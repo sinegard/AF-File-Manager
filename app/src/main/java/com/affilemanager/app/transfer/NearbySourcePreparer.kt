@@ -239,7 +239,7 @@ class NearbySourcePreparer(
                 val name = uniqueName(contentName(uri, index), usedNames)
                 val knownSize = contentLength(uri)
                 if (knownSize != null) {
-                    require(knownSize in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą: $name" }
+                    require(knownSize in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
                     application.contentResolver.openInputStream(uri)?.use { Unit }
                         ?: throw IllegalArgumentException("Failo srautas nepasiekiamas: $name")
                     totalBytes = Math.addExact(totalBytes, knownSize)
@@ -287,7 +287,7 @@ class NearbySourcePreparer(
                         val read = input.read(buffer)
                         if (read < 0) break
                         total = Math.addExact(total, read.toLong())
-                        require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
+                        require(total <= LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
                         batchBytes = Math.addExact(batchBytes, read.toLong())
                         require(batchBytes <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
                         output.write(buffer, 0, read)
@@ -304,6 +304,11 @@ class NearbySourcePreparer(
                 descriptor.length.takeIf { it >= 0L }
             }
         }.getOrNull()
+        val statSize = runCatching {
+            application.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.statSize.takeIf { it >= 0L }
+            }
+        }.getOrNull()
         var providerSize: Long? = null
         runCatching {
             application.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
@@ -315,7 +320,7 @@ class NearbySourcePreparer(
         }
         // A seekable descriptor reflects the actual stream better than a provider's occasionally
         // stale metadata column, especially for large videos replaced in place.
-        return descriptorSize ?: providerSize
+        return descriptorSize ?: statSize ?: providerSize
     }
 
     suspend fun discard(prepared: PreparedNearbyTransfer) = withContext(Dispatchers.IO) {
@@ -389,7 +394,7 @@ class NearbySourcePreparer(
         val canonical = files.map { file ->
             val source = file.canonicalFile
             require(source.isFile && source.canRead()) { "Failas nepasiekiamas: ${file.name}" }
-            require(source.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą: ${file.name}" }
+            require(source.length() in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
             total = Math.addExact(total, source.length())
             require(total <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
             source.absolutePath

@@ -157,7 +157,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var showAdd by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<NetworkProfile?>(null) }
     var deleteProfile by remember { mutableStateOf<NetworkProfile?>(null) }
-    var createRemoteFolder by remember { mutableStateOf(false) }
+    var createRemoteItem by remember { mutableStateOf(false) }
     var renameRemote by remember { mutableStateOf<RemoteEntry?>(null) }
     var deleteRemote by remember { mutableStateOf<List<RemoteEntry>?>(null) }
     var showSync by remember { mutableStateOf(false) }
@@ -234,7 +234,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onPasteLocalClipboard = { viewModel.pasteLocalClipboardToRemote() },
                     onPasteToMany = { viewModel.startAfPlanFromClipboard(remoteDestination = true) },
                     onChooseUpload = { showUploadPicker = true },
-                    onCreateFolder = { createRemoteFolder = true },
+                    onCreateFolder = { createRemoteItem = true },
                     onRename = { renameRemote = it },
                     onInfo = { remoteInfo = it },
                     onDelete = { deleteRemote = it },
@@ -278,11 +278,12 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             dismissButton = { TextButton(onClick = { deleteProfile = null }) { LText("Atšaukti") } },
         )
     }
-    if (createRemoteFolder) {
-        RemoteNameDialog("Naujas nuotolinis aplankas", "Sukurti", "", { createRemoteFolder = false }) {
-            viewModel.remoteCreateDirectory(it)
-            createRemoteFolder = false
-        }
+    if (createRemoteItem) {
+        CreateItemDialog(
+            onDismiss = { createRemoteItem = false },
+            onCreateFolder = { name -> viewModel.remoteCreateDirectory(name); createRemoteItem = false },
+            onCreateFile = { name -> viewModel.remoteCreateFile(name); createRemoteItem = false },
+        )
     }
     renameRemote?.let { entry ->
         RemoteNameDialog("Pervadinti", "Pervadinti", entry.name, { renameRemote = null }) {
@@ -614,9 +615,9 @@ internal fun RemoteBrowser(
                 } else {
                     FloatingActionButton(
                         onClick = onCreateFolder,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).testTag("remote_create_item"),
                     ) {
-                        Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti aplanką"))
+                        Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti"))
                     }
                 }
             }

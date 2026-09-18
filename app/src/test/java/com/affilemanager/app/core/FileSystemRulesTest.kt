@@ -8,6 +8,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.Locale
 
 class FileSystemRulesTest {
     @get:Rule
@@ -56,5 +57,19 @@ class FileSystemRulesTest {
         assertEquals(EntryKind.DOCUMENT, FileSystemRules.detectKind("provider-item", "application/pdf"))
         assertEquals(EntryKind.AUDIO, FileSystemRules.detectKind("provider-item", "audio/mpeg; charset=binary"))
         assertEquals(EntryKind.APK, FileSystemRules.detectKind("provider-item", "application/vnd.android.package-archive"))
+    }
+
+    @Test
+    fun humanBytesKeepsTwoFractionDigitsForEveryScaledUnit() {
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.US)
+            assertEquals("1 B", FileSystemRules.humanBytes(1))
+            assertEquals("1.50 KB", FileSystemRules.humanBytes(1_536))
+            assertEquals("5.13 MB", FileSystemRules.humanBytes((5.13 * 1_024 * 1_024).toLong()))
+            assertEquals("1.56 GB", FileSystemRules.humanBytes((1.56 * 1_024 * 1_024 * 1_024).toLong()))
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 }

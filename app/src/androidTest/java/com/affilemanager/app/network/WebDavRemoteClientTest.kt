@@ -104,6 +104,36 @@ class WebDavRemoteClientTest {
         }
     }
 
+    @Test
+    fun emptyFileCreationUsesAnAtomicNoOverwriteCondition() = runBlocking {
+        Fixture { request ->
+            when (request.method) {
+                "PROPFIND" -> Reply(207, listing("/dav"))
+                "PUT" -> Reply(201)
+                else -> Reply(405)
+            }
+        }.use { fixture ->
+            val client = WebDavRemoteClient.connect(profile(fixture.port), "test".toCharArray())
+            try {
+                client.createFile("/dav/notes.txt")
+                val put = fixture.requests.single { it.method == "PUT" }
+                assertEquals("/dav/notes.txt", put.path)
+                assertEquals("*", put.headers["if-none-match"])
+                assertTrue(put.body.isEmpty())
+            } finally { client.close() }
+        }
+
+        Fixture { request -> if (request.method == "PROPFIND") Reply(207, listing("/dav")) else Reply(412) }.use { fixture ->
+            val client = WebDavRemoteClient.connect(profile(fixture.port), "test".toCharArray())
+            try {
+                val failure = runCatching { client.createFile("/dav/existing.txt") }.exceptionOrNull()
+                check(failure is WebDavHttpException)
+                val shown = RemoteErrorPresenter.present(NetworkProtocol.WEBDAV, RemoteOperation.CREATE_FILE, failure)
+                assertEquals("WEBDAV-CREATE_FILE-HTTP-412", shown.diagnosticCode)
+            } finally { client.close() }
+        }
+    }
+
     private fun profile(port: Int) = NetworkProfile(
         id = "webdav-regression", name = "WebDAV regression", protocol = NetworkProtocol.WEBDAV,
         host = "127.0.0.1", port = port, username = "test-user", basePath = "/dav", webDavUseTls = false,

@@ -46,12 +46,16 @@ internal fun SplitApkPreview(file: File, onExtract: () -> Unit) {
     var selected by remember(file.path) { mutableStateOf<Set<String>?>(null) }
     var error by remember(file.path) { mutableStateOf<String?>(null) }
     var confirmInstall by remember(file.path) { mutableStateOf(false) }
+    var showContents by remember(file.path) { mutableStateOf(false) }
     val plan = result?.getOrNull()
     val chosen = selected ?: plan?.parts?.map { it.name }?.toSet().orEmpty()
     Column(Modifier.fillMaxSize().padding(14.dp).testTag("split_apk_preview")) {
         LText("APK rinkinys", style = MaterialTheme.typography.titleLarge)
         LText("Diegiamos originalios pasirašytos dalys. Jų jungimas į vieną APK pakeistų parašą.", style = MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick = onExtract, modifier = Modifier.testTag("split_apk_extract")) { LText("Išpakuoti originalias dalis") }
+        OutlinedButton(onClick = { showContents = true }, modifier = Modifier.testTag("split_apk_open_contents")) {
+            LText("Atidaryti archyvą")
+        }
         if (result == null) CircularProgressIndicator()
         result?.exceptionOrNull()?.let { LText(it.message ?: "Netinkamas APK rinkinys", color = MaterialTheme.colorScheme.error) }
         if (plan != null) {
@@ -74,6 +78,7 @@ internal fun SplitApkPreview(file: File, onExtract: () -> Unit) {
             }
         }
     }
+    if (showContents) ApkContentsDialog(file, onDismiss = { showContents = false })
     val installPlan = plan
     if (confirmInstall && installPlan != null) ApkInstallConfirmationDialog(
         cacheKey = "${file.path}:${file.lastModified()}:${chosen.sorted()}",

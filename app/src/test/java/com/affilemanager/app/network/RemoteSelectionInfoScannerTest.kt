@@ -34,6 +34,7 @@ class RemoteSelectionInfoScannerTest {
         override suspend fun download(remotePath: String, localDestination: File, operation: OperationContext?, maxBytes: Long?) = Unit
         override suspend fun upload(localSource: File, remotePath: String, operation: OperationContext?) = Unit
         override suspend fun createDirectory(path: String) = Unit
+        override suspend fun createFile(path: String) = Unit
         override suspend fun rename(fromPath: String, toPath: String) = Unit
         override suspend fun delete(path: String, recursive: Boolean) = Unit
         override suspend fun close() = Unit

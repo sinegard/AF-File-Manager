@@ -77,6 +77,24 @@ class ReconnectingRemoteClient(
         }
     }
 
+    override suspend fun createFile(path: String) = mutex.withLock {
+        checkOpen()
+        try {
+            delegate.createFile(path)
+        } catch (first: Throwable) {
+            if (!transientFailure(first)) throw first
+            val client = reconnectAfter(first)
+            val normalized = RemotePath.normalize(path)
+            val parent = RemotePath.normalize("$normalized/..")
+            val existing = client.list(parent).firstOrNull { RemotePath.normalize(it.path) == normalized }
+            when {
+                existing != null && !existing.directory && existing.sizeBytes == 0L -> Unit
+                existing != null -> throw IllegalStateException("Toks pavadinimas jau naudojamas", first)
+                else -> retryWithOriginal(first) { client.createFile(normalized) }
+            }
+        }
+    }
+
     override suspend fun rename(fromPath: String, toPath: String) = mutex.withLock {
         checkOpen()
         try {

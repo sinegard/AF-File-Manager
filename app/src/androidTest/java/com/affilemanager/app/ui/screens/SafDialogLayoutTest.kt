@@ -2,6 +2,7 @@ package com.affilemanager.app.ui.screens
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
@@ -9,6 +10,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
@@ -19,6 +24,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.affilemanager.app.ui.components.AfModalDialog
+import com.affilemanager.app.data.SafLocation
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -57,6 +63,39 @@ class SafDialogLayoutTest {
         capture("saf-rename-layout")
         reachable(compose.onNodeWithText("Cancel")).performClick()
         compose.runOnIdle { assertTrue(dismissed); assertFalse(confirmed) }
+    }
+
+    @Test fun savedCloudLocationCanBeRenamedOrRemovedWithoutOpeningIt() {
+        var savedTitle: String? = null
+        var removed = false
+        compose.setContent { MaterialTheme {
+            val location = SafLocation("content://provider/tree/root", "Cloud", providerLabel = "Provider", folderName = "Root")
+            var editing by remember { mutableStateOf(false) }
+            var removing by remember { mutableStateOf(false) }
+            Column {
+                SafLocationActionButtons(location, onEdit = { editing = true }, onRemove = { removing = true })
+                if (editing) SafLocationEditDialog(location, { editing = false }) {
+                    savedTitle = it
+                    editing = false
+                }
+                if (removing) SafLocationRemovalDialog(location, { removing = false }) {
+                    removed = true
+                    removing = false
+                }
+            }
+        } }
+
+        compose.onNodeWithContentDescription("Edit connection").performClick()
+        val titleField = compose.onNodeWithTag("saf_location_title")
+        titleField.performTextClearance()
+        titleField.performTextInput("Work Drive")
+        compose.onNodeWithText("Save").performClick()
+        compose.runOnIdle { assertEquals("Work Drive", savedTitle) }
+
+        compose.onNodeWithContentDescription("Remove location").performClick()
+        compose.onNodeWithTag("saf_location_remove_dialog").assertIsDisplayed()
+        compose.onNodeWithText("Remove").performClick()
+        compose.runOnIdle { assertTrue(removed) }
     }
 
     @Test fun shortDialogKeepsNestedListBoundedAndFooterReachable() {

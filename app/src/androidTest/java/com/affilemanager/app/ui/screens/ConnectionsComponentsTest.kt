@@ -155,6 +155,42 @@ class ConnectionsComponentsTest {
     }
 
     @Test
+    fun remoteCreateUsesTheSameFolderAndFileDialogAsLocalStorage() {
+        val created = mutableListOf<String>()
+        compose.setContent {
+            MaterialTheme {
+                var showCreate by remember { mutableStateOf(false) }
+                RemoteBrowser(
+                    state = NetworkUiState(connectedProfile = profile(), path = "/remote"),
+                    localDirectory = "/local/target",
+                    onBack = {}, onForward = {}, onUp = {}, onRefresh = {}, onOpen = {}, onDownload = {},
+                    onToggleSelection = {}, onClearSelection = {}, onSelectAll = {}, onDownloadSelected = {},
+                    onCopySelected = {}, localClipboardCount = 0, onPasteLocalClipboard = {}, onChooseUpload = {},
+                    onCreateFolder = { showCreate = true }, onRename = {}, onDelete = {}, onSync = {},
+                    onToggleHidden = {}, onToggleGrid = {}, onSort = {}, onDisconnect = {},
+                )
+                if (showCreate) {
+                    CreateItemDialog(
+                        onDismiss = { showCreate = false },
+                        onCreateFolder = { created += "folder:$it"; showCreate = false },
+                        onCreateFile = { created += "file:$it"; showCreate = false },
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("remote_create_item").performClick()
+        compose.onNodeWithTag("create_item_dialog").assertIsDisplayed()
+        compose.onNodeWithTag("create_type_folder").assertIsDisplayed()
+        compose.onNodeWithTag("create_type_file").assertIsDisplayed().performClick()
+        compose.onAllNodesWithText("Archive").assertCountEquals(0)
+        compose.onNodeWithTag("create_item_name").performTextInput("notes.txt")
+        compose.onNodeWithText("Create").performClick()
+
+        compose.runOnIdle { assertEquals(listOf("file:notes.txt"), created) }
+    }
+
+    @Test
     fun remoteQuickSearchFiltersOnlyTheCurrentFolder() {
         compose.setContent {
             MaterialTheme {

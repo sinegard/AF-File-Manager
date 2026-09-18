@@ -1220,6 +1220,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
     }
 
+    fun setInterfaceScalePercent(percent: Int) {
+        runCatching { graph.appearance.setInterfaceScalePercent(percent) }
+            .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
     fun activatePanel(panel: PanelId) {
         _activePanel.value = panel
     }
@@ -5062,6 +5067,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             openAdvancedBrowser(ClonedAppStorage.PRIVILEGED_PROFILE_ROOT)
             return
         }
+        if (graph.advancedAccess.state.value.activeBackend == AdvancedAccessBackend.SHIZUKU_SHELL) {
+            message(
+                "Sistemos šaknis / atveriama tik su Root arba Shizuku root prieiga. Tai nėra įprastas Android leidimas ir AF File Manager jo neapeina.",
+                true,
+            )
+            return
+        }
         message(
             "Klonuotų programų saugykla priklauso kitam Android profiliui. Jai reikia Root arba Shizuku su root teisėmis.",
             true,
@@ -5089,6 +5101,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     refreshSafLocations()
                 },
                 onFailure = { message(it.message ?: "Vietos pašalinti nepavyko", true) },
+            )
+        }
+    }
+
+    fun renameSafLocation(uri: String, title: String) {
+        viewModelScope.launch {
+            graph.safFiles.renameLocation(uri, title).fold(
+                onSuccess = { refreshSafLocations() },
+                onFailure = { message(it.message ?: "Pervadinti nepavyko", true) },
             )
         }
     }
@@ -6072,15 +6093,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     fun remoteCreateDirectory(name: String) {
+        remoteCreateItem(name, directory = true)
+    }
+
+    fun remoteCreateFile(name: String) {
+        remoteCreateItem(name, directory = false)
+    }
+
+    private fun remoteCreateItem(name: String, directory: Boolean) {
         val client = remoteClient ?: return
-        val protocol = _networkState.value.connectedProfile?.protocol ?: return
+        val state = _networkState.value
+        val protocol = state.connectedProfile?.protocol ?: return
+        val parentPath = state.path
+        val safeName = FileSystemRules.validateFileName(name).fold(
+            onSuccess = { it },
+            onFailure = {
+                message(it.message ?: "Netinkamas pavadinimas", true)
+                return
+            },
+        )
+        val operation = if (directory) RemoteOperation.CREATE_DIRECTORY else RemoteOperation.CREATE_FILE
         viewModelScope.launch {
             _networkState.update { it.copy(loading = true, error = null) }
-            runCatching { client.createDirectory(RemotePath.join(_networkState.value.path, name)) }
-                .onSuccess { refreshRemote() }
+            runCatching {
+                val target = RemotePath.join(parentPath, safeName)
+                if (directory) client.createDirectory(target) else client.createFile(target)
+            }
+                .onSuccess {
+                    if (_networkState.value.path == parentPath) refreshRemote(parentPath)
+                    else _networkState.update { it.copy(loading = false) }
+                }
                 .onFailure { error ->
                     _networkState.update {
-                        it.copy(loading = false, error = RemoteErrorPresenter.present(protocol, RemoteOperation.CREATE_DIRECTORY, error))
+                        it.copy(loading = false, error = RemoteErrorPresenter.present(protocol, operation, error))
                     }
                 }
         }

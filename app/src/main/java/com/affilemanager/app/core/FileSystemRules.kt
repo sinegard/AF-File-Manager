@@ -13,7 +13,7 @@ object FileSystemRules {
         return when {
             candidate.isEmpty() -> Result.failure(IllegalArgumentException("Pavadinimas negali būti tuščias"))
             candidate == "." || candidate == ".." -> Result.failure(IllegalArgumentException("Netinkamas pavadinimas"))
-            candidate.length > MAX_FILE_NAME_LENGTH -> Result.failure(IllegalArgumentException("Pavadinimas per ilgas"))
+            candidate.length > MAX_FILE_NAME_LENGTH -> Result.failure(IllegalArgumentException("Failo vardas per ilgas"))
             forbiddenCharacters.any(candidate::contains) -> Result.failure(IllegalArgumentException("Pavadinime yra neleistinų ženklų"))
             else -> Result.success(candidate)
         }
@@ -101,10 +101,6 @@ object FileSystemRules {
             amount /= 1_024.0
             unitIndex += 1
         } while (amount >= 1_024 && unitIndex < units.lastIndex)
-        return if (amount >= 100) {
-            "%.0f %s".format(Locale.getDefault(), amount, units[unitIndex])
-        } else {
-            "%.1f %s".format(Locale.getDefault(), amount, units[unitIndex])
-        }
+        return "%.2f %s".format(Locale.getDefault(), amount, units[unitIndex])
     }
 }

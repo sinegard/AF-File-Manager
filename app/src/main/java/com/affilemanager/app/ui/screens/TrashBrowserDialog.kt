@@ -4,7 +4,6 @@ import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -101,7 +100,6 @@ fun TrashBrowserDialog(
     state: TrashBrowserUiState,
     itemCount: Int,
     viewModel: MainViewModel,
-    onDismiss: () -> Unit,
 ) {
     val cleanupItemCount = maxOf(itemCount, state.storedItemCount)
     val cleanupAvailable = cleanupItemCount > 0 || !state.storedItemCountComplete
@@ -138,9 +136,8 @@ fun TrashBrowserDialog(
         transforming = false
     }
 
-    BackHandler(enabled = preview == null) { viewModel.navigateTrashBack() }
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (preview == null) viewModel.navigateTrashBack() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         com.affilemanager.app.ui.theme.AppearancePage(

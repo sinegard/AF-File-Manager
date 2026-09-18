@@ -34,9 +34,15 @@ data class AppearanceSettings(
     val cardTransparency: Int = 0,
     val wallpaperShading: Int = 72,
     val transparentMenus: Boolean = false,
+    val interfaceScalePercent: Int = AppearanceRules.DEFAULT_INTERFACE_SCALE_PERCENT,
 )
 
 object AppearanceRules {
+    const val MIN_INTERFACE_SCALE_PERCENT = 75
+    const val MAX_INTERFACE_SCALE_PERCENT = 125
+    const val INTERFACE_SCALE_STEP_PERCENT = 5
+    const val DEFAULT_INTERFACE_SCALE_PERCENT = 100
+
     fun useDarkTheme(mode: AppThemeMode, systemDark: Boolean): Boolean = when (mode) {
         AppThemeMode.SYSTEM -> systemDark
         AppThemeMode.LIGHT -> false
@@ -45,6 +51,12 @@ object AppearanceRules {
 
     fun paletteSupported(palette: AppColorPalette, sdkInt: Int = Build.VERSION.SDK_INT): Boolean =
         palette != AppColorPalette.DYNAMIC || sdkInt >= Build.VERSION_CODES.S
+
+    fun normalizeInterfaceScale(percent: Int): Int {
+        val bounded = percent.coerceIn(MIN_INTERFACE_SCALE_PERCENT, MAX_INTERFACE_SCALE_PERCENT)
+        return ((bounded - MIN_INTERFACE_SCALE_PERCENT + INTERFACE_SCALE_STEP_PERCENT / 2) /
+            INTERFACE_SCALE_STEP_PERCENT * INTERFACE_SCALE_STEP_PERCENT) + MIN_INTERFACE_SCALE_PERCENT
+    }
 }
 
 class AppearanceRepository(context: Context) {
@@ -73,6 +85,15 @@ class AppearanceRepository(context: Context) {
 
     fun setTransparentMenus(enabled: Boolean) = update { it.copy(transparentMenus = enabled) }
 
+    @Synchronized
+    fun setInterfaceScalePercent(percent: Int) {
+        val normalized = AppearanceRules.normalizeInterfaceScale(percent)
+        val updated = mutableSettings.value.copy(interfaceScalePercent = normalized)
+        if (updated == mutableSettings.value) return
+        preferences.edit().putInt("interface_scale_percent", normalized).apply()
+        mutableSettings.value = updated
+    }
+
     fun setCustomColors(colors: CustomThemeColors) = update {
         require(colors.values().all { color -> color ushr 24 == 255 }) { "Use opaque RGB colors" }
         it.copy(colorPalette = AppColorPalette.CUSTOM, customColors = colors)
@@ -91,6 +112,7 @@ class AppearanceRepository(context: Context) {
                 .putInt("card_transparency", updated.cardTransparency)
                 .putInt("wallpaper_shading", updated.wallpaperShading)
                 .putBoolean("transparent_menus", updated.transparentMenus)
+                .putInt("interface_scale_percent", updated.interfaceScalePercent)
                 .putString("custom_colors_v1", updated.customColors.values().take(5).joinToString(",", transform = CustomThemeRules::hex))
                 .putString("custom_colors_v2", updated.customColors.values().joinToString(",", transform = CustomThemeRules::hex))
                 .commit(),
@@ -112,5 +134,8 @@ class AppearanceRepository(context: Context) {
         cardTransparency = preferences.getInt("card_transparency", 0).coerceIn(0, 100),
         wallpaperShading = preferences.getInt("wallpaper_shading", 72).coerceIn(0, 100),
         transparentMenus = preferences.getBoolean("transparent_menus", false),
+        interfaceScalePercent = AppearanceRules.normalizeInterfaceScale(
+            preferences.getInt("interface_scale_percent", AppearanceRules.DEFAULT_INTERFACE_SCALE_PERCENT),
+        ),
     )
 }

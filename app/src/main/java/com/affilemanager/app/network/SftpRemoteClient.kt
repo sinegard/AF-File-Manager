@@ -3,10 +3,12 @@ package com.affilemanager.app.network
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SftpATTRS
+import com.jcraft.jsch.SftpException
 import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayInputStream
 import java.util.Vector
 
 class SftpRemoteClient private constructor(
@@ -116,6 +118,22 @@ class SftpRemoteClient private constructor(
         channel.mkdir(RemotePath.normalize(path))
     }
 
+    override suspend fun createFile(path: String) = withContext(Dispatchers.IO) {
+        val normalized = RemotePath.normalize(path)
+        check(!remotePathExists(normalized)) { "Toks pavadinimas jau naudojamas" }
+        val partial = RemotePath.temporarySibling(normalized, "af-create")
+        try {
+            ByteArrayInputStream(ByteArray(0)).use { empty ->
+                channel.put(empty, partial, ChannelSftp.OVERWRITE)
+            }
+            require(channel.stat(partial).size == 0L) { "Kopijos dydis nesutampa" }
+            check(!remotePathExists(normalized)) { "Toks pavadinimas jau naudojamas" }
+            channel.rename(partial, normalized)
+        } finally {
+            runCatching { channel.rm(partial) }
+        }
+    }
+
     override suspend fun rename(fromPath: String, toPath: String) = withContext(Dispatchers.IO) {
         channel.rename(RemotePath.normalize(fromPath), RemotePath.normalize(toPath))
     }
@@ -127,6 +145,13 @@ class SftpRemoteClient private constructor(
     override suspend fun close() = withContext(Dispatchers.IO) {
         channel.disconnect()
         session.disconnect()
+    }
+
+    private fun remotePathExists(path: String): Boolean = try {
+        channel.lstat(path)
+        true
+    } catch (error: SftpException) {
+        if (error.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) false else throw error
     }
 
     private fun deleteInternal(path: String, recursive: Boolean, counter: Counter, depth: Int) {

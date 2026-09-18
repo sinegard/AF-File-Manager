@@ -26,7 +26,20 @@ data class SafLocation(
     val providerLabel: String? = null,
     val folderName: String? = null,
     val canWrite: Boolean = false,
+    val customTitle: String? = null,
 )
+
+internal object SafLocationRules {
+    private const val MAX_TITLE_LENGTH = 120
+
+    fun normalizeTitle(value: String): String {
+        val title = value.trim()
+        require(title.isNotEmpty()) { "Pavadinimas negali būti tuščias" }
+        require(title.length <= MAX_TITLE_LENGTH) { "Jungties pavadinimas per ilgas" }
+        require(title.none(Char::isISOControl)) { "Pavadinime yra neleistinų ženklų" }
+        return title
+    }
+}
 
 data class SafEntry(
     val uri: String,
@@ -61,6 +74,7 @@ class SafFileRepository(private val context: Context) {
             describeLocation(
                 uri = Uri.parse(item.getString("uri")),
                 storedTitle = item.optionalString("title"),
+                storedCustomTitle = item.optionalString("customTitle"),
                 storedProviderPackage = item.optionalString("providerPackage"),
                 storedProviderLabel = item.optionalString("providerLabel"),
                 storedFolderName = item.optionalString("folderName"),
@@ -96,6 +110,23 @@ class SafFileRepository(private val context: Context) {
             writeLocations(updated)
             releasePersistedPermission(Uri.parse(uri))
             Unit
+        }
+    }
+
+    suspend fun renameLocation(uri: String, requestedTitle: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val title = SafLocationRules.normalizeTitle(requestedTitle)
+            var found = false
+            val updated = locations().map { location ->
+                if (location.uri == uri) {
+                    found = true
+                    location.copy(title = title, customTitle = title)
+                } else {
+                    location
+                }
+            }
+            require(found) { "Vieta nebeegzistuoja" }
+            writeLocations(updated)
         }
     }
 
@@ -248,6 +279,7 @@ class SafFileRepository(private val context: Context) {
     private fun describeLocation(
         uri: Uri,
         storedTitle: String? = null,
+        storedCustomTitle: String? = null,
         storedProviderPackage: String? = null,
         storedProviderLabel: String? = null,
         storedFolderName: String? = null,
@@ -261,10 +293,11 @@ class SafFileRepository(private val context: Context) {
             ?: storedFolderName
             ?: runCatching { DocumentsContract.getTreeDocumentId(uri).substringAfterLast(':') }
                 .getOrNull()?.takeIf { it.isNotBlank() && it.length <= 120 }
-        val title = providerLabel ?: storedTitle ?: folderName ?: "Android dokumentai"
+        val title = storedCustomTitle ?: providerLabel ?: storedTitle ?: folderName ?: "Android dokumentai"
         return SafLocation(
             uri = uri.toString(),
             title = title,
+            customTitle = storedCustomTitle,
             providerPackageName = packageName,
             providerLabel = providerLabel,
             folderName = folderName,
@@ -436,6 +469,7 @@ class SafFileRepository(private val context: Context) {
                 JSONObject()
                     .put("uri", location.uri)
                     .put("title", location.title)
+                    .put("customTitle", location.customTitle ?: JSONObject.NULL)
                     .put("providerPackage", location.providerPackageName ?: JSONObject.NULL)
                     .put("providerLabel", location.providerLabel ?: JSONObject.NULL)
                     .put("folderName", location.folderName ?: JSONObject.NULL),

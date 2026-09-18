@@ -204,7 +204,7 @@ class DurableTransferPlanner {
 
 class DurableTransferEngine {
     companion object {
-        private const val BUFFER_SIZE = 256 * 1_024
+        private const val BUFFER_SIZE = 1 * 1_024 * 1_024
         private const val MAX_RECORDED_FAILURES = 100
         private const val STATE_CHECKPOINT_ITEMS = 32
     }

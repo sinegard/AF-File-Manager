@@ -132,6 +132,8 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
         val active = states.firstOrNull { it.status == NearbyTransferStatus.RUNNING }
             ?: states.firstOrNull { it.status == NearbyTransferStatus.STARTING } ?: states.last()
         val files = states.flatMap { it.files }
+        val totalBytes = files.sumOf { it.sizeBytes }
+        val sentBytes = files.sumOf { it.transferredBytes }
         val status = when {
             states.any { it.status == NearbyTransferStatus.RUNNING } -> NearbyTransferStatus.RUNNING
             states.any { it.status == NearbyTransferStatus.STARTING } -> NearbyTransferStatus.STARTING
@@ -141,7 +143,14 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
         }
         onChanged(active.copy(status = status, files = files, fileCount = files.size,
             completedFiles = files.count { it.status == TransferFileStatus.COMPLETED },
-            totalBytes = files.sumOf { it.sizeBytes }, sentBytes = files.sumOf { it.transferredBytes }))
+            totalBytes = totalBytes,
+            sentBytes = sentBytes,
+            remainingMillis = if (status == NearbyTransferStatus.COMPLETED) 0L else
+                TransferProgressEstimator.remainingMillis(
+                    (totalBytes - sentBytes).coerceAtLeast(0L),
+                    active.bytesPerSecond,
+                ),
+        ))
     }
 }
 

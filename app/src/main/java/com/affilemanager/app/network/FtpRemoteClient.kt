@@ -11,6 +11,7 @@ import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import org.apache.commons.net.util.TrustManagerUtils
 import java.io.BufferedReader
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStreamReader
 import java.net.Socket
@@ -164,6 +165,22 @@ class FtpRemoteClient private constructor(
         check(client.makeDirectory(RemotePath.normalize(path))) { "FTP aplanko sukurti nepavyko" }
     }
 
+    override suspend fun createFile(path: String) = withContext(Dispatchers.IO) {
+        ensureControlAlive()
+        val normalized = RemotePath.normalize(path)
+        check(!remotePathExists(normalized)) { "Toks pavadinimas jau naudojamas" }
+        val partial = RemotePath.temporarySibling(normalized, "af-create")
+        try {
+            ByteArrayInputStream(ByteArray(0)).use { empty ->
+                check(client.storeFile(partial, empty)) { "Failo sukurti nepavyko" }
+            }
+            check(!remotePathExists(normalized)) { "Toks pavadinimas jau naudojamas" }
+            check(client.rename(partial, normalized)) { "Pervadinti nepavyko" }
+        } finally {
+            client.deleteFile(partial)
+        }
+    }
+
     override suspend fun rename(fromPath: String, toPath: String) = withContext(Dispatchers.IO) {
         ensureControlAlive()
         check(client.rename(RemotePath.normalize(fromPath), RemotePath.normalize(toPath))) { "FTP pervadinti nepavyko" }
@@ -178,6 +195,9 @@ class FtpRemoteClient private constructor(
         runCatching { client.logout() }
         if (client.isConnected) runCatching { client.disconnect() }
     }
+
+    private fun remotePathExists(path: String): Boolean =
+        client.mlistFile(path) != null || client.listFiles(path).isNotEmpty()
 
     private fun ensureControlAlive() {
         check(client.sendNoOp()) { "FTP connection closed without indication" }

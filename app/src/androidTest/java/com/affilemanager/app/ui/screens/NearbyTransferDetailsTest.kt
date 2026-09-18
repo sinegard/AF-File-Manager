@@ -20,6 +20,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
@@ -106,6 +107,12 @@ class NearbyTransferDetailsTest {
             compose.onNodeWithTag("nearby_send_details").performClick()
             compose.onNode(hasTestTag("nearby_transfer_file_0") and hasAnyDescendant(hasText("sending.txt"))).assertIsDisplayed()
             compose.onNode(hasTestTag("nearby_transfer_file_1") and hasAnyDescendant(hasText("receiving.txt"))).assertIsDisplayed()
+            compose.onNodeWithTag("nearby_files_view_toggle").performClick()
+            compose.onNode(hasTestTag("nearby_transfer_file_0") and hasAnyDescendant(hasText("sending.txt")),
+                useUnmergedTree = true).assertIsDisplayed()
+            compose.onNode(hasTestTag("nearby_transfer_file_1") and hasAnyDescendant(hasText("receiving.txt")),
+                useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithTag("nearby_files_view_toggle").performClick()
             compose.onNodeWithContentDescription("Close").performClick()
             assertEquals(peer, controller.connectedPairing())
             compose.onNodeWithTag("nearby_send_details").performClick()
@@ -203,9 +210,13 @@ class NearbyTransferDetailsTest {
                     onDismiss = { closed++ },
                     onCancel = { cancelled++ },
                     onCancelFile = { _, index -> cancelledFileIndex = index },
+                    bytesPerSecond = 1_024,
+                    remainingMillis = 2_000,
                 )
             } }
             compose.onNodeWithTag("nearby_transfer_preview_0").assertIsEnabled().performClick()
+            compose.onNodeWithText("Open").assertIsDisplayed()
+            compose.onNodeWithTag("transfer_rate_eta").assertIsDisplayed()
             compose.runOnIdle { assertEquals(photo.path, opened) }
             compose.onNodeWithTag("nearby_transfer_preview_1").assertDoesNotExist()
             compose.onNodeWithTag("nearby_transfer_preview_2").assertDoesNotExist()
@@ -220,6 +231,112 @@ class NearbyTransferDetailsTest {
             compose.onNodeWithText("Cancel").performClick()
             compose.runOnIdle { assertEquals(1, cancelled) }
         } finally { photo.delete() }
+    }
+
+    @Test fun detailsFollowTheNewestTransferAndThenTheNewestMessage() {
+        val files = mutableStateOf(
+            List(30) { index ->
+                TransferFileProgress(
+                    relativePath = "file-$index.bin",
+                    sizeBytes = 1_024,
+                    status = if (index == 29) TransferFileStatus.TRANSFERRING else TransferFileStatus.COMPLETED,
+                )
+            },
+        )
+        val messages = mutableStateOf(emptyList<com.affilemanager.app.transfer.NearbyChatMessage>())
+        compose.setContent { MaterialTheme {
+            NearbyTransferDetails(
+                files = files.value,
+                transferredBytes = 29L * 1_024,
+                totalBytes = 30L * 1_024,
+                totalFiles = 30,
+                onPreview = {},
+                onDismiss = {},
+                chatMessages = messages.value,
+            )
+        } }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("nearby_transfer_file_29").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("nearby_transfer_file_29").assertIsDisplayed()
+        compose.runOnIdle {
+            messages.value = listOf(
+                com.affilemanager.app.transfer.NearbyChatMessage("new", "Other phone", "Newest message", false, 1),
+            )
+        }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("Newest message").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Newest message").assertIsDisplayed()
+    }
+
+    @Test fun fileViewToggleShowsFourColumnsAndPreservesFileActions() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val photo = File(app.cacheDir, "grid-preview-${System.nanoTime()}.png")
+        val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        photo.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        var opened: String? = null
+        var stopped = -1
+        try {
+            val files = List(8) { index ->
+                TransferFileProgress("file-$index.png", 100,
+                    transferredBytes = if (index == 0) 100 else 0,
+                    status = if (index == 0) TransferFileStatus.COMPLETED else TransferFileStatus.WAITING,
+                    localPath = if (index == 0) photo.path else null, batchId = "grid-batch")
+            }
+            compose.setContent { MaterialTheme {
+                NearbyTransferDetails(files, 100, 800, 8, onPreview = { opened = it.absolutePath },
+                    onDismiss = {}, onCancelFile = { _, index -> stopped = index })
+            } }
+            compose.onNodeWithTag("nearby_files_view_toggle").performClick()
+            val bounds = (0..3).map { index ->
+                compose.onNodeWithTag("nearby_transfer_file_$index").fetchSemanticsNode().boundsInRoot
+            }
+            assertTrue("first four files must share a row", bounds.all { it.top == bounds[0].top })
+            assertTrue("four columns must be ordered", bounds.zipWithNext().all { (left, right) -> left.right <= right.left })
+            compose.onNodeWithTag("nearby_transfer_preview_0").performClick()
+            compose.onNodeWithTag("nearby_transfer_stop_1").performClick()
+            compose.runOnIdle { assertEquals(photo.path, opened); assertEquals(1, stopped) }
+            compose.onNodeWithTag("nearby_files_view_toggle").performClick()
+            compose.onNodeWithTag("nearby_transfer_files").performScrollToIndex(1)
+            compose.onNodeWithTag("nearby_transfer_file_0").assertIsDisplayed()
+        } finally { photo.delete() }
+    }
+
+    @Test fun byteProgressDoesNotTakeManualScrollingAwayFromTheUser() {
+        val files = mutableStateOf(
+            List(30) { index ->
+                TransferFileProgress(
+                    relativePath = "file-$index.bin",
+                    sizeBytes = 1_024,
+                    transferredBytes = if (index == 29) 128 else 1_024,
+                    status = if (index == 29) TransferFileStatus.TRANSFERRING else TransferFileStatus.COMPLETED,
+                )
+            },
+        )
+        compose.setContent { MaterialTheme {
+            NearbyTransferDetails(
+                files = files.value,
+                transferredBytes = files.value.sumOf { it.transferredBytes },
+                totalBytes = 30L * 1_024,
+                totalFiles = 30,
+                onPreview = {},
+                onDismiss = {},
+            )
+        } }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("nearby_transfer_file_29").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("nearby_transfer_files").performScrollToIndex(0)
+        compose.onNodeWithTag("nearby_transfer_file_0").assertIsDisplayed()
+        compose.runOnIdle {
+            files.value = files.value.toMutableList().apply {
+                this[29] = this[29].copy(transferredBytes = 512)
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("nearby_transfer_file_0").assertIsDisplayed()
     }
 
     @Test fun transferHistoryRestoresARealPreviewInsteadOfAFalseLock() {

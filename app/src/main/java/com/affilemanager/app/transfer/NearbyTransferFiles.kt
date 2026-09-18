@@ -51,7 +51,7 @@ internal object NearbyTransferManifest {
             pathChars += path.length
             require(pathChars <= NearbySourcePreparer.MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
             val size = (row.opt("size") as? Number)?.toString()?.toLongOrNull()
-            require(size != null && size in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
+            require(size != null && size in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
             total = Math.addExact(total, size)
             require(total <= NearbySourcePreparer.MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
             TransferFileProgress(path, size)

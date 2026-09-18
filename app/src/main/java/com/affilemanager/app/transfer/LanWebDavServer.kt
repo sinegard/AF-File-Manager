@@ -260,7 +260,7 @@ class LanWebDavServer(
     }
 
     private fun put(target: File, request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
-        if (request.bodyKind == BodyKind.FIXED) require(request.contentLength in 0..MAX_UPLOAD_BYTES) { "Failas viršija 7 GB ribą" }
+        if (request.bodyKind == BodyKind.FIXED) require(request.contentLength in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
         require(target != root && target.parentFile?.isDirectory == true && target.parentFile?.canWrite() == true) { "Paskirties katalogas neleidžia rašyti" }
         FileSystemRules.validateFileName(target.name).getOrThrow()
         val existed = target.exists()

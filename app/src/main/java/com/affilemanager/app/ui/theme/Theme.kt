@@ -18,7 +18,9 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Density
 import androidx.core.view.WindowCompat
 
 private val DefaultDarkColors = darkColorScheme(
@@ -302,6 +304,11 @@ fun AFFileManagerTheme(
         surfaceContainerHigh = opaqueColors.surfaceContainerHigh.copy(alpha = alpha),
         surfaceContainerHighest = opaqueColors.surfaceContainerHighest.copy(alpha = alpha),
     )
+    val baseDensity = LocalDensity.current
+    val interfaceScale = AppearanceRules.normalizeInterfaceScale(settings.interfaceScalePercent) / 100f
+    val scaledDensity = remember(baseDensity.density, baseDensity.fontScale, interfaceScale) {
+        Density(baseDensity.density * interfaceScale, baseDensity.fontScale)
+    }
 
     MaterialTheme(
         colorScheme = colors,
@@ -309,6 +316,7 @@ fun AFFileManagerTheme(
         SystemBarsTheme(colors = opaqueColors.copy(surface = opaqueColors.background,
             surfaceContainer = colors.surfaceContainer.compositeOver(opaqueColors.background)))
         CompositionLocalProvider(
+            LocalDensity provides scaledDensity,
             LocalAppearanceSettings provides settings,
             LocalOpaqueColors provides opaqueColors,
             androidx.compose.material3.LocalContentColor provides opaqueColors.onBackground,

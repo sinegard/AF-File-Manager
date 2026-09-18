@@ -137,7 +137,8 @@ fun SafBrowserDialog(
         transforming = false
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    val navigateBack: () -> Unit = { if (!viewModel.navigateSafBack()) onDismiss() }
+    Dialog(onDismissRequest = navigateBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize().padding(WindowInsets.safeDrawing.asPaddingValues())) {
                 DirectoryBrowserToolbar(
@@ -149,7 +150,7 @@ fun SafBrowserDialog(
                     searchActive = searchVisible,
                     grid = state.grid,
                     testTagPrefix = "saf",
-                    onBack = { if (!viewModel.navigateSafBack()) onDismiss() },
+                    onBack = navigateBack,
                     onForward = {},
                     onUp = { viewModel.navigateSafBack() },
                     onToggleSearch = {
