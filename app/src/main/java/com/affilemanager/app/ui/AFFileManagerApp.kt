@@ -71,8 +71,8 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -133,6 +133,7 @@ fun AFFileManagerApp(
     val operations by viewModel.operations.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     val fileEditState by viewModel.fileEditState.collectAsStateWithLifecycle()
+    val signatureLibrary by viewModel.signatureLibrary.collectAsStateWithLifecycle()
     val terminalState by viewModel.terminalState.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val leftPanel by viewModel.leftPanel.collectAsStateWithLifecycle()
@@ -418,12 +419,16 @@ fun AFFileManagerApp(
         FilePreviewDialog(
             target = target,
             editState = fileEditState,
+            signatureLibrary = signatureLibrary,
             archiveDisplayDefaults = archiveDisplayDefaults,
             onApplyArchiveDisplayToAll = viewModel::applyDirectoryDisplaySettingsToAll,
             onClose = viewModel::closePreview,
             onDelete = (viewModel::deletePreviewTarget).takeIf { viewModel.canDeletePreview(target) },
             onPrepareEdit = viewModel::prepareFileEdit,
             onApplyPdfSignature = viewModel::applyPdfVisualSignature,
+            onRefreshSignatureLibrary = viewModel::refreshSignatureLibrary,
+            onSaveSignature = viewModel::saveSignature,
+            onDeleteSavedSignature = viewModel::deleteSavedSignature,
             onEditTextChanged = viewModel::updateEditText,
             onEditEncodingChanged = viewModel::updateEditEncoding,
             onEditLineEndingChanged = viewModel::updateEditLineEnding,
@@ -566,7 +571,7 @@ private fun sameNormalizedPath(first: String, second: String): Boolean = runCatc
 
 @Composable
 internal fun AppLockOverlay(onUnlock: () -> Unit, onCancel: (() -> Unit)? = null, message: String? = null) {
-    Dialog(
+    AfDialog(
         onDismissRequest = { onCancel?.invoke() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = onCancel != null, dismissOnClickOutside = false),
     ) {

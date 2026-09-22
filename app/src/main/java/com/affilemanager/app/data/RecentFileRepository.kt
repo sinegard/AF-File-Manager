@@ -16,6 +16,16 @@ data class RecentFileItem(
     val recentAtMillis: Long,
 )
 
+data class RecentFilesSnapshot(
+    val added: List<RecentFileItem>,
+    val opened: List<RecentFileItem>,
+) {
+    val combined: List<RecentFileItem> = (added + opened)
+        .groupBy { it.entry.absolutePath }
+        .mapNotNull { (_, values) -> values.maxByOrNull(RecentFileItem::recentAtMillis) }
+        .sortedWith(compareByDescending<RecentFileItem> { it.recentAtMillis }.thenBy { it.entry.name.lowercase() })
+}
+
 class RecentFileRepository(
     context: Context,
     private val localFiles: LocalFileRepository,
@@ -28,6 +38,7 @@ class RecentFileRepository(
         private const val MAX_PREFERENCES_BYTES = 1_000_000
         private const val PREFS = "recent_files_v1"
         private const val KEY_TRACKED = "tracked"
+        private const val KEY_ADDED = "added"
     }
 
     private data class Candidate(val file: File, val recentAtMillis: Long)
@@ -37,10 +48,19 @@ class RecentFileRepository(
 
     @Synchronized
     fun record(path: String, recordedAtMillis: Long = System.currentTimeMillis()) {
+        record(KEY_TRACKED, path, recordedAtMillis)
+    }
+
+    @Synchronized
+    fun recordAdded(path: String, recordedAtMillis: Long = System.currentTimeMillis()) {
+        record(KEY_ADDED, path, recordedAtMillis)
+    }
+
+    private fun record(key: String, path: String, recordedAtMillis: Long) {
         val file = File(path).canonicalFile
-        if (!file.isFile || !file.canRead()) return
+        if (!file.exists() || !file.canRead()) return
         require(file.absolutePath.length <= MAX_PATH_LENGTH) { "Failo kelias per ilgas" }
-        val current = readTracked().filterNot { it.first == file.absolutePath }.toMutableList()
+        val current = readTracked(key).filterNot { it.first == file.absolutePath }.toMutableList()
         current.add(0, file.absolutePath to recordedAtMillis.coerceAtLeast(0))
         while (current.size > MAX_TRACKED_ITEMS) current.removeAt(current.lastIndex)
         val array = JSONArray().apply {
@@ -48,65 +68,75 @@ class RecentFileRepository(
                 put(JSONObject().put("path", storedPath).put("recordedAt", timestamp))
             }
         }
-        check(preferences.edit().putString(KEY_TRACKED, array.toString()).commit()) {
+        check(preferences.edit().putString(key, array.toString()).commit()) {
             "Naujausių failų įrašo išsaugoti nepavyko"
         }
     }
 
-    suspend fun latest(limit: Int = MAX_VISIBLE_ITEMS): List<RecentFileItem> = withContext(Dispatchers.IO) {
+    suspend fun latest(limit: Int = MAX_VISIBLE_ITEMS): List<RecentFileItem> = snapshot(limit).combined.take(limit)
+
+    suspend fun snapshot(limit: Int = MAX_VISIBLE_ITEMS): RecentFilesSnapshot = withContext(Dispatchers.IO) {
         require(limit in 1..MAX_VISIBLE_ITEMS) { "Naujausių failų riba netinkama" }
-        val candidates = LinkedHashMap<String, Candidate>()
-
-        readTracked().forEach { (path, recordedAt) ->
-            runCatching { File(path).canonicalFile }.getOrNull()
-                ?.takeIf { it.isFile && it.canRead() && !it.isHidden }
-                ?.let { file -> candidates[file.absolutePath] = Candidate(file, recordedAt) }
-        }
-
+        val opened = candidatesFromPreferences(KEY_TRACKED)
+        val added = LinkedHashMap<String, Candidate>()
+        candidatesFromPreferences(KEY_ADDED).forEach { candidate -> added[candidate.file.absolutePath] = candidate }
         queryMediaStore().forEach { candidate ->
             val path = candidate.file.absolutePath
-            val existing = candidates[path]
+            val existing = added[path]
             if (existing == null || candidate.recentAtMillis > existing.recentAtMillis) {
-                candidates[path] = candidate
+                added[path] = candidate
             }
         }
+        RecentFilesSnapshot(
+            added = added.values.toRecentItems(limit),
+            opened = opened.toRecentItems(limit),
+        )
+    }
 
-        candidates.values
-            .sortedWith(compareByDescending<Candidate> { it.recentAtMillis }.thenBy { it.file.name.lowercase() })
+    private fun candidatesFromPreferences(key: String): List<Candidate> = readTracked(key).mapNotNull { (path, recordedAt) ->
+        runCatching { File(path).canonicalFile }.getOrNull()
+            ?.takeIf { it.exists() && it.canRead() && !it.isHidden }
+            ?.let { file -> Candidate(file, recordedAt) }
+    }
+
+    private fun Collection<Candidate>.toRecentItems(limit: Int): List<RecentFileItem> =
+        sortedWith(compareByDescending<Candidate> { it.recentAtMillis }.thenBy { it.file.name.lowercase() })
             .take(limit)
             .map { candidate -> RecentFileItem(localFiles.toEntry(candidate.file), candidate.recentAtMillis) }
-    }
 
     private fun queryMediaStore(): List<Candidate> = runCatching {
         val resolver = applicationContext.contentResolver
         val projection = arrayOf(
             MediaStore.MediaColumns.DATA,
+            MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.DATE_MODIFIED,
         )
         val queryArgs = Bundle().apply {
             putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.MediaColumns.DATA} IS NOT NULL")
-            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.MediaColumns.DATE_MODIFIED))
+            putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.MediaColumns.DATE_ADDED))
             putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
             putInt(ContentResolver.QUERY_ARG_LIMIT, MAX_MEDIA_ROWS)
         }
         val result = ArrayList<Candidate>(MAX_MEDIA_ROWS)
         resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, null)?.use { cursor ->
             val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+            val addedIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
             val modifiedIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
             while (cursor.moveToNext() && result.size < MAX_MEDIA_ROWS) {
                 val path = cursor.getString(pathIndex)?.takeIf { it.length in 1..MAX_PATH_LENGTH } ?: continue
                 val file = runCatching { File(path).canonicalFile }.getOrNull() ?: continue
                 if (!file.isFile || !file.canRead() || file.isHidden) continue
+                val addedMillis = runCatching { Math.multiplyExact(cursor.getLong(addedIndex), 1_000L) }.getOrDefault(0L)
                 val modifiedMillis = runCatching { Math.multiplyExact(cursor.getLong(modifiedIndex), 1_000L) }
                     .getOrDefault(file.lastModified().coerceAtLeast(0))
-                result += Candidate(file, modifiedMillis.coerceAtLeast(file.lastModified().coerceAtLeast(0)))
+                result += Candidate(file, addedMillis.takeIf { it > 0L } ?: modifiedMillis.coerceAtLeast(file.lastModified().coerceAtLeast(0)))
             }
         }
         result
     }.getOrDefault(emptyList())
 
-    private fun readTracked(): List<Pair<String, Long>> {
-        val raw = preferences.getString(KEY_TRACKED, "[]") ?: "[]"
+    private fun readTracked(key: String): List<Pair<String, Long>> {
+        val raw = preferences.getString(key, "[]") ?: "[]"
         require(raw.length <= MAX_PREFERENCES_BYTES) { "Naujausių failų įrašas per didelis" }
         val array = JSONArray(raw)
         require(array.length() <= MAX_TRACKED_ITEMS) { "Naujausių failų riba viršyta" }

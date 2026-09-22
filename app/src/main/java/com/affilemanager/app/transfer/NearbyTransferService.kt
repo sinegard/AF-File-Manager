@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -183,6 +184,7 @@ class NearbyTransferService : Service() {
         private const val CHANNEL_ID = "nearby_transfer"
         private const val NOTIFICATION_ID = 42
         private const val PROGRESS_INTERVAL_MILLIS = NearbyTransferTuning.PROGRESS_INTERVAL_MILLIS
+        private const val IDLE_STOP_GRACE_MILLIS = 750L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -197,6 +199,7 @@ class NearbyTransferService : Service() {
     private var lastStartId = 0
     private var disconnecting = false
     private var controlJobs = 0
+    private var idleStopJob: Job? = null
     private val ownedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -216,6 +219,8 @@ class NearbyTransferService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
+        idleStopJob?.cancel()
+        idleStopJob = null
         when (intent?.action) {
             ACTION_CANCEL -> cancelTransfer()
             ACTION_CANCEL_FILE -> cancelFile(
@@ -234,6 +239,7 @@ class NearbyTransferService : Service() {
                 startAsForeground(progressNotification(NearbyTransferController.state.value))
                 prepareBatch(batch)
             }
+            else -> finishIfIdle()
         }
         return START_NOT_STICKY
     }
@@ -313,8 +319,18 @@ class NearbyTransferService : Service() {
 
     @Synchronized private fun finishIfIdle() {
         if (disconnecting || controlJobs > 0 || transferJob != null || preparationJobs.isNotEmpty() || NearbyTransferController.queue.hasPending()) return
-        finishForeground()
-        stopSelf(lastStartId)
+        if (idleStopJob?.isActive == true) return
+        idleStopJob = scope.launch {
+            delay(IDLE_STOP_GRACE_MILLIS)
+            synchronized(this@NearbyTransferService) {
+                idleStopJob = null
+                if (!disconnecting && controlJobs == 0 && transferJob == null && preparationJobs.isEmpty() &&
+                    !NearbyTransferController.queue.hasPending()) {
+                    finishForeground()
+                    stopSelf(lastStartId)
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -389,7 +405,7 @@ class NearbyTransferService : Service() {
                 var lastPublished = 0L
                 activeFileKey = key
                 try {
-                    upload(
+                    uploadReliably(
                         pairing = pairing,
                         batchId = batchId,
                         cookie = cookie,
@@ -612,6 +628,69 @@ class NearbyTransferService : Service() {
                 response.body?.string()?.take(200)?.ifBlank { null } ?: "Gavęs telefonas atmetė failą (${response.code})"
             }
         }
+    }
+
+    private suspend fun uploadReliably(
+        pairing: NearbyPairing,
+        batchId: String,
+        cookie: String,
+        source: TransferFile,
+        fileIndex: Int,
+        fileCount: Int,
+        totalBytes: Long,
+        completedBytes: Long,
+        onProgress: (Long) -> Unit,
+    ) {
+        var attempt = 1
+        while (true) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            try {
+                upload(
+                    pairing = pairing,
+                    batchId = batchId,
+                    cookie = cookie,
+                    source = source,
+                    fileIndex = fileIndex,
+                    fileCount = fileCount,
+                    totalBytes = totalBytes,
+                    completedBytes = completedBytes,
+                    onProgress = onProgress,
+                )
+                return
+            } catch (failure: Throwable) {
+                if (failure is CancellationException || cancelledByUser ||
+                    fileKey(batchId, fileIndex) in cancelledFileKeys) throw failure
+                val recovery = uploadRecovery(pairing, cookie, batchId, fileIndex, failure, attempt)
+                when (recovery) {
+                    NearbyUploadRecovery.COMPLETE -> return
+                    NearbyUploadRecovery.CANCEL -> throw CancellationException("Siuntimas atšauktas")
+                    NearbyUploadRecovery.RETRY -> {
+                        delay(NearbyTransferRetry.retryDelayMillis(attempt))
+                        attempt += 1
+                    }
+                    NearbyUploadRecovery.WAIT, NearbyUploadRecovery.FAIL -> throw failure
+                }
+            }
+        }
+    }
+
+    private suspend fun uploadRecovery(
+        pairing: NearbyPairing,
+        cookie: String,
+        batchId: String,
+        fileIndex: Int,
+        failure: Throwable,
+        attempt: Int,
+    ): NearbyUploadRecovery {
+        if (!NearbyTransferController.connection.supportsQueue(pairing)) return NearbyUploadRecovery.FAIL
+        repeat(NearbyTransferRetry.MAX_STATUS_CHECKS) { check ->
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val remote = runCatching { remoteFileStatus(pairing, cookie, batchId, fileIndex) }.getOrNull()
+            val decision = NearbyTransferRetry.decide(failure, remote, attempt)
+            if (decision != NearbyUploadRecovery.WAIT) return decision
+            delay(NearbyTransferRetry.statusDelayMillis(check))
+        }
+        return NearbyUploadRecovery.FAIL
     }
 
     private fun createRemoteDirectory(pairing: NearbyPairing, cookie: String, relativePath: String, batchId: String) {

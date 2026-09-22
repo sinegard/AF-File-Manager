@@ -1,5 +1,6 @@
 package com.affilemanager.app
 
+import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import androidx.test.runner.AndroidJUnitRunner
@@ -10,10 +11,15 @@ class SelfContainedTestRunner : AndroidJUnitRunner() {
     override fun onStart() {
         try {
             val packageName = targetContext.packageName
-            shell("appops set $packageName MANAGE_EXTERNAL_STORAGE allow")
-            val appOp = shell("appops get $packageName MANAGE_EXTERNAL_STORAGE")
-            check(appOp.contains("allow", ignoreCase = true)) {
-                "MANAGE_EXTERNAL_STORAGE app-op was not granted: ${appOp.trim()}"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                shell("appops set $packageName MANAGE_EXTERNAL_STORAGE allow")
+                val appOp = shell("appops get $packageName MANAGE_EXTERNAL_STORAGE")
+                check(appOp.contains("allow", ignoreCase = true)) {
+                    "MANAGE_EXTERNAL_STORAGE app-op was not granted: ${appOp.trim()}"
+                }
+            } else {
+                shell("pm grant $packageName android.permission.READ_EXTERNAL_STORAGE")
+                shell("pm grant $packageName android.permission.WRITE_EXTERNAL_STORAGE")
             }
             copyOptionalVideoFixture()
         } catch (error: Throwable) {

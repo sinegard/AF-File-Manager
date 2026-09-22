@@ -63,8 +63,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.advanced.AdvancedAccessState
 import com.affilemanager.app.core.FileSystemRules
@@ -126,7 +126,7 @@ fun AdvancedStorageBrowserDialog(
     }
     val allSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.absolutePath in state.selectedPaths }
 
-    Dialog(
+    AfDialog(
         onDismissRequest = { viewModel.navigateAdvancedBack() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {

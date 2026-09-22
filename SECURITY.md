@@ -41,12 +41,14 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 - Synchronization never performs a silent delete. Background conflicts stop execution and record their state.
 - Android confirms every APK installation. Root and Shizuku actions are not executed automatically, and changing the protected-folder access mode disconnects the previous privileged service.
 - The updater accepts only a stable release from this public repository. It verifies the HTTPS origin, APK name, size, GitHub SHA-256 digest, package ID, higher `versionCode`, and the installed app's signing certificate before opening Android's installer.
+- Quick Tunnel is opt-in and exposes only the already selected AF Web share. It keeps the one-time AF access code, runs the pinned bundled `cloudflared` component as the ordinary app UID, and stops with the Web session or the user's Stop action. The temporary address is public, Cloudflare terminates its HTTPS connection, and Cloudflare's service availability and terms remain outside AF's security boundary.
 
 ## Security boundaries
 
 - The optional Get content picker returns temporary read access only to files explicitly selected by the user. It respects the AF app lock and Android storage permissions. It does not expose saved servers, privileged roots, app-private storage, directory grants, or write access to the requesting app.
 - Android and device-vendor restrictions take precedence over the app. Ordinary access to `Android/data` and `Android/obb` remains restricted; the optional advanced mode works only when a separately installed and configured Shizuku or compatible root service actually grants access.
 - Release APKs are signed with a separate distribution key stored as GitHub Actions secrets. The private key and passwords are not present in this repository. Losing that key prevents compatible updates.
+- Public releases contain a CPU-specific APK for each supported ABI plus a universal fallback for older AF versions. The updater chooses only an APK matching the device ABI and still applies the package, version, digest, and signing-certificate checks above.
 - Every real server type should be validated against the owner's infrastructure and certificate or SSH-fingerprint policy before production use.
 - No software can guarantee that a remote server, network, removable drive, or third-party Android provider is trustworthy or available.
 

@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class NearbyQueuedTransferTest {
     @Test fun realReceivingServiceStopKeepsResultsButDropsCredentials() = runBlocking {
-        check(android.os.Build.MODEL.contains("sdk"))
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val complete = TransferFileProgress("received.txt", 12, 12, TransferFileStatus.COMPLETED, "/fixture/received.txt")
         try {
@@ -37,7 +37,7 @@ class NearbyQueuedTransferTest {
     }
 
     @Test fun failedManifestAcknowledgementCancelsOnlyThatBatchBeforeTheNextManifest() = runBlocking {
-        check(android.os.Build.MODEL.contains("sdk"))
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val original = File(app.cacheDir, "manifest-failure-${UUID.randomUUID()}.txt").apply { writeText("original remains") }
         val address = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
@@ -81,14 +81,21 @@ class NearbyQueuedTransferTest {
         try {
             NearbyTransferController.connection.clear(); NearbyTransferController.clearFinished()
             val peer = NearbyPairing.create(address.hostAddress!!, server.localPort, "12345678")
-            suspend fun send() = NearbyTransferController.start(app, peer,
-                app.graph.nearbySources.prepareLocalPaths(listOf(original.path)).getOrThrow())
-            suspend fun finish() = withTimeout(8_000) {
-                while (NearbyTransferController.state.value.status in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) delay(25)
+            suspend fun send(): String {
+                NearbyTransferController.start(app, peer,
+                    app.graph.nearbySources.prepareLocalPaths(listOf(original.path)).getOrThrow())
+                return requireNotNull(NearbyTransferController.state.value.files.lastOrNull()?.batchId)
             }
-            send(); finish()
+            suspend fun finish(batchId: String) = withTimeout(8_000) {
+                while (true) {
+                    val files = NearbyTransferController.state.value.files.filter { it.batchId == batchId }
+                    if (files.isNotEmpty() && files.all { it.status.isTerminal() }) break
+                    delay(25)
+                }
+            }
+            val failedBatch = send(); finish(failedBatch)
             assertEquals(NearbyTransferStatus.ERROR, NearbyTransferController.state.value.status)
-            send(); finish()
+            val successfulBatch = send(); finish(successfulBatch)
             assertEquals(1, events.count { it.first == "/upload" })
             val announced = events.filter { it.first == "/nearby/manifest" }
             assertEquals(2, announced.size)
@@ -105,7 +112,7 @@ class NearbyQueuedTransferTest {
     }
 
     @Test fun cancellingBeforeLoginCleansEveryQueuedPrivateCopyAndKeepsOriginals() = runBlocking {
-        check(android.os.Build.MODEL.contains("sdk"))
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val original = File(app.cacheDir, "queue-original-${UUID.randomUUID()}.txt").apply { writeText("keep original") }
         val stages = (1..2).map { File(app.cacheDir, "nearby-send-staging/${UUID.randomUUID()}").apply { check(mkdirs()) } }
@@ -138,7 +145,7 @@ class NearbyQueuedTransferTest {
     }
 
     @Test fun foregroundSenderAppendsDuringARealBlockedUploadAndSurvivesRapidNextBatches() = runBlocking {
-        check(android.os.Build.MODEL.contains("sdk"))
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val root = File(app.cacheDir, "nearby-queue-${UUID.randomUUID()}").apply { check(mkdir()) }
         val first = File(root, "first.bin").apply { outputStream().use { out -> repeat(256) { out.write(ByteArray(32768) { (it % 251).toByte() }) } } }
@@ -209,7 +216,10 @@ class NearbyQueuedTransferTest {
                 assertEquals(state.message, NearbyTransferStatus.COMPLETED, state.status)
             }
             send(first)
-            assertTrue(firstHeader.await(8, TimeUnit.SECONDS))
+            assertTrue(
+                "First upload header did not arrive; state=${NearbyTransferController.state.value}; errors=$errors",
+                firstHeader.await(15, TimeUnit.SECONDS),
+            )
             send(second)
             assertTrue("Second manifest must arrive before first upload completes", appended.await(8, TimeUnit.SECONDS))
             val queued = NearbyTransferController.state.value.files

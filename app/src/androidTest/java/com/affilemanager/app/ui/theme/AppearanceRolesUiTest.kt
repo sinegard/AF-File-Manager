@@ -110,6 +110,54 @@ class AppearanceRolesUiTest {
         assertEquals(normal * .75f, reduced, 2f)
     }
 
+    @Test fun interfaceScaleReachesModalDialogContent() {
+        val scale = mutableStateOf(100)
+        compose.setContent {
+            AFFileManagerTheme(AppearanceSettings(interfaceScalePercent = scale.value)) {
+                com.affilemanager.app.ui.components.AfModalDialog(
+                    title = "Popup",
+                    icon = androidx.compose.material.icons.Icons.Rounded.Info,
+                    onDismissRequest = {},
+                    actions = {},
+                ) {
+                    Box(Modifier.size(80.dp).testTag("scaled_dialog_content"))
+                }
+            }
+        }
+        val normal = compose.onNodeWithTag("scaled_dialog_content").fetchSemanticsNode().boundsInRoot.width
+        compose.runOnIdle { scale.value = 125 }
+        val enlarged = compose.onNodeWithTag("scaled_dialog_content").fetchSemanticsNode().boundsInRoot.width
+        compose.runOnIdle { scale.value = 75 }
+        val reduced = compose.onNodeWithTag("scaled_dialog_content").fetchSemanticsNode().boundsInRoot.width
+        assertEquals(normal * 1.25f, enlarged, 2f)
+        assertEquals(normal * .75f, reduced, 2f)
+    }
+
+    @Test fun interfaceScaleReachesThreeDotMenusWhenOpened() {
+        val scale = mutableStateOf(100)
+        val expanded = mutableStateOf(true)
+        compose.setContent {
+            AFFileManagerTheme(AppearanceSettings(interfaceScalePercent = scale.value)) {
+                Box {
+                    AfDropdownMenu(expanded = expanded.value, onDismissRequest = { expanded.value = false }) {
+                        Box(Modifier.size(64.dp).testTag("scaled_popup_content"))
+                    }
+                }
+            }
+        }
+        val normal = compose.onNodeWithTag("scaled_popup_content").fetchSemanticsNode().boundsInRoot.width
+        compose.runOnIdle { expanded.value = false; scale.value = 125 }
+        compose.waitForIdle()
+        compose.runOnIdle { expanded.value = true }
+        val enlarged = compose.onNodeWithTag("scaled_popup_content").fetchSemanticsNode().boundsInRoot.width
+        compose.runOnIdle { expanded.value = false; scale.value = 75 }
+        compose.waitForIdle()
+        compose.runOnIdle { expanded.value = true }
+        val reduced = compose.onNodeWithTag("scaled_popup_content").fetchSemanticsNode().boundsInRoot.width
+        assertEquals(normal * 1.25f, enlarged, 2f)
+        assertEquals(normal * .75f, reduced, 2f)
+    }
+
     private fun assertReadable(tag: String, fill: Color) {
         val layouts = mutableListOf<TextLayoutResult>()
         compose.onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().config[

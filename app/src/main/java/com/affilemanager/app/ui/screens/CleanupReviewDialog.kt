@@ -57,8 +57,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.DirectoryContentUsage
@@ -218,7 +218,7 @@ internal fun CleanupReviewDialog(
         )
     }
 
-    Dialog(
+    AfDialog(
         onDismissRequest = navigateBack,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {

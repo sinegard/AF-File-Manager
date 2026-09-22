@@ -73,6 +73,10 @@ class LanHttpServer(
     private val onNearbyPeer: (NearbyPairing, Long) -> Unit = { _, _ -> },
     private val onNearbyMessage: (String) -> Unit = {},
     private val onNearbyDisconnect: () -> Unit = {},
+    private val groupMode: Boolean = false,
+    private val organizerName: String = "AF File Manager",
+    private val groupName: String = "AF group",
+    private val onGroupMembers: (NearbyGroupInvite, List<NearbyGroupMember>) -> Unit = { _, _ -> },
     private val onStopped: (String) -> Unit = {},
 ) : TemporaryLanServer {
     private val nearbyFiles = NearbyReceiveFiles()
@@ -80,6 +84,7 @@ class LanHttpServer(
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
     private data class NearbyUploadKey(val batchId: String?, val fileIndex: Int)
     private val uploadClients = java.util.concurrent.ConcurrentHashMap<Socket, NearbyUploadKey>()
+    private val groupDirectory = NearbyGroupDirectory(nowMillis)
     companion object {
         const val MAX_SESSION_MINUTES = LanSessionDuration.MAX_TIMED_MINUTES
         const val MAX_CONCURRENT_REQUESTS = 4
@@ -281,6 +286,43 @@ class LanHttpServer(
                 onNearbyPeer(peer, active.expiresAtMillis)
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
             }
+            request.method == "POST" && request.path == "/nearby/group/join" -> {
+                require(groupMode && !readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) {
+                    "Užklausa atmesta"
+                }
+                val peer = readGroupPairing(request, input, remoteAddress)
+                groupDirectory.join(peer)
+                publishGroupMembers(active)
+                writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            }
+            request.method == "POST" && request.path == "/nearby/group/heartbeat" -> {
+                require(groupMode && !readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) {
+                    "Užklausa atmesta"
+                }
+                val peer = readGroupPairing(request, input, remoteAddress)
+                require(groupDirectory.heartbeat(peer)) { "Dalyvis nebepriklauso grupei" }
+                publishGroupMembers(active)
+                writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            }
+            request.method == "POST" && request.path == "/nearby/group/leave" -> {
+                require(groupMode && !readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) {
+                    "Užklausa atmesta"
+                }
+                val peer = readGroupPairing(request, input, remoteAddress)
+                groupDirectory.leave(peer)
+                publishGroupMembers(active)
+                writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            }
+            request.method == "GET" && request.path == "/nearby/group/members" -> {
+                require(groupMode && !readOnly && request.contentLength == 0L) { "Užklausa atmesta" }
+                val members = groupMembers(active)
+                writeText(
+                    output,
+                    200,
+                    NearbyGroupCodec.encode(members).toString(StandardCharsets.UTF_8),
+                    "application/json; charset=utf-8",
+                )
+            }
             request.method == "POST" && request.path == "/nearby/message" -> {
                 require(!readOnly && request.contentLength in 1..MAX_NEARBY_MESSAGE_BYTES.toLong()) { "Užklausa atmesta" }
                 val message = NearbyChatController.validate(
@@ -330,8 +372,25 @@ class LanHttpServer(
             bytesPerSecond = bytesPerSecond, remainingMillis = remainingMillis))
     }
 
+    private fun readGroupPairing(request: Request, input: BufferedInputStream, remoteAddress: String): NearbyPairing {
+        val peer = NearbyPairing.parse(readExactly(input, request.contentLength.toInt()).toString(StandardCharsets.UTF_8))
+        require(peer.host == remoteAddress) { "Užklausa atmesta" }
+        return peer
+    }
+
+    private fun organizerPairing(active: LanServerSession): NearbyPairing =
+        NearbyPairing.create(active.address, active.port, active.code, organizerName)
+
+    private fun groupMembers(active: LanServerSession): List<NearbyGroupMember> =
+        groupDirectory.snapshot(organizerPairing(active))
+
+    private fun publishGroupMembers(active: LanServerSession) {
+        val organizer = organizerPairing(active)
+        onGroupMembers(NearbyGroupInvite(organizer, groupName), groupDirectory.snapshot(organizer))
+    }
+
     private fun handleLogin(request: Request, input: BufferedInputStream, output: BufferedOutputStream, active: LanServerSession) {
-        if (codeConsumed.get() || authFailures.get() >= MAX_AUTH_FAILURES) {
+        if ((!groupMode && codeConsumed.get()) || authFailures.get() >= MAX_AUTH_FAILURES) {
             writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
             return
         }
@@ -347,7 +406,7 @@ class LanHttpServer(
             writeText(output, 403, loginPage(active, t("Neteisingas kodas")), "text/html; charset=utf-8")
             return
         }
-        if (!codeConsumed.compareAndSet(false, true)) {
+        if (!groupMode && !codeConsumed.compareAndSet(false, true)) {
             writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
             return
         }

@@ -10,6 +10,11 @@ enum class NetworkProtocol {
     FTPS,
 }
 
+enum class NetworkProvider {
+    GENERIC,
+    NEXTCLOUD,
+}
+
 data class NetworkProfile(
     val id: String,
     val name: String,
@@ -23,6 +28,7 @@ data class NetworkProfile(
     val expectedHostKeySha256: String? = null,
     val allowFirstUseTrust: Boolean = false,
     val webDavUseTls: Boolean = true,
+    val provider: NetworkProvider = NetworkProvider.GENERIC,
 )
 
 data class RemoteEntry(

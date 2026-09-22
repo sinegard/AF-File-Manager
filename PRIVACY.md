@@ -22,11 +22,13 @@ Android backup and device-to-device transfer are disabled for app data so creden
 
 ## Network activity
 
-Data is sent to SMB, SFTP, WebDAV, FTP, or FTPS servers only when the user configures those servers and starts a transfer, or enables a synchronization schedule. Plain FTP does not encrypt credentials or content and should be used only on a trusted network.
+Data is sent to SMB, SFTP, WebDAV, FTP, or FTPS servers only when the user configures those servers and starts a transfer, or enables a synchronization schedule. Plain FTP does not encrypt credentials or content and should be used only on a trusted network. A Nextcloud connection contacts only the server entered by the user; browser authorization creates a revocable app password that is stored through Android Keystore until the connection is removed.
 
 At app launch, no more than once every six hours, AF File Manager checks stable releases in the public `sinegard/AF-File-Manager` GitHub repository. GitHub receives a normal HTTPS request with the app version in the `User-Agent` header. The app never sends file names, file contents, storage listings, or network profiles to GitHub. A newer APK is downloaded automatically only on an unmetered network; on a metered network the app asks first.
 
-The temporary local-network transfer page shares only the folder selected by the user, requires a one-time code, and expires automatically. It does not create a public internet tunnel.
+The temporary local-network transfer page shares only the folder selected by the user, requires a one-time code, and expires automatically. It stays on the local network unless the user explicitly chooses **Quick Tunnel**. Quick Tunnel creates a temporary public HTTPS address through Cloudflare and routes requests and transferred file content through Cloudflare's network. Cloudflare receives the connection metadata and handles the public HTTPS connection; AF has no Cloudflare account or token. The AF one-time code still controls access, but users should not enable Quick Tunnel for content they do not want routed through a third-party service. Stopping either the tunnel or its AF Web session removes the public route.
+
+Phone groups keep the member directory on the organizer phone. File content is transferred directly between the selected sender and recipient on their local connection rather than through the organizer or an AF-operated server.
 
 Protected-folder access is local and optional. When the user enables it, selected paths and file operations are sent only to the local Shizuku or root service on that Android device. AF File Manager does not send those paths or file contents to its own server or any analytics service.
 

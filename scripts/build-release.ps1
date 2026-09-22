@@ -17,6 +17,11 @@ if (-not (Test-Path -LiteralPath $credentialPath -PathType Leaf)) {
     throw "DPAPI credential not found: $credentialPath"
 }
 
+& (Join-Path $PSScriptRoot 'build-cloudflared-android.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw "Bundled cloudflared build failed with exit code $LASTEXITCODE"
+}
+
 & (Join-Path $PSScriptRoot 'run-performance-gate.ps1') -EmulatorSerial $EmulatorSerial
 if ($LASTEXITCODE -ne 0) {
     throw "Release stopped by the performance gate."

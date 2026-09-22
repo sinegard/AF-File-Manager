@@ -198,6 +198,26 @@ object UiTranslator {
         "Tai matomas ranka pieštas žymuo, o ne kvalifikuotas kriptografinis elektroninis parašas." to
             "This is a visible handwritten mark, not a qualified cryptographic electronic signature.",
         "Pieškite pirštu arba rašikliu baltoje srityje." to "Draw with your finger or stylus in the white area.",
+        "Išsaugoti programėlėje" to "Save in app",
+        "Išsaugoti parašą" to "Save signature",
+        "Išsaugoti parašai" to "Saved signatures",
+        "Parašų dar nėra" to "There are no saved signatures",
+        "Pašalinti parašą?" to "Remove signature?",
+        "Išsaugotų parašų įkelti nepavyko" to "Could not load saved signatures",
+        "Parašo išsaugoti nepavyko" to "Could not save the signature",
+        "Parašo pašalinti nepavyko" to "Could not remove the signature",
+        "Parašų bibliotekos failo dydis netinkamas" to "The signature library file size is invalid",
+        "Parašų bibliotekos versija nepalaikoma" to "The signature library version is unsupported",
+        "Parašų bibliotekos riba viršyta" to "The signature library limit was exceeded",
+        "Parašų bibliotekoje kartojasi identifikatoriai" to "The signature library contains duplicate identifiers",
+        "Parašo identifikatorius netinkamas" to "The signature identifier is invalid",
+        "Išsaugotas parašas neberastas" to "The saved signature could not be found",
+        "Paraše yra netinkamas brūkšnys" to "The signature contains an invalid stroke",
+        "Parašo data netinkama" to "The signature date is invalid",
+        "Parašų biblioteka per didelė" to "The signature library is too large",
+        "Parašų bibliotekos katalogo sukurti nepavyko" to "Could not create the signature library directory",
+        "Parašo pavadinimo ilgis netinkamas" to "The signature name length is invalid",
+        "Parašo pavadinime yra neleistinų ženklų" to "The signature name contains invalid characters",
         "Išvalyti" to "Clear",
         "Toliau" to "Next",
         "Ankstesnis puslapis" to "Previous page",
@@ -313,6 +333,11 @@ object UiTranslator {
         "Laikinas kodas (tuščias = sugeneruotas)" to "Temporary code (blank = generated)",
         "Jei įvedate patys, naudokite bent 8 ženklus." to "If you enter one, use at least 8 characters.",
         "Atidaryti Wi-Fi ir prieigos taško nustatymus" to "Open Wi-Fi and hotspot settings",
+        "Paleisti gavimą per Wi-Fi Direct" to "Start receiving with Wi-Fi Direct",
+        "Wi-Fi Direct nereikia interneto ar prieigos taško, tačiau naudojamas telefono Wi-Fi ryšys." to "Wi-Fi Direct does not need internet or a hotspot, but it uses the phone's Wi-Fi radio.",
+        "Wi-Fi Direct gavimo paleisti nepavyko" to "Could not start Wi-Fi Direct receiving",
+        "Wi-Fi Direct gavimo grupės sukurti nepavyko" to "Could not create the Wi-Fi Direct receiving group",
+        "Wi-Fi Direct leidimas nesuteiktas" to "Wi-Fi Direct permission was not granted",
         "5 GHz dažnį galima pasirinkti sistemos nustatymuose tik tada, kai jį palaiko abu telefonai." to "A 5 GHz band can be selected in system settings only when both phones support it.",
         "Paleisti gavimą" to "Start receiving",
         "Šiuo metu veikia kita bendrinimo sesija. Ją sustabdykite prieš paleisdami gavimą." to "Another sharing session is active. Stop it before starting receiving.",
@@ -335,6 +360,19 @@ object UiTranslator {
         "Gaunančiame telefone atverkite „Gauti“, tada nuskaitykite rodomą QR kodą." to "Open ‘Receive’ on the receiving phone, then scan the displayed QR code.",
         "Nuskaityti QR kodą" to "Scan QR code",
         "Atidaryti Wi-Fi nustatymus" to "Open Wi-Fi settings",
+        "Prisijungti per Wi-Fi Direct" to "Connect with Wi-Fi Direct",
+        "Wi-Fi Direct prijungtas. Dabar nuskaitykite gavėjo QR kodą." to "Wi-Fi Direct is connected. Now scan the receiver's QR code.",
+        "Wi-Fi Direct įrenginiai" to "Wi-Fi Direct devices",
+        "Gaunančiame telefone paleiskite Wi-Fi Direct gavimą, tada pasirinkite jį šiame sąraše." to "Start Wi-Fi Direct receiving on the receiving phone, then select it in this list.",
+        "Wi-Fi Direct yra išjungtas" to "Wi-Fi Direct is turned off",
+        "Wi-Fi Direct ryšys nutrūko" to "The Wi-Fi Direct connection was lost",
+        "Wi-Fi Direct grupės sukurti nepavyko" to "Could not create the Wi-Fi Direct group",
+        "Wi-Fi Direct įrenginių paieška nepavyko" to "Wi-Fi Direct device discovery failed",
+        "Wi-Fi Direct įrenginys nepasiekiamas" to "The Wi-Fi Direct device is unavailable",
+        "Prisijungti per Wi-Fi Direct nepavyko" to "Could not connect with Wi-Fi Direct",
+        "Šis telefonas nepalaiko Wi-Fi Direct" to "This phone does not support Wi-Fi Direct",
+        "Wi-Fi Direct šiuo metu užimtas" to "Wi-Fi Direct is currently busy",
+        "Wi-Fi Direct įrenginys" to "Wi-Fi Direct device",
         "Arba įklijuokite susiejimo kodą" to "Or paste the pairing code",
         "Įrenginio valymas" to "Device cleanup",
         "Tik peržiūra — AF niekada automatiškai nešalina programų ar talpyklos" to "Review only — AF never removes apps or cache automatically",
@@ -854,6 +892,20 @@ object UiTranslator {
         "Greitos vietos" to "Quick locations",
         "Naujausi failai" to "Recent files",
         "Naujausių failų dar nėra" to "No recent files yet",
+        "Neseniai pridėti" to "Recently added",
+        "Neseniai atidaryti" to "Recently opened",
+        "Ieškoti naujausiuose" to "Search recent items",
+        "Keisti rikiavimo kryptį; palaikykite rikiavimo tipui" to "Change sort direction; hold to choose the sort field",
+        "Filtruoti pagal datą" to "Filter by date",
+        "Išvalyti paiešką" to "Clear search",
+        "Neseniai pridėtų elementų nėra" to "There are no recently added items",
+        "Neseniai atidarytų elementų nėra" to "There are no recently opened items",
+        "Visos datos" to "All dates",
+        "Šiandien" to "Today",
+        "Paskutinės 7 dienos" to "Last 7 days",
+        "Paskutinės 30 dienų" to "Last 30 days",
+        "Daugiau veiksmų" to "More actions",
+        "Paieška" to "Search",
         "Rodyti visus" to "View all",
         "Atnaujinti naujausius failus" to "Refresh recent files",
         "Saugyklos" to "Storage",
@@ -1638,6 +1690,44 @@ object UiTranslator {
         }
 
         val patterns = listOf(
+            Regex("^Netinkamas (.+) adresas$") to { match: MatchResult ->
+                val label = when (match.groupValues[1]) {
+                    "Prisijungimo" -> "sign-in"
+                    "Tikrinimo" -> "polling"
+                    else -> match.groupValues[1]
+                }
+                "Invalid $label URL"
+            },
+            Regex("^(.+) adresas nukreipia į kitą serverį$") to { match: MatchResult ->
+                val label = when (match.groupValues[1]) {
+                    "Prisijungimo" -> "The sign-in"
+                    "Tikrinimo" -> "The polling"
+                    else -> "The ${match.groupValues[1]}"
+                }
+                "$label URL points to another server"
+            },
+            Regex("^Nextcloud prisijungimo pradėti nepavyko \\(HTTP (\\d+)\\)$") to { match: MatchResult ->
+                "Could not start Nextcloud sign-in (HTTP ${match.groupValues[1]})"
+            },
+            Regex("^Nextcloud prisijungimo patvirtinti nepavyko \\(HTTP (\\d+)\\)$") to { match: MatchResult ->
+                "Could not confirm Nextcloud sign-in (HTTP ${match.groupValues[1]})"
+            },
+            Regex("^Grupės kodas atmestas \\(HTTP (\\d+)\\)$") to { match: MatchResult ->
+                "The group code was rejected (HTTP ${match.groupValues[1]})"
+            },
+            Regex("^Grupės ryšys atmestas \\(HTTP (\\d+)\\)$") to { match: MatchResult ->
+                "The group connection was rejected (HTTP ${match.groupValues[1]})"
+            },
+            Regex("^Grupės sąrašo gauti nepavyko \\(HTTP (\\d+)\\)$") to { match: MatchResult ->
+                "Could not get the group list (HTTP ${match.groupValues[1]})"
+            },
+            Regex("^Grupė \\((\\d+)\\)$") to { match: MatchResult -> "Group (${match.groupValues[1]})" },
+            Regex("^(\\d+)/(\\d+) dalyvių$") to { match: MatchResult ->
+                "${match.groupValues[1]}/${match.groupValues[2]} members"
+            },
+            Regex("^(.{1,64}) prisijungė prie grupės$") to { match: MatchResult ->
+                "${match.groupValues[1]} joined the group"
+            },
             Regex("^Failai: (\\d+) · aplankai: (\\d+) · (.+)$") to { match: MatchResult ->
                 "Files: ${match.groupValues[1]} · folders: ${match.groupValues[2]} · ${match.groupValues[3]}"
             },

@@ -6,6 +6,11 @@ import org.junit.Test
 
 class PdfVisualSignatureRulesTest {
     @Test
+    fun drawingSurfaceUsesTheExpandedTwoToOneRatio() {
+        assertEquals(2f, VisualSignatureRules.ASPECT_RATIO, 0.0001f)
+    }
+
+    @Test
     fun placementIsBoundedWhenMovedAndResized() {
         val initial = VisualSignatureRules.defaultPlacement(pageIndex = 2, pageAspectRatio = 0.75f)
         val resized = VisualSignatureRules.resize(initial, requestedWidth = 5f, pageAspectRatio = 0.75f)

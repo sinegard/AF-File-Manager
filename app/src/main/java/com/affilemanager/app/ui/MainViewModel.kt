@@ -83,6 +83,7 @@ import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.data.FileSelectionSummary
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
+import com.affilemanager.app.network.NextcloudLoginClient
 import com.affilemanager.app.network.NetworkProtocol
 import com.affilemanager.app.network.RemoteClient
 import com.affilemanager.app.network.RemoteEntry
@@ -102,6 +103,7 @@ import com.affilemanager.app.operations.DurableTransferPlanner
 import com.affilemanager.app.operations.TransferFailurePolicy
 import com.affilemanager.app.operations.TransferVerification
 import com.affilemanager.app.pdfsigning.PdfSignaturePlacement
+import com.affilemanager.app.pdfsigning.SavedSignature
 import com.affilemanager.app.pdfsigning.SignatureDrawing
 import com.affilemanager.app.security.VaultHeader
 import com.affilemanager.app.sync.SyncActionType
@@ -218,10 +220,17 @@ data class SearchUiState(
 )
 
 data class RecentFilesUiState(
-    val items: List<RecentFileItem> = emptyList(),
+    val addedItems: List<RecentFileItem> = emptyList(),
+    val openedItems: List<RecentFileItem> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
-)
+) {
+    val items: List<RecentFileItem> = (addedItems + openedItems)
+        .groupBy { it.entry.absolutePath }
+        .mapNotNull { (_, values) -> values.maxByOrNull(RecentFileItem::recentAtMillis) }
+        .sortedWith(compareByDescending<RecentFileItem> { it.recentAtMillis }.thenBy { it.entry.name.lowercase() })
+        .take(com.affilemanager.app.data.RecentFileRepository.MAX_VISIBLE_ITEMS)
+}
 
 data class BatchRenameUiState(
     val open: Boolean = false,
@@ -493,6 +502,23 @@ sealed interface PreviewTarget {
     data class Vault(val file: FileEntry, val header: VaultHeader) : PreviewTarget
 }
 
+data class SignatureLibraryUiState(
+    val items: List<SavedSignature> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
+enum class NextcloudLoginPhase { IDLE, STARTING, WAITING_FOR_BROWSER, SAVING }
+
+data class NextcloudLoginUiState(
+    val open: Boolean = false,
+    val server: String = "",
+    val phase: NextcloudLoginPhase = NextcloudLoginPhase.IDLE,
+    val error: String? = null,
+) {
+    val running: Boolean get() = phase != NextcloudLoginPhase.IDLE
+}
+
 enum class UiMessageAction { UNDO_BATCH_RENAME }
 
 data class UiMessage(
@@ -508,6 +534,8 @@ enum class HomeToolPage {
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as AFFileManagerApplication).graph
+    private val nextcloudLoginClient = NextcloudLoginClient()
+    private var nextcloudLoginJob: Job? = null
     private val legacyFilesHomeDisplayIdentity = "virtual:files-home"
     private val remotePreviewCache = RemotePreviewCache(application.cacheDir)
     private val archiveMaterializationMutex = Mutex()
@@ -687,6 +715,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _networkState = MutableStateFlow(NetworkUiState())
     val networkState: StateFlow<NetworkUiState> = _networkState.asStateFlow()
 
+    private val _nextcloudLogin = MutableStateFlow(NextcloudLoginUiState())
+    val nextcloudLogin: StateFlow<NextcloudLoginUiState> = _nextcloudLogin.asStateFlow()
+
     private val _trashItems = MutableStateFlow<List<TrashItem>>(emptyList())
     val trashItems: StateFlow<List<TrashItem>> = _trashItems.asStateFlow()
 
@@ -728,6 +759,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _fileEditState = MutableStateFlow(FileEditUiState())
     val fileEditState: StateFlow<FileEditUiState> = _fileEditState.asStateFlow()
 
+    private val _signatureLibrary = MutableStateFlow(SignatureLibraryUiState())
+    val signatureLibrary: StateFlow<SignatureLibraryUiState> = _signatureLibrary.asStateFlow()
+
     val terminalState: StateFlow<TerminalUiState> = graph.terminalSessions.state
 
     val operations = graph.operationManager.operations
@@ -741,6 +775,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var analysisRequestId = 0L
     private var similarImagesJob: Job? = null
     private var advancedBrowserJob: Job? = null
+    private var advancedFileOpenRequestId = 0L
     private var advancedFileOpenJob: Job? = null
     private var recentFilesJob: Job? = null
     private var fileCategoryJob: Job? = null
@@ -750,6 +785,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var remoteFileOpenRequestId = 0L
     private var fileEditJob: Job? = null
     private var fileEditRequestId = 0L
+    private var signatureLibraryJob: Job? = null
     private var leftPanelRefreshJob: Job? = null
     private var rightPanelRefreshJob: Job? = null
     private val handledOperations = ArrayDeque<String>()
@@ -1170,12 +1206,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         advancedFileOpenJob?.cancel()
+        val requestId = ++advancedFileOpenRequestId
         advancedFileOpenJob = viewModelScope.launch {
-            graph.privilegedFiles.stageForPreview(entry).fold(
-                onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached) },
-                onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
-            )
-            advancedFileOpenJob = null
+            try {
+                val readableLocalFile = withContext(Dispatchers.IO) {
+                    AdvancedPreviewRouting.directlyReadableFile(entry)
+                }
+                if (readableLocalFile != null) {
+                    open(graph.localFiles.toEntry(readableLocalFile))
+                } else {
+                    graph.privilegedFiles.stageForPreview(entry).fold(
+                        onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached) },
+                        onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
+                    )
+                }
+            } finally {
+                if (advancedFileOpenRequestId == requestId) advancedFileOpenJob = null
+            }
         }
     }
 
@@ -1233,8 +1280,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recentFilesJob?.cancel()
         recentFilesJob = viewModelScope.launch {
             _recentFiles.update { it.copy(loading = true, error = null) }
-            runCatching { graph.recentFiles.latest() }
-                .onSuccess { items -> _recentFiles.value = RecentFilesUiState(items = items) }
+            runCatching { graph.recentFiles.snapshot() }
+                .onSuccess { snapshot ->
+                    _recentFiles.value = RecentFilesUiState(
+                        addedItems = snapshot.added,
+                        openedItems = snapshot.opened,
+                    )
+                }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
                     _recentFiles.value = RecentFilesUiState(error = error.message ?: "Naujausių failų įkelti nepavyko")
@@ -2046,6 +2098,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setLocalClipboard(listOf(path), move = move, append = false)
     }
 
+    fun copyEntries(paths: Collection<String>, move: Boolean) {
+        setLocalClipboard(paths.distinct(), move = move, append = false)
+    }
+
     fun addSelectionToClipboard(panel: PanelId) {
         val selected = panelFlow(panel).value.selectedPaths.toList()
         if (selected.isEmpty()) return
@@ -2627,6 +2683,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
     }
 
+    fun moveLocalPathsToTrash(paths: Collection<String>) {
+        val selected = paths.asSequence().mapNotNull { path ->
+            runCatching { File(path).canonicalFile }.getOrNull()?.takeIf(File::exists)?.absolutePath
+        }.distinct().take(10_001).toList()
+        if (selected.isEmpty()) return
+        if (selected.size > 10_000) {
+            message("Vienu metu galima tvarkyti iki 10 000 elementų", true)
+            return
+        }
+        graph.operationManager.submit("Keliama į šiukšlinę") {
+            graph.trash.moveToTrash(selected, this)
+            refreshRecentFiles()
+            refreshTrash()
+            refreshPanel(PanelId.LEFT)
+            refreshPanel(PanelId.RIGHT)
+        }.onFailure { message(it.message ?: "Operacijos pradėti nepavyko", true) }
+    }
+
     fun deleteSelectionPermanently(panel: PanelId) {
         val requestedState = panelFlow(panel).value
         val selected = requestedState.selectedPaths.toList()
@@ -2641,7 +2715,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun createDirectory(panel: PanelId, name: String) {
         viewModelScope.launch {
             graph.localFiles.createDirectory(panelFlow(panel).value.path, name).fold(
-                onSuccess = { refreshPanel(panel) },
+                onSuccess = { created ->
+                    runCatching { graph.recentFiles.recordAdded(created.absolutePath) }
+                        .onFailure { message(it.message ?: "Naujausių failų įrašo išsaugoti nepavyko", true) }
+                    refreshPanel(panel)
+                    refreshRecentFiles()
+                },
                 onFailure = { message(it.message ?: "Aplanko sukurti nepavyko", true) },
             )
         }
@@ -2651,7 +2730,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             graph.localFiles.createEmptyFile(panelFlow(panel).value.path, name).fold(
                 onSuccess = { created ->
-                    runCatching { graph.recentFiles.record(created.absolutePath) }
+                    runCatching { graph.recentFiles.recordAdded(created.absolutePath) }
                         .onFailure { message(it.message ?: "Naujausių failų įrašo išsaugoti nepavyko", true) }
                     refreshPanel(panel)
                     refreshRecentFiles()
@@ -2664,7 +2743,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun rename(panel: PanelId, path: String, name: String) {
         viewModelScope.launch {
             graph.localFiles.rename(path, name).fold(
-                onSuccess = { clearSelection(panel); refreshPanel(panel) },
+                onSuccess = { renamed ->
+                    runCatching { graph.recentFiles.record(renamed.absolutePath) }
+                    clearSelection(panel)
+                    refreshPanel(panel)
+                    refreshRecentFiles()
+                },
                 onFailure = { message(it.message ?: "Pervadinti nepavyko", true) },
             )
         }
@@ -2728,6 +2812,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!entry.isReadable) {
                 message("Įjunkite Root arba Shizuku root prieigą skiltyje Daugiau", true)
                 return
+            }
+            viewModelScope.launch {
+                runCatching { graph.recentFiles.record(entry.absolutePath) }
+                    .onSuccess { refreshRecentFiles() }
+                    .onFailure { message(it.message ?: "Naujausių failų įrašo išsaugoti nepavyko", true) }
             }
             _section.value = AppSection.FILES
             navigate(_activePanel.value, entry.absolutePath)
@@ -3312,6 +3401,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 if (fileEditRequestId == requestId) fileEditJob = null
+            }
+        }
+    }
+
+    fun refreshSignatureLibrary() {
+        runSignatureLibraryOperation("Išsaugotų parašų įkelti nepavyko") {
+            graph.signatureLibrary.load()
+        }
+    }
+
+    fun saveSignature(name: String, drawing: SignatureDrawing) {
+        runSignatureLibraryOperation("Parašo išsaugoti nepavyko") {
+            graph.signatureLibrary.save(name, drawing)
+        }
+    }
+
+    fun deleteSavedSignature(id: String) {
+        runSignatureLibraryOperation("Parašo pašalinti nepavyko") {
+            graph.signatureLibrary.delete(id)
+        }
+    }
+
+    private fun runSignatureLibraryOperation(
+        failureMessage: String,
+        operation: () -> List<SavedSignature>,
+    ) {
+        if (signatureLibraryJob?.isActive == true) return
+        _signatureLibrary.update { it.copy(loading = true, error = null) }
+        signatureLibraryJob = viewModelScope.launch {
+            try {
+                val items = withContext(Dispatchers.IO) { operation() }
+                _signatureLibrary.value = SignatureLibraryUiState(items = items)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                _signatureLibrary.update { it.copy(loading = false, error = failureMessage) }
+            } finally {
+                signatureLibraryJob = null
             }
         }
     }
@@ -4453,7 +4580,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         graph.operationManager.submit("Pasirinkti failai keliami į šiukšlinę") {
             graph.trash.moveToTrash(selected.map(File::getAbsolutePath), this)
-            viewModelScope.launch { reanalyze(state) }
+            val removedPaths = selected.asSequence()
+                .filterNot(File::exists)
+                .map(File::getAbsolutePath)
+                .toList()
+            if (removedPaths.isNotEmpty()) {
+                _analysisState.update { current -> AnalysisResultPruner.prune(current, removedPaths) }
+            }
         }.onFailure { message(it.message ?: "Valymo pradėti nepavyko", true) }
     }
 
@@ -4898,6 +5031,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun shareEntries(paths: Collection<String>) {
+        val selected = paths.distinct().take(1_001)
+        if (selected.isEmpty()) return
+        if (selected.size > 1_000) {
+            message("Vienu metu galima bendrinti iki 1 000 elementų", true)
+            return
+        }
+        viewModelScope.launch {
+            graph.localShare.share(selected).onFailure {
+                message(it.message ?: "Bendrinimo atidaryti nepavyko", true)
+            }
+        }
+    }
+
     fun bookmarkSelection(panel: PanelId) {
         bookmarkPaths(panelFlow(panel).value.selectedPaths)
         clearSelection(panel)
@@ -5102,6 +5249,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 onFailure = { message(it.message ?: "Vietos pašalinti nepavyko", true) },
             )
+        }
+    }
+
+    fun revealLocalEntry(panel: PanelId, path: String) {
+        val file = runCatching { File(path).canonicalFile }.getOrElse {
+            message("Vieta nebeegzistuoja", true)
+            return
+        }
+        val parent = file.parentFile?.takeIf(File::isDirectory) ?: run {
+            message("Vieta nebeegzistuoja", true)
+            return
+        }
+        openLocalDirectoryFromHome(panel, parent.absolutePath)
+        viewModelScope.launch {
+            panelRefreshJob(panel)?.join()
+            panelFlow(panel).update { state ->
+                if (state.path == parent.absolutePath && state.entries.any { it.absolutePath == file.absolutePath }) {
+                    state.copy(selectedPaths = setOf(file.absolutePath))
+                } else state
+            }
         }
     }
 
@@ -5486,6 +5653,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleTerminalAlt() {
         graph.terminalSessions.toggleAlt()
+    }
+
+    fun openNextcloudSetup() {
+        nextcloudLoginJob?.cancel()
+        nextcloudLoginJob = null
+        _section.value = AppSection.CONNECTIONS
+        _nextcloudLogin.value = NextcloudLoginUiState(open = true)
+    }
+
+    fun updateNextcloudServer(value: String) {
+        if (_nextcloudLogin.value.running) return
+        _nextcloudLogin.update { it.copy(server = value.take(8_192), error = null) }
+    }
+
+    fun cancelNextcloudSetup() {
+        nextcloudLoginJob?.cancel()
+        nextcloudLoginJob = null
+        _nextcloudLogin.value = NextcloudLoginUiState()
+    }
+
+    fun startNextcloudLogin() {
+        val server = _nextcloudLogin.value.server.trim()
+        if (server.isEmpty() || _nextcloudLogin.value.running) return
+        nextcloudLoginJob?.cancel()
+        nextcloudLoginJob = viewModelScope.launch {
+            _nextcloudLogin.update { it.copy(phase = NextcloudLoginPhase.STARTING, error = null) }
+            try {
+                val login = nextcloudLoginClient.begin(server)
+                val application = getApplication<Application>()
+                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(login.loginUrl))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                require(browserIntent.resolveActivity(application.packageManager) != null) {
+                    "Naršyklė Nextcloud prisijungimui nerasta"
+                }
+                _nextcloudLogin.update { it.copy(phase = NextcloudLoginPhase.WAITING_FOR_BROWSER) }
+                application.startActivity(browserIntent)
+                nextcloudLoginClient.await(login).use { credentials ->
+                    _nextcloudLogin.update { it.copy(phase = NextcloudLoginPhase.SAVING) }
+                    val profile = credentials.profile()
+                    graph.networkProfiles.save(profile, credentials.appPassword.copyOf()).getOrThrow()
+                    val profiles = graph.networkProfiles.list()
+                    _networkState.update { it.copy(profiles = profiles) }
+                    _nextcloudLogin.value = NextcloudLoginUiState()
+                    message("Nextcloud paskyra prijungta")
+                    connectNetwork(profile)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _nextcloudLogin.update {
+                    it.copy(
+                        phase = NextcloudLoginPhase.IDLE,
+                        error = (error.message ?: "Nextcloud prijungti nepavyko").take(240),
+                    )
+                }
+            } finally {
+                nextcloudLoginJob = null
+            }
+        }
     }
 
     fun refreshProfiles() {
@@ -6048,7 +6274,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .filterNot(RemoteEntry::directory)
                 .map { entry -> File(destination, entry.name) }
                 .filter(File::isFile)
-                .forEach { copied -> runCatching { graph.recentFiles.record(copied.absolutePath) } }
+                .forEach { copied -> runCatching { graph.recentFiles.recordAdded(copied.absolutePath) } }
             if (result.copiedRoots > 0) refreshRecentFiles()
         }.onFailure { message(it.message ?: "Atsisiuntimo pradėti nepavyko", true) }.isSuccess
     }

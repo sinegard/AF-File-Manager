@@ -24,4 +24,14 @@ class AppearanceConsumerContractTest {
             assertTrue(it, File(source, it).readText().contains("AppearancePage("))
         }
     }
+
+    @Test fun everyDialogUsesTheScaleAwareWindowWrapper() {
+        val rawImport = Regex("(?m)^import androidx\\.compose\\.ui\\.window\\.Dialog\\r?$")
+        val violations = source.walkTopDown()
+            .filter { it.extension == "kt" && it.invariantSeparatorsPath.substringAfterLast('/') != "AppearanceComponents.kt" }
+            .filter { rawImport.containsMatchIn(it.readText()) }
+            .map { it.relativeTo(source).path }
+            .toList()
+        assertEquals("Direct Dialog imports bypass AF's live interface scale", emptyList<String>(), violations)
+    }
 }

@@ -65,8 +65,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.data.DirectoryDisplaySettings
@@ -138,7 +138,7 @@ fun SafBrowserDialog(
     }
 
     val navigateBack: () -> Unit = { if (!viewModel.navigateSafBack()) onDismiss() }
-    Dialog(onDismissRequest = navigateBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    AfDialog(onDismissRequest = navigateBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize().padding(WindowInsets.safeDrawing.asPaddingValues())) {
                 DirectoryBrowserToolbar(

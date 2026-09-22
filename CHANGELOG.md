@@ -4,6 +4,15 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.41.0] - 2026-09-22
+
+- Connect a Nextcloud account through its browser authorization flow and keep the resulting app password protected by Android Keystore.
+- Create phone groups of up to ten members. The organizer maintains the member list while files move directly between the selected sender and recipient, and Wi-Fi Direct is available as an explicit offline pairing route.
+- Large phone-to-phone transfers retry transient interruptions and keep the session alive on older Android versions; the Android 8 to Android 15 path is covered with a 30 MB streamed transfer.
+- Share an AF Web session outside the local network through an optional Cloudflare Quick Tunnel. The component is built into AF File Manager, requires no second app or Cloudflare account, and keeps the existing one-time access code.
+- Recent files separate added and opened activity, offer search, date and sort controls, and use the standard AF file actions. Dialog and popup scaling now follows the selected interface scale throughout the app.
+- Cleanup can delete selections larger than ten items without launching another analysis. Protected-file media previews use content descriptors compatible with Root and Shizuku staging.
+
 ## [0.40.0] - 2026-09-18
 
 - Remote connections can create a file or folder through the same choice used for local storage. Saved cloud/document locations can be renamed or removed without deleting their files.

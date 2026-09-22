@@ -65,8 +65,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.ConflictPolicy
@@ -117,7 +117,7 @@ fun AfWorkflowDialog(viewModel: MainViewModel) {
         pendingText = null
     }
 
-    Dialog(
+    AfDialog(
         onDismissRequest = viewModel::closeAfWorkflowCenter,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {

@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,6 +15,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.io.PrintWriter
 import java.util.Base64
 import java.util.UUID
@@ -60,6 +62,65 @@ class LanTransferServiceTest {
     }
 
     @Test
+    fun groupSessionListsMembersAndAllowsReusableInviteLogin() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.cacheDir, "lan-group-${UUID.randomUUID()}").apply { mkdirs() }
+        try {
+            LanTransferController.start(
+                context = context,
+                rootPath = root.absolutePath,
+                durationMinutes = 1,
+                groupMode = true,
+                receiverName = "Organizer",
+                groupName = "Test group",
+            )
+            val running = awaitState { it.status == LanTransferStatus.RUNNING || it.status == LanTransferStatus.ERROR }
+            check(running.status == LanTransferStatus.RUNNING) { running.message ?: "Grupės paslauga nepasileido" }
+            assertTrue(running.groupMode)
+            val uri = URI(requireNotNull(running.url))
+
+            fun login(): String {
+                val body = "code=${running.code}"
+                val response = request(
+                    uri.host,
+                    uri.port,
+                    "POST /login HTTP/1.1\r\nHost: ${uri.host}\r\nContent-Length: ${body.length}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n$body",
+                )
+                assertTrue(response.startsWith("HTTP/1.1 200"))
+                return response.lineSequence().first { it.startsWith("Set-Cookie:") }
+                    .substringAfter("Set-Cookie:").substringBefore(';').trim()
+            }
+
+            val firstCookie = login()
+            val secondCookie = login()
+            val first = NearbyPairing.create(uri.host, 30_101, "11111111", "Phone one")
+            val second = NearbyPairing.create(uri.host, 30_102, "22222222", "Phone two")
+            listOf(firstCookie to first, secondCookie to second).forEach { (cookie, peer) ->
+                val body = peer.encoded()
+                val joined = request(
+                    uri.host,
+                    uri.port,
+                    "POST /nearby/group/join HTTP/1.1\r\nHost: ${uri.host}\r\nCookie: $cookie\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body",
+                )
+                assertTrue(joined.startsWith("HTTP/1.1 200"))
+            }
+            val list = request(
+                uri.host,
+                uri.port,
+                "GET /nearby/group/members HTTP/1.1\r\nHost: ${uri.host}\r\nCookie: $firstCookie\r\n\r\n",
+            )
+            assertTrue(list.startsWith("HTTP/1.1 200"))
+            val members = NearbyGroupCodec.decode(list.substringAfter("\r\n\r\n").toByteArray())
+            assertEquals(3, members.size)
+            assertTrue(members.single { it.organizer }.pairing.receiverName == "Organizer")
+        } finally {
+            LanTransferController.stop(context)
+            awaitState { it.status == LanTransferStatus.STOPPED }
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun foregroundServiceRunsFtpWithTemporaryCredentials() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.cacheDir, "ftp-service-${UUID.randomUUID()}").apply { mkdirs() }
@@ -72,7 +133,7 @@ class LanTransferServiceTest {
             Socket(uri.host, uri.port).use { socket ->
                 socket.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
-                val writer = PrintWriter(socket.getOutputStream(), true, StandardCharsets.UTF_8)
+                val writer = PrintWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)
                 assertTrue(reader.readLine().startsWith("220"))
                 writer.print("USER ${running.username}\r\n"); writer.flush()
                 assertTrue(reader.readLine().startsWith("331"))

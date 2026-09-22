@@ -4,6 +4,7 @@ import com.affilemanager.app.ui.components.AfActionRow
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +24,9 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Stop
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
@@ -59,6 +62,9 @@ import com.affilemanager.app.transfer.LanTransferOptions
 import com.affilemanager.app.transfer.LanTransferProtocol
 import com.affilemanager.app.transfer.LanSessionDuration
 import com.affilemanager.app.transfer.LanTransferStatus
+import com.affilemanager.app.transfer.QuickTunnelController
+import com.affilemanager.app.transfer.QuickTunnelState
+import com.affilemanager.app.transfer.QuickTunnelStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.AfModalDialog
@@ -76,6 +82,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
     val roots by viewModel.roots.collectAsStateWithLifecycle()
     val transfer by LanTransferController.state.collectAsStateWithLifecycle()
+    val quickTunnel by QuickTunnelController.state.collectAsStateWithLifecycle()
     val nearbyPeer by com.affilemanager.app.transfer.NearbyTransferController.connection.state.collectAsStateWithLifecycle()
     val incomingShare by viewModel.incomingShare.collectAsStateWithLifecycle()
     val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
@@ -90,6 +97,8 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var pickerStartPath by remember { mutableStateOf<String?>(null) }
     var pickerProtocol by remember { mutableStateOf<LanTransferProtocol?>(protocol) }
     var password by remember { mutableStateOf("") }
+    var showQuickTunnelDialog by remember { mutableStateOf(false) }
+    var pendingQuickTunnelStart by remember { mutableStateOf(false) }
     val running = transfer.status == LanTransferStatus.RUNNING || transfer.status == LanTransferStatus.STARTING
     val optionsResult = runCatching {
         LanTransferOptions(
@@ -99,6 +108,24 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             readOnly = readOnly,
             anonymous = anonymous,
         ).validated(protocol)
+    }
+
+    LaunchedEffect(pendingQuickTunnelStart, transfer.status, transfer.url) {
+        if (pendingQuickTunnelStart && transfer.status == LanTransferStatus.RUNNING &&
+            transfer.protocol == LanTransferProtocol.WEB && !transfer.groupMode
+        ) {
+            transfer.url?.let { url -> QuickTunnelController.start(context, url, transfer.expiresAtMillis) }
+            pendingQuickTunnelStart = false
+        } else if (pendingQuickTunnelStart && transfer.status == LanTransferStatus.ERROR) {
+            pendingQuickTunnelStart = false
+        }
+    }
+    LaunchedEffect(transfer.status) {
+        if (transfer.status !in setOf(LanTransferStatus.RUNNING, LanTransferStatus.STARTING) &&
+            quickTunnel.status in setOf(QuickTunnelStatus.STARTING, QuickTunnelStatus.RUNNING)
+        ) {
+            QuickTunnelController.stop(context)
+        }
     }
 
     pickerStartPath?.let { initialPath ->
@@ -322,7 +349,20 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         }
         item {
             when (transfer.status) {
-                LanTransferStatus.RUNNING -> RunningShareCard(context, transfer) { LanTransferController.stop(context) }
+                LanTransferStatus.RUNNING -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RunningShareCard(context, transfer) {
+                        QuickTunnelController.stop(context)
+                        LanTransferController.stop(context)
+                    }
+                    if (transfer.protocol == LanTransferProtocol.WEB && !transfer.groupMode) {
+                        QuickTunnelCard(
+                            context = context,
+                            state = quickTunnel,
+                            onStart = { showQuickTunnelDialog = true },
+                            onStop = { QuickTunnelController.stop(context) },
+                        )
+                    }
+                }
                 LanTransferStatus.STARTING -> Card(modifier = Modifier.fillMaxWidth()) {
                     LText("Paleidžiama…", modifier = Modifier.padding(18.dp))
                 }
@@ -330,19 +370,75 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     transfer.message?.let {
                         LText(it, color = if (transfer.status == LanTransferStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Button(
-                        onClick = { optionsResult.getOrNull()?.let { LanTransferController.start(context, sharedPath, duration, protocol, it) } },
-                        enabled = optionsResult.isSuccess,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Rounded.Computer, contentDescription = null)
-                        LText("Paleisti bendrinimą", modifier = Modifier.padding(start = 8.dp))
+                    AfActionRow(modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = { optionsResult.getOrNull()?.let { LanTransferController.start(context, sharedPath, duration, protocol, it) } },
+                            enabled = optionsResult.isSuccess,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Rounded.Computer, contentDescription = null)
+                            LText("Paleisti bendrinimą", modifier = Modifier.padding(start = 8.dp))
+                        }
+                        if (protocol == LanTransferProtocol.WEB) {
+                            OutlinedButton(
+                                onClick = { showQuickTunnelDialog = true },
+                                enabled = optionsResult.isSuccess,
+                                modifier = Modifier.weight(1f).testTag("share_quick_tunnel"),
+                            ) {
+                                Icon(Icons.Rounded.Public, contentDescription = null)
+                                LText("Quick Tunnel", modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
                     }
                 }
             }
         }
         }
     }
+    }
+    if (showQuickTunnelDialog) {
+        AfModalDialog(
+            title = "Bendrinti per Quick Tunnel",
+            icon = Icons.Rounded.Public,
+            onDismissRequest = { showQuickTunnelDialog = false },
+            actions = {
+                TextButton(onClick = { showQuickTunnelDialog = false }) { LText("Atšaukti") }
+                Button(onClick = {
+                    showQuickTunnelDialog = false
+                    if (transfer.status == LanTransferStatus.RUNNING && transfer.protocol == LanTransferProtocol.WEB) {
+                        transfer.url?.let { QuickTunnelController.start(context, it, transfer.expiresAtMillis) }
+                    } else {
+                        val webOptions = optionsResult.getOrNull()
+                        if (webOptions != null) {
+                            pendingQuickTunnelStart = true
+                            LanTransferController.start(
+                                context,
+                                sharedPath,
+                                duration,
+                                LanTransferProtocol.WEB,
+                                webOptions,
+                            )
+                        }
+                    }
+                }) { LText("Tęsti") }
+            },
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LText(
+                    "Bus sukurta laikina vieša HTTPS nuoroda per Cloudflare. Failus ir toliau saugo AF vienkartinis prisijungimo kodas.",
+                )
+                LText(
+                    "Quick Tunnel yra pasirenkama išorinė paslauga be veikimo garantijos. Tunelis baigsis kartu su AF Web sesija arba jį sustabdžius.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                LText(
+                    "Tunelio komponentas įdiegtas pačiame AF File Manager; atskiros programėlės nereikia.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
     }
 }
 
@@ -491,6 +587,71 @@ private fun RunningShareCard(context: Context, state: com.affilemanager.app.tran
                 Button(onClick = onStop) {
                     Icon(Icons.Rounded.Stop, contentDescription = null)
                     LText("Sustabdyti", modifier = Modifier.padding(start = 6.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickTunnelCard(
+    context: Context,
+    state: QuickTunnelState,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val shareChooserTitle = uiText("Bendrinti")
+    Card(modifier = Modifier.fillMaxWidth().testTag("quick_tunnel_card")) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Rounded.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                LText("Cloudflare Quick Tunnel", fontWeight = FontWeight.SemiBold)
+            }
+            when (state.status) {
+                QuickTunnelStatus.STOPPED -> {
+                    LText("Sukurkite laikiną HTTPS adresą prieigai ne vietiniame tinkle.")
+                    OutlinedButton(onClick = onStart) { LText("Bendrinti per Quick Tunnel") }
+                }
+                QuickTunnelStatus.STARTING -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator()
+                        LText(state.message ?: "Kuriama laikina vieša nuoroda")
+                    }
+                    TextButton(onClick = onStop) { LText("Sustabdyti") }
+                }
+                QuickTunnelStatus.RUNNING -> {
+                    val url = state.publicUrl.orEmpty()
+                    Text(url, style = MaterialTheme.typography.titleSmall)
+                    AfActionRow {
+                        OutlinedButton(onClick = {
+                            context.getSystemService(ClipboardManager::class.java)
+                                .setPrimaryClip(ClipData.newPlainText("AF Quick Tunnel", url))
+                        }) {
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = null)
+                            LText("Kopijuoti", modifier = Modifier.padding(start = 6.dp))
+                        }
+                        OutlinedButton(onClick = {
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND)
+                                        .setType("text/plain")
+                                        .putExtra(Intent.EXTRA_TEXT, url),
+                                    shareChooserTitle,
+                                ),
+                            )
+                        }) {
+                            Icon(Icons.Rounded.Share, contentDescription = null)
+                            LText("Bendrinti", modifier = Modifier.padding(start = 6.dp))
+                        }
+                        Button(onClick = onStop) { LText("Sustabdyti") }
+                    }
+                }
+                QuickTunnelStatus.ERROR -> {
+                    LText(state.message ?: "Tunelio paleisti nepavyko", color = MaterialTheme.colorScheme.error)
+                    AfActionRow {
+                        OutlinedButton(onClick = onStart) { LText("Bandyti dar kartą") }
+                        TextButton(onClick = onStop) { LText("Uždaryti") }
+                    }
                 }
             }
         }

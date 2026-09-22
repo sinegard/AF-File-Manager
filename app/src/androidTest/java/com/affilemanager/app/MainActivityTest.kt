@@ -456,10 +456,17 @@ class MainActivityTest {
 
         compose.onNodeWithText("Send").performClick()
         compose.onNodeWithTag("nearby_send_dialog").assertIsDisplayed()
-        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithTag("nearby_continue").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithTag("nearby_join_wifi_direct").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("nearby_join_wifi_direct").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_back_or_cancel").performClick()
+        compose.onNodeWithTag("nearby_back_or_cancel").performClick()
 
         compose.onNodeWithText("Receive").performClick()
         compose.onNodeWithTag("nearby_receive_dialog").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_receive_wifi_direct").assertIsDisplayed()
         compose.onNodeWithTag("nearby_receive_close").performClick()
     }
 

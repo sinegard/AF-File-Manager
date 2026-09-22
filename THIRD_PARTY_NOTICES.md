@@ -51,6 +51,18 @@ user-selected PDF page while preserving the rest of the PDF as PDF content.
 - Copyright Tom Roush, Apache PDFBox authors, and contributors
 - License: Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0
 
+## cloudflared
+
+The optional Quick Tunnel feature contains `cloudflared` 2026.9.1, compiled
+from the pinned upstream commit `f11dea9cb7079e90a982c1a2d5548ab40847fdcf`.
+The reproducible Android build scripts copy Cloudflare's full license into the
+APK. Quick Tunnels use Cloudflare's external service and are subject to its
+terms and availability; AF embeds no Cloudflare account or token.
+
+- Project: https://github.com/cloudflare/cloudflared
+- Copyright Cloudflare, Inc. and contributors
+- License: Apache License 2.0 — https://github.com/cloudflare/cloudflared/blob/f11dea9cb7079e90a982c1a2d5548ab40847fdcf/LICENSE
+
 ## Offline interface translation assets
 
 The generated language packs were prepared during development with Meta's NLLB-200 distilled 600M model. The model and translation runtime are not included in the Android app. Standard Android action labels are taken from the Android Open Source Project translations where an exact match exists.

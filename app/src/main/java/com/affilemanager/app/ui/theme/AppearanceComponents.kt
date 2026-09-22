@@ -28,18 +28,39 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import com.affilemanager.app.ui.localization.uiText
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+
+/**
+ * Compose popup windows capture their parent composition when they are created. Recreate the
+ * window when AF's interface density changes so an already-open dialog follows the same scale as
+ * the page behind it.
+ */
+@Composable
+internal fun AfDialog(
+    onDismissRequest: () -> Unit,
+    properties: DialogProperties = DialogProperties(),
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    key(density.density, density.fontScale) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = onDismissRequest, properties = properties) {
+            CompositionLocalProvider(LocalDensity provides density, content = content)
+        }
+    }
+}
 
 /** All app-owned popups use this role, independently of the transparency of ordinary cards. */
 @Composable
@@ -112,11 +133,17 @@ internal fun AfDropdownMenu(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val fill = popupColor()
-    PopupContent {
-        DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, modifier = modifier,
-            offset = offset, scrollState = scrollState, containerColor = fill,
-            tonalElevation = 0.dp, shadowElevation = if (fill.alpha < 1f) 0.dp else 8.dp,
-            content = content)
+    val density = LocalDensity.current
+    key(density.density, density.fontScale) {
+        PopupContent {
+            DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, modifier = modifier,
+                offset = offset, scrollState = scrollState, containerColor = fill,
+                tonalElevation = 0.dp, shadowElevation = if (fill.alpha < 1f) 0.dp else 8.dp) {
+                // Material's Popup owns a separate composition. Re-provide AF's density inside
+                // that composition instead of relying on the value captured by the anchor.
+                CompositionLocalProvider(LocalDensity provides density) { content() }
+            }
+        }
     }
 }
 
@@ -133,7 +160,7 @@ internal fun AfAlertDialog(
     properties: DialogProperties = DialogProperties(),
 ) {
     val fill = popupColor()
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismissRequest,
+    AfDialog(onDismissRequest = onDismissRequest,
         properties = DialogProperties(
             dismissOnBackPress = properties.dismissOnBackPress,
             dismissOnClickOutside = properties.dismissOnClickOutside,

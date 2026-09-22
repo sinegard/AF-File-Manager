@@ -47,8 +47,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.ui.TerminalLocation
 import com.affilemanager.app.ui.TerminalUiState
 import com.affilemanager.app.ui.localization.LText
@@ -94,7 +94,7 @@ fun TerminalOverlay(
     BackHandler {
         if (state.confirmClose) onDismissCloseConfirmation() else onRequestClose()
     }
-    Dialog(
+    AfDialog(
         onDismissRequest = onRequestClose,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,

@@ -63,8 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.TrashBrowserEntry
@@ -136,7 +136,7 @@ fun TrashBrowserDialog(
         transforming = false
     }
 
-    Dialog(
+    AfDialog(
         onDismissRequest = { if (preview == null) viewModel.navigateTrashBack() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {

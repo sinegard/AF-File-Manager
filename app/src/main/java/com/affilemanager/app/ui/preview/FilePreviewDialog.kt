@@ -160,8 +160,8 @@ import androidx.compose.ui.unit.times
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.archive.ArchiveEntryInfo
 import com.affilemanager.app.archive.ArchiveBrowserIndex
 import com.affilemanager.app.archive.ArchiveBrowserItem
@@ -197,6 +197,7 @@ import com.affilemanager.app.pdfsigning.PdfSignaturePlacement
 import com.affilemanager.app.pdfsigning.SignatureDrawing
 import com.affilemanager.app.ui.PreviewTarget
 import com.affilemanager.app.ui.FileEditUiState
+import com.affilemanager.app.ui.SignatureLibraryUiState
 import com.affilemanager.app.ui.editor.EditSaveAsDialog
 import com.affilemanager.app.ui.editor.FullTextEditor
 import com.affilemanager.app.ui.components.DirectoryBrowserToolbar
@@ -294,12 +295,16 @@ private data class PdfZoomScrollRequest(
 fun FilePreviewDialog(
     target: PreviewTarget,
     editState: FileEditUiState,
+    signatureLibrary: SignatureLibraryUiState,
     archiveDisplayDefaults: DirectoryDisplayDefaults,
     onApplyArchiveDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
     onClose: () -> Unit,
     onDelete: (() -> Unit)?,
     onPrepareEdit: () -> Unit,
     onApplyPdfSignature: (SignatureDrawing, PdfSignaturePlacement) -> Unit,
+    onRefreshSignatureLibrary: () -> Unit,
+    onSaveSignature: (String, SignatureDrawing) -> Unit,
+    onDeleteSavedSignature: (String) -> Unit,
     onEditTextChanged: (String) -> Unit,
     onEditEncodingChanged: (TextEncoding) -> Unit,
     onEditLineEndingChanged: (LineEnding) -> Unit,
@@ -439,7 +444,7 @@ fun FilePreviewDialog(
         }
     }
 
-    Dialog(onDismissRequest = navigateBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    AfDialog(onDismissRequest = navigateBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         com.affilemanager.app.ui.theme.AppearancePage(
             modifier = Modifier.fillMaxSize().testTag("file-preview-dialog"),
         ) {
@@ -666,6 +671,10 @@ fun FilePreviewDialog(
             source = PreviewSource.Working(source, editSession),
             applying = activeEditState.modifyingPdf,
             error = activeEditState.error,
+            signatureLibrary = signatureLibrary,
+            onRefreshSignatureLibrary = onRefreshSignatureLibrary,
+            onSaveSignature = onSaveSignature,
+            onDeleteSavedSignature = onDeleteSavedSignature,
             onApply = { drawing, placement ->
                 pdfApplyBaseline = editSession.workingRevision.sha256
                 onApplyPdfSignature(drawing, placement)
@@ -1833,7 +1842,10 @@ private fun VideoPreview(
                             playbackError = true
                             true
                         }
-                        setVideoURI(source.localFile?.let(Uri::fromFile) ?: source.uri(context))
+                        // Always let ContentResolver open the source. Passing an app-private
+                        // cache path to the platform media process can fail on OEM builds,
+                        // especially for files staged through Shizuku or root access.
+                        setVideoURI(source.uri(context))
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -3216,8 +3228,9 @@ private fun MediaDetailsDialog(source: PreviewSource, onDismiss: () -> Unit) {
 private fun mediaPreviewInfo(context: android.content.Context, source: PreviewSource, includeArtwork: Boolean = true): MediaPreviewInfo {
     val retriever = MediaMetadataRetriever()
     return try {
-        source.localFile?.let { retriever.setDataSource(it.absolutePath) }
-            ?: retriever.setDataSource(context, source.uri(context))
+        // A content URI keeps the file descriptor owned by AF and avoids asking the
+        // platform media process to reopen an app-private or privileged filesystem path.
+        retriever.setDataSource(context, source.uri(context))
         MediaPreviewInfo(
             durationMillis = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
             mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE),
@@ -3251,8 +3264,7 @@ private fun setMediaDataSource(
     context: android.content.Context,
     source: PreviewSource,
 ) {
-    source.localFile?.let { player.setDataSource(it.absolutePath) }
-        ?: player.setDataSource(context, source.uri(context))
+    player.setDataSource(context, source.uri(context))
 }
 
 internal fun pdfDocumentInfo(context: android.content.Context, source: PreviewSource): PdfDocumentInfo =

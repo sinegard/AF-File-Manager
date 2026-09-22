@@ -10,5 +10,8 @@ docs/CHANGE_CONTRACT.md
 *.jks
 *.keystore
 *.log
+app/src/main/jniLibs/*/libcloudflared.so
+app/src/main/assets/licenses/cloudflared-LICENSE.txt
+tunnelhelper/
 __pycache__/
 *.pyc

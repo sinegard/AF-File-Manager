@@ -7,7 +7,7 @@ object GitHubReleaseParser {
     private const val MAX_APK_SIZE = 250L * 1024L * 1024L
     private val digestPattern = Regex("^[0-9a-f]{64}$")
 
-    fun parse(json: String, repository: String): AppRelease {
+    fun parse(json: String, repository: String, preferredAbis: List<String> = emptyList()): AppRelease {
         require(repository.matches(Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))) { "Netinkamas GitHub repozitorijos vardas" }
         val root = JSONObject(json)
         require(!root.optBoolean("draft", false)) { "Juodraštinis leidimas neatnaujinamas" }
@@ -17,18 +17,26 @@ object GitHubReleaseParser {
         val version = UpdateVersionRules.normalized(tag)
         val pageUrl = root.getString("html_url").also { validateReleasePage(it, repository, tag) }
         val assets = root.getJSONArray("assets")
-        val expectedName = "AF-File-Manager-$version.apk"
+        val universalName = "AF-File-Manager-$version.apk"
+        val supportedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        val abiNames = preferredAbis.asSequence()
+            .filter(supportedAbis::contains)
+            .distinct()
+            .map { abi -> "AF-File-Manager-$version-$abi.apk" }
+            .toList()
         val candidates = buildList {
             for (index in 0 until assets.length()) {
                 val asset = assets.getJSONObject(index)
                 if (asset.optString("name").endsWith(".apk", ignoreCase = true)) add(asset)
             }
         }
-        val assetJson = candidates.firstOrNull { it.optString("name") == expectedName }
-            ?: candidates.singleOrNull()
+        val assetJson = abiNames.firstNotNullOfOrNull { expected ->
+            candidates.firstOrNull { it.optString("name") == expected }
+        } ?: candidates.firstOrNull { it.optString("name") == universalName }
+            ?: candidates.singleOrNull().takeIf { preferredAbis.isEmpty() }
             ?: throw IllegalArgumentException("Leidime nėra vienareikšmio AF File Manager APK")
         val name = assetJson.getString("name")
-        require(name == expectedName) { "APK vardas neatitinka leidimo versijos" }
+        require(name == universalName || name in abiNames) { "APK vardas neatitinka leidimo versijos arba įrenginio architektūros" }
         val size = assetJson.getLong("size")
         require(size in 1..MAX_APK_SIZE) { "APK dydis neleistinas" }
         val downloadUrl = assetJson.getString("browser_download_url")

@@ -7,27 +7,31 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Draw
+import androidx.compose.material.icons.rounded.Save
+import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -65,16 +69,21 @@ import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.pdfsigning.PdfSignaturePlacement
+import com.affilemanager.app.pdfsigning.SavedSignature
 import com.affilemanager.app.pdfsigning.SignatureDrawing
+import com.affilemanager.app.pdfsigning.SignatureLibraryRepository
 import com.affilemanager.app.pdfsigning.SignaturePoint
 import com.affilemanager.app.pdfsigning.SignatureStroke
 import com.affilemanager.app.pdfsigning.VisualSignatureRules
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.SignatureLibraryUiState
+import com.affilemanager.app.ui.components.AfModalDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -91,6 +100,10 @@ internal fun PdfSignatureDialog(
     source: PreviewSource,
     applying: Boolean,
     error: String?,
+    signatureLibrary: SignatureLibraryUiState,
+    onRefreshSignatureLibrary: () -> Unit,
+    onSaveSignature: (String, SignatureDrawing) -> Unit,
+    onDeleteSavedSignature: (String) -> Unit,
     onApply: (SignatureDrawing, PdfSignaturePlacement) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -101,6 +114,9 @@ internal fun PdfSignatureDialog(
     var pageInput by remember(source.key) { mutableStateOf("1") }
     var placement by remember(source.key) { mutableStateOf<PdfSignaturePlacement?>(null) }
     var submitted by remember(source.key) { mutableStateOf(false) }
+    var showSaveSignature by remember(source.key) { mutableStateOf(false) }
+    var showSignatureLibrary by remember(source.key) { mutableStateOf(false) }
+    var deleteSignature by remember(source.key) { mutableStateOf<SavedSignature?>(null) }
     val documentResult by produceState<Result<PdfDocumentInfo>?>(initialValue = null, source.key) {
         value = withContext(Dispatchers.IO) { runCatching { pdfDocumentInfo(context, source) } }
     }
@@ -126,6 +142,7 @@ internal fun PdfSignatureDialog(
     val pageBitmap = pageBitmapResult?.getOrNull()
 
     LaunchedEffect(pageIndex) { pageInput = (pageIndex + 1).toString() }
+    LaunchedEffect(source.key) { onRefreshSignatureLibrary() }
     LaunchedEffect(pageIndex, pageBitmap?.width, pageBitmap?.height) {
         val bitmap = pageBitmap ?: return@LaunchedEffect
         placement = VisualSignatureRules.defaultPlacement(
@@ -137,7 +154,7 @@ internal fun PdfSignatureDialog(
         if (submitted && !applying && error != null) submitted = false
     }
 
-    Dialog(
+    AfDialog(
         onDismissRequest = { if (!applying && !submitted) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
@@ -185,7 +202,10 @@ internal fun PdfSignatureDialog(
                     PdfSignatureStep.DRAW -> SignatureDrawStep(
                         drawing = drawing,
                         enabled = !applying && !submitted,
+                        library = signatureLibrary,
                         onDrawingChanged = { drawing = it },
+                        onSaveRequested = { showSaveSignature = true },
+                        onOpenLibrary = { showSignatureLibrary = true },
                         onNext = { step = PdfSignatureStep.PLACE },
                         onCancel = onDismiss,
                     )
@@ -222,13 +242,59 @@ internal fun PdfSignatureDialog(
             }
         }
     }
+
+    if (showSaveSignature) {
+        SaveSignatureDialog(
+            enabled = !signatureLibrary.loading,
+            onSave = { name ->
+                onSaveSignature(name, drawing)
+                showSaveSignature = false
+            },
+            onDismiss = { showSaveSignature = false },
+        )
+    }
+    if (showSignatureLibrary) {
+        SavedSignaturesDialog(
+            state = signatureLibrary,
+            onSelect = { saved ->
+                drawing = saved.drawing
+                showSignatureLibrary = false
+            },
+            onDelete = { deleteSignature = it },
+            onRefresh = onRefreshSignatureLibrary,
+            onDismiss = { showSignatureLibrary = false },
+        )
+    }
+    deleteSignature?.let { saved ->
+        AlertDialog(
+            onDismissRequest = { deleteSignature = null },
+            title = { LText("Pašalinti parašą?") },
+            text = { androidx.compose.material3.Text(saved.name) },
+            dismissButton = {
+                TextButton(onClick = { deleteSignature = null }) { LText("Atšaukti") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteSavedSignature(saved.id)
+                        deleteSignature = null
+                    },
+                    enabled = !signatureLibrary.loading,
+                    modifier = Modifier.testTag("saved-signature-delete-confirm"),
+                ) { LText("Pašalinti") }
+            },
+        )
+    }
 }
 
 @Composable
 private fun SignatureDrawStep(
     drawing: SignatureDrawing,
     enabled: Boolean,
+    library: SignatureLibraryUiState,
     onDrawingChanged: (SignatureDrawing) -> Unit,
+    onSaveRequested: () -> Unit,
+    onOpenLibrary: () -> Unit,
     onNext: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -237,16 +303,26 @@ private fun SignatureDrawStep(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LText("Pieškite pirštu arba rašikliu baltoje srityje.", style = MaterialTheme.typography.bodyMedium)
-        SignaturePad(
-            drawing = drawing,
-            enabled = enabled,
-            onDrawingChanged = onDrawingChanged,
-            modifier = Modifier.fillMaxWidth().aspectRatio(VisualSignatureRules.ASPECT_RATIO),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            val padWidth = if (maxWidth / VisualSignatureRules.ASPECT_RATIO <= maxHeight) {
+                maxWidth
+            } else {
+                maxHeight * VisualSignatureRules.ASPECT_RATIO
+            }
+            SignaturePad(
+                drawing = drawing,
+                enabled = enabled,
+                onDrawingChanged = onDrawingChanged,
+                modifier = Modifier.width(padWidth).aspectRatio(VisualSignatureRules.ASPECT_RATIO),
+            )
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             OutlinedButton(
                 onClick = {
@@ -270,8 +346,27 @@ private fun SignatureDrawStep(
                 Spacer(Modifier.width(6.dp))
                 LText("Atstatyti")
             }
+            OutlinedButton(
+                onClick = onSaveRequested,
+                enabled = enabled && !drawing.isEmpty && !library.loading &&
+                    library.items.size < SignatureLibraryRepository.MAX_SIGNATURES,
+                modifier = Modifier.testTag("signature-save-open"),
+            ) {
+                Icon(Icons.Rounded.Save, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                LText("Išsaugoti programėlėje")
+            }
+            OutlinedButton(
+                onClick = onOpenLibrary,
+                enabled = enabled,
+                modifier = Modifier.testTag("signature-library-open"),
+            ) {
+                Icon(Icons.Rounded.Draw, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                LText("Išsaugoti parašai")
+            }
         }
-        Spacer(Modifier.weight(1f))
+        library.error?.let { LText(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
@@ -283,6 +378,207 @@ private fun SignatureDrawStep(
                 enabled = enabled && !drawing.isEmpty,
                 modifier = Modifier.testTag("signature-next"),
             ) { LText("Toliau") }
+        }
+    }
+}
+
+@Composable
+private fun SaveSignatureDialog(
+    enabled: Boolean,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val normalizedName = name.trim()
+    AfModalDialog(
+        title = "Išsaugoti parašą",
+        icon = Icons.Rounded.Save,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("signature-save-dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            Button(
+                onClick = { onSave(normalizedName) },
+                enabled = enabled && normalizedName.isNotEmpty(),
+                modifier = Modifier.testTag("signature-save-confirm"),
+            ) { LText("Išsaugoti") }
+        },
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            LText(
+                "Duomenys saugomi tik šios programos privačioje saugykloje.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = name,
+                onValueChange = { candidate ->
+                    name = candidate
+                        .filterNot { it == '\u0000' || it.isISOControl() }
+                        .take(SignatureLibraryRepository.MAX_NAME_LENGTH)
+                },
+                label = { LText("Pavadinimas") },
+                singleLine = true,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth().testTag("signature-save-name"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SavedSignaturesDialog(
+    state: SignatureLibraryUiState,
+    onSelect: (SavedSignature) -> Unit,
+    onDelete: (SavedSignature) -> Unit,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AfModalDialog(
+        title = "Išsaugoti parašai",
+        icon = Icons.Rounded.Draw,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("saved-signatures-dialog"),
+        expandedContent = true,
+        actions = {
+            TextButton(
+                onClick = onRefresh,
+                enabled = !state.loading,
+                modifier = Modifier.testTag("saved-signatures-refresh"),
+            ) { LText("Atnaujinti") }
+            TextButton(onClick = onDismiss) { LText("Uždaryti") }
+        },
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (state.items.isEmpty() && !state.loading) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp)
+                        .testTag("saved-signatures-empty"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        Icons.Rounded.Draw,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LText("Parašų dar nėra", style = MaterialTheme.typography.titleMedium)
+                    state.error?.let {
+                        LText(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().testTag("saved-signatures-list"),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    item {
+                        LText(
+                            "Duomenys saugomi tik šios programos privačioje saugykloje.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    state.error?.let { message ->
+                        item {
+                            LText(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    items(state.items, key = SavedSignature::id) { saved ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = MaterialTheme.shapes.large,
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = saved.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                SignatureDrawingPreview(
+                                    drawing = saved.drawing,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(VisualSignatureRules.ASPECT_RATIO),
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    TextButton(
+                                        onClick = { onDelete(saved) },
+                                        enabled = !state.loading,
+                                        modifier = Modifier.testTag("saved-signature-delete"),
+                                    ) {
+                                        Icon(Icons.Rounded.Delete, contentDescription = null)
+                                        Spacer(Modifier.width(4.dp))
+                                        LText("Pašalinti")
+                                    }
+                                    Button(
+                                        onClick = { onSelect(saved) },
+                                        enabled = !state.loading,
+                                        modifier = Modifier.testTag("saved-signature-select"),
+                                    ) { LText("Pasirinkti") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (state.loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.Center).testTag("saved-signatures-loading"),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SignatureDrawingPreview(
+    drawing: SignatureDrawing,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(
+        modifier = modifier
+            .background(Color.White, MaterialTheme.shapes.medium)
+            .testTag("saved-signature-preview"),
+    ) {
+        drawing.strokes.forEach { stroke ->
+            val first = stroke.points.firstOrNull() ?: return@forEach
+            if (stroke.points.size == 1) {
+                drawCircle(
+                    Color.Black,
+                    radius = 2.5.dp.toPx(),
+                    center = Offset(first.x * size.width, first.y * size.height),
+                )
+            } else {
+                val path = Path().apply {
+                    moveTo(first.x * size.width, first.y * size.height)
+                    stroke.points.drop(1).forEach { point ->
+                        lineTo(point.x * size.width, point.y * size.height)
+                    }
+                }
+                drawPath(
+                    path,
+                    Color.Black,
+                    style = Stroke(5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                )
+            }
         }
     }
 }

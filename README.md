@@ -15,16 +15,17 @@ AF File Manager is built for Android phones and tablets with Kotlin and Jetpack 
 - Preview images, PDFs, media, text, code, APKs, metadata, and archive contents. PDFs can also receive a visible handwritten signature on a chosen page, with placement and size controls.
 - Edit text and code locally or on a server, with Save, Save As, encoding and line-ending controls, conflict detection, and temporary-file cleanup.
 - Analyze storage for large files, duplicates, similar photos, empty folders, and leftovers without deleting anything automatically.
-- Connect through SMB 2/3, SFTP, WebDAV, FTP, and FTPS, with editable profiles and Android Keystore-protected secrets.
+- Connect through SMB 2/3, SFTP, WebDAV, FTP, and FTPS, or authorize a Nextcloud account in the browser, with editable profiles and Android Keystore-protected secrets.
 - Open a local Android terminal or reuse an active SFTP connection for a remote SSH terminal.
-- Share a selected folder temporarily over Web, FTP, or WebDAV on the local network.
+- Share a selected folder temporarily over Web, FTP, or WebDAV on the local network, or explicitly create a temporary public HTTPS address through Cloudflare Quick Tunnel.
+- Pair phones over the local network or Wi-Fi Direct, keep a group of up to ten phones, and send files directly to a selected member without relaying their contents through the organizer.
 - Use optional Root or Shizuku access for protected Android folders on compatible devices.
 - Work offline in 59 interface languages. English is the default; English and Lithuanian are reviewed directly.
 - Check signed GitHub releases for updates and verify the APK before opening Android's installer.
 
 ## Privacy
 
-The main file-management features work without an account and without sending file names or file contents anywhere. Network connections, sharing, and update checks happen only when their matching feature is used. More detail is available in [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
+The main file-management features work without an account and without sending file names or file contents anywhere. Network connections, cloud accounts, sharing, and update checks happen only when their matching feature is used. More detail is available in [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
 ## Android limits
 
@@ -48,13 +49,17 @@ If you choose to install or use the app, you do so at your own risk and remain r
 
 ## Build
 
-Requirements: JDK 17, Android SDK 36, and Android NDK `27.3.13750724`.
+Requirements: JDK 17, Android SDK 36, and Android NDK `27.3.13750724`. Building the bundled Quick Tunnel component also requires Go 1.26.
 
 ```powershell
 $env:JAVA_HOME = 'path-to-jdk-17'
 $env:ANDROID_HOME = 'path-to-android-sdk'
+$env:AF_GO_EXE = 'path-to-go-1.26\bin\go.exe'
+.\scripts\build-cloudflared-android.ps1
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug
 ```
+
+The generated `cloudflared` binaries are not stored in Git. The pinned build script compiles them from the exact upstream commit used by the release workflow.
 
 Release signing keys are not stored in the repository. See [docs/RELEASING.md](docs/RELEASING.md) for the release process and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled components.
 

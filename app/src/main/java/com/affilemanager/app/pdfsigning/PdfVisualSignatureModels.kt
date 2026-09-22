@@ -40,7 +40,7 @@ object VisualSignatureRules {
     const val MAX_STROKES = 64
     const val MAX_POINTS = 4_096
     const val BITMAP_WIDTH = 1_200
-    const val BITMAP_HEIGHT = 400
+    const val BITMAP_HEIGHT = 600
     const val ASPECT_RATIO = BITMAP_WIDTH.toFloat() / BITMAP_HEIGHT
     private const val MIN_WIDTH = 0.20f
     private const val MAX_WIDTH = 0.90f

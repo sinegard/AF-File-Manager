@@ -40,6 +40,7 @@ data class LanTransferState(
     val expiresAtMillis: Long? = null,
     val message: String? = null,
     val incomingUpload: LanUploadProgress? = null,
+    val groupMode: Boolean = false,
 )
 
 object LanTransferController {
@@ -53,7 +54,12 @@ object LanTransferController {
         protocol: LanTransferProtocol = LanTransferProtocol.WEB,
         options: LanTransferOptions = LanTransferOptions(),
         bindAddress: String? = null,
+        groupMode: Boolean = false,
+        receiverName: String = "AF File Manager",
+        groupName: String = "AF group",
     ) {
+        if (bindAddress == null) WifiDirectController.stop(context)
+        if (!groupMode) NearbyGroupController.sessionStopped()
         val validatedOptions = options.validated(protocol)
         val intent = Intent(context, LanTransferService::class.java)
             .setAction(LanTransferService.ACTION_START)
@@ -65,12 +71,16 @@ object LanTransferController {
             .putExtra(LanTransferService.EXTRA_PASSWORD, validatedOptions.password)
             .putExtra(LanTransferService.EXTRA_READ_ONLY, validatedOptions.readOnly)
             .putExtra(LanTransferService.EXTRA_ANONYMOUS, validatedOptions.anonymous)
+            .putExtra(LanTransferService.EXTRA_GROUP_MODE, groupMode)
+            .putExtra(LanTransferService.EXTRA_RECEIVER_NAME, receiverName.take(NearbyPairing.MAX_NAME_LENGTH))
+            .putExtra(LanTransferService.EXTRA_GROUP_NAME, groupName.take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH))
             .putExtra("bind_address", bindAddress)
         ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {
         context.startService(Intent(context, LanTransferService::class.java).setAction(LanTransferService.ACTION_STOP))
+        WifiDirectController.stop(context)
     }
 
     fun cancelIncomingFile(context: Context, batchId: String, fileIndex: Int) {
@@ -127,6 +137,9 @@ class LanTransferService : Service() {
         const val EXTRA_PASSWORD = "password"
         const val EXTRA_READ_ONLY = "read_only"
         const val EXTRA_ANONYMOUS = "anonymous"
+        const val EXTRA_GROUP_MODE = "group_mode"
+        const val EXTRA_RECEIVER_NAME = "receiver_name"
+        const val EXTRA_GROUP_NAME = "group_name"
         const val EXTRA_BATCH_ID = "batch_id"
         const val EXTRA_FILE_INDEX = "file_index"
         private const val CHANNEL_ID = "lan_transfer"
@@ -175,6 +188,15 @@ class LanTransferService : Service() {
             readOnly = intent.getBooleanExtra(EXTRA_READ_ONLY, false),
             anonymous = intent.getBooleanExtra(EXTRA_ANONYMOUS, false),
         )
+        val groupMode = intent.getBooleanExtra(EXTRA_GROUP_MODE, false) && protocol == LanTransferProtocol.WEB
+        val receiverName = intent.getStringExtra(EXTRA_RECEIVER_NAME).orEmpty()
+            .filterNot(Char::isISOControl)
+            .take(NearbyPairing.MAX_NAME_LENGTH)
+            .ifBlank { "AF File Manager" }
+        val groupName = intent.getStringExtra(EXTRA_GROUP_NAME).orEmpty()
+            .filterNot(Char::isISOControl)
+            .take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH)
+            .ifBlank { "AF group" }
         val options = runCatching { rawOptions.validated(protocol) }.getOrElse { error ->
             LanTransferController.publish(
                 LanTransferState(
@@ -184,6 +206,7 @@ class LanTransferService : Service() {
                     protocol = protocol,
                     readOnly = rawOptions.readOnly,
                     anonymous = rawOptions.anonymous,
+                    groupMode = groupMode,
                     message = error.message ?: "Netinkami bendrinimo nustatymai",
                 ),
             )
@@ -199,6 +222,7 @@ class LanTransferService : Service() {
                 protocol = protocol,
                 readOnly = options.readOnly,
                 anonymous = options.anonymous,
+                groupMode = groupMode,
                 message = "Ieškomas privatus vietinio tinklo adresas",
             ),
         )
@@ -215,7 +239,9 @@ class LanTransferService : Service() {
             requireNotNull(address) { "Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas" }
             val stopped: (String) -> Unit = { reason ->
                 NearbyTransferController.connection.clear()
+                NearbyGroupController.sessionStopped()
                 LanTransferController.publishStopped(reason)
+                WifiDirectController.stop(this)
                 stopSelf()
             }
             when (protocol) {
@@ -236,6 +262,10 @@ class LanTransferService : Service() {
                         NearbyChatController.received(sender, message)
                     },
                     onNearbyDisconnect = { NearbyTransferController.peerDisconnected(this) },
+                    groupMode = groupMode,
+                    organizerName = receiverName,
+                    groupName = groupName,
+                    onGroupMembers = NearbyGroupController::hostMembers,
                     onUploadProgress = LanTransferController::publishUpload,
                     onStopped = stopped,
                 )
@@ -274,13 +304,20 @@ class LanTransferService : Service() {
                     protocol = protocol,
                     readOnly = session.readOnly,
                     anonymous = session.anonymous,
+                    groupMode = groupMode,
                     expiresAtMillis = session.expiresAtMillis,
                     message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
                 ),
             )
+            if (groupMode) {
+                val organizer = NearbyPairing.create(session.address, session.port, session.code, receiverName)
+                NearbyGroupController.host(NearbyGroupInvite(organizer, groupName))
+            }
             startAsForeground(runningNotification(session))
         }.onFailure { error ->
             server = null
+            WifiDirectController.stop(this)
+            NearbyGroupController.sessionStopped()
             LanTransferController.publish(
                 LanTransferState(
                     status = LanTransferStatus.ERROR,
@@ -289,6 +326,7 @@ class LanTransferService : Service() {
                     protocol = protocol,
                     readOnly = options.readOnly,
                     anonymous = options.anonymous,
+                    groupMode = groupMode,
                     message = error.message ?: "LAN serverio paleisti nepavyko",
                 ),
             )
@@ -301,12 +339,15 @@ class LanTransferService : Service() {
     override fun onDestroy() {
         server?.stop("LAN paslauga sustabdyta")
         server = null
+        WifiDirectController.stop(this)
+        NearbyGroupController.sessionStopped()
         super.onDestroy()
     }
 
     private fun stopServer(reason: String) {
         server?.stop(reason)
         server = null
+        NearbyGroupController.sessionStopped()
         LanTransferController.publishStopped(reason)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

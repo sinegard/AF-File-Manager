@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.CloudUpload
+import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
@@ -103,9 +104,12 @@ import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
 import com.affilemanager.app.network.NetworkProtocol
+import com.affilemanager.app.network.NetworkProvider
 import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.network.RemoteErrorInfo
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.ui.NextcloudLoginPhase
+import com.affilemanager.app.ui.NextcloudLoginUiState
 import com.affilemanager.app.ui.RemoteBrowserRules
 import com.affilemanager.app.ui.components.RemoteFileVisual
 import com.affilemanager.app.ui.components.AfModalDialog
@@ -144,6 +148,7 @@ import java.util.Date
 @Composable
 fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val state by viewModel.networkState.collectAsStateWithLifecycle()
+    val nextcloudLogin by viewModel.nextcloudLogin.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val left by viewModel.leftPanel.collectAsStateWithLifecycle()
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -174,6 +179,13 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 Column(modifier = Modifier.weight(1f)) {
                     LText("Tinklas ir nuotolinės vietos", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     LText("SMB 2/3 · SFTP · WebDAV · FTP/FTPS", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(
+                    onClick = viewModel::openNextcloudSetup,
+                    modifier = Modifier.testTag("add_nextcloud"),
+                ) {
+                    Icon(Icons.Rounded.Cloud, contentDescription = null)
+                    LText("Nextcloud", modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }
@@ -267,6 +279,14 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             },
         )
     }
+    if (nextcloudLogin.open) {
+        NextcloudLoginDialog(
+            state = nextcloudLogin,
+            onServerChange = viewModel::updateNextcloudServer,
+            onStart = viewModel::startNextcloudLogin,
+            onDismiss = viewModel::cancelNextcloudSetup,
+        )
+    }
     deleteProfile?.let { profile ->
         AlertDialog(
             onDismissRequest = { deleteProfile = null },
@@ -358,6 +378,71 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 }
 
 @Composable
+private fun NextcloudLoginDialog(
+    state: NextcloudLoginUiState,
+    onServerChange: (String) -> Unit,
+    onStart: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AfModalDialog(
+        title = "Pridėti Nextcloud",
+        icon = Icons.Rounded.Cloud,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("nextcloud_login_dialog"),
+        actions = {
+            TextButton(onClick = onDismiss) { LText(if (state.running) "Atšaukti" else "Uždaryti") }
+            Button(
+                onClick = onStart,
+                enabled = !state.running && state.server.isNotBlank(),
+                modifier = Modifier.testTag("nextcloud_login_start"),
+            ) {
+                if (state.running) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    LText("Prisijungti naršyklėje")
+                }
+            }
+        },
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            LText(
+                "Įrašykite savo Nextcloud serverio adresą. AF atidarys numatytąją naršyklę ir gaus tik šiai programėlei skirtą atšaukiamą slaptažodį.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            OutlinedTextField(
+                value = state.server,
+                onValueChange = onServerChange,
+                enabled = !state.running,
+                singleLine = true,
+                label = { LText("Nextcloud serveris") },
+                placeholder = { LText("https://cloud.example.com") },
+                modifier = Modifier.fillMaxWidth().testTag("nextcloud_server"),
+                isError = state.error != null,
+            )
+            if (state.server.trim().startsWith("http://", ignoreCase = true)) {
+                LText(
+                    "HTTP ryšys nešifruotas. Naudokite jį tik patikimame vietiniame tinkle.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            when (state.phase) {
+                NextcloudLoginPhase.IDLE -> Unit
+                NextcloudLoginPhase.STARTING -> LText("Ruošiamas saugus Nextcloud prisijungimas")
+                NextcloudLoginPhase.WAITING_FOR_BROWSER -> LText("Užbaikite prisijungimą naršyklėje. AF laukia patvirtinimo.")
+                NextcloudLoginPhase.SAVING -> LText("Saugomas Nextcloud ryšys")
+            }
+            state.error?.let {
+                LText(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("nextcloud_login_error"))
+            }
+        }
+    }
+}
+
+@Composable
 internal fun ProfileCard(
     profile: NetworkProfile,
     loading: Boolean,
@@ -370,11 +455,19 @@ internal fun ProfileCard(
     val safeName = if (NetworkProfileRules.nameError(profile.name) == null) normalized.name else "Jungtis"
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
+            Icon(
+                if (profile.provider == NetworkProvider.NEXTCLOUD) Icons.Rounded.Cloud else Icons.Rounded.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(34.dp),
+            )
             Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(safeName, fontWeight = FontWeight.SemiBold)
                 if (profileProblem == null) {
-                    Text("${profile.protocol} · ${normalized.host}:${profile.port}", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "${if (profile.provider == NetworkProvider.NEXTCLOUD) "Nextcloud" else profile.protocol.name} · ${normalized.host}:${profile.port}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 } else {
                     LText("${profile.protocol} · Neteisingi jungties duomenys", style = MaterialTheme.typography.bodySmall)
                 }

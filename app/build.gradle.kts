@@ -11,6 +11,8 @@ val releaseKeyAlias = providers.environmentVariable("AF_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("AF_KEY_PASSWORD").orNull
 val hasReleaseSigning = listOf(releaseStorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
 val testOptimizedRelease = providers.gradleProperty("afTestOptimizedRelease").orNull.toBoolean()
+val targetAbi = providers.gradleProperty("afTargetAbi").orNull
+val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 
 android {
     namespace = "com.affilemanager.app"
@@ -22,8 +24,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 59
-        versionName = "0.40.0"
+        versionCode = 60
+        versionName = "0.41.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -37,7 +39,8 @@ android {
         vectorDrawables.useSupportLibrary = true
 
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            targetAbi?.let { require(it in supportedAbis) { "Unsupported AF target ABI: $it" } }
+            abiFilters += targetAbi?.let(::listOf) ?: supportedAbis
         }
     }
 
@@ -107,6 +110,8 @@ android {
     }
 
     packaging {
+        jniLibs.useLegacyPackaging = true
+        jniLibs.keepDebugSymbols += "**/libcloudflared.so"
         resources.excludes += setOf(
             "META-INF/DEPENDENCIES",
             "META-INF/LICENSE*",

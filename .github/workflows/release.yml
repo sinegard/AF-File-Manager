@@ -49,24 +49,48 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/af-file-manager-release.jks"
           chmod 600 "$RUNNER_TEMP/af-file-manager-release.jks"
 
+      - name: Build the pinned Android cloudflared component
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.3.13750724" >/dev/null
+          bash scripts/build-cloudflared-android.sh
+
       - name: Test, lint, and build the signed release
         env:
           AF_KEYSTORE_PATH: ${{ runner.temp }}/af-file-manager-release.jks
           AF_KEYSTORE_PASSWORD: ${{ secrets.AF_KEYSTORE_PASSWORD }}
           AF_KEY_ALIAS: ${{ secrets.AF_KEY_ALIAS }}
           AF_KEY_PASSWORD: ${{ secrets.AF_KEY_PASSWORD }}
-        run: ./gradlew testDebugUnitTest lintDebug verifyReleaseDynamicRuntimeClasses --no-daemon
+        run: ./gradlew testDebugUnitTest lintDebug verifyReleaseDynamicRuntimeClasses -PafTargetAbi=arm64-v8a --no-daemon
 
       - name: Prepare release assets
+        env:
+          AF_KEYSTORE_PATH: ${{ runner.temp }}/af-file-manager-release.jks
+          AF_KEYSTORE_PASSWORD: ${{ secrets.AF_KEYSTORE_PASSWORD }}
+          AF_KEY_ALIAS: ${{ secrets.AF_KEY_ALIAS }}
+          AF_KEY_PASSWORD: ${{ secrets.AF_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
-          source_apk="app/build/outputs/apk/release/app-release.apk"
-          test -s "$source_apk"
           mkdir -p dist
-          apk="dist/AF-File-Manager-$AF_VERSION.apk"
-          cp "$source_apk" "$apk"
-          sha256sum "$apk" > "$apk.sha256"
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            ./gradlew :app:assembleRelease -PafTargetAbi="$abi" --no-daemon
+            source_apk="app/build/outputs/apk/release/app-release.apk"
+            test -s "$source_apk"
+            apk="dist/AF-File-Manager-$AF_VERSION-$abi.apk"
+            cp "$source_apk" "$apk"
+            mapfile -t packaged_abis < <(unzip -Z1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u)
+            test "${packaged_abis[*]}" = "$abi"
+            sha256sum "$apk" > "$apk.sha256"
+          done
+
+          # Keep a universal APK so installations older than ABI-aware updates can
+          # still move to the new release. New AF versions choose the smaller asset.
+          ./gradlew :app:assembleRelease --no-daemon
+          universal="dist/AF-File-Manager-$AF_VERSION.apk"
+          cp "app/build/outputs/apk/release/app-release.apk" "$universal"
+          sha256sum "$universal" > "$universal.sha256"
 
       - name: Prepare draft GitHub Release
         env:
@@ -75,8 +99,8 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
-            "dist/AF-File-Manager-$AF_VERSION.apk#Signed Android APK" \
-            "dist/AF-File-Manager-$AF_VERSION.apk.sha256#SHA-256 checksum" \
+            dist/*.apk \
+            dist/*.sha256 \
             --verify-tag \
             --title "AF File Manager $AF_VERSION" \
             --draft \

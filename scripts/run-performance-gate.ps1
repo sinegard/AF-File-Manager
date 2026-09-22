@@ -23,12 +23,18 @@ $isEmulator = (& $adb -s $EmulatorSerial shell getprop ro.boot.qemu 2>$null).Tri
 if ($isEmulator -ne '1') {
     throw "Performance automation is restricted to an emulator; refusing device $EmulatorSerial."
 }
+$targetAbi = (& $adb -s $EmulatorSerial shell getprop ro.product.cpu.abi 2>$null).Trim()
+$supportedAbis = @('armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64')
+if ($targetAbi -notin $supportedAbis) {
+    throw "Unsupported emulator ABI for the performance candidate: $targetAbi"
+}
 
 $previousSerial = $env:ANDROID_SERIAL
 try {
     $env:ANDROID_SERIAL = $EmulatorSerial
     & (Join-Path $projectDirectory 'gradlew.bat') `
         ':benchmark:connectedBenchmarkAndroidTest' `
+        "-PafTargetAbi=$targetAbi" `
         '-Pandroid.testInstrumentationRunnerArguments.class=com.affilemanager.benchmark.AfMacrobenchmark' `
         '--console=plain'
     if ($LASTEXITCODE -ne 0) {

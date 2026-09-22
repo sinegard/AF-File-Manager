@@ -113,7 +113,7 @@ class AppUpdateManager(
         client.newCall(request).execute().use { response ->
             require(response.isSuccessful) { "GitHub atsakė HTTP ${response.code}" }
             val body = requireNotNull(response.body).string()
-            GitHubReleaseParser.parse(body, repository)
+            GitHubReleaseParser.parse(body, repository, Build.SUPPORTED_ABIS.toList())
         }
     }
 

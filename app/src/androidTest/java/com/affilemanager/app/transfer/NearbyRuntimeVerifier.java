@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Real optimized sending service against a bounded, emulator-private HTTP peer. */
 public final class NearbyRuntimeVerifier {
     public static boolean verify(Instrumentation test) throws Exception {
-        if (!android.os.Build.MODEL.contains("sdk")) throw new AssertionError("Disposable emulator required");
+        if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
         Context context = test.getTargetContext();
         InetAddress address = null;
         for (NetworkInterface iface : Collections.list(NetworkInterface.getNetworkInterfaces()))

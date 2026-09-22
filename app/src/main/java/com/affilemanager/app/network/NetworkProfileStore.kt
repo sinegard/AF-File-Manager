@@ -139,6 +139,9 @@ class NetworkProfileStore(
                     expectedHostKeySha256 = json.optString("expectedHostKeySha256").ifBlank { null },
                     allowFirstUseTrust = json.optBoolean("allowFirstUseTrust", false),
                     webDavUseTls = json.optBoolean("webDavUseTls", true),
+                    provider = runCatching {
+                        NetworkProvider.valueOf(json.optString("provider", NetworkProvider.GENERIC.name))
+                    }.getOrDefault(NetworkProvider.GENERIC),
                 ),
                 encryptedSecret = json.getString("encryptedSecret"),
             )
@@ -163,6 +166,7 @@ class NetworkProfileStore(
                     .put("expectedHostKeySha256", profile.expectedHostKeySha256 ?: "")
                     .put("allowFirstUseTrust", profile.allowFirstUseTrust)
                     .put("webDavUseTls", profile.webDavUseTls)
+                    .put("provider", profile.provider.name)
                     .put("encryptedSecret", record.encryptedSecret),
             )
         }

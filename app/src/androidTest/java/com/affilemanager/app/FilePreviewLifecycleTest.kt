@@ -28,10 +28,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.pinch
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.AnnotatedString
@@ -106,6 +108,30 @@ class FilePreviewLifecycleTest {
             compose.waitUntil(5_000) { com.affilemanager.app.media.BackgroundPlaybackService.state.value == null }
         } finally {
             compose.runOnUiThread { model.closePreview(); com.affilemanager.app.media.BackgroundPlaybackService.stop(app) }
+            root.deleteRecursively()
+        }
+    }
+
+    @Test fun appPrivateCachedAudioUsesAContentDescriptorForPlayback() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "privileged-media-test").apply {
+            deleteRecursively()
+            require(mkdirs())
+        }
+        val model = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            val audio = File(root, "staged.wav").also(::createWaveAudio)
+            compose.runOnUiThread { model.open(LocalFileRepository(app).toEntry(audio)) }
+            compose.waitUntil(10_000) {
+                runCatching {
+                    compose.onNodeWithTag("audio_play_pause").performScrollTo().assertIsEnabled()
+                    true
+                }.getOrDefault(false)
+            }
+            compose.onNodeWithTag("audio_play_pause").performClick()
+            compose.onNodeWithTag("audio_player").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { model.closePreview() }
             root.deleteRecursively()
         }
     }
@@ -432,6 +458,8 @@ class FilePreviewLifecycleTest {
             compose.waitUntil(timeoutMillis = 15_000) {
                 compose.onAllNodesWithTag("signature-pad", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
+            val padBounds = compose.onNodeWithTag("signature-pad").fetchSemanticsNode().boundsInRoot
+            assertEquals(2f, padBounds.width / padBounds.height, 0.05f)
             compose.onNodeWithTag("signature-pad").performTouchInput {
                 val start = Offset(visibleSize.width * 0.12f, visibleSize.height * 0.70f)
                 val middle = Offset(visibleSize.width * 0.48f, visibleSize.height * 0.25f)
@@ -441,6 +469,30 @@ class FilePreviewLifecycleTest {
                 moveTo(end, delayMillis = 180)
                 up()
             }
+            captureTaggedNode("pdf-signature-dialog", File(validationRoot, "pdf-signature-drawing.png"))
+            compose.onNodeWithTag("signature-save-open").performClick()
+            compose.onNodeWithTag("signature-save-name").performTextInput("Reusable test signature")
+            compose.onNodeWithTag("signature-save-confirm").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) { viewModel.signatureLibrary.value.items.size == 1 }
+
+            compose.onNodeWithTag("signature-clear").performClick()
+            compose.onNodeWithTag("signature-next").assertIsNotEnabled()
+            compose.onNodeWithTag("signature-library-open").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag("saved-signature-select", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            captureTaggedNode("saved-signatures-dialog", File(validationRoot, "pdf-signature-library.png"))
+            compose.onNodeWithTag("saved-signature-select").performClick()
+            compose.onNodeWithTag("signature-next").assertIsEnabled()
+
+            compose.onNodeWithTag("signature-library-open").performClick()
+            compose.onNodeWithTag("saved-signature-delete").performClick()
+            compose.onNodeWithTag("saved-signature-delete-confirm").performClick()
+            compose.waitUntil(timeoutMillis = 10_000) {
+                viewModel.signatureLibrary.value.items.isEmpty() &&
+                    compose.onAllNodesWithTag("saved-signatures-empty", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("Close").performClick()
             compose.onNodeWithTag("signature-next").assertIsEnabled().performClick()
             compose.waitUntil(timeoutMillis = 15_000) {
                 compose.onAllNodesWithTag("signature-page-preview", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()

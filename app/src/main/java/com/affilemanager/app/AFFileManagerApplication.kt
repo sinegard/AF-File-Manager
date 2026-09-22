@@ -32,6 +32,7 @@ import com.affilemanager.app.operations.BatchRenameEngine
 import com.affilemanager.app.operations.DurableTransferCoordinator
 import com.affilemanager.app.operations.DurableTransferRepository
 import com.affilemanager.app.pdfsigning.PdfVisualSignatureEngine
+import com.affilemanager.app.pdfsigning.SignatureLibraryRepository
 import com.affilemanager.app.search.FileSearchEngine
 import com.affilemanager.app.search.SimilarImageEngine
 import com.affilemanager.app.security.CredentialVault
@@ -39,6 +40,7 @@ import com.affilemanager.app.security.AppLockRepository
 import com.affilemanager.app.security.FileVaultEngine
 import com.affilemanager.app.sharing.LocalShareManager
 import com.affilemanager.app.transfer.NearbySourcePreparer
+import com.affilemanager.app.transfer.QuickTunnelController
 import com.affilemanager.app.sync.SyncEngine
 import com.affilemanager.app.sync.SyncScheduleRepository
 import com.affilemanager.app.update.AppUpdateManager
@@ -65,6 +67,7 @@ class AFFileManagerApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         UiTranslationCatalog.initialize(this)
+        QuickTunnelController.initialize(this)
         PDFBoxResourceLoader.init(this)
         graph = AppGraph(this)
         graph.applicationScope.launch {
@@ -96,6 +99,9 @@ class AppGraph(application: Application) {
     val fileTags = FileTagRepository.forApp(application)
     val editSessions by lazy { EditSessionStore(application.cacheDir) }
     val pdfSignatures by lazy { PdfVisualSignatureEngine(application.cacheDir) }
+    val signatureLibrary by lazy {
+        SignatureLibraryRepository(java.io.File(application.filesDir, "saved-signatures"))
+    }
     val remoteEdits by lazy { RemoteEditSaver(editSessions) }
     val textMerge by lazy { ThreeWayTextMerge() }
     val localFileOperator by lazy { LocalFileOperator() }

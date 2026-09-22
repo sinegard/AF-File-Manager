@@ -20,6 +20,7 @@ import com.affilemanager.app.model.DuplicateGroup
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.StorageAnalysis
+import com.affilemanager.app.data.FileSelectionSummary
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.io.File
@@ -265,5 +266,47 @@ class CleanupReviewDialogTest {
         compose.onNodeWithTag("cleanup_select_all_empty_folders").performClick()
         checkboxes[0].assertIsOff()
         checkboxes[1].assertIsOff()
+    }
+
+    @Test
+    fun moreThanTenCandidatesCanBeConfirmedInOneCleanupOperation() {
+        val roots = (1..12).map { "/storage/emulated/0/empty-$it" }
+        val moved = AtomicReference<Set<String>>(emptySet())
+        compose.setContent {
+            MaterialTheme {
+                CleanupReviewDialog(
+                    analysis = StorageAnalysis(
+                        scannedFiles = 0,
+                        scannedDirectories = roots.size,
+                        totalBytes = 0,
+                        largestFiles = emptyList(),
+                        oldestFiles = emptyList(),
+                        emptyDirectories = roots,
+                        truncated = false,
+                    ),
+                    duplicates = emptyList(),
+                    similarImages = emptyList(),
+                    similarImagesRunning = false,
+                    similarImagesAnalyzed = false,
+                    similarImagesError = null,
+                    initialCategory = CleanupCategory.EMPTY_FOLDERS,
+                    analysisRootPaths = listOf("/storage/emulated/0"),
+                    onAnalyzeSimilarImages = {},
+                    onMoveToTrash = moved::set,
+                    loadSelectionInfo = {
+                        Result.success(FileSelectionSummary(roots.size, 0, roots.size, 0, roots.size, true))
+                    },
+                    onLoadFolder = { Result.failure(IllegalStateException("not used")) },
+                    onOpenFile = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        compose.onNodeWithTag("cleanup_select_all_empty_folders").performClick()
+        compose.onNodeWithTag("cleanup_move_selected").performClick()
+        compose.onNodeWithTag("cleanup_confirm_move").performClick()
+
+        assertEquals(roots.toSet(), moved.get())
     }
 }

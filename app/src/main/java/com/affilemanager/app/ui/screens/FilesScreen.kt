@@ -286,6 +286,7 @@ fun FilesScreen(
     var homeDisplayArea by remember { mutableStateOf<HomeDisplayArea?>(null) }
     var showHomeCustomization by remember { mutableStateOf(false) }
     var infoTargets by remember { mutableStateOf<List<FileEntry>?>(null) }
+    var recentTrashEntries by remember { mutableStateOf<List<FileEntry>?>(null) }
     val clipboardAvailable = clipboard != null || remoteClipboard != null || afClipboard != null
 
     LaunchedEffect(clipboardAvailable) {
@@ -415,6 +416,8 @@ fun FilesScreen(
                     roots = roots,
                     safLocations = safLocations,
                     recentFiles = recentFiles.items,
+                    recentAddedFiles = recentFiles.addedItems,
+                    recentOpenedFiles = recentFiles.openedItems,
                     recentFilesLoading = recentFiles.loading,
                     recentFilesError = recentFiles.error,
                     storageDisplaySettings = storageHomeDisplaySettings,
@@ -431,6 +434,11 @@ fun FilesScreen(
                     onOpenStorage = { root -> viewModel.openStorageRoot(root, activePanel) },
                     onOpenRoot = { viewModel.openRootFromHome(activePanel) },
                     onOpenRecent = { entry -> viewModel.activatePanel(activePanel); viewModel.open(entry) },
+                    onRenameRecent = { entry -> renameTarget = activePanel to entry },
+                    onShareRecent = { entries -> viewModel.shareEntries(entries.map(FileEntry::absolutePath)) },
+                    onTrashRecent = { entries -> recentTrashEntries = entries },
+                    onRevealRecent = { entry -> viewModel.revealLocalEntry(activePanel, entry.absolutePath) },
+                    onCopyRecent = { entries, move -> viewModel.copyEntries(entries.map(FileEntry::absolutePath), move) },
                     onOpenTrash = viewModel::openTrashFromHome,
                     onOpenFavoritesPage = { viewModel.openHomeToolPage(HomeToolPage.FAVORITES) },
                     onOpenTagsPage = { viewModel.openHomeToolPage(HomeToolPage.TAGS) },
@@ -440,6 +448,7 @@ fun FilesScreen(
                     onToggleLayout = viewModel::toggleHomeDisplayLayout,
                     onConfigureLayout = { area -> homeDisplayArea = area },
                     onAddSafLocation = onAddSafLocation,
+                    onAddNextcloud = viewModel::openNextcloudSetup,
                     onOpenSafLocation = viewModel::openSafLocation,
                     onRenameSafLocation = viewModel::renameSafLocation,
                     onRemoveSafLocation = viewModel::removeSafLocation,
@@ -575,6 +584,19 @@ fun FilesScreen(
             permanent = false,
             onDismiss = { trashPanel = null },
             onConfirm = { viewModel.moveSelectionToTrash(panel); trashPanel = null },
+            loadSummary = { viewModel.loadFileSelectionInfo(paths) },
+        )
+    }
+    recentTrashEntries?.let { entries ->
+        val paths = entries.map(FileEntry::absolutePath)
+        DeleteConfirmationDialog(
+            names = entries.map(FileEntry::name),
+            permanent = false,
+            onDismiss = { recentTrashEntries = null },
+            onConfirm = {
+                viewModel.moveLocalPathsToTrash(paths)
+                recentTrashEntries = null
+            },
             loadSummary = { viewModel.loadFileSelectionInfo(paths) },
         )
     }

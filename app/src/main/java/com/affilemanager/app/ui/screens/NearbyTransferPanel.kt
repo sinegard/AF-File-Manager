@@ -108,6 +108,10 @@ import com.affilemanager.app.transfer.LanSessionDuration
 import com.affilemanager.app.transfer.LanTransferState
 import com.affilemanager.app.transfer.LanTransferStatus
 import com.affilemanager.app.transfer.NearbyPairing
+import com.affilemanager.app.transfer.NearbyGroupController
+import com.affilemanager.app.transfer.NearbyGroupInvite
+import com.affilemanager.app.transfer.NearbyGroupMember
+import com.affilemanager.app.transfer.NearbyGroupStatus
 import com.affilemanager.app.transfer.NearbyContact
 import com.affilemanager.app.transfer.NearbyDeviceAdvertiser
 import com.affilemanager.app.transfer.NearbyDeviceDiscovery
@@ -120,6 +124,9 @@ import com.affilemanager.app.transfer.NearbyTransferState
 import com.affilemanager.app.transfer.NearbyTransferStatus
 import com.affilemanager.app.transfer.PreparedNearbyTransfer
 import com.affilemanager.app.transfer.TransferFileProgress
+import com.affilemanager.app.transfer.WifiDirectController
+import com.affilemanager.app.transfer.WifiDirectPeer
+import com.affilemanager.app.transfer.WifiDirectStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.IncomingShareUiState
 import com.affilemanager.app.ui.components.AfModalDialog
@@ -157,6 +164,7 @@ internal fun NearbyPhoneTransferCard(
     LaunchedEffect(Unit) { NearbyTransferHistoryController.initialize(context) }
     val nearbyState by NearbyTransferController.state.collectAsStateWithLifecycle()
     val peer by NearbyTransferController.connection.state.collectAsStateWithLifecycle()
+    val groupState by NearbyGroupController.state.collectAsStateWithLifecycle()
     val chatState by NearbyChatController.state.collectAsStateWithLifecycle()
     val historySessions by NearbyTransferHistoryController.state.collectAsStateWithLifecycle()
     val historyError by NearbyTransferHistoryController.error.collectAsStateWithLifecycle()
@@ -165,6 +173,8 @@ internal fun NearbyPhoneTransferCard(
     var showReceiver by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showGroup by remember { mutableStateOf(false) }
+    var groupTarget by remember { mutableStateOf<NearbyPairing?>(null) }
     var confirmDisconnect by remember { mutableStateOf(false) }
     var hadPeer by remember { mutableStateOf(peer != null) }
     var sessionStartedAtMillis by remember { mutableStateOf(if (peer != null) System.currentTimeMillis() else null) }
@@ -227,8 +237,23 @@ internal fun NearbyPhoneTransferCard(
                         Icon(Icons.Rounded.QrCode2, contentDescription = null)
                         LText("Gauti", modifier = Modifier.padding(start = 6.dp))
                     }
+                    OutlinedButton(onClick = { showGroup = true }) {
+                        Icon(Icons.Rounded.Contacts, contentDescription = null)
+                        LText(
+                            if (groupState.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED)) {
+                                "Grupė (${groupState.members.size})"
+                            } else {
+                                "Grupė"
+                            },
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                 } else {
                     OutlinedButton(onClick = { showSender = true }, modifier = Modifier.testTag("nearby_add_files")) { LText("Siųsti daugiau") }
+                    OutlinedButton(onClick = { showGroup = true }) {
+                        Icon(Icons.Rounded.Contacts, contentDescription = null)
+                        LText("Grupė (${groupState.members.size})", modifier = Modifier.padding(start = 6.dp))
+                    }
                     TextButton(onClick = ::requestDisconnect, modifier = Modifier.testTag("nearby_disconnect")) { LText("Atsijungti") }
                 }
                 if (peer != null || allFiles.isNotEmpty() || chatState.messages.isNotEmpty() || historySessions.isNotEmpty()) {
@@ -253,7 +278,8 @@ internal fun NearbyPhoneTransferCard(
         }
     }
     if (showSender) NearbySendDialog(viewModel, incomingShare, onIncomingShareConsumed,
-        onDismiss = { showSender = false }, onTransferStarted = { showDetails = true }, connectedPairing = peer)
+        onDismiss = { showSender = false; groupTarget = null }, onTransferStarted = { showDetails = true },
+        connectedPairing = groupTarget ?: peer)
     if (showReceiver) NearbyReceiveDialog(receiveDirectory, lanState, receiverName, onReceiverNameChange,
         durationMinutes = durationMinutes, onDurationMinutesChange = onDurationMinutesChange,
         onChooseDirectory = { showReceiver = false; onChooseReceiveDirectory() }, onDismiss = { showReceiver = false },
@@ -311,6 +337,18 @@ internal fun NearbyPhoneTransferCard(
         onClear = NearbyTransferHistoryController::clear,
         onPreview = viewModel::open,
     )
+    if (showGroup) NearbyGroupDialog(
+        receiveDirectory = receiveDirectory,
+        receiverName = receiverName,
+        durationMinutes = durationMinutes,
+        lanState = lanState,
+        onDismiss = { showGroup = false },
+        onSendTo = { pairing ->
+            groupTarget = pairing
+            showGroup = false
+            showSender = true
+        },
+    )
     if (confirmDisconnect) com.affilemanager.app.ui.theme.AfAlertDialog(
         onDismissRequest = { confirmDisconnect = false },
         title = { LText("Atsijungti") },
@@ -363,6 +401,247 @@ private fun NearbyProgress(state: NearbyTransferState, onCancel: () -> Unit) {
 }
 
 @Composable
+private fun NearbyGroupDialog(
+    receiveDirectory: String,
+    receiverName: String,
+    durationMinutes: Int,
+    lanState: LanTransferState,
+    onDismiss: () -> Unit,
+    onSendTo: (NearbyPairing) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val groupState by NearbyGroupController.state.collectAsStateWithLifecycle()
+    var groupName by remember { mutableStateOf("AF group") }
+    var invitePayload by remember { mutableStateOf("") }
+    var pendingJoin by remember { mutableStateOf<NearbyGroupInvite?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var qrCaptureFile by remember { mutableStateOf<File?>(null) }
+    val active = groupState.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED, NearbyGroupStatus.JOINING)
+    val shareInvite = remember(groupState.organizer, groupState.groupName) {
+        groupState.organizer?.let { NearbyGroupInvite(it, groupState.groupName.ifBlank { "AF group" }) }
+    }
+    val qrBitmap by produceState<android.graphics.Bitmap?>(null, shareInvite) {
+        value = shareInvite?.let { withContext(Dispatchers.Default) { NearbyQrCode.create(it.encoded()) } }
+    }
+    val parsedInvite = remember(invitePayload) {
+        invitePayload.takeIf(String::isNotBlank)?.let { runCatching { NearbyGroupInvite.parse(it) } }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { qrCaptureFile?.delete() }
+    }
+
+    val qrCaptureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val capture = qrCaptureFile
+        qrCaptureFile = null
+        if (!captured || capture == null) {
+            capture?.delete()
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            error = null
+            withContext(Dispatchers.IO) { runCatching { NearbyQrCode.decode(capture) } }
+                .onSuccess { payload -> invitePayload = payload }
+                .onFailure { failure -> error = nearbyFriendlyError(failure, "QR kodo nuskaityti nepavyko") }
+            capture.delete()
+        }
+    }
+
+    val scanQr: () -> Unit = {
+        runCatching {
+            val directory = File(context.cacheDir, "qr-scans").apply {
+                require(isDirectory || mkdirs()) { "QR nuotraukos vietos sukurti nepavyko" }
+            }
+            val capture = File(directory, "group-${UUID.randomUUID()}.jpg")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", capture)
+            qrCaptureFile = capture
+            qrCaptureLauncher.launch(uri)
+        }.onFailure { failure ->
+            qrCaptureFile?.delete()
+            qrCaptureFile = null
+            error = nearbyFriendlyError(failure, "QR skaitytuvas šiame telefone nepasiekiamas")
+        }
+    }
+
+    fun startOwnGroupReceiver(name: String) {
+        require(lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING)) {
+            "Pirmiausia sustabdykite kitą bendrinimo sesiją"
+        }
+        LanTransferController.start(
+            context = context,
+            rootPath = receiveDirectory,
+            durationMinutes = durationMinutes,
+            protocol = LanTransferProtocol.WEB,
+            groupMode = true,
+            receiverName = receiverName,
+            groupName = name,
+        )
+    }
+
+    LaunchedEffect(pendingJoin, lanState.status, lanState.groupMode, lanState.url, lanState.code) {
+        val invite = pendingJoin ?: return@LaunchedEffect
+        if (lanState.status == LanTransferStatus.ERROR) {
+            error = lanState.message ?: "Grupės gavimo paleisti nepavyko"
+            pendingJoin = null
+            return@LaunchedEffect
+        }
+        if (lanState.status == LanTransferStatus.RUNNING && lanState.groupMode) {
+            val uri = URI(lanState.url.orEmpty())
+            val own = NearbyPairing.create(uri.host, uri.port, lanState.code.orEmpty(), receiverName)
+            NearbyGroupController.join(invite, own)
+            pendingJoin = null
+        }
+    }
+
+    AfModalDialog(
+        title = "Telefonų grupė",
+        icon = Icons.Rounded.Contacts,
+        onDismissRequest = onDismiss,
+        expandedContent = true,
+        modifier = Modifier.testTag("nearby_group_dialog"),
+        actions = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            LText(
+                "Organizatorius valdo tik iki 10 dalyvių sąrašą. Failai siunčiami tiesiai pasirinktam telefonui.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (!active) {
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it.filterNot(Char::isISOControl).take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH) },
+                    label = { LText("Grupės pavadinimas") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        runCatching { startOwnGroupReceiver(groupName.trim().ifBlank { "AF group" }) }
+                            .onFailure { error = nearbyFriendlyError(it, "Grupės sukurti nepavyko") }
+                    },
+                    enabled = lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_group_host"),
+                ) {
+                    Icon(Icons.Rounded.Contacts, contentDescription = null)
+                    LText("Sukurti grupę", modifier = Modifier.padding(start = 7.dp))
+                }
+                HorizontalDivider()
+                LText("Prisijungti prie grupės", fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = invitePayload,
+                    onValueChange = { invitePayload = it.take(NearbyPairing.MAX_PAYLOAD_LENGTH) },
+                    label = { LText("Grupės kodas") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = invitePayload.isNotBlank() && parsedInvite?.isFailure == true,
+                )
+                AfActionRow {
+                    OutlinedButton(onClick = scanQr) {
+                        Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
+                        LText("Nuskaityti QR", modifier = Modifier.padding(start = 7.dp))
+                    }
+                    OutlinedButton(onClick = {
+                        val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
+                        invitePayload = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                            .take(NearbyPairing.MAX_PAYLOAD_LENGTH)
+                    }) { LText("Įklijuoti") }
+                }
+                Button(
+                    onClick = {
+                        val invite = parsedInvite?.getOrNull() ?: return@Button
+                        error = null
+                        pendingJoin = invite
+                        runCatching { startOwnGroupReceiver(invite.groupName) }
+                            .onFailure { failure -> pendingJoin = null; error = nearbyFriendlyError(failure, "Prisijungti prie grupės nepavyko") }
+                    },
+                    enabled = parsedInvite?.isSuccess == true &&
+                        lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_group_join"),
+                ) { LText("Prisijungti") }
+            } else {
+                LText(groupState.groupName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                when (groupState.status) {
+                    NearbyGroupStatus.JOINING -> {
+                        CircularProgressIndicator()
+                        LText("Jungiamasi prie grupės")
+                    }
+                    NearbyGroupStatus.ERROR -> Unit
+                    else -> LText("${groupState.members.size}/${com.affilemanager.app.transfer.NearbyGroupDirectory.MAX_MEMBERS} dalyvių")
+                }
+                groupState.memberNotice?.let { notice ->
+                    LaunchedEffect(notice) {
+                        kotlinx.coroutines.delay(4_000)
+                        NearbyGroupController.clearMemberNotice(notice)
+                    }
+                    LText(
+                        notice,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                shareInvite?.let { invite ->
+                    qrBitmap?.let { bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = uiText("Grupės QR kodas"),
+                            modifier = Modifier.size(240.dp).testTag("nearby_group_qr"),
+                        )
+                    }
+                    OutlinedButton(onClick = {
+                        context.getSystemService(ClipboardManager::class.java)
+                            .setPrimaryClip(ClipData.newPlainText("AF File Manager group", invite.encoded()))
+                    }) {
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = null)
+                        LText("Kopijuoti kvietimą", modifier = Modifier.padding(start = 7.dp))
+                    }
+                }
+                HorizontalDivider()
+                groupState.members.forEach { member ->
+                    val own = member.pairing.host == groupState.ownPairing?.host && member.pairing.port == groupState.ownPairing?.port
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(Icons.Rounded.PhoneAndroid, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(member.pairing.receiverName, fontWeight = FontWeight.SemiBold)
+                                LText(
+                                    when {
+                                        own -> "Šis telefonas"
+                                        member.organizer -> "Organizatorius"
+                                        else -> "Dalyvis"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                            if (!own) Button(onClick = { onSendTo(member.pairing) }) { LText("Siųsti") }
+                        }
+                    }
+                }
+                Button(
+                    onClick = {
+                        NearbyGroupController.leave()
+                        LanTransferController.stop(context)
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_group_leave"),
+                ) { LText(if (groupState.status == NearbyGroupStatus.HOSTING) "Uždaryti grupę" else "Palikti grupę") }
+            }
+            if (lanState.status == LanTransferStatus.STARTING || pendingJoin != null) CircularProgressIndicator()
+            groupState.error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
+            error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
 private fun NearbyReceiveDialog(
     receiveDirectory: String,
     lanState: LanTransferState,
@@ -379,6 +658,12 @@ private fun NearbyReceiveDialog(
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var advertisementError by remember { mutableStateOf<String?>(null) }
+    var wifiDirectPending by remember { mutableStateOf(false) }
+    val wifiDirectState by WifiDirectController.state.collectAsStateWithLifecycle()
+    val wifiDirectPermissions = remember { WifiDirectController.permissionsForSdk(Build.VERSION.SDK_INT) }
+    var wifiDirectPermissionGranted by remember {
+        mutableStateOf(WifiDirectController.hasPermission(context))
+    }
     var nearbyPermissionGranted by remember {
         mutableStateOf(
             Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
@@ -418,15 +703,74 @@ private fun NearbyReceiveDialog(
         if (!granted) advertisementError = "Artimų įrenginių paieška išjungta. QR kodas ir rankinis susiejimas vis tiek veikia."
         startReceiver()
     }
+    val startWifiDirectReceiver: () -> Unit = {
+        runCatching {
+            error = null
+            wifiDirectPending = true
+            WifiDirectController.createGroup(context)
+        }.onFailure { failure ->
+            wifiDirectPending = false
+            error = nearbyFriendlyError(failure, "Wi-Fi Direct gavimo paleisti nepavyko")
+        }
+    }
+    val wifiDirectPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        val granted = WifiDirectController.hasPermission(context)
+        wifiDirectPermissionGranted = granted
+        if (granted) startWifiDirectReceiver()
+        else error = "Wi-Fi Direct leidimas nesuteiktas"
+    }
+    LaunchedEffect(wifiDirectPending, wifiDirectState.status, wifiDirectState.groupOwnerAddress) {
+        if (!wifiDirectPending) return@LaunchedEffect
+        when (wifiDirectState.status) {
+            WifiDirectStatus.CONNECTED -> {
+                val address = wifiDirectState.groupOwnerAddress
+                if (!wifiDirectState.isGroupOwner || address.isNullOrBlank()) {
+                    wifiDirectPending = false
+                    error = "Wi-Fi Direct gavimo grupės sukurti nepavyko"
+                } else {
+                    runCatching {
+                        val options = LanTransferOptions(password = password, readOnly = false)
+                            .validated(LanTransferProtocol.WEB)
+                        LanTransferController.start(
+                            context,
+                            receiveDirectory,
+                            durationMinutes,
+                            LanTransferProtocol.WEB,
+                            options,
+                            bindAddress = address,
+                        )
+                        password = ""
+                        error = null
+                        wifiDirectPending = false
+                    }.onFailure { failure ->
+                        wifiDirectPending = false
+                        WifiDirectController.stop(context)
+                        error = nearbyFriendlyError(failure, "Wi-Fi Direct gavimo paleisti nepavyko")
+                    }
+                }
+            }
+            WifiDirectStatus.ERROR -> {
+                wifiDirectPending = false
+                error = wifiDirectState.message ?: "Wi-Fi Direct gavimo paleisti nepavyko"
+            }
+            else -> Unit
+        }
+    }
+    fun dismissReceiver() {
+        if (!activeWebReceiver && wifiDirectState.status != WifiDirectStatus.IDLE) {
+            WifiDirectController.stop(context)
+        }
+        onDismiss()
+    }
 
     AfModalDialog(
         title = "Gauti iš kito telefono",
         icon = Icons.Rounded.QrCode2,
-        onDismissRequest = onDismiss,
+        onDismissRequest = ::dismissReceiver,
         expandedContent = true,
         modifier = Modifier.testTag("nearby_receive_dialog"),
         actions = {
-            TextButton(onClick = onDismiss, modifier = Modifier.testTag("nearby_receive_close")) {
+            TextButton(onClick = ::dismissReceiver, modifier = Modifier.testTag("nearby_receive_close")) {
                 LText("Uždaryti")
             }
         },
@@ -491,6 +835,22 @@ private fun NearbyReceiveDialog(
                     Icon(Icons.Rounded.WifiTethering, contentDescription = null)
                     LText("Atidaryti Wi-Fi ir prieigos taško nustatymus", modifier = Modifier.padding(start = 7.dp))
                 }
+                OutlinedButton(
+                    onClick = {
+                        if (wifiDirectPermissionGranted) startWifiDirectReceiver()
+                        else wifiDirectPermissionLauncher.launch(wifiDirectPermissions)
+                    },
+                    enabled = !wifiDirectPending && lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_receive_wifi_direct"),
+                ) {
+                    if (wifiDirectPending) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Rounded.WifiTethering, contentDescription = null)
+                    LText("Paleisti gavimą per Wi-Fi Direct", modifier = Modifier.padding(start = 7.dp))
+                }
+                LText(
+                    "Wi-Fi Direct nereikia interneto ar prieigos taško, tačiau naudojamas telefono Wi-Fi ryšys.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 LText("5 GHz dažnį galima pasirinkti sistemos nustatymuose tik tada, kai jį palaiko abu telefonai.", style = MaterialTheme.typography.bodySmall)
                 error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 advertisementError?.let { LText(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
@@ -604,6 +964,8 @@ internal fun NearbySendDialog(
     val pageListState = rememberLazyListState()
     var openStorage by remember { mutableStateOf(false) }
     var showNearbyDiscovery by remember { mutableStateOf(false) }
+    var showWifiDirectDiscovery by remember { mutableStateOf(false) }
+    var wifiDirectConnected by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var pairingPayload by remember { mutableStateOf(connectedPairing?.encoded().orEmpty()) }
     var prepared by remember { mutableStateOf<PreparedNearbyTransfer?>(null) }
@@ -644,6 +1006,7 @@ internal fun NearbySendDialog(
         qrCaptureFile = null
         prepared?.let(viewModel::discardNearbyTransferSources)
         prepared = null
+        if (wifiDirectConnected) WifiDirectController.stop(context)
         incomingShare?.let { onIncomingShareConsumed(it.requestId) }
         onDismiss()
     }
@@ -670,6 +1033,12 @@ internal fun NearbySendDialog(
     val nearbyPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) showNearbyDiscovery = true
         else error = "Artimų įrenginių leidimas nesuteiktas. Galite nuskaityti QR kodą arba įklijuoti susiejimo kodą."
+    }
+    val wifiDirectPermissions = remember { WifiDirectController.permissionsForSdk(Build.VERSION.SDK_INT) }
+    val wifiDirectPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        val granted = WifiDirectController.hasPermission(context)
+        if (granted) showWifiDirectDiscovery = true
+        else error = "Wi-Fi Direct leidimas nesuteiktas"
     }
 
     LaunchedEffect(contactsMode, contactsPermissionGranted, contactRetryToken) {
@@ -795,7 +1164,7 @@ internal fun NearbySendDialog(
         }
     }
 
-    if (!openStorage && !showNearbyDiscovery) AfModalDialog(
+    if (!openStorage && !showNearbyDiscovery && !showWifiDirectDiscovery) AfModalDialog(
         title = if (step == NearbySendStep.PICK) "Pasirinkti siunčiamus failus" else "Susieti gaunantį telefoną",
         icon = if (step == NearbySendStep.PICK) Icons.AutoMirrored.Rounded.Send else Icons.Rounded.QrCodeScanner,
         onDismissRequest = ::discardAndDismiss,
@@ -815,7 +1184,9 @@ internal fun NearbySendDialog(
                     prepared = null
                     step = NearbySendStep.PICK
                 } else discardAndDismiss()
-            }) { LText(if (step == NearbySendStep.PAIR && !loading) "Grįžti" else "Atšaukti") }
+            }, modifier = Modifier.testTag("nearby_back_or_cancel")) {
+                LText(if (step == NearbySendStep.PAIR && !loading) "Grįžti" else "Atšaukti")
+            }
             if (step == NearbySendStep.PICK) {
                 Button(
                     onClick = {
@@ -1162,6 +1533,23 @@ internal fun NearbySendDialog(
                     Icon(Icons.Rounded.WifiTethering, contentDescription = null)
                     LText("Atidaryti Wi-Fi nustatymus", modifier = Modifier.padding(start = 7.dp))
                 }
+                OutlinedButton(
+                    onClick = {
+                        if (WifiDirectController.hasPermission(context)) showWifiDirectDiscovery = true
+                        else wifiDirectPermissionLauncher.launch(wifiDirectPermissions)
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_join_wifi_direct"),
+                ) {
+                    Icon(Icons.Rounded.WifiTethering, contentDescription = null)
+                    LText("Prisijungti per Wi-Fi Direct", modifier = Modifier.padding(start = 7.dp))
+                }
+                if (wifiDirectConnected) {
+                    LText(
+                        "Wi-Fi Direct prijungtas. Dabar nuskaitykite gavėjo QR kodą.",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 OutlinedTextField(
                     value = pairingPayload,
                     onValueChange = { pairingPayload = it.take(NearbyPairing.MAX_PAYLOAD_LENGTH) },
@@ -1225,6 +1613,82 @@ internal fun NearbySendDialog(
                 }
             },
         )
+    }
+    if (showWifiDirectDiscovery) {
+        WifiDirectDiscoveryDialog(
+            onDismiss = { showWifiDirectDiscovery = false },
+            onConnected = {
+                showWifiDirectDiscovery = false
+                wifiDirectConnected = true
+                error = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun WifiDirectDiscoveryDialog(
+    onDismiss: () -> Unit,
+    onConnected: () -> Unit,
+) {
+    val context = LocalContext.current
+    val state by WifiDirectController.state.collectAsStateWithLifecycle()
+    var connectionForwarded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        runCatching { WifiDirectController.discover(context) }
+    }
+    LaunchedEffect(state.status, state.isGroupOwner) {
+        if (!connectionForwarded && state.status == WifiDirectStatus.CONNECTED && !state.isGroupOwner) {
+            connectionForwarded = true
+            onConnected()
+        }
+    }
+
+    fun close() {
+        if (state.status != WifiDirectStatus.CONNECTED) WifiDirectController.stop(context)
+        onDismiss()
+    }
+
+    AfModalDialog(
+        title = "Wi-Fi Direct įrenginiai",
+        icon = Icons.Rounded.WifiTethering,
+        onDismissRequest = ::close,
+        expandedContent = true,
+        modifier = Modifier.testTag("wifi_direct_discovery_dialog"),
+        actions = {
+            TextButton(onClick = { WifiDirectController.discover(context) }) { LText("Ieškoti dar kartą") }
+            TextButton(onClick = ::close) { LText("Uždaryti") }
+        },
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (state.status in setOf(WifiDirectStatus.DISCOVERING, WifiDirectStatus.CONNECTING)) {
+                item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+            }
+            state.message?.let { message -> item { LText(message, color = MaterialTheme.colorScheme.error) } }
+            if (state.peers.isEmpty() && state.status == WifiDirectStatus.DISCOVERING) {
+                item {
+                    LText("Gaunančiame telefone paleiskite Wi-Fi Direct gavimą, tada pasirinkite jį šiame sąraše.")
+                }
+            }
+            items(state.peers, key = WifiDirectPeer::address) { peer ->
+                Card(
+                    onClick = { WifiDirectController.connect(context, peer) },
+                    modifier = Modifier.fillMaxWidth().testTag("wifi_direct_peer"),
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(peer.name, fontWeight = FontWeight.SemiBold)
+                        LText("Prisijungti", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
     }
 }
 
