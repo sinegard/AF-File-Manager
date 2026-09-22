@@ -1,5 +1,15 @@
 # Release exceptions
 
+## AF-EXC-0.41.0-RSS — approved 2026-09-22
+
+- Approver: AF File Manager owner (`sinegard`), explicitly in the project conversation after the measured failure and matched v0.40.0 comparison were reported. This approval is for **v0.41.0 only**.
+- Rule and scope: `docs/RELEASING.md` requires the emulator performance gate before publication. The owner accepts only `coldStartAndFirstPaint.memoryRssAnonMaxKb.maximum` and `largeDirectoryFirstContent.memoryRssAnonMaxKb.maximum` above the unchanged limits in `performance/budgets.json`. The failed gate remains a failure. No time, frame, heap, security, signature, functional, or exact-artifact requirement is waived.
+- Candidate evidence: measured source `110fc55a2ee81cc1c95f16d1f78077f4a379b080`, version 0.41.0/code60, API 36 `DCoreRemote_API36_Tablet`, x86_64 ABI-specific minified benchmark package, seven iterations per scenario. Cold-start RSS reached **119,688 KiB** versus **110,000 KiB**; first large-directory content reached **155,696 KiB** versus **155,000 KiB**. All five benchmark scenarios executed without test failure, and every declared time, frame, heap, and other RSS metric stayed within its limit. A matched cold-start run of published v0.40.0 source `b1d33a51034b5bc4b7a0a097d46393107c4cd751` reached **116,392 KiB**, also above the unchanged absolute limit. The release-record commit changes documentation only from the measured source.
+- Affected users and risk: v0.41.0 users, especially devices with limited free memory, may see the app evicted or restarted more often. The measured candidate is about 3.2 MiB above the matched v0.40.0 cold-start result. This API 36 emulator result is not physical Android 8–15 or low-memory-phone acceptance, and no memory improvement is claimed.
+- Compensating controls: 485 JVM tests completed with zero failures or errors and one existing skip; Android lint, the minified release build, dynamic runtime-class verification, Android 8 and Android 15 Quick Tunnel checks, the 30 MB Android 8-to-15 transfer, and focused issue tests passed locally. Publication still requires the exact downloadable CI draft APK to match the tag, version, ABI, SHA-256, and established v2/v3 certificate, plus the affected optimized runtime checks on the isolated emulator. Any failure there blocks publication.
+- Expiry and follow-up: this exception ends with v0.41.0. Keep the budgets unchanged and investigate the cold-start RSS delta before a later release; do not copy this approval forward.
+- Recovery: do not overwrite the signed v0.41.0 assets or move the tag. If a release defect is found, keep v0.40.0 available and publish a separately numbered corrective release after validation. This record authorizes no deletion, physical-phone installation, credential change, or root access.
+
 ## AF-EXC-0.40.0-RSS — approved 2026-09-18
 
 - Approver: AF File Manager owner (`sinegard`), in the project conversation after the two measured RSS failures were reported. This approval is for **v0.40.0 only**.
