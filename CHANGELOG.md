@@ -4,7 +4,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.41.0] - 2026-09-22
+## [0.41.1] - 2026-09-22
 
 - Connect a Nextcloud account through its browser authorization flow and keep the resulting app password protected by Android Keystore.
 - Create phone groups of up to ten members. The organizer maintains the member list while files move directly between the selected sender and recipient, and Wi-Fi Direct is available as an explicit offline pairing route.
