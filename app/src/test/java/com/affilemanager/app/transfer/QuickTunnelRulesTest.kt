@@ -7,10 +7,14 @@ import org.junit.Test
 
 class QuickTunnelRulesTest {
     @Test
-    fun lanAddressIsReducedToAnAppLocalLoopbackOrigin() {
+    fun privateLanAddressRemainsReachableByTheBundledTunnelProcess() {
+        assertEquals(
+            "http://192.168.1.20:38417",
+            QuickTunnelRules.localOrigin("http://192.168.1.20:38417/"),
+        )
         assertEquals(
             "http://127.0.0.1:38417",
-            QuickTunnelRules.loopbackOrigin("http://192.168.1.20:38417"),
+            QuickTunnelRules.localOrigin("http://127.0.0.1:38417"),
         )
     }
 
@@ -21,9 +25,12 @@ class QuickTunnelRulesTest {
             "ftp://192.168.1.20:21",
             "http://user@192.168.1.20:80",
             "http://192.168.1.20:80/?token=secret",
+            "http://192.168.1.20:80/not-the-af-root",
             "http://192.168.1.20",
+            "http://8.8.8.8:80",
+            "http://example.com:80",
         ).forEach { value ->
-            assertThrows(IllegalArgumentException::class.java) { QuickTunnelRules.loopbackOrigin(value) }
+            assertThrows(IllegalArgumentException::class.java) { QuickTunnelRules.localOrigin(value) }
         }
     }
 

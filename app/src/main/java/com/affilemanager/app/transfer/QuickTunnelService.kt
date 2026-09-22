@@ -58,7 +58,7 @@ class QuickTunnelService : Service() {
         val requestId = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty().take(96)
         try {
             require(requestId.isNotBlank()) { "Tunelio užklausa netinkama" }
-            val origin = requireLoopbackOrigin(intent.getStringExtra(EXTRA_ORIGIN))
+            val origin = requireLocalOrigin(intent.getStringExtra(EXTRA_ORIGIN))
             val expiresAt = requireExpiry(intent.getLongExtra(EXTRA_EXPIRES_AT, 0L))
             startTunnel(requestId, origin, expiresAt)
         } catch (error: Throwable) {
@@ -205,10 +205,8 @@ class QuickTunnelService : Service() {
         resources.configuration.locales[0]?.language ?: "en",
     )
 
-    private fun requireLoopbackOrigin(value: String?): String {
-        val normalized = QuickTunnelRules.loopbackOrigin(value.orEmpty())
-        require(normalized.startsWith("http://127.0.0.1:")) { "Leidžiamas tik vietinis AF Web serveris" }
-        return normalized
+    private fun requireLocalOrigin(value: String?): String {
+        return QuickTunnelRules.localOrigin(value.orEmpty())
     }
 
     private fun requireExpiry(value: Long): Long {

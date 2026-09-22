@@ -20,7 +20,7 @@ data class QuickTunnelState(
 )
 
 internal object QuickTunnelRules {
-    fun loopbackOrigin(lanUrl: String): String {
+    fun localOrigin(lanUrl: String): String {
         val parsed = runCatching { URI(lanUrl.trim()) }.getOrNull()
             ?: throw IllegalArgumentException("Vietinio Web serverio adresas netinkamas")
         require(parsed.scheme.equals("http", ignoreCase = true)) { "Tuneliui reikia veikiančios Web sesijos" }
@@ -28,7 +28,12 @@ internal object QuickTunnelRules {
             "Vietinio Web serverio adresas netinkamas"
         }
         require(parsed.port in 1..65_535) { "Vietinio Web serverio prievadas netinkamas" }
-        return "http://127.0.0.1:${parsed.port}"
+        require(parsed.path.isNullOrEmpty() || parsed.path == "/") { "Vietinio Web serverio adresas netinkamas" }
+        val host = parsed.host.orEmpty()
+        require(host == "127.0.0.1" || NearbyPairing.isPrivateIpv4(host)) {
+            "Leidžiamas tik vietinis AF Web serveris"
+        }
+        return "http://$host:${parsed.port}"
     }
 
     fun expiryMillis(expiresAtMillis: Long?, nowMillis: Long): Long = expiresAtMillis
@@ -67,7 +72,7 @@ object QuickTunnelController {
 
     fun start(context: Context, lanUrl: String, expiresAtMillis: Long?) {
         val requestId = UUID.randomUUID().toString()
-        val origin = runCatching { QuickTunnelRules.loopbackOrigin(lanUrl) }.getOrElse { error ->
+        val origin = runCatching { QuickTunnelRules.localOrigin(lanUrl) }.getOrElse { error ->
             mutableState.value = QuickTunnelState(
                 status = QuickTunnelStatus.ERROR,
                 message = error.message ?: "Tunelio paleisti nepavyko",

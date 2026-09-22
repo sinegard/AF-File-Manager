@@ -4,7 +4,12 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.41.1] - 2026-09-22
+## [0.41.2] - 2026-09-22
+
+- Quick Tunnel now connects to the same private interface used by the running AF Web session instead of an unused loopback socket, preventing gateway errors.
+- Includes the Nextcloud, direct phone groups, Wi-Fi Direct, transfer recovery, recent-file, scaling, cleanup and protected-preview changes prepared for the unpublished 0.41.1 candidate.
+
+## [0.41.1] - 2026-09-22 (unpublished)
 
 - Connect a Nextcloud account through its browser authorization flow and keep the resulting app password protected by Android Keystore.
 - Create phone groups of up to ten members. The organizer maintains the member list while files move directly between the selected sender and recipient, and Wi-Fi Direct is available as an explicit offline pairing route.
