@@ -16,6 +16,7 @@ import com.affilemanager.app.model.FileSearchResult
 import com.affilemanager.app.model.SearchFilters
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.operations.OperationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -92,6 +93,11 @@ internal object InstalledAppBackupRules {
     }
 }
 
+enum class InstalledAppScope { USER, ALL, SYSTEM }
+
+enum class CategoryStorageScope { ALL, INTERNAL, USB, SD_CARD }
+enum class CategoryViewMode { FILES, FOLDERS }
+
 internal object FileCategoryPagingRules {
     const val FIRST_PAGE_RESULTS = 160
     const val NEXT_PAGE_RESULTS = 240
@@ -136,11 +142,18 @@ class FileCategoryRepository(
         val sortMode: SortMode,
         val sortDirection: SortDirection,
         val showSystemApps: Boolean,
+        val storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
+        val viewMode: CategoryViewMode = CategoryViewMode.FILES,
         val browseAll: Boolean = false,
         val query: String = "",
+        val appScope: InstalledAppScope = InstalledAppScope.USER,
     )
 
     private data class CachedPage(val page: FileCategoryPage, val createdAtNanos: Long)
+    private data class FolderKey(val category: FileCategory, val storageScope: CategoryStorageScope, val query: String)
+    private data class CachedFolders(
+        val entries: List<FileEntry>, val scannedRows: Int, val truncated: Boolean, val createdAtNanos: Long,
+    )
 
     private data class CategoryQuery(
         val selection: String,
@@ -154,6 +167,9 @@ class FileCategoryRepository(
             size > MAX_CACHED_PAGES
     }
     private val cacheLock = Any()
+    private val folderCache = object : LinkedHashMap<FolderKey, CachedFolders>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<FolderKey, CachedFolders>?): Boolean = size > 4
+    }
 
     suspend fun load(category: FileCategory, forceRefresh: Boolean = false): FileCategoryResult = withContext(Dispatchers.IO) {
         if (forceRefresh) invalidate(category)
@@ -189,18 +205,25 @@ class FileCategoryRepository(
         sortDirection: SortDirection,
         forceRefresh: Boolean = false,
         showSystemApps: Boolean = false,
+        storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
+        viewMode: CategoryViewMode = CategoryViewMode.FILES,
+        appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
     ): FileCategoryPage = withContext(Dispatchers.IO) {
         require(offset in 0 until MAX_QUERY_ROWS) { "Invalid category page offset" }
         if (forceRefresh) invalidate(category)
-        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps)
+        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, storageScope, viewMode, appScope = appScope)
         cached(key)?.let { return@withContext it }
-        val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps)
+        val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps,
+            storageScope = storageScope, viewMode = viewMode, appScope = appScope)
         synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
         page
     }
 
     fun invalidate(category: FileCategory) {
-        synchronized(cacheLock) { cache.keys.removeAll { it.category == category } }
+        synchronized(cacheLock) {
+            cache.keys.removeAll { it.category == category }
+            folderCache.keys.removeAll { it.category == category }
+        }
     }
 
     /** A bounded window into the complete index; callers replace, rather than append, pages. */
@@ -212,13 +235,17 @@ class FileCategoryRepository(
         query: String = "",
         forceRefresh: Boolean = false,
         showSystemApps: Boolean = false,
+        storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
+        viewMode: CategoryViewMode = CategoryViewMode.FILES,
+        appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
     ): FileCategoryPage = withContext(Dispatchers.IO) {
         require(offset >= 0 && offset % FileCategoryPagingRules.BROWSE_PAGE_ROWS == 0) { "Invalid category page offset" }
         val normalizedQuery = query.trim().take(200)
         if (forceRefresh) invalidate(category)
-        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, true, normalizedQuery)
+        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, storageScope, viewMode, true, normalizedQuery, appScope)
         cached(key)?.let { return@withContext it }
-        val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps, browseAll = true, search = normalizedQuery)
+        val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps,
+            storageScope = storageScope, viewMode = viewMode, browseAll = true, search = normalizedQuery, appScope = appScope)
         coroutineContext.ensureActive()
         synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
         page
@@ -288,14 +315,20 @@ class FileCategoryRepository(
         sortMode: SortMode,
         sortDirection: SortDirection,
         showSystemApps: Boolean,
+        storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
+        viewMode: CategoryViewMode = CategoryViewMode.FILES,
         browseAll: Boolean = false,
         search: String = "",
+        appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
     ): FileCategoryPage {
         val resultLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.resultLimit(offset)
         val rowLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE
         val maxQueryRows = if (browseAll) Int.MAX_VALUE else MAX_QUERY_ROWS
+        if (viewMode == CategoryViewMode.FOLDERS && category != FileCategory.INSTALLED_APPS) {
+            return queryFolderPage(category, storageScope, search, offset, resultLimit, sortMode, sortDirection)
+        }
         if (category == FileCategory.INSTALLED_APPS) {
-            val candidates = queryInstalledApps(resultLimit + 1, showSystemApps, offset, sortMode, sortDirection, search)
+            val candidates = queryInstalledApps(resultLimit + 1, appScope, offset, sortMode, sortDirection, search)
             val entries = candidates.take(resultLimit)
             val hasMore = candidates.size > resultLimit
             val nextOffset = FileCategoryPagingRules.nextOffset(offset, entries.size, hasMore, if (browseAll) Int.MAX_VALUE else MAX_RESULTS)
@@ -305,6 +338,18 @@ class FileCategoryRepository(
                 nextOffset = nextOffset,
                 truncated = hasMore && nextOffset == null,
             )
+        }
+        val roots = if (storageScope == CategoryStorageScope.ALL) emptyList() else localFiles.roots()
+            .filter { root -> when (storageScope) {
+                CategoryStorageScope.INTERNAL -> root.kind == StorageRootKind.INTERNAL
+                CategoryStorageScope.USB -> root.kind == StorageRootKind.USB_STORAGE
+                CategoryStorageScope.SD_CARD -> root.kind == StorageRootKind.SD_CARD
+                CategoryStorageScope.ALL -> false
+            } }
+            .map { File(it.path).absolutePath.trimEnd('/') }
+            .distinct()
+        if (storageScope != CategoryStorageScope.ALL && roots.isEmpty()) {
+            return FileCategoryPage(emptyList(), 0, null, false)
         }
         val workContext = coroutineContext
         return withMediaQueryCancellation { cancellationSignal ->
@@ -321,9 +366,18 @@ class FileCategoryRepository(
                 "(${baseQuery.selection}) AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? ESCAPE '\\'",
                 baseQuery.arguments + FileCategoryPagingRules.literalSearchPattern(search),
             )
+            val scopedQuery = if (roots.isEmpty()) query else {
+                val clauses = roots.joinToString(" OR ") {
+                    "(${MediaStore.MediaColumns.DATA} = ? OR ${MediaStore.MediaColumns.DATA} LIKE ? ESCAPE '\\')"
+                }
+                CategoryQuery("(${query.selection}) AND ($clauses)", query.arguments + roots.flatMap { root ->
+                    listOf(root, root.replace("\\", "\\\\").replace("%", "\\%")
+                        .replace("_", "\\_") + "/%")
+                })
+            }
             val queryArgs = Bundle().apply {
-                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, query.selection)
-                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, query.arguments)
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, scopedQuery.selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, scopedQuery.arguments)
                 // Framework structured-sort synthesis can append DESC only to the
                 // final column. Each allowlisted column needs its own direction.
                 val direction = if (sortDirection == SortDirection.ASCENDING) "ASC" else "DESC"
@@ -335,7 +389,7 @@ class FileCategoryRepository(
             val entries = ArrayList<FileEntry>(resultLimit)
             var scanned = 0
             val moreRowsAvailable: Boolean
-            val cursor = resolver.query(MediaStore.Files.getContentUri("external"), projection, queryArgs, cancellationSignal)
+            val cursor = resolver.query(mediaQueryUri(offset, rowLimit + if (browseAll) 1 else 0), projection, queryArgs, cancellationSignal)
                 ?: throw java.io.IOException("Failų sąrašo įkelti nepavyko")
             cursor.use {
                 val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
@@ -355,7 +409,7 @@ class FileCategoryRepository(
                     val name = cursor.getString(nameIndex)?.takeIf(String::isNotBlank) ?: file.name
                     val mime = cursor.getString(mimeIndex)
                     val kind = FileSystemRules.detectKind(name, mime, isDirectory = false)
-                    if (kind != category.kind || name.startsWith('.')) continue
+                    if (name.startsWith('.') || kind != category.kind) continue
                     entries += FileEntry(
                         absolutePath = file.absolutePath,
                         name = name,
@@ -388,6 +442,113 @@ class FileCategoryRepository(
         val cached = cache[key] ?: return@synchronized null
         if (System.nanoTime() - cached.createdAtNanos <= CACHE_TTL_NANOS) cached.page
         else null.also { cache.remove(key) }
+    }
+
+    private fun mediaQueryUri(offset: Int, limit: Int): android.net.Uri {
+        val collection = MediaStore.Files.getContentUri("external")
+        // Android 8/9 MediaProvider ignores the Bundle offset/limit arguments.
+        // Its supported URI limit keeps queries bounded and avoids repeating page 1.
+        return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            collection.buildUpon().appendQueryParameter("limit", "$offset,$limit").build()
+        } else collection
+    }
+
+    private suspend fun queryFolderPage(
+        category: FileCategory,
+        storageScope: CategoryStorageScope,
+        search: String,
+        offset: Int,
+        limit: Int,
+        sortMode: SortMode,
+        sortDirection: SortDirection,
+    ): FileCategoryPage {
+        val key = FolderKey(category, storageScope, search.trim().take(200))
+        val snapshot = synchronized(cacheLock) {
+            folderCache[key]?.takeIf { System.nanoTime() - it.createdAtNanos <= CACHE_TTL_NANOS }
+        } ?: loadIndexedFolders(key).also { loaded ->
+            synchronized(cacheLock) { folderCache[key] = loaded }
+        }
+        val byName = compareBy<FileEntry> { it.name.lowercase(Locale.ROOT) }.thenBy(FileEntry::absolutePath)
+        val comparator = when (sortMode) {
+            SortMode.NAME, SortMode.TYPE -> byName
+            SortMode.SIZE -> compareBy<FileEntry> { it.sizeBytes }.then(byName)
+            SortMode.MODIFIED -> compareBy<FileEntry> { it.modifiedAtMillis }.then(byName)
+        }
+        val ordered = snapshot.entries.sortedWith(
+            if (sortDirection == SortDirection.ASCENDING) comparator else comparator.reversed(),
+        )
+        val page = ordered.drop(offset).take(limit)
+        val next = (offset + page.size).takeIf { it < ordered.size }
+        return FileCategoryPage(page, if (offset == 0) snapshot.scannedRows else 0, next, snapshot.truncated)
+    }
+
+    private suspend fun loadIndexedFolders(key: FolderKey): CachedFolders {
+        val roots = localFiles.roots().filter { root -> when (key.storageScope) {
+            CategoryStorageScope.ALL -> true
+            CategoryStorageScope.INTERNAL -> root.kind == StorageRootKind.INTERNAL
+            CategoryStorageScope.USB -> root.kind == StorageRootKind.USB_STORAGE
+            CategoryStorageScope.SD_CARD -> root.kind == StorageRootKind.SD_CARD
+        } }.map { File(it.path).absolutePath.trimEnd('/') }.distinct()
+        if (key.storageScope != CategoryStorageScope.ALL && roots.isEmpty()) {
+            return CachedFolders(emptyList(), 0, false, System.nanoTime())
+        }
+        val base = categoryQuery(key.category)
+        val scoped = if (key.storageScope == CategoryStorageScope.ALL) base else {
+            val clauses = roots.joinToString(" OR ") {
+                "(${MediaStore.MediaColumns.DATA} = ? OR ${MediaStore.MediaColumns.DATA} LIKE ? ESCAPE '\\')"
+            }
+            CategoryQuery("(${base.selection}) AND ($clauses)", base.arguments + roots.flatMap { root ->
+                listOf(root, root.replace("\\", "\\\\").replace("%", "\\%")
+                    .replace("_", "\\_") + "/%")
+            })
+        }
+        val workContext = coroutineContext
+        return withMediaQueryCancellation { signal ->
+            fun read(grouped: Boolean): CachedFolders {
+                val cap = if (grouped) MAX_RESULTS else MAX_QUERY_ROWS
+                val args = Bundle().apply {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, scoped.selection)
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, scoped.arguments)
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                        if (grouped) "${MediaStore.Files.FileColumns.PARENT} ASC" else "${MediaStore.MediaColumns.DATA} ASC")
+                    putInt(ContentResolver.QUERY_ARG_LIMIT, cap + 1)
+                    if (grouped) putString(ContentResolver.QUERY_ARG_SQL_GROUP_BY,
+                        "${MediaStore.MediaColumns.VOLUME_NAME}, ${MediaStore.Files.FileColumns.PARENT}")
+                }
+                val projection = arrayOf(MediaStore.MediaColumns.DATA)
+                val paths = LinkedHashSet<String>()
+                var scanned = 0
+                var duplicate = false
+                val cursor = resolver.query(mediaQueryUri(0, cap + 1), projection, args, signal)
+                    ?: throw java.io.IOException("Aplankų sąrašo įkelti nepavyko")
+                val more: Boolean
+                cursor.use {
+                    val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                    while (scanned < cap && cursor.moveToNext()) {
+                        workContext.ensureActive()
+                        scanned++
+                        val path = cursor.getString(pathIndex)?.takeIf(String::isNotBlank) ?: continue
+                        val folder = File(path).parentFile ?: continue
+                        if (folder.name.startsWith('.') || !folder.isDirectory || !folder.canRead()) continue
+                        if (key.query.isNotBlank() && !folder.name.contains(key.query, ignoreCase = true)) continue
+                        if (!paths.add(folder.absolutePath)) duplicate = true
+                    }
+                    more = cursor.moveToNext()
+                }
+                if (grouped && duplicate) throw IllegalStateException("MediaStore ignored grouped folder query")
+                val entries = paths.asSequence().map(::File).map(localFiles::toEntry)
+                    .take(MAX_RESULTS).toList()
+                return CachedFolders(entries, scanned, more || paths.size > MAX_RESULTS, System.nanoTime())
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try { read(grouped = true) }
+                catch (error: Exception) {
+                    workContext.ensureActive()
+                    signal.throwIfCanceled()
+                    read(grouped = false)
+                }
+            } else read(grouped = false)
+        }
     }
 
     private fun mediaStoreSortColumns(mode: SortMode): Array<String> = when (mode) {
@@ -516,7 +677,7 @@ class FileCategoryRepository(
 
     @Suppress("DEPRECATION")
     private suspend fun queryInstalledApps(
-        limit: Int, showSystemApps: Boolean, offset: Int, sortMode: SortMode, sortDirection: SortDirection, search: String,
+        limit: Int, appScope: InstalledAppScope, offset: Int, sortMode: SortMode, sortDirection: SortDirection, search: String,
     ): List<FileEntry> {
         val workContext = coroutineContext
         val packageManager = applicationContext.packageManager
@@ -526,7 +687,11 @@ class FileCategoryRepository(
             packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
         } else packageManager.getInstalledApplications(0)
         val records = applications.asSequence()
-            .filter { showSystemApps || !it.isSystemApplication() }
+            .filter { when (appScope) {
+                InstalledAppScope.ALL -> true
+                InstalledAppScope.USER -> !it.isSystemApplication()
+                InstalledAppScope.SYSTEM -> it.isSystemApplication()
+            } }
             .mapNotNull { info ->
                 workContext.ensureActive()
                 val source = File(info.sourceDir ?: return@mapNotNull null)

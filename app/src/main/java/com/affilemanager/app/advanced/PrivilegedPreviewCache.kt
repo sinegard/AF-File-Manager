@@ -13,10 +13,12 @@ internal class PrivilegedPreviewCache(cacheDirectory: File) {
         clearStale()
     }
 
-    fun createDestination(entry: FileEntry): File {
+    @Synchronized fun createDestination(entry: FileEntry): File {
         require(!entry.isDirectory && entry.sizeBytes in 0..EditLimits.MAX_FILE_BYTES) { "Netinkamas failas peržiūrai" }
-        require(clearStale()) { "Ankstesnės privilegijuotos peržiūros pašalinti nepavyko" }
         require(root.mkdirs() || root.isDirectory) { "Peržiūros talpyklos sukurti nepavyko" }
+        // A second request must not delete media still owned by the first player.
+        // The caller discards its own destination on close/failure; startup clears stale copies.
+        require(root.listFiles()?.size?.let { it < 2 } == true) { "Pirmiausia uždarykite ankstesnę peržiūrą" }
         val required = Math.addExact(entry.sizeBytes, EditLimits.MIN_FREE_BYTES)
         require(root.usableSpace <= 0L || root.usableSpace >= required) { "Peržiūrai nepakanka laisvos vietos" }
         val identity = "${entry.absolutePath}\u0000${entry.sizeBytes}\u0000${entry.modifiedAtMillis}\u0000${UUID.randomUUID()}"
@@ -32,7 +34,7 @@ internal class PrivilegedPreviewCache(cacheDirectory: File) {
         require(destination.isFile && destination.length() <= EditLimits.MAX_FILE_BYTES) { "Peržiūros kopija neužbaigta" }
     }
 
-    fun discard(destination: File?): Boolean {
+    @Synchronized fun discard(destination: File?): Boolean {
         val directory = destination?.parentFile ?: return true
         if (!directory.exists()) return true
         val contained = runCatching { directory.canonicalFile.parentFile == root.canonicalFile }.getOrDefault(false)

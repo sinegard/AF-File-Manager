@@ -4,6 +4,17 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.42.0] - 2026-10-01
+
+- Show or hide optional tools and navigation buttons individually. Settings are grouped into collapsible sections, and active work keeps its controls available.
+- Nextcloud accounts now appear under Cloud, with open, edit and remove actions. Returning from browser authorization keeps the AF login dialog available.
+- File pickers share navigation, search, filtering and sort controls. The external-app picker leaves its caller visible and still respects app locking and read-only grants.
+- Quick Locations can filter by internal, USB or SD storage, show indexed media folders, and separate user and system apps. Android 8/9 category pages no longer repeat the first results.
+- Phone groups remember their name, send one selection to multiple members, and provide per-device message blocking and removal. Transfer selection survives switching categories; file details support folder navigation and cancelling an individual file.
+- Protected and system media open through private preview copies without exposing the device root. Players handle preparation errors safely, and temporary copies are removed when their preview closes.
+- Storage analysis shows each mounted volume with its icon and usage. The all-storage action appears only while removable storage is connected.
+- Recent-file actions include clearer icons and selection states. Short forms use their available width, long connection names leave room for their actions, and open popups follow language and text-direction changes.
+
 ## [0.41.2] - 2026-09-22
 
 - Quick Tunnel now connects to the same private interface used by the running AF Web session instead of an unused loopback socket, preventing gateway errors.

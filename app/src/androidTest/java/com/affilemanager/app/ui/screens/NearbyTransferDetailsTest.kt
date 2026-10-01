@@ -21,6 +21,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
@@ -39,10 +41,29 @@ import org.junit.Test
 import java.io.File
 
 class NearbyTransferDetailsTest {
+    @Test fun folderDrilldownRetainsOriginalRowIndexAndStopsOnlyTheSelectedFile() {
+        val files = listOf(
+            TransferFileProgress("outside.txt", 1, batchId = "a"),
+            TransferFileProgress("photos/done.jpg", 10, transferredBytes = 10, status = TransferFileStatus.COMPLETED, localPath = "/done.jpg", batchId = "a"),
+            TransferFileProgress("photos/waiting.jpg", 10, batchId = "a"),
+        )
+        var stopped = -1
+        var previewed = false
+        compose.setContent { com.affilemanager.app.ui.theme.AFFileManagerTheme {
+            NearbyTransferDetails(files, 10, 21, 3, { previewed = true }, {}, onCancelFile = { _, index -> stopped = index })
+        } }
+        compose.onNodeWithTag("nearby_folder_open_a").performClick()
+        compose.onNodeWithTag("nearby_transfer_file_0").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_transfer_preview_0").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_transfer_stop_1").performClick()
+        assertEquals(2, stopped)
+        assertEquals(false, previewed)
+        compose.onNodeWithText("outside.txt").assertDoesNotExist()
+    }
     @get:Rule val compose = createComposeRule()
 
     @org.junit.Before fun isolateUnpairedFixture() {
-        check(android.os.Build.MODEL.contains("sdk"))
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
         com.affilemanager.app.transfer.NearbyTransferController.connection.clear()
         com.affilemanager.app.transfer.NearbyTransferController.clearFinished()
     }
@@ -73,6 +94,7 @@ class NearbyTransferDetailsTest {
             compose.onNodeWithTag("nearby_receive_dialog").assertIsDisplayed()
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("nearby_receive_qr").fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(hasText("Files") and hasAnyAncestor(hasTestTag("nearby_receive_dialog"))).performClick()
+            compose.waitUntil(5_000) { compose.onNodeWithTag("nearby_transfer_details").isDisplayed() }
             compose.onNodeWithTag("nearby_transfer_details").assertIsDisplayed()
         } finally { compose.runOnUiThread { store.clear() } }
     }
@@ -174,8 +196,11 @@ class NearbyTransferDetailsTest {
         val incomingBounds = compose.onNodeWithTag("nearby_chat_message_1").fetchSemanticsNode().boundsInRoot
         assertTrue("outgoing message was not aligned to the right", outgoingBounds.left > incomingBounds.left)
         compose.onNodeWithTag("nearby_chat_message_0").performTouchInput { longClick() }
-        val clipboard = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
-            .getSystemService(ClipboardManager::class.java)
+        lateinit var clipboard: ClipboardManager
+        compose.runOnIdle {
+            clipboard = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+                .getSystemService(ClipboardManager::class.java)
+        }
         compose.waitUntil(5_000) {
             clipboard.primaryClip?.getItemAt(0)?.text?.toString() == "Already sent"
         }
@@ -214,16 +239,20 @@ class NearbyTransferDetailsTest {
                     remainingMillis = 2_000,
                 )
             } }
+            compose.onNodeWithTag("nearby_transfer_files").performScrollToNode(hasTestTag("nearby_transfer_preview_0"))
             compose.onNodeWithTag("nearby_transfer_preview_0").assertIsEnabled().performClick()
-            compose.onNodeWithText("Open").assertIsDisplayed()
             compose.onNodeWithTag("transfer_rate_eta").assertIsDisplayed()
             compose.runOnIdle { assertEquals(photo.path, opened) }
             compose.onNodeWithTag("nearby_transfer_preview_1").assertDoesNotExist()
             compose.onNodeWithTag("nearby_transfer_preview_2").assertDoesNotExist()
+            compose.onNodeWithTag("nearby_transfer_files").performScrollToNode(hasTestTag("nearby_transfer_stop_1"))
             compose.onNodeWithTag("nearby_transfer_stop_1").assertIsEnabled().performClick()
             compose.runOnIdle { assertEquals(1, cancelledFileIndex); assertEquals(0, cancelled) }
             val evidence = requireNotNull(app.getExternalFilesDir("validation"))
-            compose.onNodeWithTag("nearby_transfer_details").captureToImage().asAndroidBitmap().let {
+            val screenshot = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                compose.onNodeWithTag("nearby_transfer_details").captureToImage().asAndroidBitmap()
+            } else requireNotNull(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            screenshot.let {
                 File(evidence, "nearby-details-${app.resources.displayMetrics.widthPixels}.png").outputStream().use { out -> it.compress(Bitmap.CompressFormat.PNG, 100, out) }
             }
             compose.onAllNodesWithText("Close").onFirst().performClick()
@@ -398,5 +427,57 @@ class NearbyTransferDetailsTest {
 
         compose.onNodeWithText("Ada Example").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(1, toggles) }
+    }
+
+    @Test fun receiveDestinationCanBeChosenFromRecentPaths() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val store = androidx.lifecycle.ViewModelStore()
+        val destination = mutableStateOf("/storage/new")
+        try {
+            val vm = com.affilemanager.app.ui.MainViewModel(app).also { store.put("receive-path-test", it) }
+            compose.setContent { MaterialTheme {
+                NearbyPhoneTransferCard(
+                    viewModel = vm, receiveDirectory = destination.value,
+                    receivePathHistory = listOf("/storage/old"),
+                    onReceivePathChange = { destination.value = it },
+                    lanState = com.affilemanager.app.transfer.LanTransferState(),
+                    receiverName = "Phone", onReceiverNameChange = {},
+                    durationMinutes = 15, onDurationMinutesChange = {},
+                )
+            } }
+            compose.onNodeWithText("Receive").performClick()
+            compose.onNodeWithTag("nearby_receive_path").performClick()
+            compose.onNodeWithText("/storage/old").performClick()
+            compose.runOnIdle { assertEquals("/storage/old", destination.value) }
+        } finally { compose.runOnUiThread { store.clear() } }
+    }
+
+    @Test fun sendingFolderShowsItsOwnProgressAndOpensFileDetails() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val store = androidx.lifecycle.ViewModelStore()
+        val controller = com.affilemanager.app.transfer.NearbyTransferController
+        try {
+            controller.publish(com.affilemanager.app.transfer.NearbyTransferState(
+                status = com.affilemanager.app.transfer.NearbyTransferStatus.RUNNING,
+                files = listOf(
+                    TransferFileProgress("Project/one.txt", 100, 40, TransferFileStatus.TRANSFERRING),
+                    TransferFileProgress("Project/two.txt", 100, 0, TransferFileStatus.WAITING),
+                ),
+            ))
+            val vm = com.affilemanager.app.ui.MainViewModel(app).also { store.put("folder-progress-test", it) }
+            compose.setContent { MaterialTheme {
+                NearbyPhoneTransferCard(vm, app.cacheDir.path,
+                    com.affilemanager.app.transfer.LanTransferState(), receiverName = "Phone",
+                    onReceiverNameChange = {}, durationMinutes = 15, onDurationMinutesChange = {})
+            } }
+            compose.onNodeWithTag("nearby_folder_progress").assertIsDisplayed()
+            compose.onNodeWithText("Cancel transfer").assertIsDisplayed()
+            compose.onNodeWithTag("nearby_open_folder_progress").performClick()
+            compose.onNodeWithTag("nearby_transfer_details").assertIsDisplayed()
+            compose.onNodeWithText("one.txt").assertIsDisplayed()
+        } finally {
+            compose.runOnUiThread { store.clear() }
+            controller.publish(com.affilemanager.app.transfer.NearbyTransferState())
+        }
     }
 }

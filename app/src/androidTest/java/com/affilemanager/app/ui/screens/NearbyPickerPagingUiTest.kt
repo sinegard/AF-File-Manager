@@ -49,7 +49,7 @@ class NearbyPickerPagingUiTest {
             androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
                 .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
             compose.onNodeWithTag("nearby_sort_direction").performTouchInput { longClick() }
-            compose.onNodeWithTag("nearby_sort_MODIFIED").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("nearby_sort_MODIFIED").performScrollTo().assertIsDisplayed().performClick()
             waitForFirstEntry(names.first())
             compose.onNodeWithTag("nearby_sort_direction").assertIsDisplayed().performClick()
             waitForFirstEntry(names.last())
@@ -112,6 +112,10 @@ class NearbyPickerPagingUiTest {
             compose.onNodeWithTag("nearby_previous_page").performClick()
             waitFor("$prefix-000.jpg")
             compose.onNodeWithText("Next (2)").assertIsEnabled()
+            compose.onNodeWithTag("nearby_category_Vaizdo įrašai").performClick()
+            compose.onNodeWithText("Next (2)").assertIsEnabled()
+            compose.onNodeWithTag("nearby_category_Nuotraukos").performClick()
+            waitFor("$prefix-000.jpg")
             compose.onNodeWithTag("nearby_search").performTextReplacement("$prefix-no-match")
             waitFor("No matching files were found in this category")
             compose.onNodeWithTag("nearby_previous_page").assertIsNotEnabled()

@@ -1,6 +1,10 @@
 package com.affilemanager.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import android.view.View
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,6 +55,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SwapHoriz
@@ -96,11 +102,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.FileEntryOrdering
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.ClipboardMode
 import com.affilemanager.app.model.SortMode
+import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.network.NetworkProfile
 import com.affilemanager.app.network.NetworkProfileRules
 import com.affilemanager.app.network.NetworkProtocol
@@ -110,6 +118,8 @@ import com.affilemanager.app.network.RemoteErrorInfo
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.NextcloudLoginPhase
 import com.affilemanager.app.ui.NextcloudLoginUiState
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.ui.components.featureVisible
 import com.affilemanager.app.ui.RemoteBrowserRules
 import com.affilemanager.app.ui.components.RemoteFileVisual
 import com.affilemanager.app.ui.components.AfModalDialog
@@ -147,8 +157,10 @@ import java.util.Date
 
 @Composable
 fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
+    val nextcloudBrowser = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
     val state by viewModel.networkState.collectAsStateWithLifecycle()
     val nextcloudLogin by viewModel.nextcloudLogin.collectAsStateWithLifecycle()
+    val requestedEditor by viewModel.networkProfileEditor.collectAsStateWithLifecycle()
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val left by viewModel.leftPanel.collectAsStateWithLifecycle()
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -161,6 +173,9 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 
     var showAdd by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<NetworkProfile?>(null) }
+    androidx.compose.runtime.LaunchedEffect(requestedEditor) {
+        requestedEditor?.let { editingProfile = it; viewModel.consumeNetworkProfileEditor() }
+    }
     var deleteProfile by remember { mutableStateOf<NetworkProfile?>(null) }
     var createRemoteItem by remember { mutableStateOf(false) }
     var renameRemote by remember { mutableStateOf<RemoteEntry?>(null) }
@@ -180,7 +195,7 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     LText("Tinklas ir nuotolinės vietos", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     LText("SMB 2/3 · SFTP · WebDAV · FTP/FTPS", style = MaterialTheme.typography.bodySmall)
                 }
-                OutlinedButton(
+                if (featureVisible(OptionalFeature.CLOUD)) OutlinedButton(
                     onClick = viewModel::openNextcloudSetup,
                     modifier = Modifier.testTag("add_nextcloud"),
                 ) {
@@ -192,8 +207,8 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 
         if (state.connectedProfile == null) {
             Box(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp, 4.dp, 16.dp, 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -283,7 +298,11 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         NextcloudLoginDialog(
             state = nextcloudLogin,
             onServerChange = viewModel::updateNextcloudServer,
-            onStart = viewModel::startNextcloudLogin,
+            onStart = {
+                viewModel.startNextcloudLogin { url ->
+                    nextcloudBrowser.launch(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            },
             onDismiss = viewModel::cancelNextcloudSetup,
         )
     }
@@ -454,7 +473,8 @@ internal fun ProfileCard(
     val profileProblem = runCatching { NetworkProfileRules.validate(normalized) }.exceptionOrNull()?.message
     val safeName = if (NetworkProfileRules.nameError(profile.name) == null) normalized.name else "Jungtis"
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 if (profile.provider == NetworkProvider.NEXTCLOUD) Icons.Rounded.Cloud else Icons.Rounded.Lock,
                 contentDescription = null,
@@ -462,11 +482,13 @@ internal fun ProfileCard(
                 modifier = Modifier.size(34.dp),
             )
             Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(safeName, fontWeight = FontWeight.SemiBold)
+                Text(safeName, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (profileProblem == null) {
                     Text(
                         "${if (profile.provider == NetworkProvider.NEXTCLOUD) "Nextcloud" else profile.protocol.name} · ${normalized.host}:${profile.port}",
                         style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 } else {
                     LText("${profile.protocol} · Neteisingi jungties duomenys", style = MaterialTheme.typography.bodySmall)
@@ -485,11 +507,15 @@ internal fun ProfileCard(
                     )
                 }
             }
-            IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = uiText("Redaguoti jungtį")) }
-            IconButton(onClick = onDelete) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti")) }
-            Button(onClick = onConnect, enabled = !loading) {
+        }
+        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+            itemVerticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onEdit, modifier = Modifier.testTag("profile_edit_${profile.id}")) { Icon(Icons.Rounded.Edit, contentDescription = uiText("Redaguoti jungtį")) }
+            IconButton(onClick = onDelete, modifier = Modifier.testTag("profile_remove_${profile.id}")) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Pašalinti")) }
+            Button(onClick = onConnect, enabled = !loading, modifier = Modifier.testTag("profile_connect_${profile.id}")) {
                 if (loading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp) else LText("Jungtis")
             }
+        }
         }
     }
 }
@@ -826,7 +852,7 @@ private fun RemoteFolderActionsMenu(
                     onClick = { expanded = false; onPasteLocalClipboard() },
                 )
             }
-            if (afClipboardCount > 0) {
+            if (afClipboardCount > 0 && featureVisible(OptionalFeature.PLANS)) {
                 DropdownMenuItem(
                     text = { LText("Įklijuoti į kelias vietas ($afClipboardCount)") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
@@ -842,7 +868,7 @@ private fun RemoteFolderActionsMenu(
                 modifier = Modifier.testTag("remote_upload_choose"),
                 onClick = { expanded = false; onChooseUpload() },
             )
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.SYNC)) DropdownMenuItem(
                 text = { LText("Sinchronizuoti") },
                 leadingIcon = { Icon(Icons.Rounded.Sync, contentDescription = null) },
                 enabled = !state.loading,
@@ -873,7 +899,7 @@ private fun RemoteFolderActionsMenu(
                 onOpenFilter = onOpenFilter,
             )
             HorizontalDivider()
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.TERMINAL)) DropdownMenuItem(
                 text = { LText("Atidaryti serverio terminalą") },
                 leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
                 enabled = !state.loading,
@@ -1306,15 +1332,21 @@ internal fun LocalUploadDialog(
     val currentPath = navigation.currentPath
     var entries by remember(initialDirectoryPath, remotePath) { mutableStateOf(initialEntries) }
     var searchQuery by remember(currentPath) { mutableStateOf("") }
+    var searchVisible by remember { mutableStateOf(false) }
+    var pickerMenu by remember { mutableStateOf(false) }
+    var showOnlyFolders by remember { mutableStateOf(false) }
+    var showOnlyFiles by remember { mutableStateOf(false) }
+    var pickerSort by remember { mutableStateOf(SortMode.NAME) }
     var displayedEntries by remember(currentPath) { mutableStateOf(initialEntries) }
-    LaunchedEffect(currentPath, entries, searchQuery) {
+    LaunchedEffect(currentPath, entries, searchQuery, showOnlyFolders, showOnlyFiles, pickerSort) {
         val source = entries
         val query = searchQuery.trim().take(200)
         displayedEntries = withContext(Dispatchers.Default) {
-            if (query.isBlank()) source else source.filter {
+            FileEntryOrdering.order(source.filter {
                 ensureActive()
-                it.name.contains(query, ignoreCase = true)
-            }
+                (query.isBlank() || it.name.contains(query, ignoreCase = true)) &&
+                    (!showOnlyFolders || it.isDirectory) && (!showOnlyFiles || !it.isDirectory)
+            }, pickerSort, SortDirection.ASCENDING)
         }
     }
     var loading by remember(initialDirectoryPath, remotePath) { mutableStateOf(false) }
@@ -1380,62 +1412,74 @@ internal fun LocalUploadDialog(
             ) { Text("${uiText(confirmLabel)} (${selected.size})") }
         },
     ) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (featureVisible(OptionalFeature.TOOLBAR_UP)) IconButton(
+                    onClick = { parentPath?.let(::navigateTo) },
+                    enabled = parentPath != null && !loading,
+                    modifier = Modifier.testTag("local_upload_up"),
+                ) { Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn")) }
+                Text(currentPath.ifEmpty { uiText("Saugykla") }, modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (searchVisible || featureVisible(OptionalFeature.TOOLBAR_SEARCH)) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) searchQuery = "" },
+                    modifier = Modifier.testTag("local_upload_search_toggle")) {
+                    Icon(Icons.Rounded.Search, contentDescription = uiText(if (searchVisible) "Slėpti paiešką" else "Ieškoti"))
+                }
+                Box {
+                    IconButton(onClick = { pickerMenu = true }, modifier = Modifier.testTag("local_upload_more")) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
+                    }
+                    DropdownMenu(expanded = pickerMenu, onDismissRequest = { pickerMenu = false }) {
+                        DropdownMenuItem(text = { LText("Visi elementai") }, onClick = {
+                            showOnlyFolders = false; showOnlyFiles = false; pickerMenu = false
+                        }, leadingIcon = if (!showOnlyFolders && !showOnlyFiles) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null)
+                        DropdownMenuItem(text = { LText("Tik aplankai") }, onClick = {
+                            showOnlyFolders = true; showOnlyFiles = false; pickerMenu = false
+                        }, leadingIcon = if (showOnlyFolders) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null)
+                        DropdownMenuItem(text = { LText("Tik failai") }, onClick = {
+                            showOnlyFiles = true; showOnlyFolders = false; pickerMenu = false
+                        }, leadingIcon = if (showOnlyFiles) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null)
+                        HorizontalDivider()
+                        SortMode.entries.forEach { mode ->
+                            DropdownMenuItem(text = { LText(when (mode) {
+                                SortMode.NAME -> "Pavadinimas"; SortMode.SIZE -> "Dydis";
+                                SortMode.MODIFIED -> "Pakeista"; SortMode.TYPE -> "Tipas"
+                            }) }, onClick = { pickerSort = mode; pickerMenu = false },
+                                leadingIcon = if (pickerSort == mode) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null)
+                        }
+                    }
+                }
+            }
+            if (remotePath.isNotBlank()) LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
+            if (searchVisible) OutlinedTextField(
+                value = searchQuery, onValueChange = { searchQuery = it.take(200) },
+                label = { LText("Ieškoti šiame sąraše") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("local_upload_search"),
+            )
+            if (selected.isNotEmpty()) SelectionActionBar(
+                count = selected.size,
+                allSelected = allSelected,
+                onClose = { selected = emptySet() },
+                onToggleSelectAll = {
+                    selected = if (allSelected) selected - visiblePaths.toSet() else {
+                        val available = maxSelection - selected.size
+                        if (!allowMultiple) visiblePaths.take(1).toSet()
+                        else selected + visiblePaths.filterNot(selected::contains).take(available)
+                    }
+                },
+                modifier = Modifier.testTag("local_upload_selection_bar"),
+            )
+            message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
             AfPullToRefresh(
                 isRefreshing = loading,
                 onRefresh = { refreshToken += 1 },
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 testTag = "pull_to_refresh_local_upload",
             ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().testTag("local_upload_list"),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { parentPath?.let(::navigateTo) },
-                            enabled = parentPath != null && !loading,
-                            modifier = Modifier.testTag("local_upload_up"),
-                        ) {
-                            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
-                        }
-                        Text(
-                            currentPath.ifEmpty { uiText("Saugykla") },
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (remotePath.isNotBlank()) LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
-                    LText(if (filesOnly) "Pasirinkite bent vieną failą" else "Galima pasirinkti failus ir ištisus aplankus. Esami tokio pat vardo objektai nebus perrašyti.", style = MaterialTheme.typography.labelSmall)
-                    if (filesOnly) Text("${selected.size} / $maxSelection", style = MaterialTheme.typography.labelSmall)
-                    message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
-                    OutlinedTextField(
-                        value = searchQuery, onValueChange = { searchQuery = it.take(200) },
-                        label = { LText("Ieškoti šiame sąraše") }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("local_upload_search"),
-                    )
-                }
-                if (selected.isNotEmpty()) {
-                    item {
-                        SelectionActionBar(
-                            count = selected.size,
-                            allSelected = allSelected,
-                            onClose = { selected = emptySet() },
-                            onToggleSelectAll = {
-                                selected = if (allSelected) {
-                                    selected - visiblePaths.toSet()
-                                } else {
-                                    val available = maxSelection - selected.size
-                                    if (!allowMultiple) visiblePaths.take(1).toSet()
-                                    else selected + visiblePaths.filterNot(selected::contains).take(available)
-                                }
-                            },
-                            modifier = Modifier.testTag("local_upload_selection_bar"),
-                        )
-                    }
-                }
                 if (loading) {
                     item {
                         Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.Center) {
@@ -1511,6 +1555,7 @@ internal fun LocalUploadDialog(
                 }
             }
             }
+        }
     }
 }
 

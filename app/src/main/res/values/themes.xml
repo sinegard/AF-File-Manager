@@ -7,4 +7,10 @@
         <item name="android:navigationBarColor">#07101C</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
+    <!-- External GET_CONTENT requests keep their caller visible behind AF's picker dialog. -->
+    <style name="Theme.AFFilePicker" parent="Theme.AFFileManager">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

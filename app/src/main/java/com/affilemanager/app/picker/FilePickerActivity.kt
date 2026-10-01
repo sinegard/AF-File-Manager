@@ -16,15 +16,20 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import com.affilemanager.app.ui.theme.AfButton as Button
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +47,7 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.AppLockOverlay
+import com.affilemanager.app.ui.components.LocalFeatureVisibility
 import com.affilemanager.app.ui.authenticate
 import com.affilemanager.app.ui.localization.AppLanguageManager
 import com.affilemanager.app.ui.localization.LText
@@ -81,15 +87,18 @@ class FilePickerActivity : AppCompatActivity() {
         setContent {
             val appearance by graph.appearance.settings.collectAsState()
             val lockEnabled by graph.appLock.enabled.collectAsState()
+            val featureVisibility = graph.uiPreferences.loadFeatureVisibility()
             AFFileManagerTheme(settings = appearance) {
-                com.affilemanager.app.ui.theme.AppearancePage(Modifier.fillMaxSize()) {
+                CompositionLocalProvider(LocalFeatureVisibility provides featureVisibility) {
+                Box(Modifier.fillMaxSize()) {
                     if (lockEnabled && !unlocked) {
                         AppLockOverlay(onUnlock = {
-                            authenticate(this, translated("Atrakinti AF File Manager"), { unlocked = true }) { error = it }
+                            authenticate(this@FilePickerActivity, translated("Atrakinti AF File Manager"), { unlocked = true }) { error = it }
                         }, onCancel = { finish() }, message = error)
                     } else {
                         PickerContent(request)
                     }
+                }
                 }
             }
         }
@@ -145,14 +154,24 @@ class FilePickerActivity : AppCompatActivity() {
                 parentDirectory = allowed::parent, message = error ?: warning, confirming = confirming,
             )
         } else {
-            Column(
-                Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                if (hasAccess && error == null) CircularProgressIndicator()
-                LText(error ?: if (!hasAccess) "Leidimas nesuteiktas" else "Įkeliama…")
-                if (!hasAccess) Button(onClick = ::requestFileAccess) { LText("Suteikti") }
-                TextButton(onClick = { finish() }) { LText("Atšaukti") }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(24.dp).widthIn(max = 480.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    tonalElevation = 6.dp,
+                    shadowElevation = 12.dp,
+                ) {
+                    Column(
+                        Modifier.padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        if (hasAccess && error == null) CircularProgressIndicator()
+                        LText(error ?: if (!hasAccess) "Leidimas nesuteiktas" else "Įkeliama…")
+                        if (!hasAccess) Button(onClick = ::requestFileAccess) { LText("Suteikti") }
+                        TextButton(onClick = { finish() }) { LText("Atšaukti") }
+                    }
+                }
             }
         }
     }

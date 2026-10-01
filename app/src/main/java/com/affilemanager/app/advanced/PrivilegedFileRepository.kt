@@ -320,15 +320,19 @@ class PrivilegedFileRepository(
 
     suspend fun stageForPreview(entry: FileEntry): Result<File> = ioResult {
         require(!entry.isDirectory && entry.sizeBytes <= EditLimits.MAX_FILE_BYTES) { "Failas per didelis peržiūrai" }
-        val manager = access.fileSystemOrThrow()
-        val source = existingContained(manager, entry.absolutePath, allowRoot = false)
-        require(source.isFile) { "Failas nepasiekiamas" }
+        // Readable system files still need a private copy: the FileProvider must
+        // not expose the whole device root just to play an alarm or open a PDF.
+        val local = File(entry.absolutePath).takeIf { it.isFile && it.canRead() }
+        val protected = if (local == null) {
+            existingContained(access.fileSystemOrThrow(), entry.absolutePath, allowRoot = false)
+                .also { require(it.isFile) { "Failas nepasiekiamas" } }
+        } else null
         val destination = previewCache.createDestination(entry)
         try {
-            source.newInputStream().buffered().use { input ->
+            (local?.inputStream() ?: requireNotNull(protected).newInputStream()).buffered().use { input ->
                 FileOutputStream(destination).buffered().use { output -> copyBounded(input, output, EditLimits.MAX_FILE_BYTES, null) }
             }
-            require(destination.length() == source.length()) { "Peržiūros kopijos dydis neatitinka" }
+            require(destination.length() == (local?.length() ?: requireNotNull(protected).length())) { "Peržiūros kopijos dydis neatitinka" }
             previewCache.validateCompleted(destination)
             destination
         } catch (error: Throwable) {

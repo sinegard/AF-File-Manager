@@ -26,6 +26,12 @@ class AdvancedPreviewRoutingTest {
         assertNull(AdvancedPreviewRouting.directlyReadableFile(entry(directory.absolutePath, EntryKind.DIRECTORY)))
     }
 
+    @Test fun readableFileOutsideFileProviderRootsStillUsesPrivateStaging() {
+        val file = temporary.newFile("outside.ogg").apply { writeText("fixture") }
+        assertNull(AdvancedPreviewRouting.directlyReadableFile(entry(file.path, EntryKind.AUDIO)) { false })
+        assertEquals(file.canonicalFile, AdvancedPreviewRouting.directlyReadableFile(entry(file.path, EntryKind.AUDIO)) { true })
+    }
+
     private fun entry(path: String, kind: EntryKind) = FileEntry(
         absolutePath = path,
         name = path.substringAfterLast(java.io.File.separatorChar),

@@ -20,9 +20,13 @@ class AppearanceConsumerContractTest {
         listOf("ui/screens/FileCategoryBrowserDialog.kt", "ui/screens/AdvancedStorageBrowserDialog.kt",
             "ui/screens/SafBrowserDialog.kt", "ui/screens/TrashBrowserDialog.kt", "ui/screens/CleanupReviewDialog.kt",
             "ui/screens/AfWorkflowDialog.kt", "ui/preview/FilePreviewDialog.kt", "ui/preview/PdfSignatureDialog.kt",
-            "ui/terminal/TerminalOverlay.kt", "picker/FilePickerActivity.kt", "apk/SplitApkInstallActivity.kt").forEach {
+            "ui/terminal/TerminalOverlay.kt", "apk/SplitApkInstallActivity.kt").forEach {
             assertTrue(it, File(source, it).readText().contains("AppearancePage("))
         }
+        val externalPicker = File(source, "picker/FilePickerActivity.kt").readText()
+        assertTrue("External picker keeps the shared appearance theme", externalPicker.contains("AFFileManagerTheme("))
+        assertTrue("External picker uses the shared dialog", externalPicker.contains("LocalUploadDialog("))
+        assertFalse("External picker must leave the caller visible", externalPicker.contains("AppearancePage("))
     }
 
     @Test fun everyDialogUsesTheScaleAwareWindowWrapper() {

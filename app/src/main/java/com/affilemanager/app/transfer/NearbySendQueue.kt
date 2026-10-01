@@ -10,6 +10,7 @@ internal data class NearbySendBatch(
     val state: NearbyTransferState,
     val ready: Boolean = false,
     val announced: Boolean = false,
+    val groupId: String? = null,
 )
 
 /** Process-local FIFO; only the foreground service owns payloads after admission. */
@@ -17,11 +18,11 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
     private val batches = linkedMapOf<String, NearbySendBatch>()
     private var activeId: String? = null
 
-    @Synchronized fun enqueue(pairing: NearbyPairing, sources: PreparedNearbyTransfer, returnPairing: NearbyPairing?): NearbySendBatch {
+    @Synchronized fun enqueue(pairing: NearbyPairing, sources: PreparedNearbyTransfer, returnPairing: NearbyPairing?, groupId: String? = null): NearbySendBatch {
         require(sources.paths.size == sources.relativePaths.size &&
             sources.paths.size == sources.sourceUris.size) { "Netinkamas siunčiamų failų skaičius" }
         val pending = batches.values.filter { !it.state.status.finished() }
-        require(pending.all { it.pairing == pairing }) { "Pirmiausia sustabdykite kitą bendrinimo sesiją" }
+        require(pending.all { it.pairing == pairing || groupId != null && it.groupId == groupId }) { "Pirmiausia sustabdykite kitą bendrinimo sesiją" }
         require(pending.size < 16 && pending.sumOf { it.sources.paths.size } + sources.paths.size <= NearbySourcePreparer.MAX_FILES &&
             pending.sumOf { it.sources.directories.size } + sources.directories.size <= NearbySourcePreparer.MAX_DIRECTORIES &&
             pending.sumOf { it.sources.payloadCharacters() } + sources.payloadCharacters() <= NearbySourcePreparer.MAX_PATH_PAYLOAD_CHARS &&
@@ -41,13 +42,32 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
         ) }
         val batch = NearbySendBatch(id, pairing, sources, returnPairing,
             NearbyTransferState(NearbyTransferStatus.STARTING, pairing.receiverName, files.size,
-                totalBytes = files.sumOf { it.sizeBytes }, message = "Eilėje", files = files))
+                totalBytes = files.sumOf { it.sizeBytes }, message = "Eilėje", files = files), groupId = groupId)
         batches[id] = batch
         changed()
         return batch
     }
 
     @Synchronized fun get(id: String): NearbySendBatch? = batches[id]
+    @Synchronized fun enqueueGroup(peers: List<NearbyPairing>, sources: PreparedNearbyTransfer, returnPairing: NearbyPairing?): List<NearbySendBatch> {
+        require(peers.size in 1..9 && peers.distinct().size == peers.size) { "Pasirinkite grupės gavėjus" }
+        require(!hasPending()) { "Pirmiausia užbaikite vykstantį siuntimą" }
+        val groupId = UUID.randomUUID().toString()
+        val added = mutableListOf<NearbySendBatch>()
+        try {
+            peers.forEach { added += enqueue(it, sources, returnPairing, groupId) }
+            return added
+        } catch (failure: Exception) {
+            added.forEach { batches.remove(it.id) }
+            changed()
+            throw failure
+        }
+    }
+
+    /** A shared staged payload is removed only after its final admitted recipient is done. */
+    @Synchronized fun stageInUse(path: String, excludingId: String? = null): Boolean = batches.values.any {
+        it.id != excludingId && it.sources.cleanupRootPath == path && !it.state.status.finished()
+    }
     @Synchronized fun nextToPrepare(): NearbySendBatch? = batches.values.firstOrNull { !it.ready && !it.state.status.finished() }
 
     @Synchronized fun ready(id: String, files: List<TransferFileProgress>, announced: Boolean) {

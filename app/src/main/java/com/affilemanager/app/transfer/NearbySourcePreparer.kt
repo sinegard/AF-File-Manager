@@ -66,26 +66,36 @@ class NearbySourcePreparer(
 
     private val stagingRoot = File(application.cacheDir, "nearby-send-staging")
 
-    suspend fun prepareEntries(entries: Collection<FileEntry>, installedApps: Boolean): Result<PreparedNearbyTransfer> =
+    suspend fun prepareEntries(entries: Collection<FileEntry>): Result<PreparedNearbyTransfer> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val selected = entries.distinctBy(FileEntry::absolutePath)
                 require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą" }
                 require(selected.size <= MAX_FILES) { "Vienu kartu galima siųsti iki $MAX_FILES failų" }
-                if (!installedApps) {
-                    return@runCatching prepareLocalNodes(selected.map { File(it.absolutePath) })
-                }
+                val installed = selected.filter { it.packageName != null }
+                val local = selected.filter { it.packageName == null }
+                if (installed.isEmpty()) return@runCatching prepareLocalNodes(local.map { File(it.absolutePath) })
 
                 val stage = newStage()
                 try {
-                    val files = selected.mapIndexed { index, entry ->
+                    val localPrepared = local.takeIf(List<FileEntry>::isNotEmpty)
+                        ?.let { prepareLocalNodes(it.map { entry -> File(entry.absolutePath) }) }
+                    val usedNames = (localPrepared?.relativePaths.orEmpty() + localPrepared?.directories.orEmpty())
+                        .mapTo(hashSetOf()) { it.substringBefore('/').lowercase(java.util.Locale.ROOT) }
+                    val appFiles = installed.mapIndexed { index, entry ->
                         coroutineContext.ensureActive()
                         val directory = File(stage, index.toString()).apply {
                             require(mkdir()) { "Laikinos programos kopijos sukurti nepavyko" }
                         }
                         fileCategories.stageInstalledApp(entry, directory)
                     }
-                    validatedFiles(files, files.map(File::getName), emptyList(), stage)
+                    validatedFiles(
+                        files = localPrepared?.paths.orEmpty().map(::File) + appFiles,
+                        relativePaths = localPrepared?.relativePaths.orEmpty() +
+                            appFiles.map { uniqueName(it.name, usedNames) },
+                        directories = localPrepared?.directories.orEmpty(),
+                        cleanupRoot = stage,
+                    )
                 } catch (error: Throwable) {
                     stage.deleteRecursively()
                     throw error
@@ -427,9 +437,9 @@ class NearbySourcePreparer(
     }
 
     private fun safeDeleteStage(path: String) {
-        val root = runCatching { stagingRoot.canonicalFile }.getOrNull() ?: return
-        val candidate = runCatching { File(path).canonicalFile }.getOrNull() ?: return
-        if (candidate.parentFile == root) candidate.deleteRecursively()
+        if (!NearbyStagingCleanup.delete(stagingRoot, path)) {
+            android.util.Log.w("NearbyTransfer", "nearby_stage_cleanup_failed")
+        }
     }
 
     private fun contentName(uri: Uri, index: Int): String {

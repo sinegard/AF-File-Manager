@@ -2,6 +2,8 @@ package com.affilemanager.app.ui.screens
 
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.ui.components.featureVisible
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -1021,7 +1023,7 @@ private fun AnalysisOverviewCard(
 }
 
 @Composable
-private fun StorageOverviewCard(
+internal fun StorageOverviewCard(
     root: StorageRoot,
     roots: List<StorageRoot>,
     analysis: StorageAnalysis?,
@@ -1036,41 +1038,45 @@ private fun StorageOverviewCard(
     onCleanup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val total = root.totalBytes.coerceAtLeast(0L)
-    val used = (total - root.freeBytes.coerceAtLeast(0L)).coerceIn(0L, total)
-    val fraction = if (total > 0L) (used.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
-    val percentage = (fraction * 100f).toInt().coerceIn(0, 100)
+    val mountedRoots = roots.ifEmpty { listOf(root) }.distinctBy(StorageRoot::path)
+        .sortedBy { if (it.kind == StorageRootKind.INTERNAL) 0 else 1 }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(modifier = Modifier.size(86.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        progress = { fraction },
-                        modifier = Modifier.fillMaxSize(),
-                        strokeWidth = 8.dp,
-                    )
-                    Text("$percentage%", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    LText("Saugyklos užpildymas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    LText(storageRootLabel(root), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    LText(
-                        "Naudojama ${FileSystemRules.humanBytes(used)} iš ${FileSystemRules.humanBytes(total)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (analysis != null) {
-                        LText(
-                            "Nuskaityta ${analysis.scannedFiles} failų ir ${analysis.scannedDirectories} aplankų",
+            LText("Saugyklos užpildymas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            mountedRoots.forEach { target ->
+                val total = target.totalBytes.coerceAtLeast(0L)
+                val used = (total - target.freeBytes.coerceAtLeast(0L)).coerceIn(0L, total)
+                val fraction = if (total > 0L) (used.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
+                val percentage = (fraction * 100f).toInt().coerceIn(0, 100)
+                Row(
+                    modifier = Modifier.fillMaxWidth().testTag("storage_usage_${target.id}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(storageRootIcon(target.kind), contentDescription = null,
+                        modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        LText(storageRootLabel(target), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                        if (total > 0L) LText(
+                            "Naudojama ${FileSystemRules.humanBytes(used)} iš ${FileSystemRules.humanBytes(total)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        ) else LText("Nežinoma", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxSize(), strokeWidth = 5.dp)
+                        Text(if (total > 0L) "$percentage%" else "—", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                     }
                 }
             }
+            if (analysis != null) LText(
+                "Nuskaityta ${analysis.scannedFiles} failų ir ${analysis.scannedDirectories} aplankų",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             LText(if (running) "Vykdoma analizė" else "Nuskaityti saugyklą", style = MaterialTheme.typography.labelLarge)
             val activeStorageRoot = roots.firstOrNull { target ->
                 !analysisAllStorage && analysisRootPaths.singleOrNull()?.let { sameAnalysisPath(it, target.path) } == true
@@ -1103,7 +1109,7 @@ private fun StorageOverviewCard(
                     if (running) CircularProgressIndicator(modifier = Modifier.padding(start = 8.dp).size(20.dp), strokeWidth = 2.dp)
                 }
             }
-            if (!running || analysisAllStorage) {
+            if (mountedRoots.any { it.removable } && (!running || analysisAllStorage)) {
                 OutlinedButton(
                     onClick = onAnalyzeAllStorage,
                     enabled = !running && roots.isNotEmpty(),
@@ -1209,7 +1215,7 @@ private fun SearchSelectionToolbar(
                 }
             }
             IconButton(onClick = onMove) { Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti")) }
-            IconButton(onClick = onBatchRename) {
+            if (featureVisible(OptionalFeature.BATCH_RENAME)) IconButton(onClick = onBatchRename) {
                 Icon(Icons.Rounded.Edit, contentDescription = uiText("Masinis pervadinimas"))
             }
             IconButton(onClick = onTrash) { Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error) }

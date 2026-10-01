@@ -359,7 +359,7 @@ fun TrashBrowserDialog(
             title = "Automatinis šiukšliadėžės valymas",
             subtitle = "Pasirinkite, kiek laiko ištrinti elementai turi būti saugomi.",
             icon = Icons.Rounded.Schedule,
-            expandedContent = true,
+            expandedContent = false,
             onDismissRequest = { showRetention = false },
             actions = {
                 TextButton(onClick = { showRetention = false }) { LText("Atšaukti") }
@@ -372,7 +372,7 @@ fun TrashBrowserDialog(
                 ) { LText("Išsaugoti") }
             },
         ) {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(vertical = 8.dp)) {
+            LazyColumn(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                 items(TrashRetentionPeriod.entries, key = TrashRetentionPeriod::name) { period ->
                     Row(
                         modifier = Modifier

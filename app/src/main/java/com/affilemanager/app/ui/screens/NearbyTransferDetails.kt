@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
@@ -85,6 +87,7 @@ internal fun NearbyTransferDetails(
     onSendMessage: ((String) -> Unit)? = null,
     bytesPerSecond: Long = 0L,
     remainingMillis: Long? = null,
+    allowFolderDrilldown: Boolean = true,
 ) {
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
@@ -95,6 +98,25 @@ internal fun NearbyTransferDetails(
     var gridMode by remember { mutableStateOf(false) }
     var previousGridMode by remember { mutableStateOf(false) }
     val copiedMessage = uiText("Žinutė nukopijuota")
+    val folders = remember(files, outgoingCount, allowFolderDrilldown) {
+        if (!allowFolderDrilldown) emptyList() else nearbyTransferFolders(files, outgoingCount)
+    }
+    var openedFolder by remember { mutableStateOf<TransferFolderSummary?>(null) }
+    openedFolder?.let { folder ->
+        val currentIndices = files.indices.filter { index -> folder.matches(files[index], index, outgoingCount) }
+        val selectedFiles = currentIndices.map(files::get)
+        NearbyTransferDetails(
+            files = selectedFiles,
+            transferredBytes = selectedFiles.sumOf(TransferFileProgress::transferredBytes),
+            totalBytes = selectedFiles.sumOf(TransferFileProgress::sizeBytes), totalFiles = selectedFiles.size,
+            onPreview = onPreview, onDismiss = { openedFolder = null },
+            onCancelFile = onCancelFile?.let { stop -> ({ file, index -> stop(file, currentIndices[index]) }) },
+            outgoingCount = if (folder.incoming) 0 else selectedFiles.size,
+            localName = localName, peerName = peerName, message = folder.path,
+            allowFolderDrilldown = false,
+        )
+        return
+    }
     val resolvedLocalName = when (localName) {
         null, "Šis telefonas", "This phone" -> uiText("Šis telefonas")
         else -> localName
@@ -200,6 +222,27 @@ internal fun NearbyTransferDetails(
             }
             TransferRateAndEta(bytesPerSecond, remainingMillis)
             message?.let { LText(it, modifier = Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall) }
+            if (folders.isNotEmpty()) LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("nearby_transfer_folders"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(folders, key = { "${it.incoming}:${it.batchId}:${it.path}" }) { folder ->
+                    val contents = files.filterIndexed { index, file -> folder.matches(file, index, outgoingCount) }
+                    val total = contents.sumOf(TransferFileProgress::sizeBytes)
+                    val done = contents.sumOf(TransferFileProgress::transferredBytes)
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.widthIn(min = 160.dp, max = 240.dp).padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.Folder, null)
+                                Text(folder.path, modifier = Modifier.padding(start = 6.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            LinearProgressIndicator(progress = { if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f }, modifier = Modifier.fillMaxWidth())
+                            Text("${contents.count { it.status == TransferFileStatus.COMPLETED }}/${contents.size}", style = MaterialTheme.typography.labelSmall)
+                            TextButton(onClick = { openedFolder = folder }, modifier = Modifier.testTag("nearby_folder_open_${folder.batchId}")) { LText("Atidaryti") }
+                        }
+                    }
+                }
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("nearby_transfer_files"),
@@ -296,6 +339,19 @@ internal fun NearbyTransferDetails(
         }
     }
 }
+
+internal data class TransferFolderSummary(val path: String, val batchId: String, val incoming: Boolean) {
+    fun matches(file: TransferFileProgress, index: Int, outgoingCount: Int?): Boolean =
+        file.batchId == batchId && file.relativePath.startsWith("$path/") &&
+            (outgoingCount?.let { index >= it } == true) == incoming
+}
+
+internal fun nearbyTransferFolders(files: List<TransferFileProgress>, outgoingCount: Int?): List<TransferFolderSummary> =
+    files.mapIndexedNotNull { index, file ->
+        file.relativePath.substringBefore('/', "").takeIf(String::isNotBlank)?.let {
+            TransferFolderSummary(it, file.batchId, outgoingCount?.let { count -> index >= count } == true)
+        }
+    }.distinct()
 
 @Composable
 private fun ReceiptMetric(label: String, value: Int, modifier: Modifier = Modifier) {

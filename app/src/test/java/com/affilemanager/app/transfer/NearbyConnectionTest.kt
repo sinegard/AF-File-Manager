@@ -4,6 +4,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NearbyConnectionTest {
+    @Test fun groupSessionsAreIsolatedReusedAndForgottenOnExpiryOrAnUnrelatedPeer() {
+        var time = 0L
+        val connection = NearbyConnection { time }
+        val first = NearbyPairing.create("192.168.1.2", 8080, "12345678")
+        val second = first.copy(host = "192.168.1.3")
+        connection.beginGroup(listOf(first, second))
+        connection.remember(first, "af_session=first", expires = 100L)
+        connection.setQueueSupported(first, true)
+        connection.remember(second, "af_session=second", expires = 200L)
+        assertEquals("af_session=first", connection.cookieFor(first))
+        assertEquals("af_session=second", connection.cookieFor(second))
+        assertTrue(connection.supportsQueue(first))
+        assertFalse(connection.supportsQueue(second))
+        time = 100L
+        assertNull(connection.cookieFor(first))
+        assertNotNull(connection.cookieFor(second))
+        connection.remember(first, "af_session=fresh", expires = 300L)
+        connection.clearIfRejected(second, 403)
+        assertNotNull(connection.cookieFor(first))
+        assertNull(connection.cookieFor(second))
+        connection.remember(first.copy(port = 8081), "af_session=unrelated")
+        assertNull(connection.cookieFor(first))
+        connection.clear()
+        assertNull(connection.pairing())
+    }
     @Test fun rejectedSessionIsForgottenWithoutClearingAnotherPeerOrRetryingFiles() {
         val connection = NearbyConnection { 0L }
         val peer = NearbyPairing.create("192.168.1.2", 8080, "12345678")

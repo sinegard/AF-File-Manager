@@ -1,4 +1,5 @@
 package com.affilemanager.app.ui.screens
+import androidx.compose.material.icons.rounded.Folder
 
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -67,6 +68,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.data.CategoryStorageScope
+import com.affilemanager.app.data.CategoryViewMode
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
@@ -114,6 +117,7 @@ fun FileCategoryBrowser(
     var query by remember(state.category) { mutableStateOf("") }
     var selectedParent by remember(state.category) { mutableStateOf<String?>(null) }
     var menu by remember(state.category) { mutableStateOf(false) }
+    var scopeMenu by remember(state.category) { mutableStateOf(false) }
     var showDisplaySettings by remember(state.category) { mutableStateOf(false) }
     var infoTarget by remember(state.category) { mutableStateOf<FileEntry?>(null) }
     var confirmTrash by remember(state.category) { mutableStateOf(false) }
@@ -124,6 +128,7 @@ fun FileCategoryBrowser(
         searchVisible = false
         query = ""
     }
+    LaunchedEffect(state.storageScope, state.viewMode) { selectedParent = null }
     var transformed by remember(state.category) { mutableStateOf(CategoryTransform()) }
     var transforming by remember(state.category) { mutableStateOf(false) }
     LaunchedEffect(state.entries, query, selectedParent, state.sortMode, state.sortDirection) {
@@ -255,10 +260,10 @@ fun FileCategoryBrowser(
                         title = uiText(categoryTitle(state.category)),
                         path = uiText(
                             when {
-                                state.loadingMore -> "Rodoma ${state.entries.size} failų · kraunama daugiau"
-                                state.nextOffset != null -> "Rodoma ${state.entries.size} failų · daugiau slenkant žemyn"
-                                state.truncated -> "Rodomi pirmi ${state.entries.size} failai pagal pasirinktą tvarką"
-                                else -> "${state.entries.size} failų visoje saugykloje"
+                                state.loadingMore -> "Rodoma ${state.entries.size} elementų · kraunama daugiau"
+                                state.nextOffset != null -> "Rodoma ${state.entries.size} elementų · daugiau slenkant žemyn"
+                                state.truncated -> "Rodomi pirmi ${state.entries.size} elementai pagal pasirinktą tvarką"
+                                else -> "${state.entries.size} elementų"
                             },
                         ),
                         backEnabled = true,
@@ -283,16 +288,23 @@ fun FileCategoryBrowser(
                             }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 if (state.category == FileCategory.INSTALLED_APPS) {
+                                    com.affilemanager.app.data.InstalledAppScope.entries.forEach { scope ->
+                                        DropdownMenuItem(
+                                            text = { LText(when (scope) {
+                                                com.affilemanager.app.data.InstalledAppScope.USER -> "Naudotojo programos"
+                                                com.affilemanager.app.data.InstalledAppScope.ALL -> "Visos programos"
+                                                com.affilemanager.app.data.InstalledAppScope.SYSTEM -> "Sisteminės programos"
+                                            }) },
+                                            leadingIcon = { Checkbox(checked = state.appScope == scope, onCheckedChange = null) },
+                                            onClick = { menu = false; viewModel.setInstalledAppScope(scope) },
+                                            modifier = Modifier.testTag("installed_apps_scope_${scope.name}"),
+                                        )
+                                    }
                                     DropdownMenuItem(
-                                        text = { LText("Rodyti sistemines programas") },
-                                        leadingIcon = {
-                                            Checkbox(
-                                                checked = state.showSystemApps,
-                                                onCheckedChange = null,
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("installed_apps_show_system"),
-                                        onClick = { menu = false; viewModel.toggleInstalledSystemApps() },
+                                        text = { LText("Programų duomenų aplankai") },
+                                        leadingIcon = { Icon(Icons.Rounded.Folder, contentDescription = null) },
+                                        modifier = Modifier.testTag("installed_apps_data_folders"),
+                                        onClick = { menu = false; viewModel.openInstalledAppFolders() },
                                     )
                                     HorizontalDivider()
                                 }
@@ -342,6 +354,33 @@ fun FileCategoryBrowser(
                         modifier = Modifier.testTag("directory_search_field_category"),
                     )
                 }
+                if (state.category != FileCategory.INSTALLED_APPS) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        FilterChip(
+                            selected = true,
+                            onClick = { scopeMenu = true },
+                            label = { CategoryScopeLabel(state.viewMode, state.storageScope) },
+                            modifier = Modifier.testTag("category_storage_scope"),
+                        )
+                        DropdownMenu(expanded = scopeMenu, onDismissRequest = { scopeMenu = false }) {
+                            CategoryViewMode.entries.forEach { mode ->
+                                CategoryStorageScope.entries.forEach { scope ->
+                                    DropdownMenuItem(
+                                        text = { CategoryScopeLabel(mode, scope) },
+                                        leadingIcon = { Checkbox(checked = state.viewMode == mode && state.storageScope == scope,
+                                            onCheckedChange = null) },
+                                        onClick = {
+                                            scopeMenu = false
+                                            viewModel.setFileCategoryView(scope, mode)
+                                        },
+                                        modifier = Modifier.testTag("category_scope_${mode.name}_${scope.name}"),
+                                    )
+                                }
+                                if (mode == CategoryViewMode.FILES) HorizontalDivider()
+                            }
+                        }
+                    }
+                }
                 if (parentPaths.isNotEmpty()) {
                     LazyRow(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -389,7 +428,7 @@ fun FileCategoryBrowser(
                         LText(state.error, color = MaterialTheme.colorScheme.error)
                     }
                     visible.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LText("Atitinkančių failų nėra")
+                        LText(if (state.viewMode == CategoryViewMode.FOLDERS) "Atitinkančių aplankų nėra" else "Atitinkančių failų nėra")
                     }
                     state.grid -> Box {
                     LazyVerticalGrid(
@@ -591,4 +630,18 @@ private fun categoryTitle(category: FileCategory): String = when (category) {
     FileCategory.ARCHIVES -> "Archyvai"
     FileCategory.APPS -> "Programos"
     FileCategory.INSTALLED_APPS -> "Įdiegtos programos"
+}
+
+@Composable
+private fun CategoryScopeLabel(mode: CategoryViewMode, scope: CategoryStorageScope) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        LText(if (mode == CategoryViewMode.FILES) "Failai" else "Aplankai", maxLines = 1)
+        LText(" · ")
+        LText(when (scope) {
+            CategoryStorageScope.ALL -> "Visa saugykla"
+            CategoryStorageScope.INTERNAL -> "Vidinė atmintis"
+            CategoryStorageScope.USB -> "USB saugykla"
+            CategoryStorageScope.SD_CARD -> "SD kortelė"
+        }, maxLines = 1)
+    }
 }

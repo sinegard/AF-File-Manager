@@ -64,6 +64,91 @@ import java.util.zip.ZipOutputStream
 
 @RunWith(AndroidJUnit4::class)
 class FilePreviewLifecycleTest {
+    @Test fun readableSystemAudioOutsideTheProviderPlaysWithoutRootAndKeepsItsOriginal() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val access = app.graph.advancedAccess
+        val previousMode = access.state.value.selectedMode
+        val systemAudio = listOf("/product/media/audio/alarms", "/system/media/audio/alarms")
+            .asSequence().flatMap { File(it).listFiles().orEmpty().asSequence() }
+            .first { it.extension == "ogg" && it.isFile && it.canRead() }
+        assertTrue(runCatching { FileProvider.getUriForFile(app, "${app.packageName}.files", systemAudio) }.isFailure)
+        val originalSize = systemAudio.length()
+        val originalModified = systemAudio.lastModified()
+        try {
+            compose.runOnUiThread { access.setMode(com.affilemanager.app.advanced.AdvancedAccessMode.OFF) }
+            repeat(2) { route ->
+                val entry = LocalFileRepository(app).toEntry(systemAudio)
+                compose.runOnUiThread { if (route == 0) vm.open(entry) else vm.openAdvancedEntry(entry) }
+                compose.waitUntil(15_000) { vm.preview.value is com.affilemanager.app.ui.PreviewTarget.PrivilegedFile }
+                val target = vm.preview.value as com.affilemanager.app.ui.PreviewTarget.PrivilegedFile
+                assertTrue(target.localOrigin)
+                assertEquals(originalSize, target.cachedFile.length())
+                assertTrue(target.cachedFile.canonicalPath.startsWith(app.cacheDir.canonicalPath + File.separator))
+                compose.waitUntil(15_000) {
+                    runCatching { compose.onNodeWithTag("audio_play_pause").performScrollTo().assertIsEnabled(); true }.getOrDefault(false)
+                }
+                compose.onNodeWithTag("audio_play_pause").performClick()
+                compose.onNodeWithTag("audio_player").assertIsDisplayed()
+                compose.runOnUiThread { vm.closePreview() }
+                compose.waitUntil(5_000) { !target.cachedFile.exists() }
+                assertEquals(originalSize, systemAudio.length())
+                assertEquals(originalModified, systemAudio.lastModified())
+            }
+        } finally {
+            compose.runOnUiThread { vm.closePreview(); access.setMode(previousMode) }
+        }
+    }
+
+    @Test fun actualShizukuOnlyAudioIsStagedPrivatelyPlayedAndCleanedOnClose() {
+        check(android.os.Build.MODEL.contains("sdk")) { "This Shizuku fixture is emulator-only" }
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val access = app.graph.advancedAccess
+        val previousMode = access.state.value.selectedMode
+        val fixture = File(app.getExternalFilesDir("shizuku-validation"), "shizuku-fixture-${System.nanoTime()}.wav").also(::createWaveAudio)
+        val remoteRoot = "/storage/emulated/0/Android/data/moe.shizuku.privileged.api/files/af-preview-validation"
+        val remote = "$remoteRoot/${fixture.name}"
+        var staged: File? = null
+        try {
+            fun shell(command: String): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
+            ).bufferedReader().use { it.readText().trim() }
+            check(fixture.path.none(Char::isWhitespace) && remote.none(Char::isWhitespace))
+            shell("mkdir -p $remoteRoot")
+            shell("cp ${fixture.path} $remote")
+            assertTrue("Shell fixture copy was not created", shell("ls -l $remote").contains(fixture.name))
+            assertTrue("Fixture must be unreadable without the privileged backend", !File(remote).canRead())
+            compose.runOnUiThread {
+                access.setMode(com.affilemanager.app.advanced.AdvancedAccessMode.SHIZUKU)
+                access.requestShizukuAccess()
+            }
+            compose.waitUntil(60_000) { access.state.value.connected || access.state.value.error != null }
+            assertTrue(access.state.value.error ?: "Shizuku backend not connected", access.state.value.connected)
+            assertEquals(com.affilemanager.app.advanced.AdvancedAccessBackend.SHIZUKU_SHELL, access.state.value.activeBackend)
+            assertEquals(2_000, access.state.value.serviceUid)
+            val entry = com.affilemanager.app.model.FileEntry(remote, fixture.name, com.affilemanager.app.model.EntryKind.AUDIO,
+                fixture.length(), 1L, false, true, false)
+            compose.runOnUiThread { vm.openAdvancedEntry(entry) }
+            compose.waitUntil(15_000) { vm.preview.value is com.affilemanager.app.ui.PreviewTarget.PrivilegedFile }
+            staged = (vm.preview.value as com.affilemanager.app.ui.PreviewTarget.PrivilegedFile).cachedFile
+            assertTrue(requireNotNull(staged).canonicalPath.startsWith(app.cacheDir.canonicalPath + File.separator))
+            compose.waitUntil(15_000) {
+                runCatching { compose.onNodeWithTag("audio_play_pause").performScrollTo().assertIsEnabled(); true }.getOrDefault(false)
+            }
+            compose.onNodeWithTag("audio_play_pause").performClick()
+            compose.onNodeWithTag("audio_player").assertIsDisplayed()
+            compose.runOnUiThread { vm.closePreview() }
+            compose.waitUntil(5_000) { !requireNotNull(staged).exists() }
+            assertTrue(fixture.exists())
+        } finally {
+            compose.runOnUiThread { vm.closePreview(); access.setMode(previousMode) }
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("rm $remote"),
+            ).use { it.readBytes() }
+            fixture.delete()
+        }
+    }
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 

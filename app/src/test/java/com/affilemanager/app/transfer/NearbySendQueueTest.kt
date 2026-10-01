@@ -8,6 +8,35 @@ class NearbySendQueueTest {
     private val peer = NearbyPairing("192.168.1.10", 8080, "test-password")
     private fun source(name: String) = PreparedNearbyTransfer(listOf("/test/$name"), fileSizes = listOf(10))
 
+    @Test fun groupSharesStageUntilLastRecipientFinishesAndRetainsIndependentCancellation() {
+        val queue = NearbySendQueue { }
+        val staged = source("one.txt").copy(cleanupRootPath = "/private/stage")
+        val batches = queue.enqueueGroup(listOf(peer, peer.copy(host = "192.168.1.11")), staged, null)
+        assertEquals(2, batches.size)
+        assertEquals(batches[0].groupId, batches[1].groupId)
+        assertSame(staged, batches[1].sources)
+        assertTrue(queue.stageInUse("/private/stage", excludingId = batches[0].id))
+        assertTrue(queue.cancelFile(batches[0].id, 1))
+        assertEquals(TransferFileStatus.WAITING, queue.get(batches[1].id)!!.state.files.single().status)
+        queue.cancel(setOf(batches[0].id))
+        assertTrue(queue.stageInUse("/private/stage"))
+        queue.ready(batches[1].id, batches[1].state.files, true)
+        assertEquals(batches[1].id, queue.takeNext()!!.id)
+        queue.update(batches[1].id, batches[1].state.copy(status = NearbyTransferStatus.COMPLETED))
+        assertFalse(queue.stageInUse("/private/stage"))
+    }
+
+    @Test fun oversizedGroupAdmissionRollsBackEveryRecipient() {
+        var snapshot = NearbyTransferState()
+        val queue = NearbySendQueue { snapshot = it }
+        val halfBudget = source("one.txt").copy(totalBytes = NearbySourcePreparer.MAX_TOTAL_BYTES / 2 + 1)
+        assertTrue(runCatching { queue.enqueueGroup(listOf(peer, peer.copy(host = "192.168.1.11")), halfBudget, null) }.isFailure)
+        assertFalse(queue.hasPending())
+        assertTrue(snapshot.files.isEmpty())
+        assertNull(queue.nextToPrepare())
+        assertTrue(runCatching { queue.enqueueGroup(listOf(peer, peer), source("one.txt"), null) }.isFailure)
+    }
+
     @Test fun appendPreservesProgressAndSendsInAdmissionOrder() {
         var snapshot = NearbyTransferState()
         val queue = NearbySendQueue { snapshot = it }

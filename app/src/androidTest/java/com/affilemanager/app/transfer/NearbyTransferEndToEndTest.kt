@@ -16,6 +16,53 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 class NearbyTransferEndToEndTest {
+    @Test fun groupSendsOnePrivateStageToTwoReceiversAndCleansItOnlyAfterBothFinish() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "nearby-group-${UUID.randomUUID()}").apply { check(mkdir()) }
+        val source = File(root, "group.bin").apply { writeBytes(ByteArray(2 * 1024 * 1024) { (it * 17).toByte() }) }
+        val firstRoot = File(root, "first").apply { check(mkdir()) }
+        val secondRoot = File(root, "second").apply { check(mkdir()) }
+        val address = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
+            .first { it is Inet4Address && it.isSiteLocalAddress }
+        var prepared: PreparedNearbyTransfer? = null
+        try {
+            LanHttpServer(firstRoot, address, requestedCode = "12345678").use { first ->
+                LanHttpServer(secondRoot, address, requestedCode = "87654321").use { second ->
+                    val a = first.start()
+                    val b = second.start()
+                    val peers = listOf(NearbyPairing.create(a.address, a.port, a.code, "First"),
+                        NearbyPairing.create(b.address, b.port, b.code, "Second"))
+                    val own = NearbyPairing.create(a.address, 29991, "23456789", "Organizer")
+                    val invite = NearbyGroupInvite(own, "Test group")
+                    NearbyGroupController.host(invite)
+                    NearbyGroupController.hostMembers(invite, listOf(NearbyGroupMember(own, true)) + peers.map(::NearbyGroupMember))
+                    val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.files", source)
+                    prepared = app.graph.nearbySources.prepareContentUris(listOf(uri), copyToPrivateStage = true).getOrThrow()
+                    val stage = File(requireNotNull(prepared!!.cleanupRootPath))
+                    assertTrue(stage.exists())
+                    NearbyTransferController.clearFinished()
+                    NearbyTransferController.startGroup(app, peers, prepared!!, null)
+                    val finished = withTimeout(45_000) {
+                        while (NearbyTransferController.state.value.status in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) delay(50)
+                        NearbyTransferController.state.value
+                    }
+                    assertEquals(finished.message, NearbyTransferStatus.COMPLETED, finished.status)
+                    assertEquals(2, finished.completedFiles)
+                    fun digest(file: File) = java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes()).toList()
+                    assertEquals(digest(source), digest(firstRoot.resolve(source.name)))
+                    assertEquals(digest(source), digest(secondRoot.resolve(source.name)))
+                    assertTrue(source.exists())
+                    assertTrue(!stage.exists())
+                }
+            }
+        } finally {
+            NearbyTransferController.connection.clear()
+            NearbyTransferController.clearFinished()
+            NearbyGroupController.leave()
+            prepared?.let { app.graph.nearbySources.discard(it) }
+            root.deleteRecursively()
+        }
+    }
     @Test fun emptyPreparedBatchAuthenticatesAndPairsWithoutSendingFiles() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val root = File(app.cacheDir, "nearby-pair-${UUID.randomUUID()}").apply { check(mkdir()) }

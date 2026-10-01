@@ -8,12 +8,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NearbyGroupTest {
+    @Test fun messageBlockingIsIndependentReversibleAndEncodedForTheOrganizer() {
+        val directory = NearbyGroupDirectory()
+        val member = pairing(1)
+        directory.join(member)
+        assertTrue(directory.setMessagesBlocked(member, true))
+        assertFalse(directory.messagesAllowed(member.host))
+        assertTrue(directory.messagesAllowed(pairing(2).host))
+        val encoded = NearbyGroupCodec.encode(directory.snapshot(pairing(0)))
+        assertTrue(NearbyGroupCodec.decode(encoded).last().messagesBlocked)
+        assertTrue(directory.setMessagesBlocked(member, false))
+        assertTrue(directory.messagesAllowed(member.host))
+        assertFalse(directory.setMessagesBlocked(pairing(3), true))
+    }
     private fun pairing(index: Int) = NearbyPairing.create(
         host = "192.168.1.${index + 10}",
         port = 20_000 + index,
         code = (10_000_000 + index).toString(),
         receiverName = "Phone $index",
     )
+
+    @Test
+    fun pairingFeedbackOnlyFiresForANewlyConnectedPhone() {
+        val organizer = NearbyGroupMember(pairing(0), true)
+        val member = NearbyGroupMember(pairing(1))
+        val hosting = NearbyGroupState(status = NearbyGroupStatus.HOSTING, members = listOf(organizer))
+        val connected = hosting.copy(members = listOf(organizer, member))
+        assertTrue(groupPairingConfirmed(hosting, connected))
+        assertFalse(groupPairingConfirmed(connected, connected))
+        assertFalse(groupPairingConfirmed(connected, hosting))
+        assertTrue(groupPairingConfirmed(NearbyGroupState(status = NearbyGroupStatus.JOINING),
+            NearbyGroupState(status = NearbyGroupStatus.JOINED, members = listOf(organizer, member))))
+    }
 
     @Test
     fun inviteRoundTripsWithoutChangingPairing() {
@@ -35,6 +61,23 @@ class NearbyGroupTest {
         assertTrue(snapshot.first().organizer)
         assertThrows(IllegalArgumentException::class.java) { directory.join(pairing(20)) }
         assertFalse(directory.join(pairing(1)))
+    }
+
+    @Test
+    fun organizerRemovalRevokesRejoinForCurrentGroupSession() {
+        val directory = NearbyGroupDirectory()
+        val organizer = pairing(0)
+        val member = pairing(1)
+        assertTrue(directory.join(member))
+        assertTrue(directory.remove(member))
+        assertFalse(directory.remove(member))
+        assertEquals(listOf(NearbyGroupMember(organizer, true)), directory.snapshot(organizer))
+        assertFalse(directory.heartbeat(member))
+        assertThrows(IllegalArgumentException::class.java) { directory.join(member) }
+        assertThrows(IllegalArgumentException::class.java) {
+            directory.join(member.copy(port = member.port + 1))
+        }
+        assertTrue(directory.join(member.copy(port = member.port + 2, code = "33333333")))
     }
 
     @Test
@@ -71,6 +114,8 @@ class NearbyGroupTest {
             NearbyGroupController.clearMemberNotice("Phone 1 prisijungė prie grupės")
             NearbyGroupController.hostMembers(invite, listOf(organizer, member))
             assertNull(NearbyGroupController.state.value.memberNotice)
+            NearbyGroupController.hostMembers(invite, listOf(organizer))
+            assertEquals("Phone 1 paliko grupę", NearbyGroupController.state.value.memberNotice)
         } finally {
             NearbyGroupController.leave()
         }

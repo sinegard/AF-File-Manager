@@ -8,6 +8,7 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -24,6 +25,8 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Share
@@ -31,6 +34,8 @@ import androidx.compose.material.icons.rounded.Stop
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CircularProgressIndicator
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +72,9 @@ import com.affilemanager.app.transfer.QuickTunnelController
 import com.affilemanager.app.transfer.QuickTunnelState
 import com.affilemanager.app.transfer.QuickTunnelStatus
 import com.affilemanager.app.ui.MainViewModel
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.ui.components.LocalFeatureVisibility
+import com.affilemanager.app.ui.components.featureVisible
 import com.affilemanager.app.ui.PanelId
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.AfPullToRefresh
@@ -84,10 +93,19 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val transfer by LanTransferController.state.collectAsStateWithLifecycle()
     val quickTunnel by QuickTunnelController.state.collectAsStateWithLifecycle()
     val nearbyPeer by com.affilemanager.app.transfer.NearbyTransferController.connection.state.collectAsStateWithLifecycle()
+    val nearbyTransfer by com.affilemanager.app.transfer.NearbyTransferController.state.collectAsStateWithLifecycle()
     val incomingShare by viewModel.incomingShare.collectAsStateWithLifecycle()
     val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) left.path else right.path
-    val protocol = preferences.protocol
+    val visibility = LocalFeatureVisibility.current
+    val visibleProtocols = LanTransferProtocol.entries.filter { protocol -> visibility.isVisible(when (protocol) {
+        LanTransferProtocol.WEB -> OptionalFeature.WEB_SHARE
+        LanTransferProtocol.FTP -> OptionalFeature.FTP_SHARE
+        LanTransferProtocol.WEBDAV -> OptionalFeature.WEBDAV_SHARE
+    }) }
+    val serverActive = transfer.status in setOf(LanTransferStatus.RUNNING, LanTransferStatus.STARTING)
+    val protocol = if (serverActive) transfer.protocol else preferences.protocol.takeIf { it in visibleProtocols }
+        ?: visibleProtocols.firstOrNull() ?: preferences.protocol
     val sharedPath = preferences.pathFor(protocol)
     val duration = preferences.durationMinutes
     val portText = preferences.portText
@@ -136,7 +154,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             onSelect = { selected ->
                 viewModel.updateShareScreenPreferences {
                     pickerProtocol?.let { target -> it.withPathFor(target, selected) }
-                        ?: it.copy(nearbyReceivePath = selected)
+                        ?: it.withNearbyReceivePath(selected)
                 }
                 pickerStartPath = null
             },
@@ -156,15 +174,29 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+        if (visibility.isVisible(OptionalFeature.NEARBY_SHARE) || nearbyPeer != null || transfer.groupMode || incomingShare != null ||
+            nearbyTransfer.status in setOf(com.affilemanager.app.transfer.NearbyTransferStatus.STARTING, com.affilemanager.app.transfer.NearbyTransferStatus.RUNNING)) {
         item {
             NearbyPhoneTransferCard(
                 viewModel = viewModel,
                 receiveDirectory = preferences.nearbyReceivePath,
+                receiverAvatarUri = preferences.receiverAvatarUri,
+                onReceiverAvatarChange = { uri ->
+                    viewModel.updateShareScreenPreferences { it.copy(receiverAvatarUri = uri) }
+                },
+                receivePathHistory = preferences.nearbyPathHistory,
+                onReceivePathChange = { path ->
+                    viewModel.updateShareScreenPreferences { it.withNearbyReceivePath(path) }
+                },
                 lanState = transfer,
                 incomingShare = incomingShare,
                 onIncomingShareConsumed = viewModel::consumeIncomingShare,
                 onChooseReceiveDirectory = { pickerProtocol = null; pickerStartPath = preferences.nearbyReceivePath },
                 receiverName = preferences.receiverName,
+                groupName = preferences.groupName,
+                onGroupNameChange = { groupName ->
+                    viewModel.updateShareScreenPreferences { it.copy(groupName = groupName) }
+                },
                 onReceiverNameChange = { receiverName ->
                     viewModel.updateShareScreenPreferences { it.copy(receiverName = receiverName) }
                 },
@@ -174,16 +206,17 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 },
             )
         }
-        if (nearbyPeer == null) {
+        }
+        if (nearbyPeer == null && (running || visibleProtocols.isNotEmpty())) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                protocolChip("Web", LanTransferProtocol.WEB, protocol, !running) { selected ->
+                if (LanTransferProtocol.WEB in visibleProtocols || running && protocol == LanTransferProtocol.WEB) protocolChip("Web", LanTransferProtocol.WEB, protocol, !running) { selected ->
                     viewModel.updateShareScreenPreferences { it.copy(protocol = selected) }
                 }
-                protocolChip("FTP", LanTransferProtocol.FTP, protocol, !running) { selected ->
+                if (LanTransferProtocol.FTP in visibleProtocols || running && protocol == LanTransferProtocol.FTP) protocolChip("FTP", LanTransferProtocol.FTP, protocol, !running) { selected ->
                     viewModel.updateShareScreenPreferences { it.copy(protocol = selected) }
                 }
-                protocolChip("WebDAV", LanTransferProtocol.WEBDAV, protocol, !running) { selected ->
+                if (LanTransferProtocol.WEBDAV in visibleProtocols || running && protocol == LanTransferProtocol.WEBDAV) protocolChip("WebDAV", LanTransferProtocol.WEBDAV, protocol, !running) { selected ->
                     viewModel.updateShareScreenPreferences { it.copy(protocol = selected) }
                 }
             }
@@ -454,7 +487,15 @@ private fun SharedFolderPickerDialog(
     var loading by remember(initialPath) { mutableStateOf(true) }
     var error by remember(initialPath) { mutableStateOf<String?>(null) }
     var refreshToken by remember(initialPath) { mutableStateOf(0) }
+    var searchVisible by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var pickerMenu by remember { mutableStateOf(false) }
+    var reverseOrder by remember { mutableStateOf(false) }
     val currentPath = navigation.currentPath
+    val visibleDirectories = remember(directories, searchQuery, reverseOrder) {
+        val filtered = directories.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
+        if (reverseOrder) filtered.asReversed() else filtered
+    }
 
     LaunchedEffect(currentPath, refreshToken) {
         loading = true
@@ -493,29 +534,41 @@ private fun SharedFolderPickerDialog(
             }
         },
     ) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                val parent = File(currentPath).parentFile?.absolutePath
+                if (featureVisible(OptionalFeature.TOOLBAR_UP)) IconButton(onClick = { parent?.let { navigation = navigation.navigateTo(it) } },
+                    enabled = parent != null && !loading, modifier = Modifier.testTag("share_folder_up")) {
+                    Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
+                }
+                Text(currentPath, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (searchVisible || featureVisible(OptionalFeature.TOOLBAR_SEARCH)) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) searchQuery = "" },
+                    modifier = Modifier.testTag("share_folder_search_toggle")) {
+                    Icon(Icons.Rounded.Search, contentDescription = uiText(if (searchVisible) "Slėpti paiešką" else "Ieškoti"))
+                }
+                Box {
+                    IconButton(onClick = { pickerMenu = true }, modifier = Modifier.testTag("share_folder_more")) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
+                    }
+                    DropdownMenu(expanded = pickerMenu, onDismissRequest = { pickerMenu = false }) {
+                        DropdownMenuItem(text = { LText(if (reverseOrder) "Pavadinimas A–Z" else "Pavadinimas Z–A") },
+                            onClick = { reverseOrder = !reverseOrder; pickerMenu = false })
+                    }
+                }
+            }
+            if (searchVisible) OutlinedTextField(value = searchQuery, onValueChange = { searchQuery = it.take(200) },
+                label = { LText("Ieškoti šiame sąraše") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("share_folder_search"))
             AfPullToRefresh(
                 isRefreshing = loading,
                 onRefresh = { refreshToken += 1 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 testTag = "pull_to_refresh_share_folder_picker",
             ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp).testTag("share_folder_picker"),
+                modifier = Modifier.fillMaxSize().testTag("share_folder_picker"),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                item {
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        val parent = File(currentPath).parentFile?.absolutePath
-                        IconButton(
-                            onClick = { parent?.let { navigation = navigation.navigateTo(it) } },
-                            enabled = parent != null && !loading,
-                            modifier = Modifier.testTag("share_folder_up"),
-                        ) {
-                            Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
-                        }
-                        Text(currentPath, modifier = Modifier.weight(1f).padding(top = 12.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                }
                 if (loading) {
                     item {
                         Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.Center) {
@@ -524,10 +577,10 @@ private fun SharedFolderPickerDialog(
                     }
                 } else if (error != null) {
                     item { LText(error.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(10.dp)) }
-                } else if (directories.isEmpty()) {
+                } else if (visibleDirectories.isEmpty()) {
                     item { LText("Šiame aplanke nėra kitų aplankų", modifier = Modifier.padding(10.dp)) }
                 }
-                items(directories, key = FileEntry::absolutePath) { directory ->
+                items(visibleDirectories, key = FileEntry::absolutePath) { directory ->
                     OutlinedButton(
                         onClick = { navigation = navigation.navigateTo(directory.absolutePath) },
                         enabled = !loading,
@@ -540,6 +593,7 @@ private fun SharedFolderPickerDialog(
                 }
             }
             }
+        }
     }
 }
 

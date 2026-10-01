@@ -33,6 +33,7 @@ class UiPreferenceRulesTest {
                 portText = "80x80",
                 username = " user\nname ",
                 receiverName = "\u0000My phone\n",
+                groupName = " Group\nname ",
             ),
             defaultPath = "/storage/emulated/0",
             defaultReceiverName = "Android phone",
@@ -44,6 +45,7 @@ class UiPreferenceRulesTest {
         assertEquals("8080", normalized.portText)
         assertEquals("username", normalized.username)
         assertEquals("My phone", normalized.receiverName)
+        assertEquals("Groupname", normalized.groupName)
         assertFalse(ShareScreenPreferences::class.java.declaredFields.any { it.name.contains("password", ignoreCase = true) })
         assertFalse(ShareScreenPreferences::class.java.declaredFields.any { it.name.contains("code", ignoreCase = true) })
     }

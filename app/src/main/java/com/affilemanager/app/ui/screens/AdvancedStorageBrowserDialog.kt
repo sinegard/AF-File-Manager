@@ -34,6 +34,8 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Terminal
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.ui.components.featureVisible
 import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
@@ -196,7 +198,7 @@ fun AdvancedStorageBrowserDialog(
                                 onOpenFilter = { showEntryFilter = true },
                             )
                             HorizontalDivider()
-                            DropdownMenuItem(
+                            if (featureVisible(OptionalFeature.TERMINAL)) DropdownMenuItem(
                                 text = { LText("Atidaryti terminalą šiame aplanke") },
                                 leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
                                 enabled = state.path.isNotBlank() && !state.loading,

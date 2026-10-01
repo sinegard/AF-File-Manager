@@ -483,8 +483,13 @@ class MainActivityTest {
     fun analysisOffersMountedStorageSelectionWithoutDisconnectedPlaceholders() {
         compose.onNodeWithText("Analyze").performClick()
 
-        compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_all_storage"))
-        compose.onNodeWithTag("analyze_all_storage").assertIsDisplayed()
+        val roots = ViewModelProvider(compose.activity)[MainViewModel::class.java].roots.value
+        if (roots.any { it.removable }) {
+            compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("analyze_all_storage"))
+            compose.onNodeWithTag("analyze_all_storage").assertIsDisplayed()
+        } else {
+            assertTrue(compose.onAllNodesWithTag("analyze_all_storage").fetchSemanticsNodes().isEmpty())
+        }
         assertTrue(compose.onAllNodesWithTag("analyze_storage_sd_absent").fetchSemanticsNodes().isEmpty())
         assertTrue(compose.onAllNodesWithTag("analyze_storage_usb_absent").fetchSemanticsNodes().isEmpty())
         compose.onNodeWithTag("analyze_list").performScrollToNode(hasTestTag("search_scope_selected"))

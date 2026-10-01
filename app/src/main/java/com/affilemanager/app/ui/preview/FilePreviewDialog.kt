@@ -692,13 +692,14 @@ fun FilePreviewDialog(
             target is PreviewTarget.ContentFile ||
             target is PreviewTarget.RemoteFile ||
             target is PreviewTarget.RemoteArchive ||
-            target is PreviewTarget.PrivilegedFile
+            (target is PreviewTarget.PrivilegedFile && !target.localOrigin)
         val explanation = when (target) {
             is PreviewTarget.ContentFile -> "Elementas bus trinamas per Android dokumentų teikėją ir nepateks į AF File Manager šiukšlinę."
             is PreviewTarget.RemoteFile,
             is PreviewTarget.RemoteArchive,
             -> "Elementai bus ištrinti nuotoliniame serveryje be vietinės šiukšlinės."
-            is PreviewTarget.PrivilegedFile -> "Šių apsaugotų failų nebus galima atkurti iš AF File Manager šiukšlinės."
+            is PreviewTarget.PrivilegedFile -> if (target.localOrigin) "Elementus bus galima atkurti iš AF File Manager šiukšlinės."
+                else "Šių apsaugotų failų nebus galima atkurti iš AF File Manager šiukšlinės."
             is PreviewTarget.TrashFile -> "Elemento nebebus galima atkurti iš programos šiukšliadėžės."
             else -> "Elementus bus galima atkurti iš AF File Manager šiukšlinės."
         }
@@ -1554,9 +1555,13 @@ private fun MediaPreview(
             if (info == null) {
                 PreviewLoadError(requireNotNull(loaded.exceptionOrNull()))
             } else if (source.kind == EntryKind.AUDIO) {
+                androidx.compose.runtime.key(source.key) {
                 AudioPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, onMinimizeMedia, backgroundPlaylist)
+                }
             } else {
+                androidx.compose.runtime.key(source.key) {
                 VideoPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, backgroundPlaylist)
+                }
             }
         }
     }
@@ -1574,7 +1579,7 @@ private fun AudioPreview(
 ) {
     val context = LocalContext.current
     val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
-    val sourceUri = remember(source.key) { source.uri(context).toString() }
+    val sourceUri = remember(source.key) { runCatching { source.uri(context).toString() }.getOrNull() }
     val playingInBackground = background?.let { it.active && it.uri == sourceUri } == true
     var player by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
@@ -1610,15 +1615,18 @@ private fun AudioPreview(
     }
 
     DisposableEffect(source.key) {
-        val created = MediaPlayer()
-        player = created
+        var owned: MediaPlayer? = null
+        var disposed = false
         runCatching {
+            val created = MediaPlayer().also { owned = it; player = it }
             setMediaDataSource(created, context, source)
             created.isLooping = true
             created.setOnPreparedListener { ready ->
-                durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
-                prepared = true
-                playbackError = false
+                if (!disposed && player === ready) runCatching {
+                    durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
+                    prepared = true
+                    playbackError = false
+                }.onFailure { prepared = false; playbackError = true }
             }
             created.setOnCompletionListener {
                 playing = false
@@ -1633,8 +1641,13 @@ private fun AudioPreview(
             created.prepareAsync()
         }.onFailure { playbackError = true }
         onDispose {
-            runCatching { created.stop() }
-            created.release()
+            disposed = true
+            player = null
+            owned?.let { created ->
+                runCatching { created.setOnPreparedListener(null); created.setOnCompletionListener(null); created.setOnErrorListener(null) }
+                runCatching { created.stop() }
+                runCatching { created.release() }
+            }
         }
     }
     LaunchedEffect(player, prepared, loopEnabled, volume) {
@@ -1717,6 +1730,7 @@ private fun AudioPreview(
             onNext = onNextMedia,
             onToggle = {
                 player?.let { active ->
+                    runCatching {
                     if (playing) active.pause() else {
                         if (background?.active == true) BackgroundPlaybackService.stop(context)
                         if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
@@ -1724,11 +1738,12 @@ private fun AudioPreview(
                         active.start()
                     }
                     playing = active.isPlaying
+                    }.onFailure { prepared = false; playing = false; playbackError = true }
                 }
             },
             onSeek = { requested ->
                 positionMillis = requested
-                player?.seekTo(requested.toInt())
+                runCatching { player?.seekTo(requested.toInt()) }.onFailure { playbackError = true }
             },
             onLoopChanged = { loopEnabled = it },
             onSpeedChanged = { requested ->
@@ -1757,7 +1772,7 @@ private fun VideoPreview(
 ) {
     val context = LocalContext.current
     val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
-    val sourceUri = remember(source.key) { source.uri(context).toString() }
+    val sourceUri = remember(source.key) { runCatching { source.uri(context).toString() }.getOrNull() }
     val playingInBackground = background?.let { it.active && it.uri == sourceUri } == true
     var videoView by remember(source.key) { mutableStateOf<VideoView?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
@@ -1783,7 +1798,11 @@ private fun VideoPreview(
     DisposableEffect(source.key) {
         onDispose {
             preparedPlayer = null
-            runCatching { videoView?.stopPlayback() }
+            videoView?.let { view ->
+                runCatching { view.setOnPreparedListener(null); view.setOnCompletionListener(null); view.setOnErrorListener(null) }
+                runCatching { view.stopPlayback() }
+            }
+            videoView = null
         }
     }
     LaunchedEffect(preparedPlayer, loopEnabled, volume) {
@@ -1824,6 +1843,8 @@ private fun VideoPreview(
                     VideoView(viewContext).apply {
                         videoView = this
                         setOnPreparedListener { ready ->
+                            if (videoView !== this) return@setOnPreparedListener
+                            runCatching {
                             preparedPlayer = ready
                             ready.isLooping = loopEnabled
                             ready.setVolume(volume, volume)
@@ -1831,6 +1852,7 @@ private fun VideoPreview(
                             prepared = true
                             playbackError = false
                             seekTo(1)
+                            }.onFailure { prepared = false; playbackError = true }
                         }
                         setOnCompletionListener {
                             playing = false
@@ -1845,7 +1867,7 @@ private fun VideoPreview(
                         // Always let ContentResolver open the source. Passing an app-private
                         // cache path to the platform media process can fail on OEM builds,
                         // especially for files staged through Shizuku or root access.
-                        setVideoURI(source.uri(context))
+                        runCatching { setVideoURI(source.uri(context)) }.onFailure { playbackError = true }
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -1871,6 +1893,7 @@ private fun VideoPreview(
             onNext = onNextMedia,
             onToggle = {
                 videoView?.let { active ->
+                    runCatching {
                     if (playing) active.pause() else {
                         if (background?.active == true) BackgroundPlaybackService.stop(context)
                         if (positionMillis >= durationMillis && durationMillis > 0L) active.seekTo(0)
@@ -1880,11 +1903,12 @@ private fun VideoPreview(
                         active.start()
                     }
                     playing = active.isPlaying
+                    }.onFailure { prepared = false; playing = false; playbackError = true }
                 }
             },
             onSeek = { requested ->
                 positionMillis = requested
-                videoView?.seekTo(requested.toInt())
+                runCatching { videoView?.seekTo(requested.toInt()) }.onFailure { playbackError = true }
             },
             onLoopChanged = { loopEnabled = it },
             onSpeedChanged = { requested ->
@@ -2666,6 +2690,7 @@ private fun ArchivePreview(
                 OutlinedTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
+                    modifier = Modifier.fillMaxWidth(),
                     label = { LText("Naujas pavadinimas") },
                     singleLine = true,
                 )

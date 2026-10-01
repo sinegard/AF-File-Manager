@@ -122,7 +122,7 @@ internal sealed interface PreviewSource {
         val entry: FileEntry,
         val cachedFile: File,
     ) : PreviewSource {
-        override val key: String = "privileged|${entry.absolutePath}|${entry.modifiedAtMillis}|${entry.sizeBytes}"
+        override val key: String = "privileged|${entry.absolutePath}|${entry.modifiedAtMillis}|${entry.sizeBytes}|${cachedFile.absolutePath}"
         override val name: String = entry.name
         override val kind: EntryKind = entry.kind
         override val extension: String = entry.extension

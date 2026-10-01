@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderSpecial
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Pause
@@ -38,6 +39,8 @@ import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ExpandLess
 import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
@@ -60,6 +63,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.affilemanager.app.data.OptionalFeature
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -113,6 +118,11 @@ fun ToolsScreen(
     val syncSchedules by viewModel.syncSchedules.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val appearanceSettings by viewModel.appearanceSettings.collectAsStateWithLifecycle()
+    val featureVisibility by viewModel.featureVisibility.collectAsStateWithLifecycle()
+    var expandedSections by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    fun toggleSection(id: String) {
+        expandedSections = if (id in expandedSections) expandedSections - id else expandedSections + id
+    }
     val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
     val afClipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
     val active = viewModel.activePanelState()
@@ -142,7 +152,8 @@ fun ToolsScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-
+        item { SettingsSectionHeader("Išvaizda", "appearance", "appearance" in expandedSections) { toggleSection("appearance") } }
+        if ("appearance" in expandedSections) {
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -196,7 +207,14 @@ fun ToolsScreen(
                 onInterfaceScale = viewModel::setInterfaceScalePercent,
             )
         }
+        item {
+            FeatureVisibilitySettings(featureVisibility, viewModel::setFeatureVisible, viewModel::resetFeatureVisibility)
+        }
+        }
 
+        item { SettingsSectionHeader("Operacijų centras", "actions", "actions" in expandedSections) { toggleSection("actions") } }
+        if ("actions" in expandedSections) {
+        if (featureVisibility.isVisible(OptionalFeature.PLANS)) {
         item {
             Card(
                 onClick = { viewModel.openAfWorkflowCenter() },
@@ -225,6 +243,7 @@ fun ToolsScreen(
             }
         }
 
+        }
         item { SectionHeader("Operacijų centras", operations.size.toString()) }
         if (operations.isEmpty()) {
             item { InfoCard("Nėra operacijų", "Kopijavimas, archyvavimas ir tinklo perdavimai bus rodomi čia.", Icons.Rounded.CheckCircle) }
@@ -272,6 +291,7 @@ fun ToolsScreen(
             }
         }
 
+        if (featureVisibility.isVisible(OptionalFeature.CLOUD)) {
         item { SectionHeader("Pasirinktos ir debesijos vietos", safLocations.size.toString()) }
         item {
             FilledTonalButton(onClick = onAddSafLocation) {
@@ -306,20 +326,11 @@ fun ToolsScreen(
             }
         }
 
-        item { SectionHeader("Programos užraktas", if (appLockEnabled) "Įjungtas" else "Išjungtas") }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
-                Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Fingerprint, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
-                    Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        LText("Biometrinis arba įrenginio užraktas", fontWeight = FontWeight.SemiBold)
-                        LText("Grįžus iš fono failų langas bus užrakintas. Keitimą patvirtina Android.", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Switch(checked = appLockEnabled, onCheckedChange = onToggleAppLock)
-                }
-            }
         }
 
+        }
+        item { SettingsSectionHeader("Fono procesai", "background", "background" in expandedSections) { toggleSection("background") } }
+        if ("background" in expandedSections) {
         item { SectionHeader("Fono sinchronizavimas", syncSchedules.size.toString()) }
         if (syncSchedules.isEmpty()) {
             item { InfoCard("Tvarkaraščių nėra", "Prisijunkite skiltyje „Ryšiai“, atidarykite sinchronizavimą ir pasirinkite intervalą.", Icons.Rounded.Sync) }
@@ -345,6 +356,31 @@ fun ToolsScreen(
             }
         }
 
+        item { SectionHeader("Programos atnaujinimas", BuildConfig.VERSION_NAME.removeSuffix("-debug")) }
+        item {
+            AppUpdateCard(
+                state = updateState, onCheck = viewModel::checkForUpdates,
+                onDownload = viewModel::downloadUpdate, onInstall = viewModel::installUpdate,
+            )
+        }
+        }
+
+        item { SettingsSectionHeader("Privatumas", "privacy", "privacy" in expandedSections) { toggleSection("privacy") } }
+        if ("privacy" in expandedSections) {
+        item { SectionHeader("Programos užraktas", if (appLockEnabled) "Įjungtas" else "Išjungtas") }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
+                Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Fingerprint, contentDescription = null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.primary)
+                    Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        LText("Biometrinis arba įrenginio užraktas", fontWeight = FontWeight.SemiBold)
+                        LText("Grįžus iš fono failų langas bus užrakintas. Keitimą patvirtina Android.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = appLockEnabled, onCheckedChange = onToggleAppLock)
+                }
+            }
+        }
+        if (featureVisibility.isVisible(OptionalFeature.ENCRYPTION)) {
         item { SectionHeader("Šifruota saugykla", if (selectedEntry == null) "Pasirinkite failą" else "1 failas") }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
@@ -364,18 +400,31 @@ fun ToolsScreen(
             }
         }
 
+        }
+        if (featureVisibility.isVisible(OptionalFeature.ADVANCED_ACCESS) || advancedAccess.connected) {
         item { SectionHeader("Pažengusio naudotojo režimas", "Neprivalomas") }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     LText("Apsaugotų Android aplankų prieiga", fontWeight = FontWeight.SemiBold)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        AdvancedAccessMode.entries.forEach { mode ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        listOf(AdvancedAccessMode.OFF, AdvancedAccessMode.AUTO).forEach { mode ->
                             FilterChip(
                                 selected = advancedAccess.selectedMode == mode,
                                 onClick = { viewModel.setAdvancedAccessMode(mode) },
                                 label = { LText(advancedModeLabel(mode)) },
                                 modifier = Modifier.testTag("advanced_mode_${mode.name.lowercase()}"),
+                            )
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(AdvancedAccessMode.SHIZUKU, AdvancedAccessMode.ROOT).forEach { mode ->
+                            FilterChip(
+                                selected = advancedAccess.selectedMode == mode,
+                                onClick = { viewModel.setAdvancedAccessMode(mode) },
+                                label = { LText(advancedModeLabel(mode), maxLines = 1) },
+                                leadingIcon = { Icon(if (mode == AdvancedAccessMode.SHIZUKU) Icons.Rounded.Security else Icons.Rounded.Terminal, contentDescription = null) },
+                                modifier = Modifier.weight(1f).testTag("advanced_mode_${mode.name.lowercase()}"),
                             )
                         }
                     }
@@ -392,7 +441,7 @@ fun ToolsScreen(
                     advancedAccess.androidDataAccessible?.let { accessible ->
                         StatusLine("Android/data", if (accessible) "Pasiekiamas" else "Nepasiekiamas šiuo režimu")
                     }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!advancedAccess.connected) Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = viewModel::requestShizukuAccess,
                             enabled = !advancedAccess.connecting,
@@ -410,13 +459,17 @@ fun ToolsScreen(
                             enabled = advancedAccess.rootPermission != CapabilityState.UNAVAILABLE && !advancedAccess.connecting,
                         ) { LText("Jungtis per root") }
                     }
-                    Button(
-                        onClick = viewModel::openAdvancedBrowser,
-                        enabled = advancedAccess.connected && !advancedAccess.connecting,
-                        modifier = Modifier.testTag("open_android_data"),
-                    ) {
-                        Icon(Icons.Rounded.FolderSpecial, contentDescription = null)
-                        LText("Atidaryti Android/data", modifier = Modifier.padding(start = 6.dp))
+                    if (advancedAccess.connected) {
+                        listOf("data", "obb").forEach { folder ->
+                            Button(
+                                onClick = { viewModel.openAdvancedBrowser("${android.os.Environment.getExternalStorageDirectory().absolutePath}/Android/$folder") },
+                                enabled = !advancedAccess.connecting,
+                                modifier = Modifier.fillMaxWidth().testTag("open_android_$folder"),
+                            ) {
+                                Icon(Icons.Rounded.FolderSpecial, contentDescription = null)
+                                LText(if (folder == "data") "Atidaryti Android/data" else "Atidaryti Android/obb", modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
                     }
                     if (advancedAccess.connecting) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     advancedAccess.error?.let { LText(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -428,14 +481,6 @@ fun ToolsScreen(
             }
         }
 
-        item { SectionHeader("Programos atnaujinimas", BuildConfig.VERSION_NAME.removeSuffix("-debug")) }
-        item {
-            AppUpdateCard(
-                state = updateState,
-                onCheck = viewModel::checkForUpdates,
-                onDownload = viewModel::downloadUpdate,
-                onInstall = viewModel::installUpdate,
-            )
         }
 
         item { SectionHeader("Privatumas", "Be reklamų") }
@@ -445,6 +490,7 @@ fun ToolsScreen(
                 "Prisijungimų paslaptys šifruojamos Android Keystore. Analitika ir reklamos SDK nepridėti.",
                 Icons.Rounded.Security,
             )
+        }
         }
         }
     }
@@ -493,6 +539,39 @@ fun ToolsScreen(
                 showEncrypt = false
             },
         )
+    }
+}
+
+@Composable
+internal fun SettingsSectionHeader(title: String, id: String, expanded: Boolean, onToggle: () -> Unit) {
+    Card(onClick = onToggle, modifier = Modifier.fillMaxWidth().testTag("settings_section_$id")) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            LText(title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = uiText(if (expanded) "Sutraukti" else "Išskleisti"))
+        }
+    }
+}
+
+@Composable
+internal fun FeatureVisibilitySettings(
+    settings: com.affilemanager.app.data.FeatureVisibility,
+    onVisibility: (OptionalFeature, Boolean) -> Unit,
+    onReset: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth().testTag("feature_visibility_settings")) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            LText("Matomos funkcijos", fontWeight = FontWeight.Bold)
+            LText("Paslėpimas nekeičia failų ar nustatymų ir nestabdo vykstančių užduočių.", style = MaterialTheme.typography.bodySmall)
+            OptionalFeature.entries.forEach { feature ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    LText(feature.label, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                    Switch(checked = settings.isVisible(feature), onCheckedChange = { onVisibility(feature, it) },
+                        modifier = Modifier.testTag("feature_${feature.name.lowercase()}"))
+                }
+            }
+            TextButton(onClick = onReset, modifier = Modifier.testTag("feature_visibility_reset")) { LText("Atkurti numatytąsias") }
+        }
     }
 }
 

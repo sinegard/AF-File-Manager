@@ -164,6 +164,8 @@ import com.affilemanager.app.data.RecentItem
 import com.affilemanager.app.data.RecentFileItem
 import com.affilemanager.app.data.TaggedFileRecord
 import com.affilemanager.app.data.HomeCustomization
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.ui.components.featureVisible
 import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
@@ -274,6 +276,7 @@ fun FilesScreen(
     val advancedAccess by viewModel.advancedAccess.collectAsStateWithLifecycle()
     val fileCategory by viewModel.fileCategory.collectAsStateWithLifecycle()
     val safLocations by viewModel.safLocations.collectAsStateWithLifecycle()
+    val networkState by viewModel.networkState.collectAsStateWithLifecycle()
 
     var createFor by remember { mutableStateOf<PanelId?>(null) }
     var renameTarget by remember { mutableStateOf<Pair<PanelId, FileEntry>?>(null) }
@@ -454,6 +457,10 @@ fun FilesScreen(
                     onRemoveSafLocation = viewModel::removeSafLocation,
                     onOpenSystemFiles = onOpenSystemFiles,
                     onCustomizeHome = { showHomeCustomization = true },
+                    cloudProfiles = networkState.profiles.filter { it.provider == com.affilemanager.app.network.NetworkProvider.NEXTCLOUD },
+                    onOpenCloudProfile = viewModel::openCloudProfile,
+                    onEditCloudProfile = viewModel::openNetworkProfileEditor,
+                    onRemoveCloudProfile = viewModel::removeNetworkProfile,
                 )
             } else if (dualPane) {
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -1030,7 +1037,7 @@ private fun FilePanel(
                             Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                         }
                     }
-                    IconButton(
+                    if (featureVisible(OptionalFeature.FAVORITES)) IconButton(
                         onClick = { viewModel.addSelectionToFavorites(panelId) },
                         modifier = Modifier.testTag("selection_favorite_local"),
                     ) {
@@ -1062,7 +1069,7 @@ private fun FilePanel(
                     IconButton(onClick = onCopyToOther) {
                         Icon(Icons.AutoMirrored.Rounded.CompareArrows, contentDescription = uiText("Kopijuoti į kitą skydelį"))
                     }
-                    IconButton(onClick = {
+                    if (state.selectedPaths.size == 1 || featureVisible(OptionalFeature.BATCH_RENAME)) IconButton(onClick = {
                         val selectedEntries = state.entries.filter { it.absolutePath in state.selectedPaths }
                         if (selectedEntries.size == 1) selectedEntries.firstOrNull()?.let(onRename)
                         else viewModel.beginBatchRename(selectedEntries.map(FileEntry::absolutePath))
@@ -1074,14 +1081,14 @@ private fun FilePanel(
                     }
                     IconButton(onClick = onArchive) { Icon(Icons.Rounded.Archive, contentDescription = uiText("Archyvuoti")) }
                     val selectedEntries = state.entries.filter { it.absolutePath in state.selectedPaths }
-                    IconButton(
+                    if (featureVisible(OptionalFeature.ANALYSIS)) IconButton(
                         onClick = { viewModel.analyzeEntries(selectedEntries.map(FileEntry::absolutePath)) },
                         enabled = selectedEntries.isNotEmpty(),
                         modifier = Modifier.testTag("analyze_selection_local"),
                     ) {
                         Icon(Icons.Rounded.Analytics, contentDescription = uiText("Analizuoti pasirinktus"))
                     }
-                    IconButton(onClick = onTag) { Icon(Icons.AutoMirrored.Rounded.Label, contentDescription = uiText("Žymos ir įvertinimas")) }
+                    if (featureVisible(OptionalFeature.TAGS)) IconButton(onClick = onTag) { Icon(Icons.AutoMirrored.Rounded.Label, contentDescription = uiText("Žymos ir įvertinimas")) }
                     IconButton(onClick = onTrash) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error)
                     }
@@ -1163,7 +1170,7 @@ private fun CompactPanelActions(
                     leadingIcon = { Icon(Icons.Rounded.ContentPaste, contentDescription = null) },
                     onClick = { onExpandedChange(false); onPaste() },
                 )
-                DropdownMenuItem(
+                if (featureVisible(OptionalFeature.PLANS)) DropdownMenuItem(
                     text = { LText("Įklijuoti į kelias vietas") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
                     onClick = {
@@ -1180,14 +1187,14 @@ private fun CompactPanelActions(
                     onClick = { onExpandedChange(false); onUndoBatchRename() },
                 )
             }
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.FAVORITES)) DropdownMenuItem(
                 text = { LText(if (state.path in favorites) "Pašalinti iš mėgstamų" else "Pridėti prie mėgstamų") },
                 leadingIcon = {
                     Icon(if (state.path in favorites) Icons.Rounded.Star else Icons.Rounded.StarBorder, contentDescription = null)
                 },
                 onClick = { viewModel.toggleFavorite(state.path); onExpandedChange(false) },
             )
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.FAVORITES)) DropdownMenuItem(
                 text = {
                     Column {
                         LText("Mėgstami")
@@ -1202,7 +1209,7 @@ private fun CompactPanelActions(
                 modifier = Modifier.testTag("open_favorites_$panelId"),
                 onClick = { onExpandedChange(false); onShowFavorites() },
             )
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.RECENT)) DropdownMenuItem(
                 text = { LText("Peržiūrų istorija") },
                 leadingIcon = { Icon(Icons.Rounded.History, contentDescription = null) },
                 onClick = { onExpandedChange(false); onShowViewingHistory() },
@@ -1235,7 +1242,7 @@ private fun CompactPanelActions(
                 onOpenFilter = onOpenFilter,
             )
             HorizontalDivider()
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.TERMINAL)) DropdownMenuItem(
                 text = { LText("Atidaryti terminalą šiame aplanke") },
                 leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
                 onClick = { viewModel.openLocalTerminal(panelId); onExpandedChange(false) },
@@ -1359,7 +1366,7 @@ private fun PanelTabsBar(
                     leadingIcon = { Icon(Icons.Rounded.SwapHoriz, contentDescription = null) },
                     onClick = { onBeforeTabAction(); viewModel.swapPanels(); menu = false },
                 )
-                DropdownMenuItem(
+                if (featureVisible(OptionalFeature.COMPARE)) DropdownMenuItem(
                     text = { LText("Palyginti skydelių aplankus") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.CompareArrows, contentDescription = null) },
                     onClick = { onBeforeTabAction(); viewModel.comparePanels(); menu = false },
@@ -2104,7 +2111,7 @@ private fun EntryActionsButton(
                 enabled = entry.isReadable,
                 modifier = Modifier.testTag("archive_entry_action"),
             )
-            if (entry.isDirectory) {
+            if (entry.isDirectory && featureVisible(OptionalFeature.ANALYSIS)) {
                 DropdownMenuItem(
                     text = { LText("Analizuoti dabartinį aplanką") },
                     leadingIcon = { Icon(Icons.Rounded.Analytics, contentDescription = null) },
@@ -2124,13 +2131,13 @@ private fun EntryActionsButton(
                 leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
                 onClick = { expanded = false; onInfo() },
             )
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.TAGS)) DropdownMenuItem(
                 text = { LText("Žymos ir įvertinimas") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Label, contentDescription = null) },
                 onClick = { expanded = false; onTag() },
                 modifier = Modifier.testTag("tag_entry_action"),
             )
-            DropdownMenuItem(
+            if (featureVisible(OptionalFeature.FAVORITES)) DropdownMenuItem(
                 text = { LText(if (favorite) "Pašalinti iš mėgstamų" else "Pridėti prie mėgstamų") },
                 leadingIcon = {
                     Icon(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, contentDescription = null)

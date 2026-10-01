@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Environment
+import android.os.Build
 import android.system.Os
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
@@ -34,7 +35,10 @@ class FilePickerActivityTest {
     private var oldLock = false
 
     @Before fun createFixture() {
-        check(Environment.isExternalStorageManager()) { "Grant all-files access only on the isolated test emulator before this suite" }
+        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager()
+            else app.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
+                app.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        check(storageGranted) { "Grant storage access only on the isolated test emulator before this suite" }
         fixture = File(root, "Download/af-picker-145-${UUID.randomUUID()}").apply { check(mkdirs()) }
         File(fixture, "first.txt").writeText("first picker fixture")
         File(fixture, "second.txt").writeText("second picker fixture")
@@ -68,13 +72,33 @@ class FilePickerActivityTest {
         } finally { symlinkRoot.deleteRecursively() }
     }
 
+    @Test fun externalPickerWindowLeavesItsCallerVisibleAroundTheDialog() {
+        ActivityScenario.launchActivityForResult<FilePickerActivity>(request(false)).use { scenario ->
+            scenario.onActivity { activity ->
+                val attributes = activity.theme.obtainStyledAttributes(intArrayOf(
+                    android.R.attr.windowIsTranslucent,
+                    android.R.attr.windowBackground,
+                    android.R.attr.backgroundDimEnabled,
+                ))
+                try {
+                    assertTrue(attributes.getBoolean(0, false))
+                    assertEquals(android.R.color.transparent, attributes.getResourceId(1, 0))
+                    assertFalse(attributes.getBoolean(2, true))
+                } finally { attributes.recycle() }
+            }
+            compose.onNodeWithTag("local_upload_dialog").assertIsDisplayed()
+            compose.onNodeWithText("Cancel").performClick()
+            assertEquals(Activity.RESULT_CANCELED, scenario.result.resultCode)
+        }
+    }
+
     @Test fun multipleSelectionFiltersTypesKeepsFolderNavigationAndReturnsReadOnlyUris() {
         ActivityScenario.launchActivityForResult<FilePickerActivity>(request(multiple = true)).use { scenario ->
             openFixture()
             compose.onNodeWithText("excluded.png").assertDoesNotExist()
             clickEntry(File(fixture, "first.txt").path)
             clickEntry(File(fixture, "folder").path) // folders still navigate when files are selected
-            compose.onNodeWithTag("local_upload_up").performScrollTo().performClick()
+            compose.onNodeWithTag("local_upload_up").performClick()
             clickEntry(File(fixture, "second.txt").path)
             capture("picker-multiple")
             compose.onNodeWithText("Select (2)").performClick()
@@ -137,7 +161,7 @@ class FilePickerActivityTest {
             clickEntry(File(fixture, "second.txt").path)
             File(fixture, "second.txt").delete()
             compose.onNodeWithText("Select (2)").performClick()
-            compose.onNodeWithText("Selected files are unavailable or do not match the requested type").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Selected files are unavailable or do not match the requested type").assertIsDisplayed()
             compose.onNodeWithText("Cancel").performClick()
             assertEquals(Activity.RESULT_CANCELED, it.result.resultCode)
         }

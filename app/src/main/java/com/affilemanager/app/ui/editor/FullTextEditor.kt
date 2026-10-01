@@ -293,6 +293,7 @@ fun FullTextEditor(
             text = {
                 OutlinedTextField(
                     value = goToLineText,
+                    modifier = Modifier.fillMaxWidth(),
                     onValueChange = { value -> goToLineText = value.filter(Char::isDigit).take(9) },
                     label = { LText("Eilutė") },
                     singleLine = true,

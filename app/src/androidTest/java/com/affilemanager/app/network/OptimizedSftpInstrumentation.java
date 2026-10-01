@@ -36,6 +36,9 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
             } else if ("background-playback".equals(suite)) {
                 launchTargetActivity();
                 verified = BackgroundPlaybackRuntimeVerifier.verify(this);
+            } else if ("protected-media".equals(suite)) {
+                launchTargetActivity();
+                verified = com.affilemanager.app.media.ProtectedMediaRuntimeVerifier.verify(this);
             } else if ("webdav".equals(suite)) {
                 password = required("afWebDavPassword").toCharArray();
                 verified = WebDavRuntimeVerifier.verify(

@@ -151,12 +151,17 @@ import com.affilemanager.app.advanced.AdvancedAccessBackend
 import com.affilemanager.app.archive.ArchiveFormat
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.RecentViewPreferences
+import com.affilemanager.app.data.UiPreferenceRepository
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
 import com.affilemanager.app.data.FileTagDefinition
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.HomeCustomization
 import com.affilemanager.app.data.HomeCustomizationRules
+import com.affilemanager.app.network.NetworkProfile
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.ui.components.featureVisible
 import com.affilemanager.app.data.HomeDisplayArea
 import com.affilemanager.app.data.HomeSection
 import com.affilemanager.app.data.HomeShortcut
@@ -576,6 +581,10 @@ internal fun FilesHome(
     onRemoveSafLocation: (String) -> Unit,
     onOpenSystemFiles: () -> Unit,
     onCustomizeHome: () -> Unit,
+    cloudProfiles: List<NetworkProfile> = emptyList(),
+    onOpenCloudProfile: (NetworkProfile) -> Unit = {},
+    onEditCloudProfile: (NetworkProfile) -> Unit = {},
+    onRemoveCloudProfile: (String) -> Unit = {},
 ) {
     fun asLocation(shortcut: HomeShortcut) =
         QuickLocation(
@@ -598,6 +607,8 @@ internal fun FilesHome(
     var showCloudLocations by remember { mutableStateOf(false) }
     var editCloudLocation by remember { mutableStateOf<SafLocation?>(null) }
     var removeCloudLocation by remember { mutableStateOf<SafLocation?>(null) }
+    var removeCloudProfile by remember { mutableStateOf<NetworkProfile?>(null) }
+    val visibility = com.affilemanager.app.ui.components.LocalFeatureVisibility.current
     var showBookmarks by remember { mutableStateOf(false) }
     val bookmarks = remember(customization.shortcuts) { customization.shortcuts.filter { !it.builtIn } }
     Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -644,7 +655,7 @@ internal fun FilesHome(
                 ) {
             customization.sectionOrder.filterNot(customization.hiddenSections::contains).forEach { section ->
                 when (section) {
-                    HomeSection.RECENT_FILES -> RecentFilesHomeSection(
+                    HomeSection.RECENT_FILES -> if (visibility.isVisible(OptionalFeature.RECENT)) RecentFilesHomeSection(
                         recentFiles = recentFiles,
                         loading = recentFilesLoading,
                         error = recentFilesError,
@@ -669,7 +680,7 @@ internal fun FilesHome(
                         trashCount = trashCount,
                         favoritesCount = favorites.count { File(it).exists() },
                         tagsCount = tagSnapshot.definitions.size,
-                        cloudCount = safLocations.size,
+                        cloudCount = safLocations.size + cloudProfiles.size,
                         bookmarkCount = bookmarks.size,
                         customization = customization,
                         shortcuts = toolShortcuts,
@@ -719,15 +730,15 @@ internal fun FilesHome(
             title = "Debesija ir teikėjų vietos",
             icon = Icons.Rounded.Cloud,
             onDismissRequest = { showCloudLocations = false },
-            expandedContent = true,
+            expandedContent = false,
             modifier = Modifier.testTag("cloud_locations_dialog"),
             actions = {
                 TextButton(onClick = { showCloudLocations = false }) { LText("Uždaryti") }
             },
         ) {
-            if (safLocations.isEmpty()) {
+            if (safLocations.isEmpty() && cloudProfiles.isEmpty()) {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
@@ -748,7 +759,7 @@ internal fun FilesHome(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     item {
@@ -763,6 +774,14 @@ internal fun FilesHome(
                                 LText("Pridėti teikėjo aplanką")
                             }
                         }
+                    }
+                    items(cloudProfiles, key = { "network.${it.id}" }) { profile ->
+                        ProfileCard(
+                            profile = profile, loading = false,
+                            onConnect = { showCloudLocations = false; onOpenCloudProfile(profile) },
+                            onEdit = { showCloudLocations = false; onEditCloudProfile(profile) },
+                            onDelete = { removeCloudProfile = profile },
+                        )
                     }
                     items(safLocations, key = SafLocation::uri) { location ->
                         Card(onClick = { showCloudLocations = false; onOpenSafLocation(location) }) {
@@ -803,6 +822,16 @@ internal fun FilesHome(
                 onRenameSafLocation(location.uri, title)
                 editCloudLocation = null
             },
+        )
+    }
+
+    removeCloudProfile?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { removeCloudProfile = null },
+            title = { LText("Pašalinti jungtį") },
+            text = { Text(profile.name) },
+            confirmButton = { Button(onClick = { onRemoveCloudProfile(profile.id); removeCloudProfile = null }) { LText("Pašalinti") } },
+            dismissButton = { TextButton(onClick = { removeCloudProfile = null }) { LText("Atšaukti") } },
         )
     }
 
@@ -875,15 +904,23 @@ internal fun RecentFilesDialog(
     onCopy: (List<FileEntry>, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val preferences = remember(context) { UiPreferenceRepository(context) }
+    val savedView = remember(preferences) { preferences.loadRecentView() }
     var tab by remember { mutableStateOf(RecentFilesTab.ADDED) }
     var searchVisible by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(RecentFilesSort.RECENT) }
-    var ascending by remember { mutableStateOf(false) }
+    var sort by remember { mutableStateOf(RecentFilesSort.entries.firstOrNull { it.name == savedView.sort } ?: RecentFilesSort.RECENT) }
+    var ascending by remember { mutableStateOf(savedView.ascending) }
     var sortMenu by remember { mutableStateOf(false) }
-    var dateRange by remember { mutableStateOf(RecentFilesDateRange.ALL) }
+    var dateRange by remember { mutableStateOf(RecentFilesDateRange.entries.firstOrNull { it.name == savedView.dateRange } ?: RecentFilesDateRange.ALL) }
     var dateMenu by remember { mutableStateOf(false) }
     var selectedPaths by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(preferences, sort, ascending, dateRange) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            preferences.saveRecentView(RecentViewPreferences(sort.name, ascending, dateRange.name))
+        }
+    }
     val sourceItems = if (tab == RecentFilesTab.ADDED) addedItems else openedItems
     val visibleItems = remember(sourceItems, query, sort, ascending, dateRange) {
         RecentFilesViewRules.apply(sourceItems, query, sort, ascending, dateRange)
@@ -927,7 +964,7 @@ internal fun RecentFilesDialog(
                         modifier = Modifier.testTag("recent_tab_opened"),
                         label = { LText("Neseniai atidaryti") },
                     )
-                    IconButton(onClick = { searchVisible = !searchVisible }, modifier = Modifier.testTag("recent_search_toggle")) {
+                    if (featureVisible(OptionalFeature.TOOLBAR_SEARCH) || searchVisible) IconButton(onClick = { searchVisible = !searchVisible }, modifier = Modifier.testTag("recent_search_toggle")) {
                         Icon(Icons.Rounded.Search, contentDescription = uiText(if (searchVisible) "Slėpti paiešką" else "Ieškoti naujausiuose"))
                     }
                     Box(
@@ -946,6 +983,7 @@ internal fun RecentFilesDialog(
                                 DropdownMenuItem(
                                     text = { LText(recentFilesSortLabel(option)) },
                                     onClick = { sort = option; sortMenu = false },
+                                    leadingIcon = if (option == sort) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null,
                                 )
                             }
                         }
@@ -959,6 +997,7 @@ internal fun RecentFilesDialog(
                                 DropdownMenuItem(
                                     text = { LText(recentDateRangeLabel(option)) },
                                     onClick = { dateRange = option; dateMenu = false },
+                                    leadingIcon = if (option == dateRange) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null,
                                 )
                             }
                         }
@@ -1111,7 +1150,7 @@ private fun StorageHomeSection(
         itemVerticalAlignment = Alignment.CenterVertically,
     ) {
         LText("Saugyklos", style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("home_storage_heading"))
-        TextButton(
+        if (featureVisible(OptionalFeature.ANALYSIS)) TextButton(
             onClick = onOpenCleanup,
             modifier = Modifier.testTag("analyze_storage_button"),
         ) {
@@ -1305,7 +1344,17 @@ private fun HomeToolsSection(
         HomeToolLocation("cloud", "Debesija", itemCountLabel(cloudCount), Icons.Rounded.Cloud, onOpenCloud),
         HomeToolLocation("bookmarks", "Žymelės", itemCountLabel(bookmarkCount), Icons.Rounded.Bookmark, onOpenBookmarks),
     ).associateBy(HomeToolLocation::id)
-    val tools = HomeCustomizationRules.orderedToolIds(customization)
+    val visibility = com.affilemanager.app.ui.components.LocalFeatureVisibility.current
+    val tools = HomeCustomizationRules.orderedToolIds(customization).filter { id ->
+        val feature = when (id) {
+            "plans" -> OptionalFeature.PLANS
+            "favorites" -> OptionalFeature.FAVORITES
+            "tags" -> OptionalFeature.TAGS
+            "cloud" -> OptionalFeature.CLOUD
+            else -> null
+        }
+        feature == null || visibility.isVisible(feature)
+    }
         .asSequence()
         .filterNot(customization.hiddenToolIds::contains)
         .mapNotNull(builtInTools::get)
@@ -1523,12 +1572,14 @@ internal fun HomeCustomizationDialog(
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText("Pavadinimas (nebūtina)") },
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = path,
                         onValueChange = { path = it },
+                        modifier = Modifier.fillMaxWidth(),
                         label = { LText("Failo arba aplanko kelias") },
                         singleLine = true,
                     )
@@ -1685,13 +1736,13 @@ private fun RecentFileListItem(
                     Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { LText("Pervadinti") }, onClick = { menu = false; onRename() }, modifier = Modifier.testTag("recent_action_rename"))
-                    DropdownMenuItem(text = { LText("Bendrinti") }, onClick = { menu = false; onShare() }, modifier = Modifier.testTag("recent_action_share"))
-                    DropdownMenuItem(text = { LText("Perkelti į šiukšlinę") }, onClick = { menu = false; onTrash() }, modifier = Modifier.testTag("recent_action_trash"))
-                    DropdownMenuItem(text = { LText("Atidaryti aplanką") }, onClick = { menu = false; onReveal() }, modifier = Modifier.testTag("recent_action_reveal"))
-                    DropdownMenuItem(text = { LText("Kopijuoti") }, onClick = { menu = false; onCopy(false) }, modifier = Modifier.testTag("recent_action_copy"))
-                    DropdownMenuItem(text = { LText("Perkelti") }, onClick = { menu = false; onCopy(true) }, modifier = Modifier.testTag("recent_action_move"))
-                    DropdownMenuItem(text = { LText(if (selected) "Atžymėti" else "Pasirinkti") }, onClick = { menu = false; onSelect() }, modifier = Modifier.testTag("recent_action_select"))
+                    DropdownMenuItem(text = { LText("Pervadinti") }, onClick = { menu = false; onRename() }, leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) }, modifier = Modifier.testTag("recent_action_rename"))
+                    DropdownMenuItem(text = { LText("Bendrinti") }, onClick = { menu = false; onShare() }, leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }, modifier = Modifier.testTag("recent_action_share"))
+                    DropdownMenuItem(text = { LText("Perkelti į šiukšlinę") }, onClick = { menu = false; onTrash() }, leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) }, modifier = Modifier.testTag("recent_action_trash"))
+                    DropdownMenuItem(text = { LText("Atidaryti aplanką") }, onClick = { menu = false; onReveal() }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) }, modifier = Modifier.testTag("recent_action_reveal"))
+                    DropdownMenuItem(text = { LText("Kopijuoti") }, onClick = { menu = false; onCopy(false) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.testTag("recent_action_copy"))
+                    DropdownMenuItem(text = { LText("Perkelti") }, onClick = { menu = false; onCopy(true) }, leadingIcon = { Icon(Icons.Rounded.ContentCut, contentDescription = null) }, modifier = Modifier.testTag("recent_action_move"))
+                    DropdownMenuItem(text = { LText(if (selected) "Atžymėti" else "Pasirinkti") }, onClick = { menu = false; onSelect() }, leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) }, modifier = Modifier.testTag("recent_action_select"))
                 }
             }
         }

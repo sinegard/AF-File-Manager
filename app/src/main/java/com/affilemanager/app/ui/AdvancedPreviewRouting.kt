@@ -5,10 +5,10 @@ import java.io.File
 
 /** Uses an ordinary app-readable path before asking a privileged backend to stage a copy. */
 internal object AdvancedPreviewRouting {
-    fun directlyReadableFile(entry: FileEntry): File? {
+    fun directlyReadableFile(entry: FileEntry, canExpose: (File) -> Boolean = { true }): File? {
         if (entry.isDirectory) return null
         return runCatching { File(entry.absolutePath).canonicalFile }
             .getOrNull()
-            ?.takeIf { it.isFile && it.canRead() }
+            ?.takeIf { it.isFile && it.canRead() && canExpose(it) }
     }
 }

@@ -51,6 +51,13 @@ import androidx.compose.material3.Text
 import com.affilemanager.app.ui.theme.AfButton as Button
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import com.affilemanager.app.data.OptionalFeature
+import com.affilemanager.app.transfer.LanTransferController
+import com.affilemanager.app.transfer.LanTransferStatus
+import com.affilemanager.app.transfer.NearbyTransferController
+import com.affilemanager.app.transfer.NearbyTransferStatus
+import com.affilemanager.app.ui.components.LocalFeatureVisibility
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -128,6 +135,23 @@ fun AFFileManagerApp(
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
     val lifecycleOwner = LocalLifecycleOwner.current
     val section by viewModel.section.collectAsStateWithLifecycle()
+    val featureVisibility by viewModel.featureVisibility.collectAsStateWithLifecycle()
+    val networkState by viewModel.networkState.collectAsStateWithLifecycle()
+    val sharingState by LanTransferController.state.collectAsStateWithLifecycle()
+    val nearbyState by NearbyTransferController.state.collectAsStateWithLifecycle()
+    val sharingActive = sharingState.status in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING) ||
+        nearbyState.status in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)
+    val visibleDestinations = destinations.filter { destination ->
+        val feature = when (destination.section) {
+            AppSection.ANALYZE -> OptionalFeature.ANALYSIS
+            AppSection.CONNECTIONS -> OptionalFeature.NETWORK
+            AppSection.SHARE -> OptionalFeature.SHARING
+            else -> null
+        }
+        feature == null || featureVisibility.isVisible(feature) || destination.section == section ||
+            destination.section == AppSection.SHARE && sharingActive ||
+            destination.section == AppSection.CONNECTIONS && networkState.connectedProfile != null
+    }
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
     val homeToolPage by viewModel.homeToolPage.collectAsStateWithLifecycle()
     val operations by viewModel.operations.collectAsStateWithLifecycle()
@@ -146,7 +170,6 @@ fun AFFileManagerApp(
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val appLockEnabled by viewModel.appLockEnabled.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
-    val networkState by viewModel.networkState.collectAsStateWithLifecycle()
     val safBrowser by viewModel.safBrowser.collectAsStateWithLifecycle()
     var hasAllFilesAccess by remember { mutableStateOf(hasFullFileAccess(context)) }
     var unlocked by remember(appLockEnabled) { mutableStateOf(!appLockEnabled) }
@@ -260,6 +283,7 @@ fun AFFileManagerApp(
         }
     }
 
+    CompositionLocalProvider(LocalFeatureVisibility provides featureVisibility) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         com.affilemanager.app.ui.theme.AppearanceBackground()
         val wideNavigation = maxWidth >= 900.dp
@@ -279,7 +303,7 @@ fun AFFileManagerApp(
                     if (!wideNavigation) {
                         com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
                         NavigationBar {
-                            destinations.forEach { destination ->
+                            visibleDestinations.forEach { destination ->
                                 NavigationBarItem(
                                     selected = section == destination.section,
                                     onClick = { viewModel.setSection(destination.section) },
@@ -302,7 +326,7 @@ fun AFFileManagerApp(
                 if (wideNavigation) {
                     com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
                     NavigationRail {
-                        destinations.forEach { destination ->
+                        visibleDestinations.forEach { destination ->
                             NavigationRailItem(
                                 selected = section == destination.section,
                                 onClick = { viewModel.setSection(destination.section) },
@@ -552,6 +576,7 @@ fun AFFileManagerApp(
                 )
             },
         )
+    }
     }
 }
 

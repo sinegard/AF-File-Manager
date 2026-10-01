@@ -582,7 +582,7 @@ private fun AutomationDialog(
         title = "Automatizuoti AF planą",
         icon = Icons.Rounded.Schedule,
         onDismissRequest = onDismiss,
-        expandedContent = true,
+        expandedContent = false,
         modifier = Modifier.testTag("automation_dialog"),
         actions = {
             TextButton(onClick = onDismiss) { LText("Atšaukti") }
@@ -604,10 +604,10 @@ private fun AutomationDialog(
         },
     ) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedTextField(value = name, onValueChange = { name = it.take(120) }, label = { LText("Taisyklės pavadinimas") }, singleLine = true)
+                OutlinedTextField(value = name, onValueChange = { name = it.take(120) }, modifier = Modifier.fillMaxWidth(), label = { LText("Taisyklės pavadinimas") }, singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(AfAutomationSchedule.EVERY_6_HOURS, AfAutomationSchedule.DAILY, AfAutomationSchedule.WEEKLY).forEach { option ->
                         FilterChip(selected = schedule == option, onClick = { schedule = option }, label = { LText(scheduleLabel(option)) })

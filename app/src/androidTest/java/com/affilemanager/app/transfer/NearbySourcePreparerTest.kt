@@ -84,4 +84,26 @@ class NearbySourcePreparerTest {
             source.delete()
         }
     }
+
+    @Test
+    fun selectedLocalFileAndInstalledAppRemainInOneTransferBasket() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val source = File(app.cacheDir, "selected-${UUID.randomUUID()}.txt").apply { writeText("local file") }
+        val applicationInfo = app.packageManager.getApplicationInfo(app.packageName, 0)
+        val installed = app.graph.localFiles.toEntry(File(applicationInfo.sourceDir)).copy(
+            name = "AF File Manager",
+            packageName = app.packageName,
+        )
+        var prepared: PreparedNearbyTransfer? = null
+        try {
+            prepared = app.graph.nearbySources.prepareEntries(listOf(app.graph.localFiles.toEntry(source), installed)).getOrThrow()
+            assertEquals(2, prepared.paths.size)
+            assertEquals(2, prepared.relativePaths.distinct().size)
+            assertTrue(prepared.relativePaths.contains(source.name))
+            assertTrue(prepared.paths.any { it != source.canonicalPath && File(it).isFile })
+        } finally {
+            prepared?.let { app.graph.nearbySources.discard(it) }
+            source.delete()
+        }
+    }
 }

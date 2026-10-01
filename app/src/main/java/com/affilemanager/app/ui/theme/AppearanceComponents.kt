@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
@@ -55,9 +57,16 @@ internal fun AfDialog(
     content: @Composable () -> Unit,
 ) {
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val layoutDirection = LocalLayoutDirection.current
     key(density.density, density.fontScale) {
         androidx.compose.ui.window.Dialog(onDismissRequest = onDismissRequest, properties = properties) {
-            CompositionLocalProvider(LocalDensity provides density, content = content)
+            CompositionLocalProvider(
+                LocalDensity provides density,
+                LocalConfiguration provides configuration,
+                LocalLayoutDirection provides layoutDirection,
+                content = content,
+            )
         }
     }
 }
@@ -134,6 +143,8 @@ internal fun AfDropdownMenu(
 ) {
     val fill = popupColor()
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val layoutDirection = LocalLayoutDirection.current
     key(density.density, density.fontScale) {
         PopupContent {
             DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, modifier = modifier,
@@ -141,7 +152,11 @@ internal fun AfDropdownMenu(
                 tonalElevation = 0.dp, shadowElevation = if (fill.alpha < 1f) 0.dp else 8.dp) {
                 // Material's Popup owns a separate composition. Re-provide AF's density inside
                 // that composition instead of relying on the value captured by the anchor.
-                CompositionLocalProvider(LocalDensity provides density) { content() }
+                CompositionLocalProvider(
+                    LocalDensity provides density,
+                    LocalConfiguration provides configuration,
+                    LocalLayoutDirection provides layoutDirection,
+                ) { content() }
             }
         }
     }

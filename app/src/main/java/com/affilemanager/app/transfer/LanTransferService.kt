@@ -95,6 +95,21 @@ object LanTransferController {
         )
     }
 
+    fun removeGroupMember(context: Context, pairing: NearbyPairing) {
+        context.startService(
+            Intent(context, LanTransferService::class.java)
+                .setAction(LanTransferService.ACTION_REMOVE_GROUP_MEMBER)
+                .putExtra(LanTransferService.EXTRA_MEMBER_PAIRING, pairing.encoded()),
+        )
+    }
+
+    fun setGroupMessagesBlocked(context: Context, pairing: NearbyPairing, blocked: Boolean) {
+        context.startService(Intent(context, LanTransferService::class.java)
+            .setAction(LanTransferService.ACTION_GROUP_MESSAGES)
+            .putExtra(LanTransferService.EXTRA_MEMBER_PAIRING, pairing.encoded())
+            .putExtra("blocked", blocked))
+    }
+
     internal fun publish(state: LanTransferState) {
         _state.value = state
     }
@@ -129,6 +144,8 @@ class LanTransferService : Service() {
         const val ACTION_START = "com.affilemanager.app.action.START_LAN_TRANSFER"
         const val ACTION_STOP = "com.affilemanager.app.action.STOP_LAN_TRANSFER"
         const val ACTION_CANCEL_NEARBY_FILE = "com.affilemanager.app.action.CANCEL_NEARBY_FILE"
+        const val ACTION_REMOVE_GROUP_MEMBER = "com.affilemanager.app.action.REMOVE_GROUP_MEMBER"
+        const val ACTION_GROUP_MESSAGES = "com.affilemanager.app.action.GROUP_MESSAGES"
         const val EXTRA_ROOT = "root"
         const val EXTRA_DURATION_MINUTES = "duration_minutes"
         const val EXTRA_PROTOCOL = "protocol"
@@ -142,6 +159,7 @@ class LanTransferService : Service() {
         const val EXTRA_GROUP_NAME = "group_name"
         const val EXTRA_BATCH_ID = "batch_id"
         const val EXTRA_FILE_INDEX = "file_index"
+        const val EXTRA_MEMBER_PAIRING = "member_pairing"
         private const val CHANNEL_ID = "lan_transfer"
         private const val NOTIFICATION_ID = 41
     }
@@ -166,6 +184,24 @@ class LanTransferService : Service() {
             val index = intent.getIntExtra(EXTRA_FILE_INDEX, 0)
             if (id.isNotBlank() && index in 1..NearbySourcePreparer.MAX_FILES) {
                 server?.cancelNearbyFile(id, index)
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_REMOVE_GROUP_MEMBER) {
+            val pairing = intent.getStringExtra(EXTRA_MEMBER_PAIRING)
+                ?.let { runCatching { NearbyPairing.parse(it) }.getOrNull() }
+            if (pairing != null && LanTransferController.state.value.groupMode) {
+                runCatching { server?.removeGroupMember(pairing) }.onFailure { failure ->
+                    LanTransferController.publish(LanTransferController.state.value.copy(message = failure.message ?: "Veiksmas nepavyko"))
+                }
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_GROUP_MESSAGES) {
+            val pairing = intent.getStringExtra(EXTRA_MEMBER_PAIRING)
+                ?.let { runCatching { NearbyPairing.parse(it) }.getOrNull() }
+            if (pairing != null && LanTransferController.state.value.groupMode) {
+                server?.setGroupMessagesBlocked(pairing, intent.getBooleanExtra("blocked", false))
             }
             return START_NOT_STICKY
         }
@@ -257,8 +293,8 @@ class LanTransferService : Service() {
                         NearbyChatController.beginSession(peer)
                         NearbyTransferController.connection.remember(peer, expires = expiry)
                     },
-                    onNearbyMessage = { message ->
-                        val sender = NearbyTransferController.connectedPairing()?.receiverName ?: "Phone"
+                    onNearbyNamedMessage = { groupSender, message ->
+                        val sender = groupSender ?: NearbyTransferController.connectedPairing()?.receiverName ?: "Phone"
                         NearbyChatController.received(sender, message)
                     },
                     onNearbyDisconnect = { NearbyTransferController.peerDisconnected(this) },

@@ -16,6 +16,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -54,10 +57,12 @@ class ConnectionsComponentsTest {
             LocalUploadDialog("/local", "", emptyList(), emptySet(),
                 { path -> Result.success(if (path == folder.absolutePath) listOf(later) else listOf(folder, first)) }, {}, { copied = it })
         } }
+        compose.onNodeWithTag("local_upload_search_toggle").performClick()
         compose.onNodeWithTag("local_upload_search").performTextInput("first")
         compose.onNodeWithText("first.txt").performScrollTo().performClick()
         compose.onAllNodesWithText("folder").assertCountEquals(0)
-        compose.onNodeWithTag("local_upload_search").performScrollTo().performTextClearance()
+        compose.onNodeWithTag("local_upload_search").performTextClearance()
+        compose.onNodeWithTag("local_upload_list").performScrollToNode(hasTestTag("local_upload_open_${folder.absolutePath}"))
         compose.onNodeWithTag("local_upload_open_${folder.absolutePath}").performScrollTo().performClick()
         compose.onNodeWithText("second.txt").performScrollTo().performClick()
         compose.onNodeWithText("Copy (2)").performClick()

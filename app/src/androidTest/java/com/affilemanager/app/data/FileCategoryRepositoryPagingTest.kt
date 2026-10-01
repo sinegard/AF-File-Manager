@@ -24,6 +24,114 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class FileCategoryRepositoryPagingTest {
+    private fun imageCollection(): android.net.Uri = if (android.os.Build.VERSION.SDK_INT >= 29) {
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    } else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+    private fun imageValues(name: String, relativePath: String) = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+            put(MediaStore.MediaColumns.IS_PENDING, 0)
+        } else {
+            val directory = File(android.os.Environment.getExternalStorageDirectory(), relativePath)
+            check(directory.isDirectory || directory.mkdirs())
+            put(MediaStore.MediaColumns.DATA, File(directory, name).absolutePath)
+        }
+    }
+
+    private fun deleteImages(relativePath: String) {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val directory = File(android.os.Environment.getExternalStorageDirectory(), relativePath)
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            resolver.delete(imageCollection(), "${MediaStore.MediaColumns.RELATIVE_PATH} = ?", arrayOf(relativePath))
+        } else {
+            resolver.delete(imageCollection(), "${MediaStore.MediaColumns.DATA} LIKE ?", arrayOf("${directory.absolutePath}/%"))
+        }
+        check(directory.parentFile?.name == "Pictures" && directory.name.startsWith("af-", ignoreCase = true))
+        directory.deleteRecursively()
+    }
+
+    @Test fun installedAppsHaveDisjointUserAndSystemScopesWithoutChangingApkCategory() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val repository = FileCategoryRepository(context, LocalFileRepository(context))
+        suspend fun names(scope: InstalledAppScope): Set<String> {
+            val found = linkedSetOf<String>()
+            var offset: Int? = 0
+            var count = 0
+            while (offset != null) {
+                val page = repository.loadBrowsePage(FileCategory.INSTALLED_APPS, offset, SortMode.NAME, SortDirection.ASCENDING, "", appScope = scope)
+                found += page.entries.map(FileEntry::absolutePath)
+                offset = page.nextOffset
+                assertTrue(++count <= 20)
+            }
+            return found
+        }
+        val users = names(InstalledAppScope.USER)
+        val system = names(InstalledAppScope.SYSTEM)
+        assertTrue(users.isNotEmpty())
+        assertTrue(system.isNotEmpty())
+        assertTrue(users.intersect(system).isEmpty())
+        assertEquals(users + system, names(InstalledAppScope.ALL))
+    }
+    @Test fun storageScopeAndFolderModeFilterBeforePagination() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val resolver = context.contentResolver
+        val collection = imageCollection()
+        val marker = "af-scope-${System.nanoTime()}"
+        val relativePath = "Pictures/$marker/"
+        val uri = resolver.insert(collection, imageValues("$marker.jpg", relativePath))
+        assertNotNull(uri)
+        try {
+            val repository = FileCategoryRepository(context, LocalFileRepository(context))
+            val internal = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME,
+                SortDirection.ASCENDING, marker, storageScope = CategoryStorageScope.INTERNAL)
+            assertTrue(internal.entries.any { it.name == "$marker.jpg" })
+            val usb = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME,
+                SortDirection.ASCENDING, marker, storageScope = CategoryStorageScope.USB)
+            assertTrue(usb.entries.isEmpty())
+            val folders = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME,
+                SortDirection.ASCENDING, "", storageScope = CategoryStorageScope.INTERNAL,
+                viewMode = CategoryViewMode.FOLDERS)
+            assertTrue(folders.entries.all(FileEntry::isDirectory))
+            assertTrue(folders.entries.any { it.name == marker })
+        } finally {
+            deleteImages(relativePath)
+        }
+    }
+
+    @Test fun legacyAndroidFolderViewUsesIndexedFilesWithoutWalkingTheStorageTree() = runBlocking {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT < 30)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val marker = "af-legacy-folder-${System.nanoTime()}"
+        val directory = File(android.os.Environment.getExternalStorageDirectory(), "Pictures/$marker")
+        assertTrue(directory.mkdirs())
+        val image = File(directory, "sample.jpg")
+        val bitmap = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+        image.outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it)) }
+        bitmap.recycle()
+        val indexed = java.util.concurrent.CountDownLatch(1)
+        var indexedUri: android.net.Uri? = null
+        try {
+            android.media.MediaScannerConnection.scanFile(context, arrayOf(image.path), arrayOf("image/jpeg")) { _, uri ->
+                indexedUri = uri
+                indexed.countDown()
+            }
+            assertTrue(indexed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            assertNotNull(indexedUri)
+            val repository = FileCategoryRepository(context, LocalFileRepository(context))
+            val folders = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME,
+                SortDirection.ASCENDING, marker, storageScope = CategoryStorageScope.INTERNAL,
+                viewMode = CategoryViewMode.FOLDERS)
+            assertTrue(folders.entries.any { it.absolutePath == directory.absolutePath })
+        } finally {
+            indexedUri?.let { context.contentResolver.delete(it, null, null) }
+            image.delete()
+            directory.delete()
+        }
+    }
+
     @Test fun failedPageRequestCanBeRetriedWithoutPoisoningTheNextResult() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val application = context.applicationContext as com.affilemanager.app.AFFileManagerApplication
@@ -66,17 +174,12 @@ class FileCategoryRepositoryPagingTest {
     fun nearbyBrowserFindsEveryIndexedFileBeyondOldCapsAndSearchesTheEntireCategory() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val resolver = context.contentResolver
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val collection = imageCollection()
         val prefix = "af-complete-${System.nanoTime()}"
         val relativePath = "Pictures/$prefix/"
         val fixtureCount = 10_205
         val repository = FileCategoryRepository(context, LocalFileRepository(context))
-        fun values(name: String) = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-            put(MediaStore.MediaColumns.IS_PENDING, 0)
-        }
+        fun values(name: String) = imageValues(name, relativePath)
         try {
             (0 until fixtureCount).chunked(500).forEach { batch ->
                 val rows = batch.map { values("$prefix-${it.toString().padStart(5, '0')}.jpg") }.toTypedArray()
@@ -109,7 +212,7 @@ class FileCategoryRepositoryPagingTest {
             val exact = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME, SortDirection.ASCENDING, "100%_literal", forceRefresh = true)
             assertEquals(listOf(literal), exact.entries.filter { it.absolutePath.contains(prefix) }.map(FileEntry::name))
         } finally {
-            resolver.delete(collection, "${MediaStore.MediaColumns.RELATIVE_PATH} = ?", arrayOf(relativePath))
+            deleteImages(relativePath)
         }
     }
 
@@ -180,16 +283,11 @@ class FileCategoryRepositoryPagingTest {
     fun imagesAreReturnedInBoundedGloballySortedPages() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val resolver = context.contentResolver
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val relativePath = "Pictures/AFPaging-${System.nanoTime()}/"
+        val collection = imageCollection()
+        val relativePath = "Pictures/af-paging-${System.nanoTime()}/"
         val fixtureCount = 360
         val values = Array(fixtureCount) { index ->
-            ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, "af-page-${index.toString().padStart(4, '0')}.jpg")
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
-                put(MediaStore.Images.Media.IS_PENDING, 0)
-            }
+            imageValues("af-page-${index.toString().padStart(4, '0')}.jpg", relativePath)
         }
         try {
             assertEquals(fixtureCount, resolver.bulkInsert(collection, values))
@@ -228,11 +326,7 @@ class FileCategoryRepositoryPagingTest {
             assertEquals(fixtureCount, fixtureNames.distinct().size)
             assertEquals(fixtureNames.sorted(), fixtureNames)
         } finally {
-            resolver.delete(
-                collection,
-                "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
-                arrayOf(relativePath),
-            )
+            deleteImages(relativePath)
         }
     }
 }

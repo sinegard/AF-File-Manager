@@ -71,6 +71,7 @@ data class NearbyGroupInvite(
 data class NearbyGroupMember(
     val pairing: NearbyPairing,
     val organizer: Boolean = false,
+    val messagesBlocked: Boolean = false,
 )
 
 internal object NearbyGroupCodec {
@@ -78,7 +79,8 @@ internal object NearbyGroupCodec {
         require(members.size <= NearbyGroupDirectory.MAX_MEMBERS) { "Grupėje per daug dalyvių" }
         val array = JSONArray()
         members.forEach { member ->
-            array.put(JSONObject().put("pairing", member.pairing.encoded()).put("organizer", member.organizer))
+            array.put(JSONObject().put("pairing", member.pairing.encoded()).put("organizer", member.organizer)
+                .put("messagesBlocked", member.messagesBlocked))
         }
         return JSONObject().put("version", 1).put("members", array).toString().toByteArray(StandardCharsets.UTF_8)
     }
@@ -91,7 +93,7 @@ internal object NearbyGroupCodec {
         require(array.length() <= NearbyGroupDirectory.MAX_MEMBERS) { "Grupėje per daug dalyvių" }
         return (0 until array.length()).map { index ->
             val item = array.getJSONObject(index)
-            NearbyGroupMember(NearbyPairing.parse(item.getString("pairing")), item.optBoolean("organizer", false))
+            NearbyGroupMember(NearbyPairing.parse(item.getString("pairing")), item.optBoolean("organizer", false), item.optBoolean("messagesBlocked", false))
         }.distinctBy { "${it.pairing.host}:${it.pairing.port}" }
     }
 
@@ -108,11 +110,14 @@ internal class NearbyGroupDirectory(
 
     private data class Record(val pairing: NearbyPairing, var lastSeenMillis: Long)
     private val members = linkedMapOf<String, Record>()
+    private val removedIdentities = hashSetOf<String>()
+    private val blockedMessages = hashSetOf<String>()
 
     @Synchronized
     fun join(pairing: NearbyPairing): Boolean {
         prune()
         val key = pairing.key()
+        require(pairing.identity() !in removedIdentities) { "Organizatorius pašalino šį telefoną iš grupės" }
         val existing = members[key]
         if (existing == null) {
             require(members.size < MAX_MEMBERS - 1) { "Grupė pilna" }
@@ -135,20 +140,53 @@ internal class NearbyGroupDirectory(
     @Synchronized
     fun leave(pairing: NearbyPairing): Boolean = members.remove(pairing.key()) != null
 
+    /** Organizer-only local action; blocks this pairing identity for the current session. */
+    @Synchronized
+    fun remove(pairing: NearbyPairing): Boolean {
+        val key = pairing.key()
+        require(removedIdentities.size < 100) { "Grupės sesijos valdymo riba pasiekta" }
+        if (members.remove(key) == null) return false
+        removedIdentities += pairing.identity()
+        blockedMessages -= pairing.identity()
+        return true
+    }
+
+    @Synchronized
+    fun setMessagesBlocked(pairing: NearbyPairing, blocked: Boolean): Boolean {
+        if (members[pairing.key()]?.pairing != pairing) return false
+        if (blocked) blockedMessages += pairing.identity() else blockedMessages -= pairing.identity()
+        return true
+    }
+
+    @Synchronized
+    fun messagesAllowed(host: String): Boolean = members.values.none {
+        it.pairing.host == host && it.pairing.identity() in blockedMessages
+    } && removedIdentities.none { it.startsWith("$host:") }
+
+    @Synchronized
+    fun messagesAllowed(pairing: NearbyPairing): Boolean =
+        pairing.identity() !in blockedMessages && pairing.identity() !in removedIdentities
+
+    @Synchronized
+    fun memberAt(host: String): NearbyPairing? = members.values.map(Record::pairing)
+        .filter { it.host == host }.singleOrNull()
+
     @Synchronized
     fun snapshot(organizer: NearbyPairing): List<NearbyGroupMember> {
         prune()
         return listOf(NearbyGroupMember(organizer, organizer = true)) +
-            members.values.map { NearbyGroupMember(it.pairing) }
+            members.values.map { NearbyGroupMember(it.pairing, messagesBlocked = it.pairing.identity() in blockedMessages) }
     }
 
     @Synchronized
     private fun prune() {
         val minimum = nowMillis() - MEMBER_TIMEOUT_MILLIS
         members.entries.removeAll { it.value.lastSeenMillis < minimum }
+        blockedMessages.retainAll(members.values.map { it.pairing.identity() }.toSet())
     }
 
     private fun NearbyPairing.key(): String = "$host:$port"
+    private fun NearbyPairing.identity(): String = "$host:$code"
 }
 
 enum class NearbyGroupStatus { IDLE, HOSTING, JOINING, JOINED, ERROR }
@@ -162,6 +200,13 @@ data class NearbyGroupState(
     val memberNotice: String? = null,
     val error: String? = null,
 )
+
+internal fun groupPairingConfirmed(previous: NearbyGroupState, current: NearbyGroupState): Boolean {
+    if (current.status == NearbyGroupStatus.JOINED && previous.status != NearbyGroupStatus.JOINED) return true
+    if (previous.status != NearbyGroupStatus.HOSTING || current.status != NearbyGroupStatus.HOSTING) return false
+    val known = previous.members.mapTo(hashSetOf()) { "${it.pairing.host}:${it.pairing.port}" }
+    return current.members.any { !it.organizer && "${it.pairing.host}:${it.pairing.port}" !in known }
+}
 
 object NearbyGroupController {
     private const val HEARTBEAT_MILLIS = 3_000L
@@ -195,7 +240,7 @@ object NearbyGroupController {
         if (current.status == NearbyGroupStatus.HOSTING && current.organizer == invite.organizer) {
             _state.value = current.copy(
                 members = members,
-                memberNotice = joinedNotice(current.members, members) ?: current.memberNotice,
+                memberNotice = membershipNotice(current.members, members) ?: current.memberNotice,
                 error = null,
             )
         }
@@ -224,7 +269,7 @@ object NearbyGroupController {
                         status = NearbyGroupStatus.JOINED,
                         members = members,
                         memberNotice = if (current.status == NearbyGroupStatus.JOINED) {
-                            joinedNotice(current.members, members) ?: current.memberNotice
+                            membershipNotice(current.members, members) ?: current.memberNotice
                         } else {
                             null
                         },
@@ -265,15 +310,20 @@ object NearbyGroupController {
         }
     }
 
-    private fun joinedNotice(
+    private fun membershipNotice(
         previous: List<NearbyGroupMember>,
         current: List<NearbyGroupMember>,
     ): String? {
         val previousKeys = previous.mapTo(hashSetOf()) { "${it.pairing.host}:${it.pairing.port}" }
+        val currentKeys = current.mapTo(hashSetOf()) { "${it.pairing.host}:${it.pairing.port}" }
         val joined = current.firstOrNull { member ->
             !member.organizer && "${member.pairing.host}:${member.pairing.port}" !in previousKeys
-        } ?: return null
-        return "${joined.pairing.receiverName} prisijungė prie grupės"
+        }
+        if (joined != null) return "${joined.pairing.receiverName} prisijungė prie grupės"
+        val left = previous.firstOrNull { member ->
+            !member.organizer && "${member.pairing.host}:${member.pairing.port}" !in currentKeys
+        }
+        return left?.let { "${it.pairing.receiverName} paliko grupę" }
     }
 
     private fun login(organizer: NearbyPairing): String {

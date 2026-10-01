@@ -40,6 +40,8 @@ import com.affilemanager.app.data.WorkspaceSessionRepository
 import com.affilemanager.app.cleanup.DeviceCleanupSnapshot
 import com.affilemanager.app.data.FileTagSnapshot
 import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.data.CategoryStorageScope
+import com.affilemanager.app.data.CategoryViewMode
 import com.affilemanager.app.data.DirectoryDisplayDefaults
 import com.affilemanager.app.data.DirectoryDisplaySettings
 import com.affilemanager.app.data.DirectorySortSettings
@@ -288,6 +290,9 @@ data class FileCategoryUiState(
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val showSystemApps: Boolean = false,
+    val appScope: com.affilemanager.app.data.InstalledAppScope = com.affilemanager.app.data.InstalledAppScope.USER,
+    val storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
+    val viewMode: CategoryViewMode = CategoryViewMode.FILES,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val scannedRows: Int = 0,
@@ -489,6 +494,7 @@ sealed interface PreviewTarget {
     data class PrivilegedFile(
         val entry: FileEntry,
         val cachedFile: File,
+        val localOrigin: Boolean = false,
     ) : PreviewTarget
     data class Archive(val file: FileEntry, val entries: List<ArchiveEntryInfo>) : PreviewTarget
     data class RemoteArchive(
@@ -694,6 +700,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         graph.uiPreferences.loadShare(initialPrimaryPath, defaultReceiverName),
     )
     val shareScreenPreferences: StateFlow<ShareScreenPreferences> = _shareScreenPreferences.asStateFlow()
+
+    private val _featureVisibility = MutableStateFlow(graph.uiPreferences.loadFeatureVisibility())
+    val featureVisibility = _featureVisibility.asStateFlow()
+
+    fun setFeatureVisible(feature: com.affilemanager.app.data.OptionalFeature, visible: Boolean) {
+        saveFeatureVisibility(_featureVisibility.value.withVisibility(feature, visible))
+    }
+
+    fun resetFeatureVisibility() = saveFeatureVisibility(com.affilemanager.app.data.FeatureVisibility())
+
+    private fun saveFeatureVisibility(value: com.affilemanager.app.data.FeatureVisibility) {
+        // One small synchronous commit keeps rapid toggles ordered and never reports an unsaved choice.
+        runCatching { graph.uiPreferences.saveFeatureVisibility(value) }
+            .onSuccess { _featureVisibility.value = value }
+            .onFailure { message("Nustatymų įrašyti nepavyko") }
+    }
 
     private val _analysisState = MutableStateFlow(AnalysisUiState())
     val analysisState: StateFlow<AnalysisUiState> = _analysisState.asStateFlow()
@@ -1210,16 +1232,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         advancedFileOpenJob = viewModelScope.launch {
             try {
                 val readableLocalFile = withContext(Dispatchers.IO) {
-                    AdvancedPreviewRouting.directlyReadableFile(entry)
+                    AdvancedPreviewRouting.directlyReadableFile(entry, ::canExposeLocalPreview)
                 }
                 if (readableLocalFile != null) {
                     open(graph.localFiles.toEntry(readableLocalFile))
                 } else {
                     graph.privilegedFiles.stageForPreview(entry).fold(
-                        onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached) },
+                        onSuccess = { cached ->
+                            val privilegedOrigin = runCatching {
+                                com.affilemanager.app.advanced.PrivilegedPathRules.requireWithinAllowed(
+                                    entry.absolutePath, graph.privilegedFiles.roots.map { it.path }, allowRoot = false,
+                                )
+                            }.isSuccess
+                            _preview.value = PreviewTarget.PrivilegedFile(entry, cached, localOrigin = !privilegedOrigin)
+                        },
                         onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
                     )
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                message(error.message ?: "Failo atidaryti nepavyko", true)
             } finally {
                 if (advancedFileOpenRequestId == requestId) advancedFileOpenJob = null
             }
@@ -2195,6 +2228,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sortMode = snapshot.sortMode
         val sortDirection = snapshot.sortDirection
         val showSystemApps = snapshot.showSystemApps
+        val appScope = snapshot.appScope
+        val storageScope = snapshot.storageScope
+        val viewMode = snapshot.viewMode
         fileCategoryJob?.cancel()
         _fileCategory.update { current ->
             if (current.category != category) current else if (reset) {
@@ -2228,6 +2264,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         sortDirection = sortDirection,
                         forceRefresh = refresh,
                         showSystemApps = showSystemApps,
+                        appScope = appScope,
+                        storageScope = storageScope,
+                        viewMode = viewMode,
                     )
                     refresh = false
                     pageEntries = page.entries
@@ -2240,7 +2279,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _fileCategory.value
                 if (!current.open || current.category != category ||
                     current.sortMode != sortMode || current.sortDirection != sortDirection ||
-                    current.showSystemApps != showSystemApps
+                    current.showSystemApps != showSystemApps ||
+                    current.appScope != appScope ||
+                    current.storageScope != storageScope || current.viewMode != viewMode
                 ) return@launch
                 _fileCategory.update {
                     val merged = (if (reset) pageEntries else it.entries + pageEntries)
@@ -2306,8 +2347,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun prepareNearbyTransferEntries(
         entries: Collection<FileEntry>,
-        installedApps: Boolean,
-    ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareEntries(entries, installedApps)
+    ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareEntries(entries)
 
     suspend fun prepareNearbyTransferDocuments(
         uris: Collection<Uri>,
@@ -2332,6 +2372,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     @Suppress("DEPRECATION")
     fun openFileCategoryEntry(entry: FileEntry) {
+        if (entry.isDirectory) {
+            closeFileCategory()
+            open(entry)
+            return
+        }
         if (_fileCategory.value.category != FileCategory.INSTALLED_APPS) {
             open(entry)
             return
@@ -2398,8 +2443,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleInstalledSystemApps() {
         val state = _fileCategory.value
         if (state.category != FileCategory.INSTALLED_APPS) return
-        _fileCategory.update { it.copy(showSystemApps = !it.showSystemApps, selectedPaths = emptySet()) }
+        _fileCategory.update { it.copy(showSystemApps = !it.showSystemApps,
+            appScope = if (it.showSystemApps) com.affilemanager.app.data.InstalledAppScope.USER else com.affilemanager.app.data.InstalledAppScope.ALL,
+            selectedPaths = emptySet()) }
         loadFileCategoryPage(reset = true, forceRefresh = true)
+    }
+
+    fun setInstalledAppScope(scope: com.affilemanager.app.data.InstalledAppScope) {
+        if (_fileCategory.value.category != FileCategory.INSTALLED_APPS) return
+        _fileCategory.update { it.copy(appScope = scope, showSystemApps = scope != com.affilemanager.app.data.InstalledAppScope.USER,
+            selectedPaths = emptySet(), scrollToTopRequest = it.scrollToTopRequest + 1) }
+        loadFileCategoryPage(reset = true)
+    }
+
+    fun openInstalledAppFolders() {
+        // App data must use the real privileged browser, never an APK inventory disguised as folders.
+        if (!graph.advancedAccess.state.value.connected) {
+            message("Android/data prieigai reikia aktyvaus root arba Shizuku")
+            _section.value = AppSection.TOOLS
+            return
+        }
+        closeFileCategory()
+        openAdvancedBrowser("${Environment.getExternalStorageDirectory().absolutePath}/Android/data")
     }
 
     fun closeFileCategory() {
@@ -2430,6 +2495,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun consumeCleanupRequest() {
         _cleanupRequested.value = false
+    }
+
+    fun setFileCategoryView(scope: CategoryStorageScope, mode: CategoryViewMode) {
+        val state = _fileCategory.value
+        if (state.category == null || state.category == FileCategory.INSTALLED_APPS ||
+            (state.storageScope == scope && state.viewMode == mode)) return
+        _fileCategory.update {
+            it.copy(storageScope = scope, viewMode = mode, selectedPaths = emptySet(),
+                scrollToTopRequest = it.scrollToTopRequest + 1L)
+        }
+        loadFileCategoryPage(reset = true)
     }
 
     fun openDeviceCleanup() {
@@ -2840,10 +2916,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 com.affilemanager.app.model.EntryKind.ARCHIVE -> runCatching { graph.archives.list(entry.file) }
                     .onSuccess { _preview.value = PreviewTarget.Archive(entry, it) }
                     .onFailure { message(it.message ?: "Archyvo perskaityti nepavyko", true) }
-                else -> _preview.value = PreviewTarget.LocalFile(entry)
+                else -> {
+                    val directlyExposed = withContext(Dispatchers.IO) { canExposeLocalPreview(entry.file) }
+                    if (directlyExposed) _preview.value = PreviewTarget.LocalFile(entry)
+                    else graph.privilegedFiles.stageForPreview(entry).fold(
+                        onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached, localOrigin = true) },
+                        onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
+                    )
+                }
             }
         }
     }
+
+    private fun canExposeLocalPreview(file: File): Boolean = runCatching {
+        androidx.core.content.FileProvider.getUriForFile(
+            getApplication(), "${getApplication<Application>().packageName}.files", file,
+        )
+    }.isSuccess
 
     fun canNavigatePreviewMedia(target: PreviewTarget): Boolean = when (target) {
         is PreviewTarget.LocalFile -> localMediaCandidates(target.entry).size > 1
@@ -2945,10 +3034,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         connectionName = target.connectionName,
                         path = target.remote.path,
                     )
-                    is PreviewTarget.PrivilegedFile -> EditOrigin.Privileged(
-                        path = target.entry.absolutePath,
-                        canWrite = target.entry.isWritable,
-                    )
+                    is PreviewTarget.PrivilegedFile -> if (target.localOrigin) {
+                        EditOrigin.Local(target.entry.absolutePath, target.entry.isWritable)
+                    } else EditOrigin.Privileged(target.entry.absolutePath, target.entry.isWritable)
                     is PreviewTarget.ArchiveEntry,
                     is PreviewTarget.Archive,
                     is PreviewTarget.RemoteArchive,
@@ -4417,7 +4505,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is PreviewTarget.ContentFile -> "Šalinamas Android dokumentas"
             is PreviewTarget.RemoteFile -> "Šalinama iš serverio"
             is PreviewTarget.RemoteArchive -> "Šalinama iš serverio"
-            is PreviewTarget.PrivilegedFile -> "Šalinamas apsaugotas failas"
+            is PreviewTarget.PrivilegedFile -> if (target.localOrigin) "Keliama į šiukšlinę" else "Šalinamas apsaugotas failas"
             is PreviewTarget.ArchiveEntry -> return
         }
         graph.operationManager.submit(title) {
@@ -4434,7 +4522,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 is PreviewTarget.RemoteFile -> deleteRemotePreviewTarget(target.profileId, target.connectionName, target.remote, this)
                 is PreviewTarget.RemoteArchive -> deleteRemotePreviewTarget(target.profileId, target.connectionName, target.remote, this)
-                is PreviewTarget.PrivilegedFile -> graph.privilegedFiles.deletePermanently(listOf(target.entry.absolutePath), this)
+                is PreviewTarget.PrivilegedFile -> if (target.localOrigin) {
+                    graph.trash.moveToTrash(listOf(target.entry.absolutePath), this)
+                } else graph.privilegedFiles.deletePermanently(listOf(target.entry.absolutePath), this)
                 is PreviewTarget.ArchiveEntry -> return@submit
             }
             if (_preview.value == target) closePreviewImmediately()
@@ -4442,7 +4532,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is PreviewTarget.RemoteFile,
                 is PreviewTarget.RemoteArchive,
                 -> refreshRemote()
-                is PreviewTarget.PrivilegedFile -> refreshAdvancedBrowser()
+                is PreviewTarget.PrivilegedFile -> if (!target.localOrigin) refreshAdvancedBrowser() else {
+                    refreshPanel(PanelId.LEFT)
+                    refreshPanel(PanelId.RIGHT)
+                    refreshFileCategory()
+                    refreshRecentFiles()
+                    refreshTrash()
+                }
                 else -> {
                     refreshPanel(PanelId.LEFT)
                     refreshPanel(PanelId.RIGHT)
@@ -5673,7 +5769,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _nextcloudLogin.value = NextcloudLoginUiState()
     }
 
-    fun startNextcloudLogin() {
+    fun startNextcloudLogin(openBrowser: (String) -> Unit) {
         val server = _nextcloudLogin.value.server.trim()
         if (server.isEmpty() || _nextcloudLogin.value.running) return
         nextcloudLoginJob?.cancel()
@@ -5681,14 +5777,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _nextcloudLogin.update { it.copy(phase = NextcloudLoginPhase.STARTING, error = null) }
             try {
                 val login = nextcloudLoginClient.begin(server)
-                val application = getApplication<Application>()
-                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(login.loginUrl))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                require(browserIntent.resolveActivity(application.packageManager) != null) {
-                    "Naršyklė Nextcloud prisijungimui nerasta"
-                }
                 _nextcloudLogin.update { it.copy(phase = NextcloudLoginPhase.WAITING_FOR_BROWSER) }
-                application.startActivity(browserIntent)
+                openBrowser(login.loginUrl)
                 nextcloudLoginClient.await(login).use { credentials ->
                     _nextcloudLogin.update { it.copy(phase = NextcloudLoginPhase.SAVING) }
                     val profile = credentials.profile()
@@ -6015,6 +6105,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { graph.navigation.setDirectorySortSettings(identity, next) }
             .onSuccess { _networkState.update { it.withDirectorySortSettings(next) } }
             .onFailure { message(it.message ?: "Katalogo rūšiavimo nustatymo išsaugoti nepavyko", true) }
+    }
+
+    private val _networkProfileEditor = MutableStateFlow<NetworkProfile?>(null)
+    val networkProfileEditor = _networkProfileEditor.asStateFlow()
+
+    fun openNetworkProfileEditor(profile: NetworkProfile) {
+        _networkProfileEditor.value = profile
+        _section.value = AppSection.CONNECTIONS
+    }
+
+    fun consumeNetworkProfileEditor() { _networkProfileEditor.value = null }
+
+    fun openCloudProfile(profile: NetworkProfile) {
+        _section.value = AppSection.CONNECTIONS
+        connectNetwork(profile)
     }
 
     fun setRemoteSort(mode: SortMode, direction: SortDirection) {
@@ -6541,6 +6646,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         graph.applicationScope.launch {
             graph.editSessions.discard(editSession)
             remotePreviewCache.discard(previewTarget.remoteCachedFile())
+            graph.privilegedFiles.discardPreview(previewTarget.privilegedCachedFile())
             discardArchiveMaterializations()
         }
         remoteClient?.let { client -> graph.applicationScope.launch { client.close() } }

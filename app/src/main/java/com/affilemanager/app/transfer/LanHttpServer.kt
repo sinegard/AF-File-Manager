@@ -58,6 +58,8 @@ internal interface TemporaryLanServer : AutoCloseable {
     fun start(): LanServerSession
     fun stop(reason: String)
     fun cancelNearbyFile(batchId: String, fileIndex: Int): Boolean = false
+    fun removeGroupMember(pairing: NearbyPairing): Boolean = false
+    fun setGroupMessagesBlocked(pairing: NearbyPairing, blocked: Boolean): Boolean = false
 }
 
 class LanHttpServer(
@@ -78,6 +80,7 @@ class LanHttpServer(
     private val groupName: String = "AF group",
     private val onGroupMembers: (NearbyGroupInvite, List<NearbyGroupMember>) -> Unit = { _, _ -> },
     private val onStopped: (String) -> Unit = {},
+    private val onNearbyNamedMessage: (String?, String) -> Unit = { _, message -> onNearbyMessage(message) },
 ) : TemporaryLanServer {
     private val nearbyFiles = NearbyReceiveFiles()
     private val nearbyProgressLock = Any()
@@ -85,6 +88,24 @@ class LanHttpServer(
     private data class NearbyUploadKey(val batchId: String?, val fileIndex: Int)
     private val uploadClients = java.util.concurrent.ConcurrentHashMap<Socket, NearbyUploadKey>()
     private val groupDirectory = NearbyGroupDirectory(nowMillis)
+    private data class GroupSession(val host: String, @Volatile var peer: NearbyPairing? = null)
+    private val groupSessions = java.util.concurrent.ConcurrentHashMap<String, GroupSession>()
+
+    override fun removeGroupMember(pairing: NearbyPairing): Boolean {
+        if (!groupMode || !running.get()) return false
+        val active = session ?: return false
+        val removed = groupDirectory.remove(pairing)
+        if (removed) publishGroupMembers(active)
+        return removed
+    }
+
+    override fun setGroupMessagesBlocked(pairing: NearbyPairing, blocked: Boolean): Boolean {
+        val active = session ?: return false
+        if (!groupMode || !running.get()) return false
+        val changed = groupDirectory.setMessagesBlocked(pairing, blocked)
+        if (changed) publishGroupMembers(active)
+        return changed
+    }
     companion object {
         const val MAX_SESSION_MINUTES = LanSessionDuration.MAX_TIMED_MINUTES
         const val MAX_CONCURRENT_REQUESTS = 4
@@ -159,6 +180,7 @@ class LanHttpServer(
         executor.shutdownNow()
         clients.forEach { runCatching { it.close() } }
         clients.clear()
+        groupSessions.clear()
         session = null
         onStopped(t(reason).take(200))
     }
@@ -234,10 +256,10 @@ class LanHttpServer(
         }
 
         if (request.path == "/login" && request.method == "POST") {
-            handleLogin(request, input, output, active)
+            handleLogin(request, input, output, active, remoteAddress)
             return
         }
-        if (!isAuthenticated(request)) {
+        if (!isAuthenticated(request, remoteAddress)) {
             writeText(output, 401, loginPage(active), "text/html; charset=utf-8")
             return
         }
@@ -282,6 +304,7 @@ class LanHttpServer(
                 require(!readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) { "Užklausa atmesta" }
                 val peer = NearbyPairing.parse(readExactly(input, request.contentLength.toInt()).toString(StandardCharsets.UTF_8))
                 require(peer.host == remoteAddress) { "Užklausa atmesta" }
+                bindGroupPeer(request, peer)
                 // Record only. The recipient must select files and explicitly start the reverse send.
                 onNearbyPeer(peer, active.expiresAtMillis)
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
@@ -292,6 +315,7 @@ class LanHttpServer(
                 }
                 val peer = readGroupPairing(request, input, remoteAddress)
                 groupDirectory.join(peer)
+                bindGroupPeer(request, peer)
                 publishGroupMembers(active)
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
             }
@@ -325,10 +349,18 @@ class LanHttpServer(
             }
             request.method == "POST" && request.path == "/nearby/message" -> {
                 require(!readOnly && request.contentLength in 1..MAX_NEARBY_MESSAGE_BYTES.toLong()) { "Užklausa atmesta" }
+                val sender = requestToken(request)?.let { groupSessions[it]?.peer } ?: groupDirectory.memberAt(remoteAddress)
+                val messagesAllowed = sender?.let(groupDirectory::messagesAllowed)
+                    ?: groupDirectory.messagesAllowed(remoteAddress)
+                if (groupMode && !messagesAllowed) {
+                    writeText(output, 403, t("Žinutės iš šio telefono užblokuotos"), "text/plain; charset=utf-8",
+                        extraHeaders = listOf("X-AF-Message-Blocked: 1"))
+                    return
+                }
                 val message = NearbyChatController.validate(
                     readExactly(input, request.contentLength.toInt()).toString(StandardCharsets.UTF_8),
                 )
-                onNearbyMessage(message)
+                onNearbyNamedMessage(sender?.receiverName, message)
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
             }
             request.method == "POST" && request.path == "/nearby/manifest" && readOnly ->
@@ -389,7 +421,7 @@ class LanHttpServer(
         onGroupMembers(NearbyGroupInvite(organizer, groupName), groupDirectory.snapshot(organizer))
     }
 
-    private fun handleLogin(request: Request, input: BufferedInputStream, output: BufferedOutputStream, active: LanServerSession) {
+    private fun handleLogin(request: Request, input: BufferedInputStream, output: BufferedOutputStream, active: LanServerSession, remoteAddress: String) {
         if ((!groupMode && codeConsumed.get()) || authFailures.get() >= MAX_AUTH_FAILURES) {
             writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
             return
@@ -410,13 +442,17 @@ class LanHttpServer(
             writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
             return
         }
+        val token = if (groupMode) synchronized(groupSessions) {
+            require(groupSessions.size < 128) { "Grupė pilna" }
+            randomToken(24).also { groupSessions[it] = GroupSession(remoteAddress) }
+        } else cookieToken
         val page = "<html lang='${html(language)}'><head><meta http-equiv='refresh' content='0;url=/'></head><body>${html(t("Prisijungta"))}.</body></html>"
         writeText(
             output,
             200,
             page,
             "text/html; charset=utf-8",
-            extraHeaders = listOf("Set-Cookie: af_session=$cookieToken; HttpOnly; SameSite=Strict; Path=/",
+            extraHeaders = listOf("Set-Cookie: af_session=$token; HttpOnly; SameSite=Strict; Path=/",
                 "X-AF-Session-Expires: ${active.expiresAtMillis}", "X-AF-Queue-Version: 1"),
         )
     }
@@ -591,9 +627,21 @@ class LanHttpServer(
         return candidate
     }
 
-    private fun isAuthenticated(request: Request): Boolean {
-        val cookies = request.headers["cookie"].orEmpty().split(';').map(String::trim)
-        return cookies.any { it == "af_session=$cookieToken" }
+    private fun requestToken(request: Request): String? = request.headers["cookie"].orEmpty()
+        .split(';').map(String::trim).firstOrNull { it.startsWith("af_session=") }?.substringAfter('=')
+
+    private fun isAuthenticated(request: Request, remoteAddress: String): Boolean {
+        val token = requestToken(request) ?: return false
+        return if (groupMode) groupSessions[token]?.host == remoteAddress else token == cookieToken
+    }
+
+    private fun bindGroupPeer(request: Request, peer: NearbyPairing) {
+        if (!groupMode) return
+        val session = requestToken(request)?.let(groupSessions::get) ?: error("Gavimo sesija nepatvirtinta")
+        synchronized(session) {
+            require(session.peer == null || session.peer == peer) { "Gavimo sesija nepatvirtinta" }
+            session.peer = peer
+        }
     }
 
     private fun loginPage(session: LanServerSession, error: String? = null): String {

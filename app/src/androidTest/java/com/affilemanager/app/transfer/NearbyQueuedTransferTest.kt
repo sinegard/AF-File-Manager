@@ -5,6 +5,8 @@ import com.affilemanager.app.AFFileManagerApplication
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -69,7 +71,7 @@ class NearbyQueuedTransferTest {
                     while (true) { val header = line(); if (header.isEmpty()) break
                         headers[header.substringBefore(':').lowercase()] = header.substringAfter(':').trim() }
                     val length = headers["content-length"]!!.toInt()
-                    val body = input.readNBytes(length); check(body.size == length)
+                    val body = readExactly(input, length)
                     events += route to headers["x-af-batch-id"].orEmpty()
                     if (route == "/upload") assertArrayEquals(original.readBytes(), body)
                     val status = if (route == "/nearby/manifest" && manifests.incrementAndGet() == 1) "500 Lost acknowledgement" else "200 OK"
@@ -190,7 +192,7 @@ class NearbyQueuedTransferTest {
                         if (route == "/upload" && uploads.isEmpty()) {
                             firstHeader.countDown(); check(releaseUpload.await(12, TimeUnit.SECONDS))
                         }
-                        val body = input.readNBytes(length); check(body.size == length)
+                        val body = readExactly(input, length)
                         if (route == "/nearby/manifest") {
                             manifests += NearbyTransferManifest.decode(body)
                             if (manifests.size == 2) appended.countDown()
@@ -218,10 +220,10 @@ class NearbyQueuedTransferTest {
             send(first)
             assertTrue(
                 "First upload header did not arrive; state=${NearbyTransferController.state.value}; errors=$errors",
-                firstHeader.await(15, TimeUnit.SECONDS),
+                withContext(Dispatchers.IO) { firstHeader.await(15, TimeUnit.SECONDS) },
             )
             send(second)
-            assertTrue("Second manifest must arrive before first upload completes", appended.await(8, TimeUnit.SECONDS))
+            assertTrue("Second manifest must arrive before first upload completes", withContext(Dispatchers.IO) { appended.await(8, TimeUnit.SECONDS) })
             val queued = NearbyTransferController.state.value.files
             assertEquals(listOf(first.name, second.name), queued.map { it.name })
             assertEquals(TransferFileStatus.WAITING, queued.last().status)
@@ -242,4 +244,7 @@ class NearbyQueuedTransferTest {
     }
 
     private fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).toList()
+    private fun readExactly(input: java.io.InputStream, size: Int) = ByteArray(size).also {
+        java.io.DataInputStream(input).readFully(it)
+    }
 }

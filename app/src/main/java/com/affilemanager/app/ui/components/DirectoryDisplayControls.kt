@@ -42,6 +42,7 @@ import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.data.OptionalFeature
 
 /**
  * Shared navigation chrome for every place that behaves like a file browser.
@@ -77,13 +78,13 @@ fun DirectoryBrowserToolbar(
             .testTag("directory_toolbar_$testTagPrefix"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack, enabled = backEnabled) {
+        if (featureVisible(OptionalFeature.TOOLBAR_BACK)) IconButton(onClick = onBack, enabled = backEnabled) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Atgal"))
         }
-        IconButton(onClick = onForward, enabled = forwardEnabled) {
+        if (featureVisible(OptionalFeature.TOOLBAR_FORWARD)) IconButton(onClick = onForward, enabled = forwardEnabled) {
             Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Pirmyn"))
         }
-        IconButton(onClick = onUp, enabled = upEnabled) {
+        if (featureVisible(OptionalFeature.TOOLBAR_UP)) IconButton(onClick = onUp, enabled = upEnabled) {
             Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
         }
         Column(modifier = Modifier.weight(1f)) {
@@ -129,6 +130,7 @@ fun DirectoryLayoutButton(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (!featureVisible(OptionalFeature.TOOLBAR_LAYOUT)) return
     val toggleLabel = uiText(if (grid) "Rodyti sąrašą" else "Rodyti tinklelį")
     Box(
         modifier = modifier
@@ -157,6 +159,7 @@ fun DirectorySearchButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (!active && !featureVisible(OptionalFeature.TOOLBAR_SEARCH)) return
     IconButton(onClick = onClick, modifier = modifier.testTag(testTag)) {
         Icon(
             Icons.Rounded.Search,

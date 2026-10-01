@@ -133,6 +133,25 @@ object NearbyTransferController {
         context.startService(Intent(context, NearbyTransferService::class.java).setAction(NearbyTransferService.ACTION_CANCEL))
     }
 
+    @Synchronized
+    fun startGroup(context: Context, peers: List<NearbyPairing>, prepared: PreparedNearbyTransfer, returnPairing: NearbyPairing?) {
+        val group = NearbyGroupController.state.value
+        require(group.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED) &&
+            peers.all { peer -> peer != group.ownPairing && group.members.any { it.pairing == peer } }) {
+            "Pasirinkti gavėjai nebepriklauso grupei"
+        }
+        NearbyTransferHistoryController.initialize(context)
+        val batches = queue.enqueueGroup(peers.map { NearbyPairing.parse(it.encoded()) }, prepared, returnPairing)
+        try {
+            connection.beginGroup(peers)
+            ContextCompat.startForegroundService(context, Intent(context, NearbyTransferService::class.java)
+                .setAction(NearbyTransferService.ACTION_START).putExtra("batch_id", batches.first().id))
+        } catch (failure: Exception) {
+            batches.forEach { queue.rollback(it.id) }
+            throw failure
+        }
+    }
+
     fun cancelFile(context: Context, batchId: String, fileIndex: Int) {
         require(batchId.isNotBlank() && fileIndex in 1..NearbySourcePreparer.MAX_FILES) {
             "Siuntimo rinkinio keliai nesutampa"
@@ -280,7 +299,6 @@ class NearbyTransferService : Service() {
             } catch (failure: Exception) {
                 val current = NearbyTransferController.queue.get(batch.id)?.state ?: batch.state
                 val status = if (failure is CancellationException || current.status == NearbyTransferStatus.CANCELLED) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.ERROR
-                batch.sources.cleanupRootPath?.let(::safeDeleteStage)
                 // The receiver may have accepted the manifest before its reply was lost.
                 // Retire that exact batch before announcing another one, without replaying files.
                 val cookie = NearbyTransferController.connection.cookieFor(batch.pairing)
@@ -291,6 +309,9 @@ class NearbyTransferService : Service() {
                     message = if (status == NearbyTransferStatus.CANCELLED) "Siuntimas atšauktas" else (failure.message ?: "Siuntimas nepavyko").take(240),
                     files = current.files.map { it.copy(status = if (status == NearbyTransferStatus.CANCELLED) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED,
                         localPath = if (batch.sources.cleanupRootPath != null) null else it.localPath) }))
+                batch.sources.cleanupRootPath?.let { path ->
+                    if (!NearbyTransferController.queue.stageInUse(path)) safeDeleteStage(path)
+                }
             }
             startNext()
             }
@@ -518,7 +539,9 @@ class NearbyTransferService : Service() {
                 val cookie = NearbyTransferController.connection.cookieFor(pairing)
                 if (cookie != null) runCatching { sendControl(pairing, cookie, "/nearby/cancel", batch.id) }
             }
-            cleanupRoot?.let(::safeDeleteStage)
+            cleanupRoot?.let { path ->
+                if (!NearbyTransferController.queue.stageInUse(path, excludingId = batch.id)) safeDeleteStage(path)
+            }
             cancelledFileKeys.removeIf { it.startsWith("${batch.id}:") }
             terminalState?.let { state -> NearbyTransferController.queue.update(batch.id,
                 if (cleanupRoot == null) state else state.copy(files = state.files.map { it.copy(localPath = null) })) }
@@ -918,6 +941,9 @@ class NearbyTransferService : Service() {
                     .post(message.toRequestBody("text/plain; charset=utf-8".toMediaType()))
                     .build()
                 client.newCall(request).apply { timeout().timeout(15, TimeUnit.SECONDS) }.execute().use { response ->
+                    require(response.code != 403 || response.header("X-AF-Message-Blocked") != "1") {
+                        "Žinutės iš šio telefono užblokuotos"
+                    }
                     checkSessionResponse(peer, response.code)
                     require(response.isSuccessful) { "Žinutės išsiųsti nepavyko (${response.code})" }
                 }
@@ -992,9 +1018,10 @@ class NearbyTransferService : Service() {
     }
 
     private fun safeDeleteStage(path: String) {
-        val root = runCatching { File(cacheDir, "nearby-send-staging").canonicalFile }.getOrNull() ?: return
-        val candidate = runCatching { File(path).canonicalFile }.getOrNull() ?: return
-        if (candidate.parentFile == root) candidate.deleteRecursively()
+        if (NearbyTransferController.queue.stageInUse(path, excludingId = currentBatchId)) return
+        if (!NearbyStagingCleanup.delete(File(cacheDir, "nearby-send-staging"), path)) {
+            android.util.Log.w("NearbyTransfer", "nearby_stage_cleanup_failed")
+        }
     }
 
     private fun createChannel() {

@@ -56,6 +56,6 @@ This roadmap is designed for Android rather than copied blindly from desktop fil
 ## Deliberately later
 
 - Local AI or semantic search only after durable operations, sessions, and transfer safety remain proven at larger scale.
-- Optional cloud-provider OAuth accounts require a separate threat model and credential lifecycle.
+- Further native cloud integrations requiring AF to register an app with the provider are not planned. Existing Android document-provider access and optional Nextcloud connections remain available without an AF account.
 - ADB remains an external development tool rather than an in-app access mode. Android restrictions around `Android/data` and `Android/obb` must continue to be represented honestly when neither Shizuku nor compatible root access is active.
 - A portable Windows or Linux build would be a separate product and architecture, not a property of the Android APK.
