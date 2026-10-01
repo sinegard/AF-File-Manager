@@ -1,5 +1,17 @@
 # Release exceptions
 
+## AF-EXC-0.42.0-RSS — approved 2026-10-01
+
+The owner (`sinegard`) approved this exception in the project conversation after both measured memory overruns were reported. It applies to **0.42.0 only**. The owner accepts the known memory overhead for this feature and fix release; the performance gate remains failed and `performance/budgets.json` stays unchanged.
+
+The exception covers only the two RSS checks required by `docs/RELEASING.md`: `coldStartAndFirstPaint.memoryRssAnonMaxKb.maximum` reached **120,784 KiB** against **110,000 KiB**, and `largeDirectoryFirstContent.memoryRssAnonMaxKb.maximum` reached **162,532 KiB** against **155,000 KiB**. All five scenarios completed seven iterations on the dedicated API 36 x86_64 emulator. Every declared time, frame, heap and other RSS limit passed. The measured application source and profiles are recorded in `86827acc4c39b9cb2e7299dbd6e56c87a3586954`; this release-record commit changes documentation only. The benchmark APK SHA-256 is `b409b05714d00e223b5aecd759a6b678fb8c01daf665ea70f8a4947cee13be79`, and the report SHA-256 is `cd15d000ada8df4dac2ca54025e1ee90be8225d0b3a99b5758d8d09d0d07c5f8`.
+
+Users with little free memory may see AF evicted or restarted more often. These measurements do not establish physical-phone or low-memory-device acceptance, and no memory improvement is claimed. This exception does not waive functional, security, data-preservation, signature or exact-artifact checks.
+
+The unchanged application fixes have unit, lint, Android 8/16 and optimized-runtime evidence. The release still requires the exact downloadable CI APK to match its tag, version, ABI, checksum and established signing certificate, then pass the affected runtime checks. Any failure there blocks publication.
+
+This approval expires with 0.42.0. Before a later release, investigate the two RSS checks and meet the budgets or obtain a separately scoped decision with fresh evidence. Close this exception with a later passing measurement or an explicit superseding decision. Keep previous releases available; any correction gets a new version rather than replacing an APK or moving an accepted tag. No phone installation, root grant, registration, credential change or user-data deletion is authorized by this exception.
+
 ## AF-EXC-0.41.2-RSS — approved 2026-09-22
 
 - Approver: AF File Manager owner (`sinegard`), explicitly in the project conversation after the exact v0.41.2 measurements and the two failed RSS limits were reported. This approval is for **v0.41.2 only**.
