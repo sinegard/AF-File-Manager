@@ -30,6 +30,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -168,6 +171,44 @@ import kotlin.math.roundToInt
 private enum class NearbySendStep { PICK, PAIR }
 
 @Composable
+private fun NearbyReceiveModeButtons(
+    onNetwork: () -> Unit,
+    onWifiDirect: () -> Unit,
+    enabled: Boolean,
+    networkTag: String,
+    wifiTag: String,
+) {
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onNetwork, enabled = enabled,
+            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 64.dp).testTag(networkTag)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
+                LText("Paleisti gavimą", textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+        OutlinedButton(onClick = onWifiDirect, enabled = enabled,
+            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 64.dp).testTag(wifiTag)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.WifiTethering, contentDescription = null)
+                LText("Paleisti gavimą per Wi-Fi Direct", textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NearbyDurationControl(minutes: Int, onChange: (Int) -> Unit, tag: String) {
+    LText(if (minutes == LanSessionDuration.MANUAL_MINUTES) "Sesijos trukmė · rankinis sustabdymas" else "Sesijos trukmė · $minutes min.")
+    Slider(value = if (minutes == LanSessionDuration.MANUAL_MINUTES) 0f else (minutes / LanSessionDuration.STEP_MINUTES).toFloat(),
+        onValueChange = { value ->
+            val index = value.roundToInt().coerceIn(0, LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES)
+            onChange(if (index == 0) LanSessionDuration.MANUAL_MINUTES else index * LanSessionDuration.STEP_MINUTES)
+        }, valueRange = 0f..(LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES).toFloat(),
+        steps = LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES - 1,
+        modifier = Modifier.fillMaxWidth().testTag(tag))
+}
+
+@Composable
 internal fun NearbyPhoneTransferCard(
     viewModel: MainViewModel,
     receiveDirectory: String,
@@ -183,6 +224,8 @@ internal fun NearbyPhoneTransferCard(
     onReceiverNameChange: (String) -> Unit,
     groupName: String = "AF group",
     onGroupNameChange: (String) -> Unit = {},
+    groupAvatarUri: String = "",
+    onGroupAvatarChange: (String) -> Unit = {},
     durationMinutes: Int,
     onDurationMinutesChange: (Int) -> Unit,
 ) {
@@ -369,7 +412,10 @@ internal fun NearbyPhoneTransferCard(
         receiverName = receiverName,
         groupName = groupName,
         onGroupNameChange = onGroupNameChange,
+        groupAvatarUri = groupAvatarUri,
+        onGroupAvatarChange = onGroupAvatarChange,
         durationMinutes = durationMinutes,
+        onDurationMinutesChange = onDurationMinutesChange,
         lanState = lanState,
         onDismiss = { showGroup = false },
         onSendTo = { pairing ->
@@ -467,7 +513,10 @@ private fun NearbyGroupDialog(
     receiverName: String,
     groupName: String,
     onGroupNameChange: (String) -> Unit,
+    groupAvatarUri: String,
+    onGroupAvatarChange: (String) -> Unit,
     durationMinutes: Int,
+    onDurationMinutesChange: (Int) -> Unit,
     lanState: LanTransferState,
     onDismiss: () -> Unit,
     onSendTo: (NearbyPairing) -> Unit,
@@ -475,6 +524,14 @@ private fun NearbyGroupDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var password by remember { mutableStateOf("") }
+    var showDiscovery by remember { mutableStateOf(false) }
+    var showWifiDiscovery by remember { mutableStateOf(false) }
+    var wifiReceiveName by remember { mutableStateOf<String?>(null) }
+    val wifiState by WifiDirectController.state.collectAsStateWithLifecycle()
+    val groupAvatar by produceState<android.graphics.Bitmap?>(null, groupAvatarUri) {
+        value = groupAvatarUri.takeIf(String::isNotBlank)?.let { withContext(Dispatchers.IO) { decodeReceiverAvatar(context, it) } }
+    }
     val groupState by NearbyGroupController.state.collectAsStateWithLifecycle()
     val membersAtOpen = remember { groupState.members.size }
     var firstMemberOpened by remember { mutableStateOf(false) }
@@ -485,6 +542,12 @@ private fun NearbyGroupDialog(
     var invitePayload by remember { mutableStateOf("") }
     var pendingJoin by remember { mutableStateOf<NearbyGroupInvite?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            onGroupAvatarChange(uri.toString())
+        }.onFailure { error = nearbyFriendlyError(it, "Paveikslėlio atidaryti nepavyko") }
+    }
     var qrCaptureFile by remember { mutableStateOf<File?>(null) }
     val active = groupState.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED, NearbyGroupStatus.JOINING)
     val shareInvite = remember(groupState.organizer, groupState.groupName) {
@@ -542,7 +605,7 @@ private fun NearbyGroupDialog(
         }
     }
 
-    fun startOwnGroupReceiver(name: String) {
+    fun startOwnGroupReceiver(name: String, bindAddress: String? = null, organizer: Boolean = true) {
         require(lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING)) {
             "Pirmiausia sustabdykite kitą bendrinimo sesiją"
         }
@@ -554,7 +617,36 @@ private fun NearbyGroupDialog(
             groupMode = true,
             receiverName = receiverName,
             groupName = name,
+            options = LanTransferOptions(password = password).validated(LanTransferProtocol.WEB),
+            bindAddress = bindAddress,
+            groupOrganizer = organizer,
         )
+        password = ""
+    }
+
+    val wifiPermissions = remember { WifiDirectController.permissionsForSdk(Build.VERSION.SDK_INT) }
+    var permissionAction by remember { mutableStateOf("") }
+    val wifiPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        if (WifiDirectController.hasPermission(context)) {
+            if (permissionAction == "receive") WifiDirectController.createGroup(context) else showWifiDiscovery = true
+        } else { wifiReceiveName = null; error = "Wi-Fi Direct leidimas nesuteiktas" }
+    }
+    val discoveryPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) showDiscovery = true else error = "Artimų įrenginių leidimas nesuteiktas. Galite nuskaityti QR kodą arba įklijuoti susiejimo kodą."
+    }
+    LaunchedEffect(wifiReceiveName, wifiState.status, wifiState.groupOwnerAddress) {
+        val name = wifiReceiveName ?: return@LaunchedEffect
+        if (wifiState.status == WifiDirectStatus.CONNECTED) {
+            wifiReceiveName = null
+            val address = wifiState.groupOwnerAddress
+            if (!wifiState.isGroupOwner || address == null) error = "Wi-Fi Direct gavimo grupės sukurti nepavyko"
+            else runCatching { startOwnGroupReceiver(name, address) }.onFailure {
+                WifiDirectController.stop(context); error = nearbyFriendlyError(it, "Grupės sukurti nepavyko")
+            }
+        } else if (wifiState.status == WifiDirectStatus.ERROR) {
+            wifiReceiveName = null
+            error = wifiState.message ?: "Wi-Fi Direct gavimo paleisti nepavyko"
+        }
     }
 
     LaunchedEffect(pendingJoin, lanState.status, lanState.groupMode, lanState.url, lanState.code) {
@@ -572,7 +664,15 @@ private fun NearbyGroupDialog(
         }
     }
 
-    AfModalDialog(
+    if (showDiscovery) NearbyDiscoveryDialog(groupOnly = true, onDismiss = { showDiscovery = false }, onSelect = { device ->
+        device.groupName?.let { invitePayload = NearbyGroupInvite(device.pairing, it).encoded() }
+        showDiscovery = false
+    })
+    if (showWifiDiscovery) WifiDirectDiscoveryDialog(onDismiss = { showWifiDiscovery = false }, onConnected = {
+        showWifiDiscovery = false
+        showDiscovery = true
+    })
+    if (!showDiscovery && !showWifiDiscovery) AfModalDialog(
         title = "Telefonų grupė",
         icon = Icons.Rounded.Contacts,
         onDismissRequest = onDismiss,
@@ -590,24 +690,41 @@ private fun NearbyGroupDialog(
                 style = MaterialTheme.typography.bodySmall,
             )
             if (!active) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(onClick = { avatarPicker.launch(arrayOf("image/*")) }, modifier = Modifier.size(72.dp).testTag("nearby_group_avatar")) {
+                        if (groupAvatar != null) Image(requireNotNull(groupAvatar).asImageBitmap(), contentDescription = uiText("Pasirinkti"),
+                            modifier = Modifier.size(64.dp), contentScale = ContentScale.Crop)
+                        else Icon(Icons.Rounded.Contacts, contentDescription = uiText("Pasirinkti"), modifier = Modifier.size(42.dp))
+                    }
                 OutlinedTextField(
                     value = groupName,
                     onValueChange = { onGroupNameChange(it.filterNot(Char::isISOControl).take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH)) },
                     label = { LText("Grupės pavadinimas") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                 )
-                Button(
-                    onClick = {
+                }
+                OutlinedTextField(value = password, onValueChange = { password = it.filterNot(Char::isISOControl).take(LanTransferOptions.MAX_PASSWORD_LENGTH) },
+                    label = { LText("Laikinas slaptažodis (tuščias = sugeneruotas)") }, visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true, modifier = Modifier.fillMaxWidth().testTag("nearby_group_password"))
+                NearbyDurationControl(durationMinutes, onDurationMinutesChange, "nearby_group_duration")
+                NearbyReceiveModeButtons(
+                    onNetwork = {
                         runCatching { startOwnGroupReceiver(groupName.trim().ifBlank { "AF group" }) }
                             .onFailure { error = nearbyFriendlyError(it, "Grupės sukurti nepavyko") }
                     },
+                    onWifiDirect = {
+                        wifiReceiveName = groupName.trim().ifBlank { "AF group" }
+                        permissionAction = "receive"
+                        if (WifiDirectController.hasPermission(context)) {
+                            runCatching { WifiDirectController.createGroup(context) }.onFailure {
+                                wifiReceiveName = null; error = nearbyFriendlyError(it, "Wi-Fi Direct gavimo paleisti nepavyko")
+                            }
+                        } else wifiPermissionLauncher.launch(wifiPermissions)
+                    },
                     enabled = lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
-                    modifier = Modifier.fillMaxWidth().testTag("nearby_group_host"),
-                ) {
-                    Icon(Icons.Rounded.Contacts, contentDescription = null)
-                    LText("Sukurti grupę", modifier = Modifier.padding(start = 7.dp))
-                }
+                    networkTag = "nearby_group_host", wifiTag = "nearby_group_receive_wifi_direct",
+                )
                 HorizontalDivider()
                 LText("Prisijungti prie grupės", fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
@@ -616,7 +733,7 @@ private fun NearbyGroupDialog(
                     label = { LText("Grupės kodas") },
                     minLines = 2,
                     maxLines = 4,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_group_pairing_input"),
                     isError = invitePayload.isNotBlank() && parsedInvite?.isFailure == true,
                 )
                 AfActionRow {
@@ -624,6 +741,19 @@ private fun NearbyGroupDialog(
                         Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
                         LText("Nuskaityti QR", modifier = Modifier.padding(start = 7.dp))
                     }
+                    OutlinedButton(onClick = {
+                        if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                            showDiscovery = true
+                        else discoveryPermissionLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+                    }) { Icon(Icons.Rounded.Search, null); LText("Rasti artimus AF įrenginius", modifier = Modifier.padding(start = 7.dp)) }
+                }
+                OutlinedButton(onClick = {
+                    permissionAction = "send"
+                    if (WifiDirectController.hasPermission(context)) showWifiDiscovery = true else wifiPermissionLauncher.launch(wifiPermissions)
+                }, modifier = Modifier.fillMaxWidth().testTag("nearby_group_find_wifi_direct")) {
+                    Icon(Icons.Rounded.WifiTethering, null); LText("Prisijungti per Wi-Fi Direct", modifier = Modifier.padding(start = 7.dp))
+                }
+                AfActionRow {
                     OutlinedButton(onClick = {
                         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
                         invitePayload = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
@@ -635,14 +765,26 @@ private fun NearbyGroupDialog(
                         val invite = parsedInvite?.getOrNull() ?: return@Button
                         error = null
                         pendingJoin = invite
-                        runCatching { startOwnGroupReceiver(invite.groupName) }
+                        scope.launch {
+                          runCatching {
+                            val address = withContext(Dispatchers.IO) {
+                                java.net.DatagramSocket().use { socket ->
+                                    socket.connect(java.net.InetAddress.getByName(invite.organizer.host), invite.organizer.port)
+                                    socket.localAddress.hostAddress
+                                }
+                            }
+                            startOwnGroupReceiver(invite.groupName, address, organizer = false)
+                          }
                             .onFailure { failure -> pendingJoin = null; error = nearbyFriendlyError(failure, "Prisijungti prie grupės nepavyko") }
+                        }
                     },
                     enabled = parsedInvite?.isSuccess == true &&
                         lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
                     modifier = Modifier.fillMaxWidth().testTag("nearby_group_join"),
                 ) { LText("Prisijungti") }
             } else {
+                groupAvatar?.let { Image(it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(120.dp)) }
                 LText(groupState.groupName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 when (groupState.status) {
                     NearbyGroupStatus.JOINING -> {
@@ -741,6 +883,7 @@ private fun NearbyGroupDialog(
             if (lanState.status == LanTransferStatus.STARTING || pendingJoin != null) CircularProgressIndicator()
             groupState.error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
             error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
+            lanState.discoveryError?.let { LText(it, color = MaterialTheme.colorScheme.error) }
         }
     }
     if (showManageDevices && groupState.status == NearbyGroupStatus.HOSTING) {
@@ -856,12 +999,6 @@ private fun NearbyReceiveDialog(
     }
     val qrBitmap by produceState<android.graphics.Bitmap?>(null, pairing) {
         value = pairing?.let { withContext(Dispatchers.Default) { NearbyQrCode.create(it.encoded()) } }
-    }
-    val advertiser = remember(context) { NearbyDeviceAdvertiser(context) { advertisementError = it } }
-    DisposableEffect(advertiser, pairing, nearbyPermissionGranted) {
-        if (pairing != null && nearbyPermissionGranted) advertiser.start(pairing, receiverName)
-        else advertiser.stop()
-        onDispose { advertiser.stop() }
     }
     val startReceiver: () -> Unit = {
         runCatching {
@@ -1040,31 +1177,19 @@ private fun NearbyReceiveDialog(
                     steps = (LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES) - 1,
                     modifier = Modifier.fillMaxWidth().testTag("nearby_receive_duration"),
                 )
-                AfActionRow {
-                    Button(
-                        onClick = {
+                NearbyReceiveModeButtons(
+                        onNetwork = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !nearbyPermissionGranted) {
                                 nearbyPermissionLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
                             } else startReceiver()
                         },
-                        enabled = lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
-                    ) {
-                        Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
-                        LText("Paleisti gavimą", modifier = Modifier.padding(start = 7.dp))
-                    }
-                    OutlinedButton(
-                        onClick = {
+                        onWifiDirect = {
                             if (wifiDirectPermissionGranted) startWifiDirectReceiver()
                             else wifiDirectPermissionLauncher.launch(wifiDirectPermissions)
                         },
                         enabled = !wifiDirectPending && lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
-                        modifier = Modifier.testTag("nearby_receive_wifi_direct"),
-                    ) {
-                        if (wifiDirectPending) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Rounded.WifiTethering, contentDescription = null)
-                        LText("Paleisti gavimą per Wi-Fi Direct", modifier = Modifier.padding(start = 7.dp))
-                    }
-                }
+                        networkTag = "nearby_receive_network", wifiTag = "nearby_receive_wifi_direct",
+                )
                 OutlinedButton(
                     onClick = { openHotspotSettings(context) },
                     modifier = Modifier.fillMaxWidth(),
@@ -1077,11 +1202,13 @@ private fun NearbyReceiveDialog(
                     style = MaterialTheme.typography.bodySmall)
                 error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 advertisementError?.let { LText(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+                lanState.discoveryError?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 if (lanState.status == LanTransferStatus.ERROR) lanState.message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 if (lanState.status == LanTransferStatus.RUNNING && !activeWebReceiver) {
                     LText("Šiuo metu veikia kita bendrinimo sesija. Ją sustabdykite prieš paleisdami gavimą.", color = MaterialTheme.colorScheme.error)
                 }
             } else {
+                lanState.discoveryError?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 LText("Kitame telefone pasirinkite „Siųsti“ ir nuskaitykite šį kodą.", fontWeight = FontWeight.SemiBold)
                 qrBitmap?.let { bitmap ->
                     Image(
@@ -1756,7 +1883,17 @@ internal fun NearbySendDialog(
                 if (connectedPairing == null) {
                 LText("Gaunančiame telefone atverkite „Gauti“, tada nuskaitykite rodomą QR kodą.")
                 LText("Gavimas atgal į pasirinktą aplanką veiks 15 minučių. Atsijungti galima bendrinimo lange.", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = scanQr, modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = pairingPayload,
+                    onValueChange = { pairingPayload = it.take(NearbyPairing.MAX_PAYLOAD_LENGTH) },
+                    label = { LText("Arba įklijuokite susiejimo kodą") },
+                    minLines = 2,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth().testTag("nearby_pairing_input"),
+                    isError = pairingPayload.isNotBlank() && parsedPairing?.isFailure == true,
+                )
+                Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = scanQr, modifier = Modifier.weight(1f).fillMaxHeight()) {
                     Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
                     LText("Nuskaityti QR kodą", modifier = Modifier.padding(start = 7.dp))
                 }
@@ -1768,14 +1905,11 @@ internal fun NearbySendDialog(
                         if (granted) showNearbyDiscovery = true
                         else nearbyPermissionLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
                     },
-                    modifier = Modifier.fillMaxWidth().testTag("nearby_find_devices"),
+                    modifier = Modifier.weight(1f).fillMaxHeight().testTag("nearby_find_devices"),
                 ) {
                     Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
                     LText("Rasti artimus AF įrenginius", modifier = Modifier.padding(start = 7.dp))
                 }
-                OutlinedButton(onClick = { openHotspotSettings(context) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.WifiTethering, contentDescription = null)
-                    LText("Atidaryti Wi-Fi nustatymus", modifier = Modifier.padding(start = 7.dp))
                 }
                 OutlinedButton(
                     onClick = {
@@ -1794,15 +1928,10 @@ internal fun NearbySendDialog(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                OutlinedTextField(
-                    value = pairingPayload,
-                    onValueChange = { pairingPayload = it.take(NearbyPairing.MAX_PAYLOAD_LENGTH) },
-                    label = { LText("Arba įklijuokite susiejimo kodą") },
-                    minLines = 3,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth().testTag("nearby_pairing_input"),
-                    isError = pairingPayload.isNotBlank() && parsedPairing?.isFailure == true,
-                )
+                OutlinedButton(onClick = { openHotspotSettings(context) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.WifiTethering, contentDescription = null)
+                    LText("Atidaryti Wi-Fi nustatymus", modifier = Modifier.padding(start = 7.dp))
+                }
                 parsedPairing?.exceptionOrNull()?.message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 }
                 parsedPairing?.getOrNull()?.let { pairing ->
@@ -1940,6 +2069,7 @@ private fun WifiDirectDiscoveryDialog(
 private fun NearbyDiscoveryDialog(
     onDismiss: () -> Unit,
     onSelect: (com.affilemanager.app.transfer.NearbyDiscoveredDevice) -> Unit,
+    groupOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     val discovery = remember(context) { NearbyDeviceDiscovery(context) }
@@ -1971,13 +2101,13 @@ private fun NearbyDiscoveryDialog(
             if (!state.searching && state.devices.isEmpty() && state.message == null) {
                 item { LText("Artimų AF įrenginių nerasta. Abiejuose telefonuose įjunkite Wi-Fi ir gavėjo telefone palikite atvertą gavimo langą.") }
             }
-            items(state.devices, key = { it.serviceName }) { device ->
+            items(state.devices.filter { !groupOnly || it.groupName != null }, key = { it.serviceName }) { device ->
                 Card(
                     onClick = { onSelect(device) },
                     modifier = Modifier.fillMaxWidth().testTag("nearby_discovered_device"),
                 ) {
                     Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(device.receiverName, fontWeight = FontWeight.SemiBold)
+                        Text(device.groupName ?: device.receiverName, fontWeight = FontWeight.SemiBold)
                         Text(device.deviceName, style = MaterialTheme.typography.bodySmall)
                         LText("Kodas: ${device.pairing.code}", style = MaterialTheme.typography.labelSmall)
                         Text("${device.pairing.host}:${device.pairing.port}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

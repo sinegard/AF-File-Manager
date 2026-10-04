@@ -42,6 +42,7 @@ class FileCategoryPagingUiTest {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         try {
             assertTrue(resolver.bulkInsert(collection, values) == fixtureCount)
+            com.affilemanager.app.data.materializeIndexedFixture(compose.activity, collection, relativePath)
             val startedAt = SystemClock.elapsedRealtime()
             compose.runOnUiThread {
                 viewModel.setSection(AppSection.FILES)

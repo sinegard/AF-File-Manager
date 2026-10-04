@@ -27,7 +27,14 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
         char[] password = new char[0];
         try {
             boolean verified;
-            if ("nearby".equals(suite)) {
+            if ("share-index".equals(suite)) {
+                launchTargetActivity();
+                verified = com.affilemanager.app.transfer.ReleaseShareIndexVerifier.verify(this);
+            } else if ("issue-regression".equals(suite)) {
+                launchTargetActivity();
+                verified = (Boolean) Class.forName("com.affilemanager.app.transfer.IssueRegressionRuntimeVerifier")
+                        .getMethod("verify", Instrumentation.class).invoke(null, this);
+            } else if ("nearby".equals(suite)) {
                 launchTargetActivity();
                 verified = com.affilemanager.app.transfer.NearbyRuntimeVerifier.verify(this);
             } else if ("split-apk".equals(suite)) {

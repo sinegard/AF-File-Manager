@@ -7,8 +7,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
-class LocalFileOperator {
+class LocalFileOperator(private val onMutation: suspend (List<File>) -> Unit = {}) {
     companion object {
         const val MAX_OPERATION_ENTRIES = 200_000
         const val MAX_TREE_DEPTH = 64
@@ -47,16 +50,22 @@ class LocalFileOperator {
         sources.forEach { source ->
             context.checkpoint()
             val initialTarget = File(destination, source.name)
+            require(initialTarget.canonicalFile != source) { "Šaltinis ir paskirtis yra tas pats failas" }
             val target = resolveTarget(initialTarget, source.isDirectory, conflictPolicy) ?: return@forEach
 
+            val changed = mutableListOf<File>()
+            publishingStorageChanges(onMutation, { changed }) {
             if (move && !target.exists() && source.renameTo(target)) {
+                changed += source
+                changed += target
                 val movedScan = scan(target)
                 context.progress(movedScan.items, movedScan.bytes, source.name)
             } else {
-                copyRecursively(source, target, conflictPolicy, context, depth = 0)
-                if (move) {
-                    deleteRecursively(source, context = null, depth = 0)
+                val fullyCopied = copyRecursively(source, target, conflictPolicy, context, changed, depth = 0)
+                if (move && fullyCopied) {
+                    deleteRecursively(source, context = null, depth = 0, changed = changed)
                 }
+            }
             }
         }
     }
@@ -68,7 +77,12 @@ class LocalFileOperator {
             Scan(Math.addExact(sum.items, scan.items), Math.addExact(sum.bytes, scan.bytes))
         }
         context.setTotals(total.items, total.bytes)
-        sources.forEach { deleteRecursively(it, context, depth = 0) }
+        sources.forEach {
+            val changed = mutableListOf<File>()
+            publishingStorageChanges(onMutation, { changed }) {
+                deleteRecursively(it, context, depth = 0, changed = changed)
+            }
+        }
     }
 
     private suspend fun copyRecursively(
@@ -76,21 +90,23 @@ class LocalFileOperator {
         requestedTarget: File,
         conflictPolicy: ConflictPolicy,
         context: OperationContext,
+        changed: MutableList<File>,
         depth: Int,
-    ) {
+    ): Boolean {
         require(depth <= MAX_TREE_DEPTH) { "Aplankų gylis viršija $MAX_TREE_DEPTH ribą" }
         context.checkpoint()
-        val target = resolveTarget(requestedTarget, source.isDirectory, conflictPolicy) ?: return
+        val target = resolveTarget(requestedTarget, source.isDirectory, conflictPolicy) ?: return false
 
         if (source.isDirectory) {
             if (!target.exists()) check(target.mkdir()) { "Nepavyko sukurti ${target.name}" }
             val children = source.listFiles() ?: throw SecurityException("Nepavyko perskaityti ${source.name}")
+            var fullyCopied = true
             children.forEach { child ->
-                copyRecursively(child, File(target, child.name), conflictPolicy, context, depth + 1)
+                if (!copyRecursively(child, File(target, child.name), conflictPolicy, context, changed, depth + 1)) fullyCopied = false
             }
             target.setLastModified(source.lastModified())
             context.progress(itemDelta = 1, currentName = source.name)
-            return
+            return fullyCopied
         }
 
         val partial = File(target.parentFile, ".${target.name}.${System.nanoTime()}.partial")
@@ -109,24 +125,34 @@ class LocalFileOperator {
                 }
             }
             require(partial.length() == source.length()) { "Kopijos dydis nesutampa: ${source.name}" }
-            if (target.exists() && !target.delete()) throw IllegalStateException("Nepavyko pakeisti ${target.name}")
-            if (!partial.renameTo(target)) throw IllegalStateException("Nepavyko užbaigti ${target.name}")
+            if (target.exists() && conflictPolicy != ConflictPolicy.REPLACE) throw FileAlreadyExistsException(target)
+            if (conflictPolicy == ConflictPolicy.REPLACE) {
+                try {
+                    Files.move(partial.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            } else Files.move(partial.toPath(), target.toPath())
+            changed += target
             target.setLastModified(source.lastModified())
             context.progress(itemDelta = 1, currentName = source.name)
         } finally {
             if (partial.exists()) partial.delete()
         }
+        return true
     }
 
-    private suspend fun deleteRecursively(file: File, context: OperationContext?, depth: Int) {
+    private suspend fun deleteRecursively(file: File, context: OperationContext?, depth: Int, changed: MutableList<File>) {
         require(depth <= MAX_TREE_DEPTH) { "Aplankų gylis viršija $MAX_TREE_DEPTH ribą" }
         context?.checkpoint()
         if (file.isDirectory) {
             val children = file.listFiles() ?: throw SecurityException("Nepavyko perskaityti ${file.name}")
-            children.forEach { deleteRecursively(it, context, depth + 1) }
+            children.forEach { deleteRecursively(it, context, depth + 1, changed) }
         }
-        val size = if (file.isFile) file.length() else 0
+        val regularFile = file.isFile
+        val size = if (regularFile) file.length() else 0
         if (!file.delete()) throw IllegalStateException("Nepavyko ištrinti ${file.name}")
+        if (regularFile) changed += file
         context?.progress(itemDelta = 1, byteDelta = size, currentName = file.name)
     }
 
@@ -156,10 +182,8 @@ class LocalFileOperator {
             ConflictPolicy.SKIP -> null
             ConflictPolicy.KEEP_BOTH -> FileSystemRules.keepBothTarget(target)
             ConflictPolicy.REPLACE -> {
-                if (target.isDirectory && sourceIsDirectory) target else {
-                    require(target.delete()) { "Nepavyko pakeisti ${target.name}" }
-                    target
-                }
+                require(target.isDirectory == sourceIsDirectory) { "Nepavyko pakeisti ${target.name}" }
+                target // The old file stays intact until the replacement copy is complete.
             }
             ConflictPolicy.MERGE -> {
                 require(sourceIsDirectory && target.isDirectory) { "Sujungti galima tik aplankus" }

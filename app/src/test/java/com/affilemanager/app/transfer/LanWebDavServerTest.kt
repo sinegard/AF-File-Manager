@@ -8,6 +8,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.net.InetAddress
 import java.net.Socket
+import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -265,6 +266,65 @@ class LanWebDavServerTest {
             )
             assertTrue(listing.startsWith("HTTP/1.1 207"))
             assertTrue(listing.contains("visible.txt"))
+        }
+    }
+
+    @Test
+    fun copyMoveAndDeletePublishOneBoundedMutationPerOperation() {
+        val root = temporary.newFolder("dav-index")
+        val source = root.resolve("source").apply { mkdir(); resolve("a.txt").writeText("source bytes") }
+        val mutations = mutableListOf<List<File>>()
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678",
+            onMutation = { mutations += it }).use { server ->
+            val port = server.start().port
+            assertTrue(request(port, authenticated("COPY /source HTTP/1.1\r\nDestination: /copy\r\n"))
+                .startsWith("HTTP/1.1 201"))
+            assertEquals("source bytes", source.resolve("a.txt").readText())
+            assertEquals("source bytes", root.resolve("copy/a.txt").readText())
+            root.resolve("destination").apply { mkdir(); resolve("old.txt").writeText("old") }
+            assertTrue(request(port, authenticated("MOVE /copy HTTP/1.1\r\nDestination: /destination\r\n"))
+                .startsWith("HTTP/1.1 204"))
+            assertFalse(root.resolve("copy").exists())
+            assertFalse(root.resolve("destination/old.txt").exists())
+            assertEquals("source bytes", root.resolve("destination/a.txt").readText())
+            assertTrue(request(port, authenticated("DELETE /destination HTTP/1.1\r\n"))
+                .startsWith("HTTP/1.1 204"))
+            assertEquals(listOf(listOf(root.resolve("copy")), listOf(root.resolve("copy"), root.resolve("destination")),
+                listOf(root.resolve("destination"))), mutations)
+            assertEquals(setOf("source"), root.listFiles()!!.map { it.name }.toSet())
+        }
+    }
+
+    @Test
+    fun overlappingPathsAreRejectedWithoutRemovingOriginals() {
+        val root = temporary.newFolder("dav-overlap")
+        val source = root.resolve("source").apply { mkdir(); resolve("a.txt").writeText("keep") }
+        source.resolve("child").apply { mkdir(); resolve("b.txt").writeText("also keep") }
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val port = server.start().port
+            for ((method, path, target) in listOf(Triple("MOVE", "/source", "/source"),
+                Triple("MOVE", "/source", "/source/child"), Triple("COPY", "/source/a.txt", "/source"))) {
+                assertTrue(request(port, authenticated("$method $path HTTP/1.1\r\nDestination: $target\r\n"))
+                    .startsWith("HTTP/1.1 400"))
+                assertEquals("keep", source.resolve("a.txt").readText())
+                assertEquals("also keep", source.resolve("child/b.txt").readText())
+            }
+        }
+    }
+
+    @Test
+    fun failedBoundedCopyKeepsThePreviousDestination() {
+        val root = temporary.newFolder("dav-copy-failure")
+        var nested = root.resolve("source").apply { mkdir() }
+        repeat(130) { nested = nested.resolve("a").apply { check(mkdir()) } }
+        root.resolve("target.txt").writeText("keep the old destination")
+        LanWebDavServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val response = request(server.start().port,
+                authenticated("COPY /source HTTP/1.1\r\nDestination: /target.txt\r\n"))
+            assertTrue(response.startsWith("HTTP/1.1 400"))
+            assertEquals("keep the old destination", root.resolve("target.txt").readText())
+            assertTrue(nested.isDirectory)
+            assertFalse(root.listFiles()!!.any { it.name.startsWith(".af-webdav-") })
         }
     }
 

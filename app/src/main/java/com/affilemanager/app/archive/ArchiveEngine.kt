@@ -2,6 +2,7 @@ package com.affilemanager.app.archive
 
 import com.github.junrar.Archive
 import com.affilemanager.app.operations.OperationContext
+import com.affilemanager.app.operations.publishingStorageChanges
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.lingala.zip4j.ZipFile
@@ -31,7 +32,10 @@ import java.util.Date
 import java.util.UUID
 import java.util.zip.ZipOutputStream
 
-class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
+class ArchiveEngine(
+    private val limits: ArchiveLimits = ArchiveLimits(),
+    private val onMutation: suspend (List<File>) -> Unit = {},
+) {
     companion object {
         private const val BUFFER_SIZE = 256 * 1_024
     }
@@ -62,12 +66,16 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
     ) = withContext(Dispatchers.IO) {
         require(archiveFile.isFile) { "Archyvas nepasiekiamas" }
         require(destinationDirectory.isDirectory || destinationDirectory.mkdirs()) { "Paskirties aplankas nepasiekiamas" }
+        val affected = list(archiveFile, password).filterNot(ArchiveEntryInfo::directory)
+            .map { SafeArchivePath.resolve(destinationDirectory, it.name, limits.maxDepth) }
+        publishingStorageChanges(onMutation, { affected }) {
         when (detectFormat(archiveFile)) {
             ArchiveFormat.ZIP -> extractZip(archiveFile, destinationDirectory, password, operation)
             ArchiveFormat.SEVEN_Z -> extractSevenZ(archiveFile, destinationDirectory, operation)
             ArchiveFormat.RAR -> extractRar(archiveFile, destinationDirectory, operation)
             ArchiveFormat.TAR, ArchiveFormat.TAR_GZ -> extractTar(archiveFile, destinationDirectory, operation)
             ArchiveFormat.GZIP -> extractGzip(archiveFile, destinationDirectory, operation, fallbackExtractedName)
+        }
         }
     }
 
@@ -197,6 +205,11 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             operation?.progress(itemDelta = 1, currentName = path)
         }
 
+        publishingStorageChanges(onMutation, {
+            chosenEntries.filterNot(ArchiveEntryInfo::directory).map {
+                SafeArchivePath.resolve(destinationDirectory, it.name, limits.maxDepth)
+            }
+        }) {
         when (detectFormat(archiveFile)) {
             ArchiveFormat.ZIP -> {
                 val zip = if (password == null) ZipFile(archiveFile) else ZipFile(archiveFile, password)
@@ -280,6 +293,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
         }
         require(processed == chosenEntries.size) { "Pasirinktų archyvo įrašų išpakuoti nepavyko" }
         processed
+        }
     }
 
     /** Transactionally removes selected entries from a writable .zip archive. */
@@ -371,6 +385,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             }
             require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
             require(partialFile.renameTo(outputFile)) { "Archyvo užbaigti nepavyko" }
+            onMutation(listOf(outputFile))
         } finally {
             password?.fill('\u0000')
             if (partial?.exists() == true) partial.delete()
@@ -673,6 +688,7 @@ class ArchiveEngine(private val limits: ArchiveLimits = ArchiveLimits()) {
             val actual = listZip(original, password)
             require(verify(actual)) { "Įrašyto archyvo patikra nepavyko" }
             require(backup.delete()) { "Archyvas pakeistas, bet laikinos atkūrimo kopijos pašalinti nepavyko" }
+            onMutation(listOf(original))
             actual
         } catch (failure: Throwable) {
             if (replacementStarted && backup.isFile) {

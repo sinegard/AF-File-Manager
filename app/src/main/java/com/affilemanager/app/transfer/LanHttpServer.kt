@@ -81,12 +81,14 @@ class LanHttpServer(
     private val onGroupMembers: (NearbyGroupInvite, List<NearbyGroupMember>) -> Unit = { _, _ -> },
     private val onStopped: (String) -> Unit = {},
     private val onNearbyNamedMessage: (String?, String) -> Unit = { _, message -> onNearbyMessage(message) },
+    private val onMutation: (List<File>) -> Unit = {},
 ) : TemporaryLanServer {
     private val nearbyFiles = NearbyReceiveFiles()
     private val nearbyProgressLock = Any()
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
     private data class NearbyUploadKey(val batchId: String?, val fileIndex: Int)
     private val uploadClients = java.util.concurrent.ConcurrentHashMap<Socket, NearbyUploadKey>()
+    private val uploadPeers = java.util.concurrent.ConcurrentHashMap<Socket, NearbyPairing>()
     private val groupDirectory = NearbyGroupDirectory(nowMillis)
     private data class GroupSession(val host: String, @Volatile var peer: NearbyPairing? = null)
     private val groupSessions = java.util.concurrent.ConcurrentHashMap<String, GroupSession>()
@@ -95,7 +97,10 @@ class LanHttpServer(
         if (!groupMode || !running.get()) return false
         val active = session ?: return false
         val removed = groupDirectory.remove(pairing)
-        if (removed) publishGroupMembers(active)
+        if (removed) {
+            uploadPeers.entries.filter { it.value == pairing }.forEach { runCatching { it.key.close() } }
+            publishGroupMembers(active)
+        }
         return removed
     }
 
@@ -199,6 +204,7 @@ class LanHttpServer(
     private fun acceptLoop(activeSession: LanServerSession) {
         try {
             while (running.get()) {
+                if (groupMode) publishGroupMembers(activeSession)
                 if (LanSessionDuration.isExpired(nowMillis(), activeSession.expiresAtMillis)) {
                     stop("LAN sesijos laikas baigėsi")
                     break
@@ -263,12 +269,28 @@ class LanHttpServer(
             writeText(output, 401, loginPage(active), "text/html; charset=utf-8")
             return
         }
+        val boundPeer = requestToken(request)?.let { groupSessions[it]?.peer }
+        if (groupMode && boundPeer != null && groupDirectory.isRemoved(boundPeer) &&
+            request.path !in setOf("/nearby/group/leave", "/nearby/disconnect")) {
+            writeText(output, 403, t("Organizatorius pašalino šį telefoną iš grupės"),
+                "text/plain; charset=utf-8", listOf("X-AF-Group-State: removed"))
+            return
+        }
         when {
             request.method == "POST" && request.path == "/nearby/disconnect" -> {
                 require(!readOnly && request.contentLength == 0L) { "Užklausa atmesta" }
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
-                onNearbyDisconnect()
-                stop("Serveris sustabdytas")
+                if (groupMode) {
+                    // A member's receiver belongs to that member, not to the whole group.
+                    val token = requestToken(request)
+                    val peer = token?.let { groupSessions[it]?.peer }
+                    if (peer != null) groupDirectory.leave(peer)
+                    if (token != null) groupSessions.remove(token)
+                    publishGroupMembers(active)
+                } else {
+                    onNearbyDisconnect()
+                    stop("Serveris sustabdytas")
+                }
             }
             request.method == "POST" && request.path == "/nearby/cancel" -> {
                 require(!readOnly && request.contentLength == 0L) { "Užklausa atmesta" }
@@ -314,6 +336,11 @@ class LanHttpServer(
                     "Užklausa atmesta"
                 }
                 val peer = readGroupPairing(request, input, remoteAddress)
+                if (groupDirectory.isRemoved(peer)) {
+                    writeText(output, 403, t("Organizatorius pašalino šį telefoną iš grupės"),
+                        "text/plain; charset=utf-8", listOf("X-AF-Group-State: removed"))
+                    return
+                }
                 groupDirectory.join(peer)
                 bindGroupPeer(request, peer)
                 publishGroupMembers(active)
@@ -324,6 +351,11 @@ class LanHttpServer(
                     "Užklausa atmesta"
                 }
                 val peer = readGroupPairing(request, input, remoteAddress)
+                if (groupDirectory.isRemoved(peer)) {
+                    writeText(output, 403, t("Organizatorius pašalino šį telefoną iš grupės"),
+                        "text/plain; charset=utf-8", listOf("X-AF-Group-State: removed"))
+                    return
+                }
                 require(groupDirectory.heartbeat(peer)) { "Dalyvis nebepriklauso grupei" }
                 publishGroupMembers(active)
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
@@ -386,7 +418,11 @@ class LanHttpServer(
                 socket.soTimeout = UPLOAD_SOCKET_TIMEOUT_MILLIS
                 val fileIndex = request.query["fileIndex"]?.toIntOrNull() ?: 1
                 uploadClients[socket] = NearbyUploadKey(request.headers["x-af-batch-id"], fileIndex)
-                try { upload(request, input, output) } finally { uploadClients.remove(socket) }
+                if (boundPeer != null) uploadPeers[socket] = boundPeer
+                try { upload(request, input, output, boundPeer) } finally {
+                    uploadClients.remove(socket)
+                    uploadPeers.remove(socket)
+                }
             }
             else -> writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
         }
@@ -509,7 +545,7 @@ class LanHttpServer(
         output.flush()
     }
 
-    private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream) {
+    private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream, boundPeer: NearbyPairing?) {
         val length = request.contentLength
         require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
         val directory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
@@ -589,8 +625,9 @@ class LanHttpServer(
                 try {
                     while (remaining > 0) {
                         check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }
+                        check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
                         val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                        if (read < 0) throw IllegalStateException("Įkėlimas nutrūko")
+                        if (read < 0) throw IllegalArgumentException("Įkėlimas nutrūko")
                         bufferedFileOutput.write(buffer, 0, read)
                         remaining -= read
                         received = Math.addExact(received, read.toLong())
@@ -604,10 +641,12 @@ class LanHttpServer(
             }
             require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
             check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }
+            check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
             // A file created after keep-both planning must never be silently replaced.
             java.nio.file.Files.move(partial.toPath(), target.toPath())
             committed = true
             publishProgress(completed = true)
+            onMutation(listOf(target))
             writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
         } catch (failure: Exception) {
             // A response write can fail after commit; that file is still complete.

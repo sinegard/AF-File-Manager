@@ -34,6 +34,7 @@ class AfStorageSessionFactory(
     private val archives: ArchiveEngine,
     private val profiles: NetworkProfileStore,
     private val clients: RemoteClientFactory,
+    private val onMutation: suspend (List<File>) -> Unit = {},
 ) {
     private val stagingRoot = File(context.cacheDir, "af-workflow-staging")
 
@@ -42,6 +43,7 @@ class AfStorageSessionFactory(
         archives = archives,
         profiles = profiles,
         clients = clients,
+        onMutation = onMutation,
     )
 }
 
@@ -50,10 +52,12 @@ private class AfAndroidStorageSession(
     private val archives: ArchiveEngine,
     private val profiles: NetworkProfileStore,
     private val clients: RemoteClientFactory,
+    private val onMutation: suspend (List<File>) -> Unit,
 ) : AfStorageSession {
     private val openedClients = linkedMapOf<String, RemoteClient>()
     private var knownProfiles: Map<String, NetworkProfile>? = null
     private var closed = false
+    private val changedFiles = linkedSetOf<File>()
 
     override suspend fun enumerate(source: AfSourceRef): List<AfEnumeratedEntry> = withContext(Dispatchers.IO) {
         checkOpen()
@@ -213,7 +217,10 @@ private class AfAndroidStorageSession(
         when (normalized.kind) {
             AfLocationKind.LOCAL -> {
                 val directory = File(normalized.path)
-                require(directory.isDirectory || directory.mkdirs()) { "Could not create destination folder" }
+                if (!directory.isDirectory) {
+                    require(directory.mkdirs()) { "Could not create destination folder" }
+                    trackChange(directory)
+                }
             }
             AfLocationKind.REMOTE -> {
                 val existing = remoteStat(normalized)
@@ -236,7 +243,11 @@ private class AfAndroidStorageSession(
         require(sourceFile.isFile && !Files.isSymbolicLink(sourceFile.toPath())) { "Private staged file is unavailable" }
         val normalized = destination.normalized()
         when (normalized.kind) {
-            AfLocationKind.LOCAL -> installLocal(sourceFile, File(normalized.path), replace, operation)
+            AfLocationKind.LOCAL -> {
+                val destinationFile = File(normalized.path)
+                installLocal(sourceFile, destinationFile, replace, operation)
+                trackChange(destinationFile)
+            }
             AfLocationKind.REMOTE -> installRemote(sourceFile, normalized, replace, operation)
         }
     }
@@ -245,7 +256,10 @@ private class AfAndroidStorageSession(
         checkOpen()
         val normalized = location.normalized()
         when (normalized.kind) {
-            AfLocationKind.LOCAL -> deleteLocal(File(normalized.path), recursive)
+            AfLocationKind.LOCAL -> {
+                val file = File(normalized.path)
+                try { deleteLocal(file, recursive) } finally { trackChange(file) }
+            }
             AfLocationKind.REMOTE -> remoteClient(normalized).delete(normalized.path, recursive)
         }
     }
@@ -266,6 +280,8 @@ private class AfAndroidStorageSession(
                 } catch (_: AtomicMoveNotSupportedException) {
                     Files.move(fromFile.toPath(), toFile.toPath())
                 }
+                trackChange(fromFile)
+                trackChange(toFile)
             }
             AfLocationKind.REMOTE -> remoteClient(source).rename(source.path, target.path)
         }
@@ -279,7 +295,17 @@ private class AfAndroidStorageSession(
             openedClients.values.toList().asReversed().forEach { client -> runCatching { client.close() } }
             openedClients.clear()
             stagingRoot.listFiles { file -> file.name.startsWith("af-stage-") }?.forEach(File::delete)
+            try {
+                if (changedFiles.isNotEmpty()) onMutation(changedFiles.toList())
+            } finally { changedFiles.clear() }
         }
+    }
+
+    private fun trackChange(file: File) {
+        check(changedFiles.size < AfWorkflowLimits.MAX_PLANNED_ENTRIES * 2 || file in changedFiles) {
+            "Per daug elementų"
+        }
+        changedFiles += file
     }
 
     private suspend fun enumerateLocal(source: AfSourceRef): List<AfEnumeratedEntry> {

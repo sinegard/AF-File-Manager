@@ -8,6 +8,66 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NearbyGroupTest {
+    @Test fun delayedLoginCannotResurrectALeftGroupOrOverwriteANewHostSession() {
+        val address = java.net.NetworkInterface.getNetworkInterfaces().toList()
+            .flatMap { it.inetAddresses.toList() }.first { it is java.net.Inet4Address && it.isSiteLocalAddress }
+        val accepted = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        java.net.ServerSocket(0, 2, address).use { server ->
+            val worker = Thread {
+                try {
+                    server.soTimeout = 3_000
+                    server.accept().use { socket ->
+                        socket.soTimeout = 3_000
+                        val reader = socket.getInputStream().bufferedReader(Charsets.US_ASCII)
+                        assertTrue(reader.readLine().startsWith("POST /login "))
+                        while (reader.readLine().isNotEmpty()) { /* Bounded fixture request. */ }
+                        accepted.countDown()
+                        check(release.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                        socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n" +
+                            "Set-Cookie: af_session=private-test; Path=/\r\nConnection: close\r\n\r\nOK").toByteArray())
+                        socket.getOutputStream().flush()
+                    }
+                    server.soTimeout = 500
+                    try { server.accept().use { throw AssertionError("Stale join continued after leaving") } }
+                    catch (_: java.net.SocketTimeoutException) { /* No stale join request. */ }
+                } catch (error: Throwable) { failure.set(error) }
+                finally { finished.countDown() }
+            }.apply { isDaemon = true; start() }
+            try {
+                val invite = NearbyGroupInvite(NearbyPairing.create(address.hostAddress, server.localPort, "12345678", "Old host"), "Old group")
+                NearbyGroupController.join(invite, pairing(2))
+                assertTrue(accepted.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                NearbyGroupController.leave()
+                assertEquals(NearbyGroupStatus.IDLE, NearbyGroupController.state.value.status)
+                NearbyGroupController.host(NearbyGroupInvite(pairing(3), "New group"))
+                release.countDown()
+                assertTrue(finished.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                failure.get()?.let { throw AssertionError("Delayed-login fixture failed", it) }
+                assertEquals(NearbyGroupStatus.HOSTING, NearbyGroupController.state.value.status)
+                assertEquals("New group", NearbyGroupController.state.value.groupName)
+            } finally {
+                release.countDown()
+                NearbyGroupController.leave()
+                worker.join(1_000)
+            }
+        }
+    }
+
+    @Test fun aStaleIdentityCannotHeartbeatOrLeaveForAReconnectedMember() {
+        val directory = NearbyGroupDirectory()
+        val old = pairing(1)
+        val current = old.copy(code = "98765432")
+        directory.join(old)
+        directory.join(current)
+        assertFalse(directory.heartbeat(old))
+        assertFalse(directory.leave(old))
+        assertFalse(directory.remove(old))
+        assertEquals(current, directory.snapshot(pairing(0)).last().pairing)
+        assertTrue(directory.heartbeat(current))
+    }
     @Test fun messageBlockingIsIndependentReversibleAndEncodedForTheOrganizer() {
         val directory = NearbyGroupDirectory()
         val member = pairing(1)

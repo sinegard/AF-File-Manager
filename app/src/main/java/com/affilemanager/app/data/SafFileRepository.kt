@@ -52,7 +52,7 @@ data class SafEntry(
     val canWrite: Boolean,
 )
 
-class SafFileRepository(private val context: Context) {
+class SafFileRepository(private val context: Context, private val onMutation: suspend (List<File>) -> Unit = {}) {
     companion object {
         private const val PREFS = "saf_locations_v1"
         private const val KEY_LOCATIONS = "locations"
@@ -224,7 +224,8 @@ class SafFileRepository(private val context: Context) {
             runCatching {
                 require(destinationDirectory.isDirectory) { "Vietinis paskirties aplankas nepasiekiamas" }
                 val counter = CopyCounter()
-                copySafNode(document(sourceUri), destinationDirectory, operation, counter, 0)
+                val target = copySafNode(document(sourceUri), destinationDirectory, operation, counter, 0)
+                onMutation(listOf(target))
             }
         }
 
@@ -392,7 +393,7 @@ class SafFileRepository(private val context: Context) {
         operation: OperationContext?,
         counter: CopyCounter,
         depth: Int,
-    ) {
+    ): File {
         countCopyNode(counter, depth)
         val safeName = FileSystemRules.validateFileName(source.name ?: "Be pavadinimo").getOrThrow()
         val requested = File(destinationParent, safeName)
@@ -410,7 +411,7 @@ class SafFileRepository(private val context: Context) {
             } finally {
                 if (partialDirectory.exists()) partialDirectory.deleteRecursively()
             }
-            return
+            return target
         }
         require(source.isFile) { "Nepalaikomas SAF elemento tipas" }
         val partial = File(destinationParent, ".${target.name}.af-partial")
@@ -442,6 +443,7 @@ class SafFileRepository(private val context: Context) {
         } finally {
             if (partial.exists()) partial.delete()
         }
+        return target
     }
 
     private fun freeDocumentName(parent: DocumentFile, requested: String): String {

@@ -151,6 +151,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -293,6 +295,7 @@ data class FileCategoryUiState(
     val appScope: com.affilemanager.app.data.InstalledAppScope = com.affilemanager.app.data.InstalledAppScope.USER,
     val storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
     val viewMode: CategoryViewMode = CategoryViewMode.FILES,
+    val parentFolderPath: String? = null,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
     val scannedRows: Int = 0,
@@ -801,6 +804,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var advancedFileOpenJob: Job? = null
     private var recentFilesJob: Job? = null
     private var fileCategoryJob: Job? = null
+    private var categoryFolderReturnState: FileCategoryUiState? = null
     private var safBrowserJob: Job? = null
     private var batchRenamePreviewJob: Job? = null
     private var remoteFileOpenJob: Job? = null
@@ -816,6 +820,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val searchDraftSaveRequests = Channel<SearchDraftPreferences>(Channel.CONFLATED)
 
     init {
+        viewModelScope.launch {
+            com.affilemanager.app.transfer.NearbyGroupController.state
+                .map { it.memberNotice to it.error }.distinctUntilChanged().collect { (notice, error) ->
+                    if (error != null) message(error, true)
+                    else if (notice != null) message(notice)
+                }
+        }
         viewModelScope.launch {
             graph.terminalSessions.notices.collectLatest { message(it, true) }
         }
@@ -2199,6 +2210,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openFileCategory(category: FileCategory, forceRefresh: Boolean = false) {
+        categoryFolderReturnState = null
         fileCategoryJob?.cancel()
         val display = savedDirectoryDisplaySettings(fileCategoryIdentity(category))
         val sort = runCatching { graph.navigation.directorySortSettings(fileCategoryIdentity(category)) }
@@ -2231,6 +2243,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appScope = snapshot.appScope
         val storageScope = snapshot.storageScope
         val viewMode = snapshot.viewMode
+        val parentFolderPath = snapshot.parentFolderPath
         fileCategoryJob?.cancel()
         _fileCategory.update { current ->
             if (current.category != category) current else if (reset) {
@@ -2267,6 +2280,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         appScope = appScope,
                         storageScope = storageScope,
                         viewMode = viewMode,
+                        parentFolderPath = parentFolderPath,
                     )
                     refresh = false
                     pageEntries = page.entries
@@ -2281,7 +2295,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     current.sortMode != sortMode || current.sortDirection != sortDirection ||
                     current.showSystemApps != showSystemApps ||
                     current.appScope != appScope ||
-                    current.storageScope != storageScope || current.viewMode != viewMode
+                    current.storageScope != storageScope || current.viewMode != viewMode || current.parentFolderPath != parentFolderPath
                 ) return@launch
                 _fileCategory.update {
                     val merged = (if (reset) pageEntries else it.entries + pageEntries)
@@ -2373,8 +2387,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Suppress("DEPRECATION")
     fun openFileCategoryEntry(entry: FileEntry) {
         if (entry.isDirectory) {
-            closeFileCategory()
-            open(entry)
+            val current = _fileCategory.value
+            if (current.category != null && current.category != FileCategory.INSTALLED_APPS) {
+                categoryFolderReturnState = current
+                _fileCategory.value = current.copy(
+                    viewMode = CategoryViewMode.FILES,
+                    parentFolderPath = entry.absolutePath,
+                    entries = emptyList(), selectedPaths = emptySet(),
+                    scrollToTopRequest = current.scrollToTopRequest + 1,
+                )
+                loadFileCategoryPage(reset = true)
+            }
             return
         }
         if (_fileCategory.value.category != FileCategory.INSTALLED_APPS) {
@@ -2471,6 +2494,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fileCategoryJob?.cancel()
         fileCategoryJob = null
         _fileCategory.value = FileCategoryUiState()
+        categoryFolderReturnState = null
+    }
+
+    fun backFileCategory() {
+        val parent = categoryFolderReturnState
+        if (parent != null && _fileCategory.value.parentFolderPath != null) {
+            fileCategoryJob?.cancel()
+            categoryFolderReturnState = null
+            _fileCategory.value = parent.copy(selectedPaths = emptySet(), loading = false, loadingMore = false)
+        } else closeFileCategory()
     }
 
     fun openTrashFromHome() {
@@ -2500,9 +2533,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setFileCategoryView(scope: CategoryStorageScope, mode: CategoryViewMode) {
         val state = _fileCategory.value
         if (state.category == null || state.category == FileCategory.INSTALLED_APPS ||
-            (state.storageScope == scope && state.viewMode == mode)) return
+            (state.storageScope == scope && state.viewMode == mode && state.parentFolderPath == null)) return
+        categoryFolderReturnState = null
         _fileCategory.update {
-            it.copy(storageScope = scope, viewMode = mode, selectedPaths = emptySet(),
+            it.copy(storageScope = scope, viewMode = mode, parentFolderPath = null, selectedPaths = emptySet(),
                 scrollToTopRequest = it.scrollToTopRequest + 1L)
         }
         loadFileCategoryPage(reset = true)
@@ -3170,7 +3204,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 val result = when (session.origin) {
                     is EditOrigin.Local -> withContext(Dispatchers.IO) {
-                        graph.editSessions.saveLocal(session, forceOverwrite)
+                        graph.editSessions.saveLocal(session, forceOverwrite).also { result ->
+                            if (result is EditSaveResult.Saved) graph.sharedStorageIndex.changed(listOf(File((session.origin as EditOrigin.Local).path)))
+                        }
                     }
                     is EditOrigin.Content -> withContext(Dispatchers.IO) {
                         saveContentOrigin(session, forceOverwrite)
@@ -3403,7 +3439,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             directoryPath = requireNotNull(target.parentFile).absolutePath,
                             requestedName = target.name,
                             policy = policy,
-                        )
+                        ).also { saved ->
+                            if (saved is EditSaveAsResult.Saved) {
+                                val actual = saved.destination as EditDestination.Local
+                                graph.sharedStorageIndex.changed(listOf(File(actual.path)))
+                            }
+                        }
                     }
                     is EditDestination.Remote -> {
                         val profile = _networkState.value.connectedProfile
@@ -4629,7 +4670,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun trashAnalysisSelection(paths: Collection<String>) {
+    fun trashAnalysisSelection(paths: Collection<String>, keepOneCopy: Boolean = true) {
         val state = _analysisState.value
         val rootPaths = state.rootPaths.ifEmpty { listOfNotNull(state.rootPath) }
         val roots = runCatching { rootPaths.map { File(it).canonicalFile }.distinctBy(File::getAbsolutePath) }.getOrElse {
@@ -4660,23 +4701,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (selected.isEmpty()) return
-        fun scheduled(path: String): Boolean {
-            val candidate = File(path)
-            return selected.any { selectedRoot -> FileSystemRules.isContained(selectedRoot, candidate) }
-        }
-        val removedWholeDuplicateGroup = state.duplicates.any { group ->
-            group.paths.isNotEmpty() && group.paths.all(::scheduled)
-        }
-        val removedWholeSimilarGroup = state.similarImages.any { group ->
-            group.files.isNotEmpty() && group.files.all { scheduled(it.absolutePath) }
-        }
-        if (removedWholeDuplicateGroup || removedWholeSimilarGroup) {
+        val protected = com.affilemanager.app.operations.CleanupCopyProtection.select(selected,
+            state.duplicates.map { it.paths } + state.similarImages.map { group -> group.files.map { it.absolutePath } },
+            keepOneCopy = keepOneCopy)
+        val retainedRoots = protected.retained
+        val movable = protected.movable
+        if (movable.isEmpty()) {
             message("Iš kiekvienos vienodų ar panašių failų grupės palikite bent vieną failą", true)
             return
         }
         graph.operationManager.submit("Pasirinkti failai keliami į šiukšlinę") {
-            graph.trash.moveToTrash(selected.map(File::getAbsolutePath), this)
-            val removedPaths = selected.asSequence()
+            if (retainedRoots.isNotEmpty()) note("Iš kiekvienos vienodų ar panašių failų grupės palikite bent vieną failą")
+            graph.trash.moveToTrash(movable.map(File::getAbsolutePath), this)
+            if (retainedRoots.isNotEmpty()) message("Iš kiekvienos vienodų ar panašių failų grupės palikite bent vieną failą")
+            val removedPaths = movable.asSequence()
                 .filterNot(File::exists)
                 .map(File::getAbsolutePath)
                 .toList()

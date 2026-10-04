@@ -11,6 +11,8 @@ val releaseKeyAlias = providers.environmentVariable("AF_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("AF_KEY_PASSWORD").orNull
 val hasReleaseSigning = listOf(releaseStorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
 val testOptimizedRelease = providers.gradleProperty("afTestOptimizedRelease").orNull.toBoolean()
+// Opt-in disposable package for optimized checks without replacing a signed user app.
+val testIsolatedBenchmark = providers.gradleProperty("afTestIsolatedBenchmark").orNull.toBoolean()
 val targetAbi = providers.gradleProperty("afTargetAbi").orNull
 val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 
@@ -18,18 +20,22 @@ android {
     namespace = "com.affilemanager.app"
     compileSdk = 36
     ndkVersion = "27.3.13750724"
-    testBuildType = if (testOptimizedRelease) "release" else "debug"
+    testBuildType = when {
+        testIsolatedBenchmark -> "benchmark"
+        testOptimizedRelease -> "release"
+        else -> "debug"
+    }
 
     defaultConfig {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 63
-        versionName = "0.42.0"
+        versionCode = 64
+        versionName = "0.43.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
-        testInstrumentationRunner = if (testOptimizedRelease) {
+        testInstrumentationRunner = if (testOptimizedRelease || testIsolatedBenchmark) {
             "com.affilemanager.app.network.OptimizedSftpInstrumentation"
         } else {
             "com.affilemanager.app.SelfContainedTestRunner"
@@ -81,9 +87,11 @@ android {
         }
         create("benchmark") {
             initWith(getByName("release"))
+            if (testIsolatedBenchmark) applicationIdSuffix = ".validation"
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
             isDebuggable = false
+            proguardFiles("benchmark-proguard-rules.pro")
         }
         create("profile") {
             initWith(getByName("release"))

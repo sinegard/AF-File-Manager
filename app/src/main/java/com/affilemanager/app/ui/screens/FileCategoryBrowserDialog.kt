@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -113,6 +114,15 @@ fun FileCategoryBrowser(
     modifier: Modifier = Modifier,
 ) {
     if (!state.open || state.category == null) return
+    val positions = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    positions.SaveableStateProvider("${state.category.name}:${state.viewMode.name}") {
+        FileCategoryBrowserContent(state, viewModel, modifier)
+    }
+}
+
+@Composable
+private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: MainViewModel, modifier: Modifier) {
+    if (!state.open || state.category == null) return
     var searchVisible by remember(state.category) { mutableStateOf(false) }
     var query by remember(state.category) { mutableStateOf("") }
     var selectedParent by remember(state.category) { mutableStateOf<String?>(null) }
@@ -128,7 +138,7 @@ fun FileCategoryBrowser(
         searchVisible = false
         query = ""
     }
-    LaunchedEffect(state.storageScope, state.viewMode) { selectedParent = null }
+    LaunchedEffect(state.storageScope, state.viewMode, state.parentFolderPath) { selectedParent = null; query = "" }
     var transformed by remember(state.category) { mutableStateOf(CategoryTransform()) }
     var transforming by remember(state.category) { mutableStateOf(false) }
     LaunchedEffect(state.entries, query, selectedParent, state.sortMode, state.sortDirection) {
@@ -166,8 +176,14 @@ fun FileCategoryBrowser(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
 
+    var lastTopRequest by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(state.scrollToTopRequest)
+    }
     LaunchedEffect(state.category, state.scrollToTopRequest) {
-        if (state.grid) gridState.scrollToItem(0) else listState.scrollToItem(0)
+        if (lastTopRequest != state.scrollToTopRequest) {
+            if (state.grid) gridState.scrollToItem(0) else listState.scrollToItem(0)
+            lastTopRequest = state.scrollToTopRequest
+        }
     }
 
     LaunchedEffect(state.category, state.grid, state.nextOffset, state.loadingMore, visible.size) {
@@ -186,7 +202,7 @@ fun FileCategoryBrowser(
 
     BackHandler {
         if (state.selectedPaths.isNotEmpty()) viewModel.clearFileCategorySelection()
-        else viewModel.closeFileCategory()
+        else viewModel.backFileCategory()
     }
     com.affilemanager.app.ui.theme.AppearancePage(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -257,7 +273,7 @@ fun FileCategoryBrowser(
                     }
                 } else {
                     DirectoryBrowserToolbar(
-                        title = uiText(categoryTitle(state.category)),
+                        title = state.parentFolderPath?.let { File(it).name } ?: uiText(categoryTitle(state.category)),
                         path = uiText(
                             when {
                                 state.loadingMore -> "Rodoma ${state.entries.size} elementų · kraunama daugiau"
@@ -268,13 +284,13 @@ fun FileCategoryBrowser(
                         ),
                         backEnabled = true,
                         forwardEnabled = false,
-                        upEnabled = false,
+                        upEnabled = state.parentFolderPath != null,
                         searchActive = searchVisible,
                         grid = state.grid,
                         testTagPrefix = "category",
-                        onBack = viewModel::closeFileCategory,
+                        onBack = viewModel::backFileCategory,
                         onForward = {},
-                        onUp = {},
+                        onUp = viewModel::backFileCategory,
                         onToggleSearch = {
                             searchVisible = !searchVisible
                             if (!searchVisible) query = ""
@@ -355,7 +371,9 @@ fun FileCategoryBrowser(
                     )
                 }
                 if (state.category != FileCategory.INSTALLED_APPS) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                  Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                      horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.widthIn(max = 180.dp)) {
                         FilterChip(
                             selected = true,
                             onClick = { scopeMenu = true },
@@ -380,28 +398,20 @@ fun FileCategoryBrowser(
                             }
                         }
                     }
-                }
-                if (parentPaths.isNotEmpty()) {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        item {
-                            FilterChip(
-                                selected = selectedParent == null,
-                                onClick = { selectedParent = null },
-                                label = { LText("Visi aplankai") },
-                            )
-                        }
-                        items(parentPaths, key = { it }) { path ->
-                            FilterChip(
-                                selected = selectedParent == path,
-                                onClick = { selectedParent = path },
-                                label = { Text(File(path).name.ifBlank { path }, maxLines = 1) },
-                            )
+                    if (parentPaths.isNotEmpty() && state.viewMode == CategoryViewMode.FILES && state.parentFolderPath == null) {
+                        LazyRow(modifier = Modifier.weight(1f).testTag("category_folder_chips"),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item {
+                                FilterChip(selected = selectedParent == null, onClick = { selectedParent = null },
+                                    label = { LText("Visi aplankai") })
+                            }
+                            items(parentPaths, key = { it }) { path ->
+                                FilterChip(selected = selectedParent == path, onClick = { selectedParent = path },
+                                    label = { Text(File(path).name.ifBlank { path }, maxLines = 1) })
+                            }
                         }
                     }
+                  }
                 }
                 if (state.error != null && state.entries.isNotEmpty()) {
                     LText(

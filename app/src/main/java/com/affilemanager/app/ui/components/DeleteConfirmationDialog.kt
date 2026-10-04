@@ -44,6 +44,7 @@ internal fun DeleteConfirmationDialog(
     fallbackFolders: Int = 0,
     fallbackBytes: Long = 0,
     confirmTestTag: String = "confirm_delete",
+    extraContent: (@Composable () -> Unit)? = null,
 ) {
     val stableNames = remember(names) { names.map(String::trim).filter(String::isNotEmpty).distinct().take(10_000) }
     var loading by remember(stableNames, loadSummary) { mutableStateOf(loadSummary != null) }
@@ -99,6 +100,7 @@ internal fun DeleteConfirmationDialog(
             }
             LText(explanation, style = MaterialTheme.typography.bodySmall,
                 color = if (permanent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            extraContent?.invoke()
         }
     }
 }

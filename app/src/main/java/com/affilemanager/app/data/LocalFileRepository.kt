@@ -123,7 +123,10 @@ internal object LegacyStorageRootPolicy {
     }
 }
 
-class LocalFileRepository(private val context: Context) {
+class LocalFileRepository(
+    private val context: Context,
+    private val onMutation: suspend (List<File>) -> Unit = {},
+) {
     suspend fun roots(): List<StorageRoot> = withContext(Dispatchers.IO) {
         val storageManager = context.getSystemService(StorageManager::class.java)
         val volumes = storageManager.storageVolumes
@@ -447,6 +450,7 @@ class LocalFileRepository(private val context: Context) {
             val target = File(parent, name)
             require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
             check(target.mkdir()) { "Nepavyko sukurti aplanko" }
+            onMutation(listOf(target))
             toEntry(target)
         }
     }
@@ -459,6 +463,7 @@ class LocalFileRepository(private val context: Context) {
             val target = File(parent, name)
             require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
             check(target.createNewFile()) { "Nepavyko sukurti failo" }
+            onMutation(listOf(target))
             toEntry(target)
         }
     }
@@ -472,6 +477,7 @@ class LocalFileRepository(private val context: Context) {
             val target = File(parent, name)
             require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
             check(source.renameTo(target)) { "Pervadinti nepavyko" }
+            onMutation(listOf(source, target))
             toEntry(target)
         }
     }
@@ -508,6 +514,7 @@ class LocalFileRepository(private val context: Context) {
                     }.getOrElse {
                         Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
                     }
+                    onMutation(listOf(file))
                 } finally {
                     if (temporary.exists()) temporary.delete()
                 }

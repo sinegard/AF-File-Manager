@@ -139,6 +139,7 @@ internal fun CleanupReviewDialog(
     analysisRootPaths: List<String>,
     onAnalyzeSimilarImages: () -> Unit,
     onMoveToTrash: (Set<String>) -> Unit,
+    onMoveAllToTrash: ((Set<String>) -> Unit)? = null,
     loadSelectionInfo: suspend (Collection<String>) -> Result<FileSelectionSummary> = { paths ->
         runCatching { FileSelectionInfoScanner().scan(paths) }
     },
@@ -149,6 +150,7 @@ internal fun CleanupReviewDialog(
     var category by remember(initialCategory) { mutableStateOf(initialCategory) }
     var selected by remember(analysis) { mutableStateOf(emptySet<String>()) }
     var confirmTrash by remember { mutableStateOf(false) }
+    var keepOneCopy by remember(selected) { mutableStateOf(true) }
     var folderStack by remember(analysis) { mutableStateOf(emptyList<String>()) }
     var folderListing by remember(analysis) { mutableStateOf<DirectoryContentsUsage?>(null) }
     var folderLoading by remember(analysis) { mutableStateOf(false) }
@@ -468,18 +470,33 @@ internal fun CleanupReviewDialog(
 
     if (confirmTrash) {
         val selectedSnapshot = selected
+        val protectedSelection = remember(selectedSnapshot, duplicates, similarImages) {
+            com.affilemanager.app.operations.CleanupCopyProtection.select(selectedSnapshot.map(::File),
+                duplicates.map { it.paths } + similarImages.map { group -> group.files.map { it.absolutePath } })
+        }
         DeleteConfirmationDialog(
             names = selectedSnapshot.map { File(it).name }, permanent = false,
             title = "Perkelti pasirinktus elementus į šiukšlinę?",
             onDismiss = { confirmTrash = false },
             onConfirm = {
                 confirmTrash = false
-                onMoveToTrash(selectedSnapshot)
+                if (!keepOneCopy && onMoveAllToTrash != null) onMoveAllToTrash(selectedSnapshot)
+                else onMoveToTrash(selectedSnapshot)
                 selected = emptySet()
             },
             loadSummary = { loadSelectionInfo(selectedSnapshot) },
             explanation = "Elementus vėliau bus galima atkurti arba ištrinti visam laikui.",
             confirmTestTag = "cleanup_confirm_move",
+            extraContent = {
+                if (protectedSelection.retained.isNotEmpty() && onMoveAllToTrash != null) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(checked = keepOneCopy, onCheckedChange = { keepOneCopy = it },
+                            modifier = Modifier.testTag("cleanup_keep_one_copy"))
+                        LText("Iš kiekvienos vienodų ar panašių failų grupės palikite bent vieną failą",
+                            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
         )
     }
 }

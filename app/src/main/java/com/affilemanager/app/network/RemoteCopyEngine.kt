@@ -19,7 +19,7 @@ data class RemoteCopyResult(
     val failures: List<RemoteCopyFailure>,
 )
 
-class RemoteCopyEngine {
+class RemoteCopyEngine(private val onMutation: suspend (List<File>) -> Unit = {}) {
     companion object {
         const val MAX_SELECTED_ROOTS = 1_000
         const val MAX_VISITED_ENTRIES = 100_000
@@ -94,16 +94,19 @@ class RemoteCopyEngine {
             var ownedLocalRoot: File? = null
             try {
                 validateName(entry.name)
-                if (entry.directory) {
+                val committed = if (entry.directory) {
                     val root = createLocalDirectory(destination, entry.name, reserved)
                     ownedLocalRoot = root
                     counter.visit(0)
                     downloadDirectoryContents(entry.path, root, remote, operation, counter, depth = 0)
+                    root
                 } else {
                     counter.visit(0)
                     downloadFileNoReplace(entry.path, destination, entry.name, reserved, remote, operation)
                 }
                 copied += 1
+                ownedLocalRoot = null // The completed root is no longer disposable staging.
+                onMutation(listOf(committed))
             } catch (cancelled: CancellationException) {
                 ownedLocalRoot?.let(::cleanupLocalRoot)
                 throw cancelled

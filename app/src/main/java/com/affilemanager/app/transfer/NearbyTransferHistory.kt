@@ -31,6 +31,7 @@ data class NearbyTransferHistorySession(
     val totalBytes: Long = 0,
     val filesTruncated: Boolean = false,
     val messages: List<NearbyChatMessage> = emptyList(),
+    val groupName: String? = null,
 )
 
 internal object NearbyTransferHistoryRules {
@@ -97,6 +98,7 @@ internal object NearbyTransferHistoryRules {
         .map { session ->
             session.copy(
                 peerName = session.peerName.take(NearbyPairing.MAX_NAME_LENGTH),
+                groupName = session.groupName?.filterNot(Char::isISOControl)?.trim()?.take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH)?.takeIf(String::isNotBlank),
                 files = session.files.take(MAX_FILES_PER_SESSION).map { file ->
                     file.copy(
                         localPath = file.localPath?.takeIf {
@@ -157,6 +159,7 @@ private class NearbyTransferHistoryRepository(context: Context) {
     private fun encodeSession(session: NearbyTransferHistorySession): JSONObject = JSONObject()
         .put("id", session.id)
         .put("peer", session.peerName)
+        .put("group", session.groupName ?: JSONObject.NULL)
         .put("started", session.startedAtMillis)
         .put("updated", session.updatedAtMillis)
         .put("ended", session.endedAtMillis ?: JSONObject.NULL)
@@ -185,6 +188,7 @@ private class NearbyTransferHistoryRepository(context: Context) {
         return NearbyTransferHistorySession(
             id = row.getString("id").take(80),
             peerName = row.getString("peer").take(NearbyPairing.MAX_NAME_LENGTH),
+            groupName = if (row.isNull("group")) null else row.optString("group").take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH),
             startedAtMillis = row.getLong("started"),
             updatedAtMillis = row.getLong("updated"),
             endedAtMillis = row.optLong("ended").takeIf { !row.isNull("ended") && it > 0L },
@@ -250,6 +254,11 @@ object NearbyTransferHistoryController {
 
     @Synchronized
     fun beginSession(pairing: NearbyPairing) {
+        val group = NearbyGroupController.state.value
+        if (group.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINING, NearbyGroupStatus.JOINED) && group.organizer != null) {
+            beginGroupSession(NearbyGroupInvite(group.organizer, group.groupName))
+            return
+        }
         val identity = "${pairing.host}:${pairing.port}:${pairing.receiverName}"
         val now = System.currentTimeMillis()
         if (currentIdentity == identity && currentSessionId != null) {
@@ -267,6 +276,21 @@ object NearbyTransferHistoryController {
             updatedAtMillis = now,
         )
         mutableState.value = NearbyTransferHistoryRules.normalize(listOf(session) + mutableState.value)
+    }
+
+    @Synchronized
+    fun beginGroupSession(invite: NearbyGroupInvite) {
+        val identity = "group:${invite.organizer.host}:${invite.organizer.port}:${invite.organizer.code}"
+        if (currentIdentity == identity && currentSessionId != null) return
+        currentIdentity = identity
+        currentSessionId = UUID.randomUUID().toString()
+        lastOutgoingSignature = null
+        lastIncomingSignature = null
+        val now = System.currentTimeMillis()
+        val session = NearbyTransferHistorySession(id = requireNotNull(currentSessionId), peerName = invite.groupName,
+            startedAtMillis = now, updatedAtMillis = now, groupName = invite.groupName)
+        mutableState.value = NearbyTransferHistoryRules.normalize(listOf(session) + mutableState.value)
+        persist()
     }
 
     @Synchronized

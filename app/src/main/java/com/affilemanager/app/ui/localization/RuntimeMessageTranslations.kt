@@ -3,6 +3,7 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "Android failų indekso atnaujinti nepavyko" to "Could not update Android's file index",
         "AF Quick Tunnel" to "AF Quick Tunnel",
         "Cloudflare Quick Tunnel" to "Cloudflare Quick Tunnel",
         "Quick Tunnel" to "Quick Tunnel",
@@ -621,6 +622,7 @@ internal object RuntimeMessageTranslations {
 
     /** English-originated library and editor failures that can reach the interface. */
     val lithuanian = mapOf(
+        "Could not update Android's file index" to "Android failų indekso atnaujinti nepavyko",
         "Plain text" to "Paprastas tekstas",
         "File size cannot be negative" to "Failo dydis negali būti neigiamas",
         "Invalid SHA-256 revision" to "Netinkama SHA-256 versija",

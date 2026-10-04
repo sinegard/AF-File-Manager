@@ -33,6 +33,38 @@ class CleanupReviewDialogTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @Test fun movingTheLastCopyRequiresAnExplicitConfirmationChoice() {
+        val paths = listOf("/storage/emulated/0/Download/last-a.txt", "/storage/emulated/0/Download/last-b.txt")
+        val protected = AtomicInteger()
+        val allCopies = AtomicReference<Set<String>>(emptySet())
+        compose.setContent {
+            MaterialTheme {
+                CleanupReviewDialog(
+                    analysis = StorageAnalysis(2, 0, 8, emptyList(), emptyList(), emptyList(), false),
+                    duplicates = listOf(DuplicateGroup("fixture", 4, paths)), similarImages = emptyList(),
+                    similarImagesRunning = false, similarImagesAnalyzed = false, similarImagesError = null,
+                    initialCategory = CleanupCategory.DUPLICATES, analysisRootPaths = listOf("/storage/emulated/0"),
+                    onAnalyzeSimilarImages = {}, onMoveToTrash = { protected.incrementAndGet() },
+                    onMoveAllToTrash = allCopies::set,
+                    loadSelectionInfo = { Result.success(FileSelectionSummary(2, 2, 0, 8, 2, true)) },
+                    onLoadFolder = { Result.failure(IllegalStateException("not used")) },
+                    onOpenFile = {}, onDismiss = {},
+                )
+            }
+        }
+        repeat(2) { attempt ->
+            compose.onAllNodesWithTag("cleanup_candidate_checkbox")[0].assertIsOff().performClick()
+            compose.onAllNodesWithTag("cleanup_candidate_checkbox")[1].assertIsOff().performClick()
+            compose.onNodeWithTag("cleanup_move_selected").performClick()
+            compose.onNodeWithTag("cleanup_keep_one_copy").assertIsOn()
+            assertTrue(allCopies.get().isEmpty())
+            if (attempt == 1) compose.onNodeWithTag("cleanup_keep_one_copy").performClick().assertIsOff()
+            compose.onNodeWithTag("cleanup_confirm_move").performClick()
+        }
+        assertEquals(1, protected.get())
+        assertEquals(paths.toSet(), allCopies.get())
+    }
+
     @Test
     fun checkboxSelectsWhileCardOpensTheCandidate() {
         val opened = AtomicInteger()
@@ -160,10 +192,12 @@ class CleanupReviewDialogTest {
         val artifact = File(requireNotNull(application.getExternalFilesDir("validation")), "cleanup-folder-browser.png")
         artifact.outputStream().use { output ->
             assertTrue(
-                compose.onNodeWithTag("cleanup_review_dialog", useUnmergedTree = true)
-                    .captureToImage()
-                    .asAndroidBitmap()
-                    .compress(Bitmap.CompressFormat.PNG, 100, output),
+                (if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    compose.onNodeWithTag("cleanup_review_dialog", useUnmergedTree = true).captureToImage().asAndroidBitmap()
+                } else {
+                    requireNotNull(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                        .uiAutomation.takeScreenshot())
+                }).compress(Bitmap.CompressFormat.PNG, 100, output),
             )
         }
         assertTrue(artifact.isFile && artifact.length() > 0)

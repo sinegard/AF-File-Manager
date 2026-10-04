@@ -21,7 +21,7 @@ data class VaultHeader(
     val originalSize: Long,
 )
 
-class FileVaultEngine {
+class FileVaultEngine(private val onMutation: suspend (List<File>) -> Unit = {}) {
     companion object {
         private val MAGIC = "AFFMV1".toByteArray(Charsets.US_ASCII)
         private const val SALT_BYTES = 16
@@ -76,8 +76,8 @@ class FileVaultEngine {
                 }
             }
             require(partial.isFile && partial.length() > 0) { "Šifruotas failas nesukurtas" }
-            if (destination.exists()) require(destination.delete()) { "Esamo failo pakeisti nepavyko" }
-            require(partial.renameTo(destination)) { "Šifruoto failo užbaigti nepavyko" }
+            java.nio.file.Files.move(partial.toPath(), destination.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            onMutation(listOf(destination))
             operation?.progress(itemDelta = 1, currentName = source.name)
         } finally {
             key.encoded?.fill(0)
@@ -142,6 +142,7 @@ class FileVaultEngine {
                 }
                 require(written == originalSize) { "Iššifruoto failo dydis nesutampa" }
                 require(requireNotNull(partial).renameTo(destination)) { "Iššifruoto failo užbaigti nepavyko" }
+                onMutation(listOf(destination))
                 operation?.progress(itemDelta = 1, currentName = destination.name)
                 destination
             }

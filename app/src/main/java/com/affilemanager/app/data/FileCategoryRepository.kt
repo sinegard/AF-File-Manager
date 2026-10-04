@@ -147,6 +147,7 @@ class FileCategoryRepository(
         val browseAll: Boolean = false,
         val query: String = "",
         val appScope: InstalledAppScope = InstalledAppScope.USER,
+        val parentFolderPath: String? = null,
     )
 
     private data class CachedPage(val page: FileCategoryPage, val createdAtNanos: Long)
@@ -208,13 +209,15 @@ class FileCategoryRepository(
         storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
         viewMode: CategoryViewMode = CategoryViewMode.FILES,
         appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
+        parentFolderPath: String? = null,
     ): FileCategoryPage = withContext(Dispatchers.IO) {
         require(offset in 0 until MAX_QUERY_ROWS) { "Invalid category page offset" }
         if (forceRefresh) invalidate(category)
-        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, storageScope, viewMode, appScope = appScope)
+        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, storageScope, viewMode,
+            appScope = appScope, parentFolderPath = parentFolderPath)
         cached(key)?.let { return@withContext it }
         val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps,
-            storageScope = storageScope, viewMode = viewMode, appScope = appScope)
+            storageScope = storageScope, viewMode = viewMode, appScope = appScope, parentFolderPath = parentFolderPath)
         synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
         page
     }
@@ -320,6 +323,7 @@ class FileCategoryRepository(
         browseAll: Boolean = false,
         search: String = "",
         appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
+        parentFolderPath: String? = null,
     ): FileCategoryPage {
         val resultLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.resultLimit(offset)
         val rowLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE
@@ -361,7 +365,14 @@ class FileCategoryRepository(
                 MediaStore.MediaColumns.DATE_MODIFIED,
                 MediaStore.MediaColumns.MIME_TYPE,
             )
-            val baseQuery = categoryQuery(category)
+            val categoryBase = categoryQuery(category)
+            val baseQuery = if (parentFolderPath == null) categoryBase else {
+                val parent = File(parentFolderPath).absoluteFile.toPath().normalize().toString().trimEnd('/')
+                val escaped = parent.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                CategoryQuery("(${categoryBase.selection}) AND ${MediaStore.MediaColumns.DATA} LIKE ? ESCAPE '\\' " +
+                    "AND ${MediaStore.MediaColumns.DATA} NOT LIKE ? ESCAPE '\\'",
+                    categoryBase.arguments + arrayOf("$escaped/%", "$escaped/%/%"))
+            }
             val query = if (search.isBlank()) baseQuery else CategoryQuery(
                 "(${baseQuery.selection}) AND ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? ESCAPE '\\'",
                 baseQuery.arguments + FileCategoryPagingRules.literalSearchPattern(search),
@@ -406,7 +417,8 @@ class FileCategoryRepository(
                     scanned += 1
                     val path = cursor.getString(pathIndex)?.takeIf(String::isNotBlank) ?: continue
                     val file = File(path)
-                    val name = cursor.getString(nameIndex)?.takeIf(String::isNotBlank) ?: file.name
+                    if (!file.isFile) continue
+                    val name = file.name
                     val mime = cursor.getString(mimeIndex)
                     val kind = FileSystemRules.detectKind(name, mime, isDirectory = false)
                     if (name.startsWith('.') || kind != category.kind) continue
@@ -614,9 +626,13 @@ class FileCategoryRepository(
             conditions += "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
             arguments += "%.${extension.lowercase(Locale.ROOT)}"
         }
+        val fileTypes = mutableListOf(MediaStore.Files.FileColumns.MEDIA_TYPE_NONE.toString())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            fileTypes += MediaStore.Files.FileColumns.MEDIA_TYPE_DOCUMENT.toString()
+        }
         return CategoryQuery(
-            selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? AND ${MediaStore.MediaColumns.DATA} IS NOT NULL AND (${conditions.joinToString(" OR ")})",
-            arguments = (listOf(MediaStore.Files.FileColumns.MEDIA_TYPE_NONE.toString()) + arguments).toTypedArray(),
+            selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (${fileTypes.joinToString(",") { "?" }}) AND ${MediaStore.MediaColumns.DATA} IS NOT NULL AND (${conditions.joinToString(" OR ")})",
+            arguments = (fileTypes + arguments).toTypedArray(),
         )
     }
 

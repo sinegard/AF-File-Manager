@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -138,7 +140,7 @@ internal fun NearbyTransferHistoryDialog(
                                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Rounded.History, contentDescription = null)
+                                Icon(if (session.groupName != null) Icons.Rounded.Groups else Icons.Rounded.Person, contentDescription = null)
                                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                                     if (session.peerName in setOf("Kitas telefonas", "Other phone")) {
                                         LText("Kitas telefonas", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

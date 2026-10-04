@@ -91,6 +91,7 @@ internal object TrashPathRules {
 class TrashRepository(
     private val context: Context,
     private val configuredRoot: File? = null,
+    private val onMutation: suspend (List<File>) -> Unit = {},
 ) {
     companion object {
         private const val MAX_TRASH_ITEMS = 10_000
@@ -227,6 +228,7 @@ class TrashRepository(
                     movePreparedSource(source, sourceScan, operation)
                     operation.progress(itemDelta = sourceScan.first, byteDelta = sourceScan.second, currentName = source.name)
                     movedItems += 1
+                    onMutation(listOf(source))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Throwable) {
@@ -311,6 +313,7 @@ class TrashRepository(
                 val target = if (requested.exists()) FileSystemRules.keepBothTarget(requested) else requested
                 require(stored.renameTo(target)) { "Atkurti nepavyko" }
                 check(metadata.delete() || !metadata.exists()) { "Nepavyko pašalinti metaduomenų" }
+                onMutation(listOf(target))
                 target.absolutePath
             }
         }

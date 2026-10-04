@@ -84,6 +84,7 @@ class FileCategoryRepositoryPagingTest {
         val uri = resolver.insert(collection, imageValues("$marker.jpg", relativePath))
         assertNotNull(uri)
         try {
+            materializeIndexedFixture(context, collection, relativePath)
             val repository = FileCategoryRepository(context, LocalFileRepository(context))
             val internal = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME,
                 SortDirection.ASCENDING, marker, storageScope = CategoryStorageScope.INTERNAL)
@@ -185,6 +186,7 @@ class FileCategoryRepositoryPagingTest {
                 val rows = batch.map { values("$prefix-${it.toString().padStart(5, '0')}.jpg") }.toTypedArray()
                 assertEquals(rows.size, resolver.bulkInsert(collection, rows))
             }
+            materializeIndexedFixture(context, collection, relativePath)
             var offset: Int? = 0
             val seen = linkedSetOf<String>()
             var pageCount = 0
@@ -209,6 +211,7 @@ class FileCategoryRepositoryPagingTest {
             val literal = "$prefix-100%_literal.jpg"
             assertNotNull(resolver.insert(collection, values(literal)))
             assertNotNull(resolver.insert(collection, values("$prefix-100XXliteral.jpg")))
+            materializeIndexedFixture(context, collection, relativePath)
             val exact = repository.loadBrowsePage(FileCategory.IMAGES, 0, SortMode.NAME, SortDirection.ASCENDING, "100%_literal", forceRefresh = true)
             assertEquals(listOf(literal), exact.entries.filter { it.absolutePath.contains(prefix) }.map(FileEntry::name))
         } finally {
@@ -291,6 +294,7 @@ class FileCategoryRepositoryPagingTest {
         }
         try {
             assertEquals(fixtureCount, resolver.bulkInsert(collection, values))
+            materializeIndexedFixture(context, collection, relativePath)
             val repository = FileCategoryRepository(context, LocalFileRepository(context))
             repository.invalidate(FileCategory.IMAGES)
 

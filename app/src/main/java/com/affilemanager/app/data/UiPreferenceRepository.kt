@@ -23,6 +23,7 @@ data class ShareScreenPreferences(
     val nearbyReceivePath: String = sharedPath,
     val nearbyPathHistory: List<String> = emptyList(),
     val receiverAvatarUri: String = "",
+    val groupAvatarUri: String = "",
 ) {
     fun withNearbyReceivePath(path: String): ShareScreenPreferences = copy(
         nearbyReceivePath = path,
@@ -89,6 +90,7 @@ class UiPreferenceRepository(context: Context) {
                     (0 until history.length()).map { index -> history.optString(index) }
                 }.orEmpty(),
                 receiverAvatarUri = json.optString("receiverAvatarUri"),
+                groupAvatarUri = json.optString("groupAvatarUri"),
             ),
             defaultPath = defaultPath,
             defaultReceiverName = defaultReceiverName,
@@ -105,6 +107,7 @@ class UiPreferenceRepository(context: Context) {
             .put("nearbyReceivePath", normalized.nearbyReceivePath)
             .put("nearbyPathHistory", JSONArray(normalized.nearbyPathHistory))
             .put("receiverAvatarUri", normalized.receiverAvatarUri)
+            .put("groupAvatarUri", normalized.groupAvatarUri)
             .put("protocol", normalized.protocol.name)
             .put("durationMinutes", normalized.durationMinutes)
             .put("portText", normalized.portText)
@@ -256,6 +259,7 @@ internal object UiPreferenceRules {
                 .map { cleanSingleLine(it, MAX_PATH_LENGTH) }
                 .filter(String::isNotBlank).distinct().take(6).toList(),
             receiverAvatarUri = value.receiverAvatarUri.takeIf { it.startsWith("content://") && it.length <= 2_048 }.orEmpty(),
+            groupAvatarUri = value.groupAvatarUri.takeIf { it.startsWith("content://") && it.length <= 2_048 }.orEmpty(),
             durationMinutes = LanSessionDuration.normalize(value.durationMinutes),
             portText = value.portText.filter(Char::isDigit).take(5),
             username = cleanSingleLine(value.username, MAX_USERNAME_LENGTH),

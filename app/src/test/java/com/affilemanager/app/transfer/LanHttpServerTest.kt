@@ -16,6 +16,55 @@ class LanHttpServerTest {
     @get:Rule
     val temporary = TemporaryFolder()
 
+    @Test fun leavingOneGroupMemberDoesNotStopTheOrganizerOrDisconnectOtherMembers() {
+        val root = temporary.newFolder("group-leave")
+        val snapshots = java.util.concurrent.CopyOnWriteArrayList<List<NearbyGroupMember>>()
+        var stopped = false
+        val address = privateAddress()
+        LanHttpServer(root, address, requestedCode = "12345678", groupMode = true,
+            onStopped = { stopped = true }, onGroupMembers = { _, members -> snapshots += members }).use { server ->
+            val port = server.start().port
+            val firstCookie = login(port, address)
+            val secondCookie = login(port, address)
+            fun member(index: Int) = NearbyPairing.create(address.hostAddress, 25_000 + index, "8765432$index", "Phone $index")
+            fun post(cookie: String, path: String, body: String = ""): String = request(port,
+                "POST $path HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body", address)
+            assertTrue(post(firstCookie, "/nearby/group/join", member(1).encoded()).startsWith("HTTP/1.1 200"))
+            assertTrue(post(secondCookie, "/nearby/group/join", member(2).encoded()).startsWith("HTTP/1.1 200"))
+            assertEquals(3, snapshots.last().size)
+            assertTrue(post(firstCookie, "/nearby/disconnect").startsWith("HTTP/1.1 200"))
+            assertFalse(stopped)
+            assertEquals(listOf("AF File Manager", "Phone 2"), snapshots.last().map { it.pairing.receiverName })
+            assertTrue(post(secondCookie, "/nearby/group/heartbeat", member(2).encoded()).startsWith("HTTP/1.1 200"))
+            assertTrue(request(port, "GET /nearby/group/members HTTP/1.1\r\nHost: localhost\r\nCookie: $secondCookie\r\n\r\n", address)
+                .startsWith("HTTP/1.1 200"))
+            assertTrue(post(secondCookie, "/upload?name=after-leave.txt", "still connected").startsWith("HTTP/1.1 201"))
+            assertEquals("still connected", root.resolve("after-leave.txt").readText())
+        }
+    }
+
+    @Test fun organizerRemovalHasAnExplicitReasonAndCannotRemoveAnotherIdentity() {
+        val root = temporary.newFolder("group-removal")
+        val address = privateAddress()
+        LanHttpServer(root, address, requestedCode = "12345678", groupMode = true).use { server ->
+            val port = server.start().port
+            val cookie = login(port, address)
+            val member = NearbyPairing.create(address.hostAddress, 25_001, "87654321", "Member")
+            fun post(path: String) = request(port,
+                "POST $path HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${member.encoded().toByteArray().size}\r\n\r\n${member.encoded()}", address)
+            assertTrue(post("/nearby/group/join").startsWith("HTTP/1.1 200"))
+            assertTrue(server.removeGroupMember(member))
+            val rejected = post("/nearby/group/heartbeat")
+            assertTrue(rejected.startsWith("HTTP/1.1 403"))
+            assertTrue(rejected.contains("X-AF-Group-State: removed"))
+            assertTrue(post("/nearby/group/join").startsWith("HTTP/1.1 403"))
+            assertTrue(request(port, "POST /upload?name=blocked.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 3\r\n\r\nbad", address)
+                .startsWith("HTTP/1.1 403"))
+            assertFalse(root.resolve("blocked.txt").exists())
+            assertTrue(request(port, "GET / HTTP/1.1\r\nHost: localhost\r\nCookie: ${login(port, address)}\r\n\r\n", address).startsWith("HTTP/1.1 200"))
+        }
+    }
+
     @Test fun nearbyMessagesRequireAuthenticationAndStayOutOfSharedStorage() {
         val root = temporary.newFolder("messages")
         val received = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -396,17 +445,79 @@ class LanHttpServerTest {
         }
     }
 
-    private fun login(port: Int): String {
+    @Test fun interruptedThirtyMiBUploadKeepsOriginalsAndReceiverUsable() {
+        val root = temporary.newFolder("large-upload-interruption")
+        root.resolve("large.bin").writeText("previous destination")
+        val source = temporary.newFile("source-large.bin")
+        val buffer = ByteArray(64 * 1_024) { (it % 251).toByte() }
+        source.outputStream().use { output -> repeat(480) { output.write(buffer) } }
+        fun checksum(file: java.io.File): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                while (true) { val read = input.read(buffer); if (read < 0) break; digest.update(buffer, 0, read) }
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        val originalChecksum = checksum(source)
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            Socket(InetAddress.getLoopbackAddress(), port).use { upload ->
+                upload.soTimeout = 5_000
+                val output = upload.getOutputStream()
+                output.write(("POST /upload?name=large.bin HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n" +
+                    "Content-Length: ${source.length()}\r\n\r\n").toByteArray())
+                source.inputStream().use { input -> repeat(240) { check(input.read(buffer) == buffer.size); output.write(buffer) } }
+                output.flush()
+                upload.shutdownOutput()
+                assertTrue(upload.getInputStream().readBytes().toString(Charsets.UTF_8).startsWith("HTTP/1.1 400"))
+            }
+            assertEquals("previous destination", root.resolve("large.bin").readText())
+            assertEquals(setOf("large.bin"), root.listFiles()!!.map { it.name }.toSet())
+            assertEquals(originalChecksum, checksum(source))
+            assertEquals(30L * 1_024 * 1_024, source.length())
+            assertTrue(request(port, "GET / HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n\r\n")
+                .startsWith("HTTP/1.1 200"))
+            assertFalse(root.listFiles()!!.any { it.name.endsWith(".partial") })
+        }
+    }
+
+    @Test fun lastIdleGroupMemberExpiresWithoutStoppingTheOrganizer() {
+        val root = temporary.newFolder("group-idle-expiry")
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val joined = java.util.concurrent.atomic.AtomicBoolean(false)
+        val expired = java.util.concurrent.CountDownLatch(1)
+        val address = privateAddress()
+        LanHttpServer(root, address, requestedCode = "12345678", groupMode = true, nowMillis = now::get,
+            onGroupMembers = { _, members -> if (joined.get() && members.size == 1) expired.countDown() }).use { server ->
+            val port = server.start().port
+            val cookie = login(port, address)
+            val peer = NearbyPairing.create(address.hostAddress, 24_001, "87654321", "Member")
+            val body = peer.encoded()
+            assertTrue(request(port, "POST /nearby/group/join HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n" +
+                "Content-Length: ${body.toByteArray().size}\r\n\r\n$body", address).startsWith("HTTP/1.1 200"))
+            joined.set(true)
+            now.addAndGet(31_000)
+            assertTrue(expired.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(request(port, "GET / HTTP/1.1\r\nHost: localhost\r\nCookie: ${login(port, address)}\r\n\r\n", address)
+                .startsWith("HTTP/1.1 200"))
+        }
+    }
+
+    private fun privateAddress(): InetAddress = java.net.NetworkInterface.getNetworkInterfaces().toList()
+        .flatMap { it.inetAddresses.toList() }.first { it is java.net.Inet4Address && it.isSiteLocalAddress }
+
+    private fun login(port: Int, address: InetAddress = InetAddress.getLoopbackAddress()): String {
         val body = "code=12345678"
         val response = request(
             port,
-            "POST /login HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n$body",
+            "POST /login HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n$body", address,
         )
         return response.lineSequence().first { it.startsWith("Set-Cookie:") }
             .substringAfter("Set-Cookie:").substringBefore(';').trim()
     }
 
-    private fun request(port: Int, request: String): String = Socket(InetAddress.getLoopbackAddress(), port).use { socket ->
+    private fun request(port: Int, request: String, address: InetAddress = InetAddress.getLoopbackAddress()): String = Socket(address, port).use { socket ->
         socket.soTimeout = 5_000
         socket.getOutputStream().write(request.toByteArray(StandardCharsets.UTF_8))
         socket.getOutputStream().flush()

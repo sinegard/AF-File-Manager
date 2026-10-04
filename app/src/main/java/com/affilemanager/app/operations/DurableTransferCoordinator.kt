@@ -11,6 +11,7 @@ class DurableTransferCoordinator(
     private val repository: DurableTransferRepository,
     private val planner: DurableTransferPlanner = DurableTransferPlanner(),
     private val engine: DurableTransferEngine = DurableTransferEngine(),
+    private val onMutation: suspend (List<java.io.File>) -> Unit = {},
 ) {
     companion object {
         private const val MAX_AUTO_RESUME = 32
@@ -73,9 +74,15 @@ class DurableTransferCoordinator(
             title = if (plan.move) "Patikimai perkeliama" else "Patikimai kopijuojama",
             retryable = true,
         ) {
+            val files = plan.items.filterNot(PlannedTransferItem::directory)
+            val destinations = files.map { java.io.File(it.targetPath) }
             try {
-                val latest = repository.load(plan.id).state
-                engine.execute(plan, latest, repository, this)
+                publishingStorageChanges(onMutation, {
+                    destinations + if (plan.move) files.map { java.io.File(it.sourcePath) } else emptyList()
+                }) {
+                    val latest = repository.load(plan.id).state
+                    engine.execute(plan, latest, repository, this)
+                }
             } catch (cancelled: CancellationException) {
                 val latest = runCatching { repository.load(plan.id).state }.getOrDefault(queued)
                 withContext(NonCancellable + Dispatchers.IO) {

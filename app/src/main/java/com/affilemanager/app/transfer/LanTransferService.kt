@@ -14,6 +14,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
+import com.affilemanager.app.AFFileManagerApplication
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +44,7 @@ data class LanTransferState(
     val message: String? = null,
     val incomingUpload: LanUploadProgress? = null,
     val groupMode: Boolean = false,
+    val discoveryError: String? = null,
 )
 
 object LanTransferController {
@@ -57,6 +61,7 @@ object LanTransferController {
         groupMode: Boolean = false,
         receiverName: String = "AF File Manager",
         groupName: String = "AF group",
+        groupOrganizer: Boolean = true,
     ) {
         if (bindAddress == null) WifiDirectController.stop(context)
         if (!groupMode) NearbyGroupController.sessionStopped()
@@ -75,6 +80,7 @@ object LanTransferController {
             .putExtra(LanTransferService.EXTRA_RECEIVER_NAME, receiverName.take(NearbyPairing.MAX_NAME_LENGTH))
             .putExtra(LanTransferService.EXTRA_GROUP_NAME, groupName.take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH))
             .putExtra("bind_address", bindAddress)
+            .putExtra("group_organizer", groupOrganizer)
         ContextCompat.startForegroundService(context, intent)
     }
 
@@ -165,6 +171,7 @@ class LanTransferService : Service() {
     }
 
     private var server: TemporaryLanServer? = null
+    private var advertiser: NearbyDeviceAdvertiser? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -280,6 +287,17 @@ class LanTransferService : Service() {
                 WifiDirectController.stop(this)
                 stopSelf()
             }
+            val publishFiles: (List<File>) -> Unit = { files ->
+                // Called on a server worker only, never on the service's main thread.
+                runCatching {
+                    runBlocking(Dispatchers.IO) { (application as AFFileManagerApplication).graph.sharedStorageIndex.changed(files) }
+                }.onFailure { error ->
+                    LanTransferController.publish(LanTransferController.state.value.copy(
+                        message = "Could not update Android's file index",
+                    ))
+                    android.util.Log.w("AFLanIndex", "Could not update Android's file index", error)
+                }
+            }
             when (protocol) {
                 LanTransferProtocol.WEB -> LanHttpServer(
                     rootDirectory = root,
@@ -303,6 +321,7 @@ class LanTransferService : Service() {
                     groupName = groupName,
                     onGroupMembers = NearbyGroupController::hostMembers,
                     onUploadProgress = LanTransferController::publishUpload,
+                    onMutation = publishFiles,
                     onStopped = stopped,
                 )
                 LanTransferProtocol.FTP -> LanFtpServer(
@@ -315,6 +334,7 @@ class LanTransferService : Service() {
                     readOnly = options.readOnly,
                     anonymous = options.anonymous,
                     onStopped = stopped,
+                    onMutation = publishFiles,
                 )
                 LanTransferProtocol.WEBDAV -> LanWebDavServer(
                     rootDirectory = root,
@@ -326,6 +346,7 @@ class LanTransferService : Service() {
                     readOnly = options.readOnly,
                     anonymous = options.anonymous,
                     onStopped = stopped,
+                    onMutation = publishFiles,
                 )
             }.also { server = it }.start()
         }.onSuccess { session ->
@@ -345,9 +366,16 @@ class LanTransferService : Service() {
                     message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
                 ),
             )
-            if (groupMode) {
+            val groupOrganizer = intent.getBooleanExtra("group_organizer", true)
+            if (groupMode && groupOrganizer) {
                 val organizer = NearbyPairing.create(session.address, session.port, session.code, receiverName)
                 NearbyGroupController.host(NearbyGroupInvite(organizer, groupName))
+            }
+            if (protocol == LanTransferProtocol.WEB && !session.readOnly) {
+                advertiser = NearbyDeviceAdvertiser(this) { error ->
+                    LanTransferController.publish(LanTransferController.state.value.copy(discoveryError = error))
+                }.also { it.start(NearbyPairing.create(session.address, session.port, session.code, receiverName),
+                    receiverName, groupName.takeIf { groupMode && groupOrganizer }) }
             }
             startAsForeground(runningNotification(session))
         }.onFailure { error ->
@@ -373,6 +401,8 @@ class LanTransferService : Service() {
     }
 
     override fun onDestroy() {
+        advertiser?.close()
+        advertiser = null
         server?.stop("LAN paslauga sustabdyta")
         server = null
         WifiDirectController.stop(this)
@@ -381,6 +411,8 @@ class LanTransferService : Service() {
     }
 
     private fun stopServer(reason: String) {
+        advertiser?.close()
+        advertiser = null
         server?.stop(reason)
         server = null
         NearbyGroupController.sessionStopped()

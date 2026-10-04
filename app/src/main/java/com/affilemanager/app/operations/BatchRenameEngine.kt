@@ -59,6 +59,7 @@ data class BatchRenameUndoItem(
 data class BatchRenameUndo(val items: List<BatchRenameUndoItem>)
 
 class BatchRenameEngine(
+    private val onMutation: suspend (List<File>) -> Unit = {},
     private val renameFile: (File, File) -> Boolean = { source, target -> source.renameTo(target) },
 ) {
     private data class RenameStage(
@@ -158,6 +159,9 @@ class BatchRenameEngine(
         context.setTotals(mappings.size, null)
 
         val stages = mutableListOf<RenameStage>()
+        publishingStorageChanges(onMutation, {
+            stages.flatMap { listOf(File(it.item.originalPath), File(it.item.targetPath), it.temporary) }
+        }) {
         try {
             mappings.forEach { item ->
                 context.checkpoint()
@@ -185,7 +189,7 @@ class BatchRenameEngine(
             }
             throw failure
         }
-
+        }
         return BatchRenameUndo(
             stages.map { stage ->
                 val renamed = File(stage.item.targetPath)

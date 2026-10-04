@@ -142,10 +142,14 @@ class LanTransferServiceTest {
             }
             val afterRemoval = request(
                 uri.host, uri.port,
-                "GET /nearby/group/members HTTP/1.1\r\nHost: ${uri.host}\r\nCookie: $firstCookie\r\n\r\n",
+                "GET /nearby/group/members HTTP/1.1\r\nHost: ${uri.host}\r\nCookie: $secondCookie\r\n\r\n",
             )
             assertTrue(afterRemoval.startsWith("HTTP/1.1 200"))
             assertEquals(2, NearbyGroupCodec.decode(afterRemoval.substringAfter("\r\n\r\n").toByteArray()).size)
+            val removed = request(uri.host, uri.port,
+                "GET /nearby/group/members HTTP/1.1\r\nHost: ${uri.host}\r\nCookie: $firstCookie\r\n\r\n")
+            assertTrue(removed.startsWith("HTTP/1.1 403"))
+            assertTrue(removed.contains("X-AF-Group-State: removed"))
             val body = first.encoded()
             val rejoin = request(
                 uri.host, uri.port,

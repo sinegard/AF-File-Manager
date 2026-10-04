@@ -85,7 +85,10 @@ class AppGraph(application: Application) {
     val terminalSessions = TerminalSessionStore(application, applicationScope)
     val advancedAccess = AdvancedAccessManager(application)
     val privilegedFiles = PrivilegedFileRepository(application, advancedAccess)
-    val localFiles = LocalFileRepository(application)
+    val sharedStorageIndex: com.affilemanager.app.data.SharedStorageIndex = com.affilemanager.app.data.SharedStorageIndex(application).apply {
+        onChanged = { com.affilemanager.app.data.FileCategory.entries.forEach(fileCategories::invalidate) }
+    }
+    val localFiles = LocalFileRepository(application, sharedStorageIndex::changed)
     val recentFiles = RecentFileRepository(application, localFiles)
     val fileCategories = FileCategoryRepository(application, localFiles)
     val deviceCleanup by lazy { DeviceCleanupRepository(application) }
@@ -104,29 +107,29 @@ class AppGraph(application: Application) {
     }
     val remoteEdits by lazy { RemoteEditSaver(editSessions) }
     val textMerge by lazy { ThreeWayTextMerge() }
-    val localFileOperator by lazy { LocalFileOperator() }
-    val batchRename by lazy { BatchRenameEngine() }
+    val localFileOperator by lazy { LocalFileOperator(onMutation = sharedStorageIndex::changed) }
+    val batchRename by lazy { BatchRenameEngine(onMutation = sharedStorageIndex::changed) }
     val operationManager = FileOperationManager(applicationScope) {
         FileOperationForegroundService.start(application)
     }
     val durableTransferRepository = DurableTransferRepository(application)
-    val durableTransfers = DurableTransferCoordinator(operationManager, durableTransferRepository)
-    val trash = TrashRepository(application)
+    val durableTransfers = DurableTransferCoordinator(operationManager, durableTransferRepository, onMutation = sharedStorageIndex::changed)
+    val trash = TrashRepository(application, onMutation = sharedStorageIndex::changed)
     val trashRetentionSettings = TrashRetentionSettings(application)
     val trashRetentionScheduler = TrashRetentionScheduler(application)
     val search = FileSearchEngine(localFiles)
     val similarImages by lazy { SimilarImageEngine() }
-    val archives = ArchiveEngine()
+    val archives = ArchiveEngine(onMutation = sharedStorageIndex::changed)
     val localShare by lazy { LocalShareManager(application, archives) }
     val nearbySources by lazy { NearbySourcePreparer(application, fileCategories) }
     val credentialVault = CredentialVault()
     val appLock = AppLockRepository(application)
     val networkProfiles = NetworkProfileStore(application, credentialVault)
     val remoteClients = RemoteClientFactory()
-    val remoteCopies by lazy { RemoteCopyEngine() }
-    val safFiles = SafFileRepository(application)
-    val fileVault by lazy { FileVaultEngine() }
-    val sync by lazy { SyncEngine() }
+    val remoteCopies by lazy { RemoteCopyEngine(sharedStorageIndex::changed) }
+    val safFiles = SafFileRepository(application, sharedStorageIndex::changed)
+    val fileVault by lazy { FileVaultEngine(sharedStorageIndex::changed) }
+    val sync by lazy { SyncEngine(sharedStorageIndex::changed) }
     val syncSchedules = SyncScheduleRepository(application)
     val updates = AppUpdateManager(application)
     val workflows: AfWorkflowCoordinator by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -138,7 +141,7 @@ class AppGraph(application: Application) {
             timelineRepository = AfTimelineRepository(application),
             automationRepository = AfAutomationRepository(application),
             automationScheduler = AfAutomationScheduler(application),
-            storageFactory = AfStorageSessionFactory(application, archives, networkProfiles, remoteClients),
+            storageFactory = AfStorageSessionFactory(application, archives, networkProfiles, remoteClients, sharedStorageIndex::changed),
             stagingDirectory = java.io.File(application.cacheDir, "af-plan-execution"),
         )
     }

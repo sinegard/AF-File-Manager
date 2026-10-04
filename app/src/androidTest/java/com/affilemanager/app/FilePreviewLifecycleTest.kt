@@ -860,7 +860,10 @@ class FilePreviewLifecycleTest {
         val fixtureRoot = File(requireNotNull(application.getExternalFilesDir("edit-save-as")), "current")
         fixtureRoot.deleteRecursively()
         val sourceDirectory = File(fixtureRoot, "source").apply { mkdirs() }
-        val destinationDirectory = File(fixtureRoot, "destination").apply { mkdirs() }
+        val destinationDirectory = File(
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+            "AFSaveAs-${java.util.UUID.randomUUID()}",
+        ).apply { check(mkdirs()) }
         val source = File(sourceDirectory, "original.txt").apply { writeText("original") }
         val destination = File(destinationDirectory, "renamed.txt")
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
@@ -881,6 +884,14 @@ class FilePreviewLifecycleTest {
                 assertEquals("original", source.readText())
                 assertEquals(destination.absolutePath, (viewModel.fileEditState.value.session?.origin as? com.affilemanager.app.editing.EditOrigin.Local)?.path)
             }
+            application.contentResolver.query(
+                android.provider.MediaStore.Files.getContentUri("external"),
+                arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME),
+                "${android.provider.MediaStore.MediaColumns.DATA} = ?", arrayOf(destination.path), null,
+            )!!.use { cursor ->
+                assertTrue("Save as must publish the real saved file to Android's index", cursor.moveToFirst())
+                assertEquals(destination.name, cursor.getString(0))
+            }
 
             replaceEditorText("second saved version")
             compose.waitUntil(timeoutMillis = 10_000) { viewModel.fileEditState.value.text == "second saved version" }
@@ -893,6 +904,8 @@ class FilePreviewLifecycleTest {
                 compose.onAllNodesWithTag("file-preview-dialog", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
             }
             fixtureRoot.deleteRecursively()
+            check(destinationDirectory.deleteRecursively())
+            kotlinx.coroutines.runBlocking { application.graph.sharedStorageIndex.changed(listOf(destinationDirectory)) }
         }
     }
 

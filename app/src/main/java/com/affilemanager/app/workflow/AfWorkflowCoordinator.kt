@@ -158,6 +158,7 @@ class AfWorkflowCoordinator(
         val initial = executionRepository.create(preflight).copy(status = AfExecutionStatus.RUNNING)
         executionRepository.save(initial)
         val storage = storageFactory.open()
+        var primaryFailure: Throwable? = null
         try {
             val (_, receipt) = executionEngine.execute(
                 preflight = preflight,
@@ -176,6 +177,7 @@ class AfWorkflowCoordinator(
             )
             refresh()
         } catch (error: Throwable) {
+            primaryFailure = error
             runCatching {
                 val failed = executionRepository.load(preflight.executionId)
                 timelineRepository.add(executionEngine.buildReceipt(failed.preflight, failed.state, failed.journal))
@@ -186,7 +188,7 @@ class AfWorkflowCoordinator(
             refresh()
             throw error
         } finally {
-            storage.close()
+            closeStorage(storage, primaryFailure)
         }
     }
 
@@ -205,6 +207,7 @@ class AfWorkflowCoordinator(
             ?: return Result.failure(IllegalArgumentException("Operation receipt is unavailable"))
         return operations.submit("Undo: ${receipt.planName}") {
             val storage = storageFactory.open()
+            var primaryFailure: Throwable? = null
             try {
                 val fresh = undoEngine.preview(receipt, storage)
                 require(fresh == preview && fresh.canRun) { "Files changed after the undo preview" }
@@ -212,8 +215,11 @@ class AfWorkflowCoordinator(
                 timelineRepository.add(undoReceipt)
                 check(timelineRepository.markUndoConsumed(receipt.id)) { "Original operation receipt is unavailable" }
                 refresh()
+            } catch (error: Throwable) {
+                primaryFailure = error
+                throw error
             } finally {
-                storage.close()
+                closeStorage(storage, primaryFailure)
             }
         }
     }
@@ -230,6 +236,7 @@ class AfWorkflowCoordinator(
         retryable = true,
     ) {
         val storage = storageFactory.open()
+        var primaryFailure: Throwable? = null
         try {
             val latest = executionRepository.load(record.preflight.executionId)
             val (state, receipt) = executionEngine.execute(
@@ -246,6 +253,7 @@ class AfWorkflowCoordinator(
             timelineRepository.add(receipt)
             refresh()
         } catch (error: Throwable) {
+            primaryFailure = error
             withContext(NonCancellable) {
                 runCatching {
                     val failed = executionRepository.load(record.preflight.executionId)
@@ -264,7 +272,15 @@ class AfWorkflowCoordinator(
             }
             throw error
         } finally {
-            storage.close()
+            closeStorage(storage, primaryFailure)
+        }
+    }
+
+    private suspend fun closeStorage(storage: AfStorageSession, primaryFailure: Throwable?) {
+        try { storage.close() }
+        catch (indexFailure: Throwable) {
+            if (primaryFailure != null) primaryFailure.addSuppressed(indexFailure)
+            else throw java.io.IOException("Could not update Android's file index", indexFailure)
         }
     }
 

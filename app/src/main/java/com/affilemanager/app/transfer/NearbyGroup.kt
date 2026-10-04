@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,6 +22,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 
 data class NearbyGroupInvite(
     val organizer: NearbyPairing,
@@ -133,17 +135,25 @@ internal class NearbyGroupDirectory(
     fun heartbeat(pairing: NearbyPairing): Boolean {
         prune()
         val record = members[pairing.key()] ?: return false
+        if (record.pairing != pairing || pairing.identity() in removedIdentities) return false
         record.lastSeenMillis = nowMillis()
         return true
     }
 
     @Synchronized
-    fun leave(pairing: NearbyPairing): Boolean = members.remove(pairing.key()) != null
+    fun leave(pairing: NearbyPairing): Boolean {
+        if (members[pairing.key()]?.pairing != pairing) return false
+        return members.remove(pairing.key()) != null
+    }
+
+    @Synchronized
+    fun isRemoved(pairing: NearbyPairing): Boolean = pairing.identity() in removedIdentities
 
     /** Organizer-only local action; blocks this pairing identity for the current session. */
     @Synchronized
     fun remove(pairing: NearbyPairing): Boolean {
         val key = pairing.key()
+        if (members[key]?.pairing != pairing) return false
         require(removedIdentities.size < 100) { "Grupės sesijos valdymo riba pasiekta" }
         if (members.remove(key) == null) return false
         removedIdentities += pairing.identity()
@@ -215,14 +225,18 @@ object NearbyGroupController {
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.SECONDS)
         .followRedirects(false)
         .build()
     private val _state = MutableStateFlow(NearbyGroupState())
     val state: StateFlow<NearbyGroupState> = _state.asStateFlow()
     private var polling: Job? = null
     private var cookie: String? = null
+    private var generation = 0L
 
+    @Synchronized
     fun host(invite: NearbyGroupInvite) {
+        generation++
         polling?.cancel()
         polling = null
         cookie = null
@@ -233,8 +247,10 @@ object NearbyGroupController {
             organizer = invite.organizer,
             members = listOf(NearbyGroupMember(invite.organizer, organizer = true)),
         )
+        NearbyTransferHistoryController.beginGroupSession(invite)
     }
 
+    @Synchronized
     internal fun hostMembers(invite: NearbyGroupInvite, members: List<NearbyGroupMember>) {
         val current = _state.value
         if (current.status == NearbyGroupStatus.HOSTING && current.organizer == invite.organizer) {
@@ -246,8 +262,10 @@ object NearbyGroupController {
         }
     }
 
+    @Synchronized
     fun join(invite: NearbyGroupInvite, ownPairing: NearbyPairing) {
         require(ownPairing != invite.organizer) { "Negalima prisijungti prie savo grupės" }
+        val activeGeneration = ++generation
         polling?.cancel()
         cookie = null
         _state.value = NearbyGroupState(
@@ -259,13 +277,34 @@ object NearbyGroupController {
         polling = scope.launch {
             try {
                 val activeCookie = login(invite.organizer)
-                cookie = activeCookie
+                coroutineContext.ensureActive()
+                synchronized(this@NearbyGroupController) {
+                    if (generation != activeGeneration) return@launch
+                    cookie = activeCookie
+                }
                 postPairing(invite.organizer, activeCookie, "/nearby/group/join", ownPairing)
+                coroutineContext.ensureActive()
+                synchronized(this@NearbyGroupController) {
+                    if (generation != activeGeneration) return@launch
+                    NearbyTransferHistoryController.beginGroupSession(invite)
+                }
                 while (true) {
-                    postPairing(invite.organizer, activeCookie, "/nearby/group/heartbeat", ownPairing)
-                    val members = loadMembers(invite.organizer, activeCookie)
-                    val current = _state.value
-                    _state.value = current.copy(
+                    coroutineContext.ensureActive()
+                    val members = try {
+                        postPairing(invite.organizer, activeCookie, "/nearby/group/heartbeat", ownPairing)
+                        loadMembers(invite.organizer, activeCookie)
+                    } catch (failure: java.io.IOException) {
+                        // An interrupted heartbeat is not a voluntary departure. Retry within
+                        // the directory's existing 30-second membership lease.
+                        delay(HEARTBEAT_MILLIS)
+                        postPairing(invite.organizer, activeCookie, "/nearby/group/heartbeat", ownPairing)
+                        loadMembers(invite.organizer, activeCookie)
+                    }
+                    coroutineContext.ensureActive()
+                    synchronized(this@NearbyGroupController) {
+                      if (generation != activeGeneration) return@launch
+                      val current = _state.value
+                      _state.value = current.copy(
                         status = NearbyGroupStatus.JOINED,
                         members = members,
                         memberNotice = if (current.status == NearbyGroupStatus.JOINED) {
@@ -274,28 +313,36 @@ object NearbyGroupController {
                             null
                         },
                         error = null,
-                    )
+                      )
+                    }
                     delay(HEARTBEAT_MILLIS)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
+              synchronized(this@NearbyGroupController) {
+                if (generation != activeGeneration) return@launch
                 _state.value = _state.value.copy(
                     status = NearbyGroupStatus.ERROR,
-                    error = (error.message ?: "Prisijungti prie grupės nepavyko").take(240),
+                    error = if (error is GroupMemberRemovedException) "Organizatorius pašalino šį telefoną iš grupės"
+                        else (error.message ?: "Prisijungti prie grupės nepavyko").take(240),
                 )
+              }
             }
         }
     }
 
+    @Synchronized
     fun leave() {
         val snapshot = _state.value
         val activeCookie = cookie
+        generation++
         polling?.cancel()
         polling = null
         cookie = null
         _state.value = NearbyGroupState()
-        if (snapshot.status == NearbyGroupStatus.JOINED && snapshot.organizer != null && snapshot.ownPairing != null && activeCookie != null) {
+        if (snapshot.status != NearbyGroupStatus.IDLE) NearbyTransferHistoryController.endSession()
+        if (snapshot.status in setOf(NearbyGroupStatus.JOINING, NearbyGroupStatus.JOINED, NearbyGroupStatus.ERROR) && snapshot.organizer != null && snapshot.ownPairing != null && activeCookie != null) {
             scope.launch {
                 runCatching { postPairing(snapshot.organizer, activeCookie, "/nearby/group/leave", snapshot.ownPairing) }
             }
@@ -304,6 +351,7 @@ object NearbyGroupController {
 
     internal fun sessionStopped() = leave()
 
+    @Synchronized
     fun clearMemberNotice(notice: String) {
         _state.value.takeIf { it.memberNotice == notice }?.let { current ->
             _state.value = current.copy(memberNotice = null)
@@ -342,6 +390,7 @@ object NearbyGroupController {
         val body = pairing.encoded().toByteArray(StandardCharsets.UTF_8).toRequestBody(null)
         val request = Request.Builder().url(url(organizer, path)).header("Cookie", cookie).post(body).build()
         client.newCall(request).execute().use { response ->
+            if (response.code == 403 && response.header("X-AF-Group-State") == "removed") throw GroupMemberRemovedException()
             require(response.code == 200) { "Grupės ryšys atmestas (HTTP ${response.code})" }
         }
     }
@@ -349,15 +398,28 @@ object NearbyGroupController {
     private fun loadMembers(organizer: NearbyPairing, cookie: String): List<NearbyGroupMember> {
         val request = Request.Builder().url(url(organizer, "/nearby/group/members")).header("Cookie", cookie).get().build()
         return client.newCall(request).execute().use { response ->
+            if (response.code == 403 && response.header("X-AF-Group-State") == "removed") throw GroupMemberRemovedException()
             require(response.code == 200) { "Grupės sąrašo gauti nepavyko (HTTP ${response.code})" }
             val body = requireNotNull(response.body)
             val size = body.contentLength()
             require(size < 0 || size <= NearbyGroupCodec.MAX_BYTES) { "Grupės sąrašas per didelis" }
-            val bytes = body.bytes()
+            val bytes = body.byteStream().use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(4 * 1_024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    require(output.size() + count <= NearbyGroupCodec.MAX_BYTES) { "Grupės sąrašas per didelis" }
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
             require(bytes.size <= NearbyGroupCodec.MAX_BYTES) { "Grupės sąrašas per didelis" }
             NearbyGroupCodec.decode(bytes)
         }
     }
 
     private fun url(pairing: NearbyPairing, path: String): String = "http://${pairing.host}:${pairing.port}$path"
+
+    private class GroupMemberRemovedException : IllegalStateException()
 }

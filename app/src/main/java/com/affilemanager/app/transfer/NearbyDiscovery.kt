@@ -17,6 +17,7 @@ data class NearbyDiscoveredDevice(
     val receiverName: String,
     val deviceName: String,
     val pairing: NearbyPairing,
+    val groupName: String? = null,
 )
 
 data class NearbyDiscoveryState(
@@ -30,13 +31,21 @@ internal object NearbyDiscoveryPayload {
     const val MAX_RESULTS = 20
     private const val MAX_ATTRIBUTE_BYTES = 128
 
-    fun attributes(pairing: NearbyPairing, receiverName: String, deviceName: String): Map<String, ByteArray> = mapOf(
+    fun serviceLabel(receiverName: String): String {
+        var label = "AF ${clean(receiverName, 40).ifBlank { "Phone" }}"
+        while (label.toByteArray(StandardCharsets.UTF_8).size > 63) {
+            label = label.dropLast(Character.charCount(label.codePointBefore(label.length)))
+        }
+        return label
+    }
+
+    fun attributes(pairing: NearbyPairing, receiverName: String, deviceName: String, groupName: String? = null): Map<String, ByteArray> = mapOf(
         "v" to "1".toByteArray(StandardCharsets.UTF_8),
-        "name" to clean(receiverName, NearbyPairing.MAX_NAME_LENGTH).toByteArray(StandardCharsets.UTF_8),
-        "device" to clean(deviceName, NearbyPairing.MAX_NAME_LENGTH).toByteArray(StandardCharsets.UTF_8),
+        "name" to attributeText(receiverName),
+        "device" to attributeText(deviceName),
         "host" to pairing.host.toByteArray(StandardCharsets.US_ASCII),
         "code" to pairing.code.toByteArray(StandardCharsets.UTF_8),
-    )
+    ) + if (groupName.isNullOrBlank()) emptyMap() else mapOf("group" to attributeText(groupName))
 
     fun decode(
         serviceName: String,
@@ -58,6 +67,7 @@ internal object NearbyDiscoveryPayload {
             receiverName = receiver,
             deviceName = device.ifBlank { "Android" },
             pairing = pairing,
+            groupName = attributes["group"]?.let { clean(text(attributes, "group"), NearbyGroupInvite.MAX_GROUP_NAME_LENGTH) }?.takeIf(String::isNotBlank),
         )
     }.getOrNull()
 
@@ -67,32 +77,42 @@ internal object NearbyDiscoveryPayload {
         return bytes.toString(StandardCharsets.UTF_8)
     }
 
-    private fun clean(value: String, maximum: Int): String = value
-        .filterNot(Char::isISOControl)
-        .trim()
-        .take(maximum)
+    private fun clean(value: String, maximum: Int): String {
+        val bounded = value.filterNot(Char::isISOControl).trim().take(maximum)
+        return if (bounded.lastOrNull()?.isHighSurrogate() == true) bounded.dropLast(1) else bounded
+    }
+
+    private fun attributeText(value: String): ByteArray {
+        var text = clean(value, NearbyPairing.MAX_NAME_LENGTH)
+        while (text.toByteArray(StandardCharsets.UTF_8).size > MAX_ATTRIBUTE_BYTES) {
+            text = text.dropLast(Character.charCount(text.codePointBefore(text.length)))
+        }
+        return text.toByteArray(StandardCharsets.UTF_8)
+    }
 }
 
-/** UI-owned mDNS advertisement. Nothing is persisted and closing the receive dialog unregisters it. */
+/** Receive-service-owned advertisement. Hiding its UI does not end the session. */
 class NearbyDeviceAdvertiser(context: Context, private val onError: (String) -> Unit = {}) : Closeable {
     private val manager = context.applicationContext.getSystemService(NsdManager::class.java)
     private var listener: NsdManager.RegistrationListener? = null
 
     @Synchronized
-    fun start(pairing: NearbyPairing, receiverName: String) {
+    fun start(pairing: NearbyPairing, receiverName: String, groupName: String? = null) {
         stop()
         val info = NsdServiceInfo().apply {
-            serviceName = "AF ${receiverName.filterNot(Char::isISOControl).trim().take(40).ifBlank { "Phone" }}"
+            serviceName = NearbyDiscoveryPayload.serviceLabel(receiverName)
             serviceType = NearbyDiscoveryPayload.SERVICE_TYPE
             port = pairing.port
-            NearbyDiscoveryPayload.attributes(pairing, receiverName, deviceLabel()).forEach { (key, value) ->
+            NearbyDiscoveryPayload.attributes(pairing, receiverName, deviceLabel(), groupName).forEach { (key, value) ->
                 setAttribute(key, value.toString(StandardCharsets.UTF_8))
             }
         }
         val registration = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(serviceInfo: NsdServiceInfo) = Unit
             override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                onError("Artimų įrenginių rodymo paleisti nepavyko ($errorCode)")
+                if (synchronized(this@NearbyDeviceAdvertiser) { listener === this }) {
+                    onError("Artimų įrenginių rodymo paleisti nepavyko ($errorCode)")
+                }
             }
             override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit

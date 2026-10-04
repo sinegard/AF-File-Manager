@@ -46,6 +46,7 @@ class LanWebDavServer(
     private val anonymous: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val onStopped: (String) -> Unit = {},
+    private val onMutation: (List<File>) -> Unit = {},
 ) : TemporaryLanServer {
     companion object {
         const val USERNAME = "af"
@@ -218,7 +219,7 @@ class LanWebDavServer(
             "DELETE" -> {
                 requireWriteAllowed(target, request)
                 require(target != root && target.exists()) { "Bendrinimo šaknies pašalinti negalima" }
-                deleteBounded(target, Counter())
+                publishMutation(listOf(target)) { deleteBounded(target, Counter()) }
                 removeLocksUnder(target)
                 write(output, 204, "text/plain", ByteArray(0))
             }
@@ -272,6 +273,7 @@ class LanWebDavServer(
                 fileOutput.fd.sync()
             }
             Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            onMutation(listOf(target))
             write(output, if (existed) 204 else 201, "text/plain", ByteArray(0))
         } finally { if (partial.exists()) partial.delete() }
     }
@@ -282,26 +284,67 @@ class LanWebDavServer(
         requireWriteAllowed(source, request)
         requireWriteAllowed(target, request)
         require(target != root && target.parentFile?.isDirectory == true) { "Paskirtis nepasiekiama" }
+        require(!FileSystemRules.isContained(source, target) && !FileSystemRules.isContained(target, source)) {
+            "Destination folders overlap: ${target.name}"
+        }
         if (target.exists()) {
             require(!request.headers["overwrite"].equals("F", true)) { "Paskirtis jau egzistuoja" }
-            deleteBounded(target, Counter())
         }
-        require(source.renameTo(target)) { "Perkelti nepavyko" }
+        val existed = target.exists()
+        publishMutation(listOf(source, target)) { installPrepared(source, target) }
         removeLocksUnder(source)
-        write(output, 201, "text/plain", ByteArray(0))
+        write(output, if (existed) 204 else 201, "text/plain", ByteArray(0))
     }
 
     private fun copy(source: File, request: Request, output: BufferedOutputStream) {
         require(source.exists()) { "Šaltinis nepasiekiamas" }
         val target = destination(request)
         requireWriteAllowed(target, request)
-        require(target != root && !FileSystemRules.isContained(source, target)) { "Negalima kopijuoti į šaltinio vidų" }
+        require(target != root && target.parentFile?.isDirectory == true) { "Paskirtis nepasiekiama" }
+        require(!FileSystemRules.isContained(source, target) && !FileSystemRules.isContained(target, source)) {
+            "Destination folders overlap: ${target.name}"
+        }
         if (target.exists()) {
             require(!request.headers["overwrite"].equals("F", true)) { "Paskirtis jau egzistuoja" }
-            deleteBounded(target, Counter())
         }
-        copyBounded(source, target, Counter())
-        write(output, 201, "text/plain", ByteArray(0))
+        val existed = target.exists()
+        val prepared = File(target.parentFile, ".af-webdav-${UUID.randomUUID()}.partial")
+        try {
+            // Do not remove the old destination before a complete copy exists.
+            copyBounded(source, prepared, Counter())
+            publishMutation(listOf(target)) { installPrepared(prepared, target) }
+            write(output, if (existed) 204 else 201, "text/plain", ByteArray(0))
+        } finally {
+            if (prepared.exists()) deleteBounded(prepared, Counter())
+        }
+    }
+
+    private fun installPrepared(prepared: File, target: File) {
+        val backup = if (target.exists()) File(target.parentFile, ".af-webdav-${UUID.randomUUID()}.backup") else null
+        backup?.let { Files.move(target.toPath(), it.toPath()) }
+        try {
+            Files.move(prepared.toPath(), target.toPath())
+        } catch (failure: Throwable) {
+            if (backup != null && !target.exists()) {
+                try { Files.move(backup.toPath(), target.toPath()) }
+                catch (recovery: Throwable) { failure.addSuppressed(recovery) }
+            }
+            // A failed recovery keeps the backup; never delete the only old copy.
+            throw failure
+        }
+        backup?.let { deleteBounded(it, Counter()) }
+    }
+
+    private fun publishMutation(paths: List<File>, action: () -> Unit) {
+        var failure: Throwable? = null
+        try { action() }
+        catch (error: Throwable) { failure = error; throw error }
+        finally {
+            try { onMutation(paths) }
+            catch (indexError: Throwable) {
+                if (failure != null) failure.addSuppressed(indexError) else throw indexError
+            }
+        }
     }
 
     private fun destination(request: Request): File {
@@ -320,19 +363,24 @@ class LanWebDavServer(
         return candidate
     }
 
-    private fun copyBounded(source: File, target: File, counter: Counter) {
+    private fun copyBounded(source: File, target: File, counter: Counter, depth: Int = 0) {
         counter.add()
+        require(depth <= 128) { "Per daug elementų" }
         require(!Files.isSymbolicLink(source.toPath())) { "Simbolinės nuorodos nekopijuojamos" }
         if (source.isDirectory) {
             require(target.mkdir()) { "Katalogo sukurti nepavyko" }
-            source.listFiles()?.forEach { copyBounded(it, File(target, it.name), counter) } ?: error("Katalogas neperskaitomas")
-        } else source.inputStream().use { input -> target.outputStream().use { input.copyTo(it, 256 * 1_024) } }
+            source.listFiles()?.forEach { copyBounded(it, File(target, it.name), counter, depth + 1) } ?: error("Katalogas neperskaitomas")
+        } else source.inputStream().use { input -> FileOutputStream(target).use { output ->
+            input.copyTo(output, 256 * 1_024)
+            output.fd.sync()
+        } }
     }
 
-    private fun deleteBounded(file: File, counter: Counter) {
+    private fun deleteBounded(file: File, counter: Counter, depth: Int = 0) {
         counter.add()
+        require(depth <= 128) { "Per daug elementų" }
         require(!Files.isSymbolicLink(file.toPath())) { "Simbolinės nuorodos nešalinamos" }
-        if (file.isDirectory) file.listFiles()?.forEach { deleteBounded(it, counter) } ?: error("Katalogas neperskaitomas")
+        if (file.isDirectory) file.listFiles()?.forEach { deleteBounded(it, counter, depth + 1) } ?: error("Katalogas neperskaitomas")
         require(file.delete()) { "Pašalinti nepavyko" }
     }
 

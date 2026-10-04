@@ -4,6 +4,7 @@ import com.affilemanager.app.network.RemoteClient
 import com.affilemanager.app.network.RemoteEntry
 import com.affilemanager.app.network.RemotePath
 import com.affilemanager.app.operations.OperationContext
+import com.affilemanager.app.operations.publishingStorageChanges
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -47,7 +48,7 @@ data class SyncPreview(
     val truncated: Boolean,
 )
 
-class SyncEngine {
+class SyncEngine(private val onMutation: suspend (List<File>) -> Unit = {}) {
     companion object {
         private const val MAX_SYNC_ENTRIES = 100_000
         private const val MAX_DEPTH = 64
@@ -95,6 +96,10 @@ class SyncEngine {
     ) = withContext(Dispatchers.IO) {
         require(preview.actions.none { it.type == SyncActionType.CONFLICT }) { "Pirmiausia išspręskite sinchronizavimo konfliktus" }
         operation.setTotals(preview.actions.count { it.type != SyncActionType.SKIP }, preview.totalTransferBytes)
+        publishingStorageChanges(onMutation, {
+            preview.actions.filter { it.type == SyncActionType.DOWNLOAD }
+                .map { safeLocal(localRoot, it.targetRelativePath ?: it.relativePath) }
+        }) {
         preview.actions.forEach { action ->
             operation.checkpoint()
             val sourceLocal = safeLocal(localRoot, action.relativePath)
@@ -119,6 +124,7 @@ class SyncEngine {
             if (action.type != SyncActionType.SKIP && action.type != SyncActionType.UPLOAD && action.type != SyncActionType.DOWNLOAD) {
                 operation.progress(itemDelta = 1, currentName = action.relativePath)
             }
+        }
         }
     }
 

@@ -194,6 +194,8 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 onChooseReceiveDirectory = { pickerProtocol = null; pickerStartPath = preferences.nearbyReceivePath },
                 receiverName = preferences.receiverName,
                 groupName = preferences.groupName,
+                groupAvatarUri = preferences.groupAvatarUri,
+                onGroupAvatarChange = { uri -> viewModel.updateShareScreenPreferences { it.copy(groupAvatarUri = uri) } },
                 onGroupNameChange = { groupName ->
                     viewModel.updateShareScreenPreferences { it.copy(groupName = groupName) }
                 },

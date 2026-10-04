@@ -40,6 +40,7 @@ class LanFtpServer(
     private val anonymous: Boolean = false,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val onStopped: (String) -> Unit = {},
+    private val onMutation: (List<File>) -> Unit = {},
 ) : TemporaryLanServer {
     companion object {
         const val USERNAME = "af"
@@ -323,6 +324,7 @@ class LanFtpServer(
                                     }
                                 }
                                 Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                                onMutation(listOf(target))
                             }
                         } finally { if (partial.exists()) partial.delete() }
                     }
@@ -340,7 +342,9 @@ class LanFtpServer(
                     }
                     "DELE" -> if (requireWrite()) {
                         val file = resolvePath(cwd, argument)
-                        if (file != root && file.isFile && file.delete()) reply(250, "Deleted") else reply(550, "Delete failed")
+                        if (file != root && file.isFile && file.delete()) {
+                            onMutation(listOf(file)); reply(250, "Deleted")
+                        } else reply(550, "Delete failed")
                     }
                     "RMD", "XRMD" -> if (requireWrite()) {
                         val dir = resolvePath(cwd, argument)
@@ -354,7 +358,9 @@ class LanFtpServer(
                         val source = renameFrom
                         renameFrom = null
                         val target = resolveWritablePath(cwd, argument)
-                        if (source != null && !target.exists() && source.renameTo(target)) reply(250, "Renamed") else reply(550, "Rename failed")
+                        if (source != null && !target.exists() && source.renameTo(target)) {
+                            onMutation(listOf(source, target)); reply(250, "Renamed")
+                        } else reply(550, "Rename failed")
                     }
                     "QUIT" -> { reply(221, "Goodbye"); break }
                         else -> reply(502, "Command not implemented")
