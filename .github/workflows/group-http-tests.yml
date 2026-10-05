@@ -1,0 +1,31 @@
+name: Group HTTP tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/src/test/java/com/affilemanager/app/transfer/LanHttpServerTest.kt"
+      - ".github/workflows/group-http-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  group-http:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Set up JDK 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@4733eaac7c1b0da527e4206b7671e0061de1ce37 # v6
+        with:
+          cache-provider: basic
+      - name: Run real HTTP group tests
+        run: ./gradlew :app:testDebugUnitTest --tests com.affilemanager.app.transfer.LanHttpServerTest --console=plain --no-daemon

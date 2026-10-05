@@ -132,6 +132,7 @@ android {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
         unitTests.all {
             it.useJUnit()
+            it.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         }
     }
 
