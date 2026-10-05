@@ -1,6 +1,7 @@
 package com.affilemanager.app.transfer
 
 import com.affilemanager.app.ui.localization.AppLanguageManager
+import com.affilemanager.app.ui.localization.UiTranslator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -536,8 +537,25 @@ class LanHttpServerTest {
     }
 
     private fun assertStatus(expected: Int, response: String) {
-        // Report only the status line, never a session cookie or fixture password.
-        assertTrue("Expected HTTP $expected; got ${response.lineSequence().first()}", response.startsWith("HTTP/1.1 $expected "))
+        // Only report a known validation category, never arbitrary response bodies,
+        // session cookies, pairing payloads or fixture passwords.
+        val body = response.substringAfter("\r\n\r\n", "")
+        val knownReasons = mapOf(
+            "Užklausa atmesta" to "request-rejected",
+            "Netinkamas susiejimo kodas" to "pairing-size",
+            "Tai nėra AF File Manager susiejimo kodas" to "pairing-format",
+            "Gavimo adresas turi būti privatus IPv4 adresas" to "pairing-host",
+            "Netinkamas gavimo prievadas" to "pairing-port",
+            "Netinkamas vienkartinis kodas" to "pairing-code",
+            "Netinkamas įrenginio vardas" to "pairing-name",
+            "Gavimo sesija nepatvirtinta" to "pairing-session",
+            "Susiejimo kodas per ilgas" to "pairing-query-size",
+        )
+        val reason = knownReasons.entries.firstOrNull {
+            body == it.key || body == UiTranslator.translate(it.key, AppLanguageManager.ENGLISH)
+        }?.value ?: "unclassified"
+        assertTrue("Expected HTTP $expected; got ${response.lineSequence().first()}; category=$reason",
+            response.startsWith("HTTP/1.1 $expected "))
     }
 
     private fun request(port: Int, request: String, address: InetAddress = InetAddress.getLoopbackAddress()): String = Socket().use { socket ->
