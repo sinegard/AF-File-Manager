@@ -4,7 +4,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.43.0] - 2026-10-04 (unpublished)
+## [0.43.0] - 2026-10-05
 
 - Leaving a phone group now disconnects only that member. Other members stay connected, and removed members can no longer use their old session to access or upload files.
 - Receiving buttons line up on small screens. Group setup includes a name, an optional picture, a temporary password and a session duration; transfer history shows the group name.

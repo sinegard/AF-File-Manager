@@ -37,6 +37,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\generate-baseline-
 
 `scripts/run-performance-gate.ps1` refuses physical-device serials, builds the minified candidate only for the emulator's ABI, and checks the resulting Macrobenchmark JSON against `performance/budgets.json`. The ABI match keeps the measurement representative of the corresponding release APK instead of the larger universal compatibility package. Emulator results are used only as a repeatable regression guard; release decisions for perceived speed should still include direct physical-device use.
 
+The owner approved fixed RSSAnon ceilings of **150 MiB (153,600 KiB)** for cold start and **200 MiB (204,800 KiB)** for large-directory first content on 2026-10-05. These use the unchanged 0.43.0 candidate's seven-iteration peaks of 120,852 and 162,112 KiB, with approximately 25% headroom rounded up to the proposed MiB values. This is a test budget, not reserved Android RAM or a guarantee for low-memory phones. All other limits and the seven-iteration requirement remain unchanged. Do not automatically increase these ceilings from later results; a change needs a separately justified owner decision. Preserve the original failed result when re-evaluating a saved report under this approved budget, and do not describe that re-evaluation as a new measurement or a memory improvement.
+
 The script exposes signing values only to the child Gradle process and clears the temporary environment variables afterward.
 
 The local release path also runs `scripts/build-cloudflared-android.ps1`. Set `AF_GO_EXE` to a Go 1.26 executable and keep Android NDK `27.3.13750724` installed. Generated native binaries and the copied upstream license are ignored build inputs rather than repository blobs.

@@ -15,7 +15,7 @@
         "maximumMax": 22000
       },
       "memoryRssAnonMaxKb": {
-        "maximumMax": 110000
+        "maximumMax": 153600
       }
     },
     "largeDirectoryFirstContent": {
@@ -31,7 +31,7 @@
         "maximumMax": 48000
       },
       "memoryRssAnonMaxKb": {
-        "maximumMax": 155000
+        "maximumMax": 204800
       }
     },
     "largeDirectoryScroll": {
