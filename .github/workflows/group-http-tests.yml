@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "app/src/test/java/com/affilemanager/app/transfer/LanHttpServerTest.kt"
+      - "app/src/test/java/com/affilemanager/app/transfer/**"
       - ".github/workflows/group-http-tests.yml"
   workflow_dispatch:
 
@@ -28,4 +28,4 @@ jobs:
         with:
           cache-provider: basic
       - name: Run real HTTP group tests
-        run: ./gradlew :app:testDebugUnitTest --tests com.affilemanager.app.transfer.LanHttpServerTest --console=plain --no-daemon
+        run: ./gradlew :app:testDebugUnitTest --tests com.affilemanager.app.transfer.LanHttpServerTest --tests com.affilemanager.app.transfer.NearbyGroupTest --tests com.affilemanager.app.transfer.LanTestNetworkTest --console=plain --no-daemon

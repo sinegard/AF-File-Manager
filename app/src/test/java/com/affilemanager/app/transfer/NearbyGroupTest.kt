@@ -9,8 +9,7 @@ import org.junit.Test
 
 class NearbyGroupTest {
     @Test fun delayedLoginCannotResurrectALeftGroupOrOverwriteANewHostSession() {
-        val address = java.net.NetworkInterface.getNetworkInterfaces().toList()
-            .flatMap { it.inetAddresses.toList() }.first { it is java.net.Inet4Address && it.isSiteLocalAddress }
+        val address = LanTestNetwork.privateAddress()
         val accepted = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
         val finished = java.util.concurrent.CountDownLatch(1)

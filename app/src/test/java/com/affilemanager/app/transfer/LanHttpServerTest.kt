@@ -523,20 +523,7 @@ class LanHttpServerTest {
         }
     }
 
-    private fun privateAddress(): InetAddress = java.net.NetworkInterface.getNetworkInterfaces().toList()
-        .flatMap { it.inetAddresses.toList() }.first { it is java.net.Inet4Address && it.isSiteLocalAddress }.also { address ->
-            ServerSocket(0, 1, address).use { listener ->
-                listener.soTimeout = 5_000
-                Socket().use { client ->
-                    client.bind(InetSocketAddress(address, 0))
-                    client.connect(InetSocketAddress(address, listener.localPort), 5_000)
-                    listener.accept().use { accepted ->
-                        assertTrue("Fixture source changed: ${address.hostAddress} -> ${accepted.inetAddress.hostAddress}",
-                            address.hostAddress == accepted.inetAddress.hostAddress)
-                    }
-                }
-            }
-        }
+    private fun privateAddress(): InetAddress = LanTestNetwork.privateAddress()
 
     private fun login(port: Int, address: InetAddress = InetAddress.getLoopbackAddress()): String {
         val body = "code=12345678"
