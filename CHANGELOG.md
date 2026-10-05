@@ -4,7 +4,7 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.43.1] - 2026-10-05
+## [0.43.2] - 2026-10-05
 
 - Leaving a phone group now disconnects only that member. Other members stay connected, and removed members can no longer use their old session to access or upload files.
 - Receiving buttons line up on small screens. Group setup includes a name, an optional picture, a temporary password and a session duration; transfer history shows the group name.
@@ -13,9 +13,13 @@ This file records the user-visible changes in AF File Manager releases.
 - Copying, moving, renaming, restoring and receiving files now updates Android's file index, so other apps see the changes too. Stored APK names no longer use stale index entries.
 - Replacing a file keeps the previous destination until the new copy is complete. Local and WebDAV operations reject overlapping paths and preserve recoverable files when an operation fails.
 
+## [0.43.1] - 2026-10-05 (unpublished)
+
+- Prepared the changes included in 0.43.2. The Linux test host rewrote its virtual network address, causing three group tests to fail; no APK was released.
+
 ## [0.43.0] - 2026-10-05 (unpublished)
 
-- Prepared the changes included in 0.43.1. The release was not published because three group tests failed on the Linux build host; no APK was released.
+- Prepared the changes included in 0.43.2. The release was not published because three group tests failed on the Linux build host; no APK was released.
 
 ## [0.42.0] - 2026-10-01
 
