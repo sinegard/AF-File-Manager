@@ -8,6 +8,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -29,8 +30,8 @@ class LanHttpServerTest {
             fun member(index: Int) = NearbyPairing.create(address.hostAddress, 25_000 + index, "8765432$index", "Phone $index")
             fun post(cookie: String, path: String, body: String = ""): String = request(port,
                 "POST $path HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${body.toByteArray().size}\r\n\r\n$body", address)
-            assertTrue(post(firstCookie, "/nearby/group/join", member(1).encoded()).startsWith("HTTP/1.1 200"))
-            assertTrue(post(secondCookie, "/nearby/group/join", member(2).encoded()).startsWith("HTTP/1.1 200"))
+            assertStatus(200, post(firstCookie, "/nearby/group/join", member(1).encoded()))
+            assertStatus(200, post(secondCookie, "/nearby/group/join", member(2).encoded()))
             assertEquals(3, snapshots.last().size)
             assertTrue(post(firstCookie, "/nearby/disconnect").startsWith("HTTP/1.1 200"))
             assertFalse(stopped)
@@ -52,7 +53,7 @@ class LanHttpServerTest {
             val member = NearbyPairing.create(address.hostAddress, 25_001, "87654321", "Member")
             fun post(path: String) = request(port,
                 "POST $path HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${member.encoded().toByteArray().size}\r\n\r\n${member.encoded()}", address)
-            assertTrue(post("/nearby/group/join").startsWith("HTTP/1.1 200"))
+            assertStatus(200, post("/nearby/group/join"))
             assertTrue(server.removeGroupMember(member))
             val rejected = post("/nearby/group/heartbeat")
             assertTrue(rejected.startsWith("HTTP/1.1 403"))
@@ -89,6 +90,23 @@ class LanHttpServerTest {
                 "POST /nearby/message HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${tooLarge.length}\r\n\r\n$tooLarge")
                 .startsWith("HTTP/1.1 400"))
             assertEquals(1, received.size)
+        }
+    }
+
+    @Test fun claimedDifferentPrivateHostCannotJoinTheGroup() {
+        val root = temporary.newFolder("group-forged-host")
+        val address = privateAddress()
+        val claimedHost = if (address.hostAddress == "192.168.254.254") "192.168.254.253" else "192.168.254.254"
+        LanHttpServer(root, address, requestedCode = "12345678", groupMode = true).use { server ->
+            val port = server.start().port
+            val cookie = login(port, address)
+            val body = NearbyPairing.create(claimedHost, 25_001, "87654321", "Wrong host").encoded()
+            val response = request(port,
+                "POST /nearby/group/join HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n" +
+                    "Content-Length: ${body.toByteArray(StandardCharsets.UTF_8).size}\r\n\r\n$body", address)
+            assertStatus(400, response)
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+            assertStatus(200, request(port, "GET / HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n\r\n", address))
         }
     }
 
@@ -494,8 +512,8 @@ class LanHttpServerTest {
             val cookie = login(port, address)
             val peer = NearbyPairing.create(address.hostAddress, 24_001, "87654321", "Member")
             val body = peer.encoded()
-            assertTrue(request(port, "POST /nearby/group/join HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n" +
-                "Content-Length: ${body.toByteArray().size}\r\n\r\n$body", address).startsWith("HTTP/1.1 200"))
+            assertStatus(200, request(port, "POST /nearby/group/join HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\n" +
+                "Content-Length: ${body.toByteArray().size}\r\n\r\n$body", address))
             joined.set(true)
             now.addAndGet(31_000)
             assertTrue(expired.await(3, java.util.concurrent.TimeUnit.SECONDS))
@@ -517,7 +535,17 @@ class LanHttpServerTest {
             .substringAfter("Set-Cookie:").substringBefore(';').trim()
     }
 
-    private fun request(port: Int, request: String, address: InetAddress = InetAddress.getLoopbackAddress()): String = Socket(address, port).use { socket ->
+    private fun assertStatus(expected: Int, response: String) {
+        // Report only the status line, never a session cookie or fixture password.
+        assertTrue("Expected HTTP $expected; got ${response.lineSequence().first()}", response.startsWith("HTTP/1.1 $expected "))
+    }
+
+    private fun request(port: Int, request: String, address: InetAddress = InetAddress.getLoopbackAddress()): String = Socket().use { socket ->
+        // A pairing advertises this source address. Do not let a multi-interface CI
+        // host route the fixture through a different interface and fail host binding.
+        socket.bind(InetSocketAddress(address, 0))
+        socket.connect(InetSocketAddress(address, port), 5_000)
+        assertEquals("Fixture source must match the advertised peer", address, socket.localAddress)
         socket.soTimeout = 5_000
         socket.getOutputStream().write(request.toByteArray(StandardCharsets.UTF_8))
         socket.getOutputStream().flush()
