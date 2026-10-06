@@ -15,6 +15,7 @@ data class TransferFileProgress(
     val localPath: String? = null,
     val modifiedAtMillis: Long = 0,
     val batchId: String = "",
+    val failure: TransferFailure? = null,
 ) {
     val name: String get() = relativePath.substringAfterLast('/')
 }
@@ -127,7 +128,7 @@ internal class NearbyReceiveFiles {
             item.status in setOf(TransferFileStatus.WAITING, TransferFileStatus.FAILED)) {
             "Siuntimo rinkinio keliai nesutampa"
         }
-        batches[id] = files.toMutableList().apply { this[index - 1] = item.copy(status = TransferFileStatus.TRANSFERRING) }
+        batches[id] = files.toMutableList().apply { this[index - 1] = item.copy(status = TransferFileStatus.TRANSFERRING, failure = null) }
     }
 
     @Synchronized fun update(index: Int, item: TransferFileProgress, id: String? = null): List<TransferFileProgress> {
@@ -162,6 +163,9 @@ internal class NearbyReceiveFiles {
 
     @Synchronized fun status(id: String?, index: Int): TransferFileStatus? =
         batches[id]?.getOrNull(index - 1)?.status
+
+    @Synchronized fun detail(id: String?, index: Int): TransferFileProgress? =
+        batches[id]?.getOrNull(index - 1)
 
     @Synchronized fun isCancelled(id: String?, index: Int): Boolean = batches[id]?.getOrNull(index - 1)?.status == TransferFileStatus.CANCELLED
 }

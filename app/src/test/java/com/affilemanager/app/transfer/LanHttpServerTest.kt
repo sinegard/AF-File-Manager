@@ -489,7 +489,9 @@ class LanHttpServerTest {
                 source.inputStream().use { input -> repeat(240) { check(input.read(buffer) == buffer.size); output.write(buffer) } }
                 output.flush()
                 upload.shutdownOutput()
-                assertTrue(upload.getInputStream().readBytes().toString(Charsets.UTF_8).startsWith("HTTP/1.1 400"))
+                val response = upload.getInputStream().readBytes().toString(Charsets.UTF_8)
+                assertTrue(response.startsWith("HTTP/1.1 408"))
+                assertTrue(response.contains("X-AF-Error-Code: AF-XFER-CONNECTION"))
             }
             assertEquals("previous destination", root.resolve("large.bin").readText())
             assertEquals(setOf("large.bin"), root.listFiles()!!.map { it.name }.toSet())

@@ -9,6 +9,12 @@ import java.io.File
 /** Restores the permissions and optional media fixture after Orchestrator clears app data. */
 class SelfContainedTestRunner : AndroidJUnitRunner() {
     override fun onStart() {
+        // Opt-in permission diagnostics must observe the externally configured state unchanged.
+        if (androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("issue215KeepStoragePermission") == "1") {
+            check(Build.MODEL.contains("sdk", ignoreCase = true))
+            super.onStart()
+            return
+        }
         try {
             val packageName = targetContext.packageName
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

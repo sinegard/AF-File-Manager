@@ -23,6 +23,7 @@ DEFAULT_STRINGS = ROOT / "app/src/main/res/values/strings.xml"
 ASSET_DIRECTORY = ROOT / "app/src/main/assets/i18n"
 RESOURCE_DIRECTORY = ROOT / "app/src/main/res"
 INDEX_PATH = ASSET_DIRECTORY / "index.json"
+OVERRIDES_PATH = Path(__file__).with_name("ui-translation-overrides.json")
 MODEL_NAME = "facebook/nllb-200-distilled-600M"
 
 # BCP-47 tag -> NLLB language code. English and Lithuanian are maintained directly in source.
@@ -334,19 +335,25 @@ def translate_catalog(
     source: CatalogSource,
     language: str,
     target_code: str,
-    translator: NllbTranslator,
+    translator: NllbTranslator | None,
     android_res: Path | None,
 ) -> tuple[list[str], list[str]]:
     all_values = source.exact + source.templates
+    manual = manual_overrides(language)
     masked = {value: mask_protected_text(value) for value in all_values}
     meaningful = [
         masked_value
         for value, (masked_value, _) in masked.items()
-        if re.search(r"[A-Za-z]", PROTECTED_TEXT.sub("", value))
+        if value not in manual and re.search(r"[A-Za-z]", PROTECTED_TEXT.sub("", value))
     ]
-    translated_values = translator.translate_many(meaningful, target_code)
+    if meaningful and translator is None:
+        missing = [value for value in all_values if value not in manual and masked[value][0] in meaningful]
+        raise ValueError(f"{language}: manual translations are missing: {missing}")
+    translated_values = translator.translate_many(meaningful, target_code) if meaningful else {}
 
     def translated(value: str) -> str:
+        if value in manual:
+            return manual[value]
         masked_value, replacements = masked[value]
         if masked_value not in translated_values:
             return value
@@ -357,6 +364,35 @@ def translate_catalog(
     exact = [overrides.get(value, translated_value) for value, translated_value in zip(source.exact, exact, strict=True)]
     templates = [translated(value) for value in source.templates]
     return exact, templates
+
+
+def manual_overrides(language: str) -> dict[str, str]:
+    """Keyed corrections are independent of positional JSON packs and never need a model."""
+    if not OVERRIDES_PATH.is_file():
+        return {}
+    by_source = json.loads(OVERRIDES_PATH.read_text(encoding="utf-8"))
+    # Compose context-bearing failures from existing translated UI phrases. This is a development
+    # step only, not runtime word substitution; no user path/name is translated.
+    previous: dict[str, str] = {}
+    pack = ASSET_DIRECTORY / f"{language}.json"
+    if INDEX_PATH.is_file() and pack.is_file():
+        index = load_catalog_index(INDEX_PATH)
+        exact, _ = load_pack(pack)
+        previous = dict(zip(index.exact, exact, strict=True))
+
+    def resolve(source: str, stack: tuple[str, ...] = ()) -> str:
+        if source in stack:
+            raise ValueError(f"Cyclic translation composition: {source}")
+        value = by_source.get(source, {})
+        if language in value:
+            return value[language]
+        if "parts" in value:
+            return " · ".join(resolve(part, stack + (source,)) for part in value["parts"])
+        if source in previous:
+            return previous[source]
+        raise ValueError(f"{language}: missing translation composition part: {source}")
+
+    return {source: resolve(source) for source, values in by_source.items() if language in values or "parts" in values}
 
 
 def write_json(path: Path, payload: dict[str, object]) -> None:
@@ -459,7 +495,7 @@ def update_catalog(
     previous_templates: list[str],
     language: str,
     target_code: str,
-    translator: NllbTranslator,
+    translator: NllbTranslator | None,
     android_res: Path | None,
 ) -> tuple[list[str], list[str]]:
     if len(previous_exact) != len(previous_source.exact) or len(previous_templates) != len(previous_source.templates):
@@ -480,6 +516,8 @@ def update_catalog(
         android_res,
     )
     exact_by_source.update(zip(missing_source.exact, translated_exact, strict=True))
+    # Preserve every existing translation except explicit, keyed corrections.
+    exact_by_source.update({key: value for key, value in manual_overrides(language).items() if key in source.exact})
     template_by_source.update(zip(missing_source.templates, translated_templates, strict=True))
     return (
         [exact_by_source[value] for value in source.exact],
@@ -503,7 +541,13 @@ def main() -> None:
         help="Translate only catalog entries missing from existing language packs",
     )
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument(
+        "--manual-only", action="store_true",
+        help="With --update-existing, apply keyed translations without loading a model; missing copy is an error",
+    )
     args = parser.parse_args()
+    if args.manual_only and not args.update_existing:
+        raise SystemExit("--manual-only requires --update-existing")
 
     selected = list(LANGUAGES)
     if args.languages:
@@ -520,6 +564,8 @@ def main() -> None:
     print(f"Catalog: {len(source.exact)} exact strings, {len(source.templates)} templates", flush=True)
 
     if args.verify_only:
+        if catalog_changed:
+            raise SystemExit("The checked-in index does not match the current interface catalog")
         for language in selected:
             exact, templates = load_pack(ASSET_DIRECTORY / f"{language}.json")
             validate_pack(source, language, exact, templates)
@@ -534,7 +580,7 @@ def main() -> None:
         for tag in selected
         if args.force or args.update_existing or not (ASSET_DIRECTORY / f"{tag}.json").is_file()
     ]
-    translator = NllbTranslator(args.batch_size) if pending else None
+    translator = NllbTranslator(args.batch_size) if pending and not args.manual_only else None
     generated: dict[str, tuple[list[str], list[str]]] = {}
     for language in selected:
         output = ASSET_DIRECTORY / f"{language}.json"
@@ -545,7 +591,6 @@ def main() -> None:
             print(f"{language}: existing pack verified", flush=True)
             continue
 
-        assert translator is not None
         if output.is_file() and not args.force:
             if not args.update_existing:
                 raise ValueError(f"{language}: existing pack is stale; use --update-existing or --force")

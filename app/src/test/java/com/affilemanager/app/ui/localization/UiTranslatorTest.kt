@@ -4,8 +4,103 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import java.io.File
 import org.junit.Test
+import com.affilemanager.app.data.OptionalFeature
 
 class UiTranslatorTest {
+    @Test fun stableTransferCodesKeepTheUsersLanguageAndDoNotTranslateTheirIdentifiers() {
+        assertEquals("Server error (AF-XFER-SPACE)", UiTranslator.translate("Serverio klaida (AF-XFER-SPACE)", "en"))
+        assertEquals("Serverio klaida (AF-XFER-PERMISSION)", UiTranslator.translate("Server error (AF-XFER-PERMISSION)", "lt"))
+        assertEquals("Server error (AF-XFER-CONNECTION)", UiTranslator.translate("Server error (AF-XFER-CONNECTION)", "en"))
+    }
+    @Test fun composedAnalysisSummaryLocalizesTheSizeLabelBeforeSubstitution() {
+        val size = UiTranslator.translate("Dydis: 42 KB", "en")
+        assertEquals("Files: 3 · folders: 0 · Size: 42 KB",
+            UiTranslator.translate("Failai: 3 · aplankai: 0 · $size", "en"))
+        val nativeSize = UiTranslator.translate("Dydis: 42 KB", "lt")
+        assertEquals("Failai: 3 · aplankai: 0 · Dydis: 42 KB",
+            UiTranslator.translate("Failai: 3 · aplankai: 0 · $nativeSize", "lt"))
+    }
+
+    @Test fun stringResourcesDoNotBypassThePerAppLocaleInApplicationOrServiceContexts() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory) ?: error("Main source directory not found")
+        val bypassed = sourceRoot.walkTopDown().filter { it.isFile && it.extension == "kt" }
+            .filter { Regex("""\bgetString\(R\.string\.""").containsMatchIn(it.readText()) }
+            .map(File::getName).toList()
+        assertTrue("Resource copy bypasses the app locale: $bypassed", bypassed.isEmpty())
+        val deviceLocale = Regex("""(?<!appLanguageContext\(\)\.)resources\.configuration\.locales""")
+        val servicesUsingDeviceLocale = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.name.endsWith("Service.kt") }
+            .filter { deviceLocale.containsMatchIn(it.readText()) }
+            .map(File::getName).toList()
+        assertTrue("Service copy uses the device locale instead of the chosen app locale: $servicesUsingDeviceLocale",
+            servicesUsingDeviceLocale.isEmpty())
+    }
+
+    @Test fun messageWrappersTranslateTheBodyAndPreserveUserPaths() {
+        assertEquals("Warning: Could not create the folder", UiTranslator.translate("Įspėjimas: Nepavyko sukurti aplanko", "en"))
+        assertEquals("Klaida: Nepavyko sukurti paskirties aplanko", UiTranslator.translate("Error: Could not create destination folder", "lt"))
+        val path = "/Download/Šiukšliadėžė.txt"
+        assertEquals("Error: File unavailable: $path", UiTranslator.translate("Klaida: Failas nepasiekiamas: $path", "en"))
+        val tooDeep = "Warning: ".repeat(9) + "Files"
+        assertEquals(tooDeep, UiTranslator.translate(tooDeep, "lt"))
+    }
+
+    @Test
+    fun optionalFeatureLabelsUseTheSelectedLanguageIncludingLabelsWithoutAccents() {
+        assertEquals("Terminal", UiTranslator.translate(OptionalFeature.TERMINAL.label, "en"))
+        assertEquals("Sync", UiTranslator.translate(OptionalFeature.SYNC.label, "en"))
+        assertEquals("Phone-to-phone transfer", UiTranslator.translate(OptionalFeature.NEARBY_SHARE.label, "en"))
+        val protocolNames = setOf(OptionalFeature.WEB_SHARE, OptionalFeature.FTP_SHARE, OptionalFeature.WEBDAV_SHARE)
+        OptionalFeature.entries.filterNot { it in protocolNames }.forEach { feature ->
+            assertTrue("Missing feature label: ${feature.name}", UiTranslator.hasKnownUiEntry(feature.label))
+            assertTrue("Lithuanian feature label leaked: ${feature.name}",
+                UiTranslator.translate(feature.label, "en") != feature.label)
+            assertEquals(feature.label, UiTranslator.translate(feature.label, "lt"))
+        }
+    }
+
+    @Test
+    fun modelBackedEnumLabelsAreRegisteredAcrossTheWholeApp() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory) ?: error("Main source directory not found")
+        val enumWithLabel = Regex("""enum class \w+\(\s*val label: String""")
+        val entry = Regex("""\b[A-Z][A-Z0-9_]*\(\s*"((?:\\.|[^"\\])*)"""")
+        val technicalNames = setOf(
+            "Web", "FTP", "WebDAV", "Markdown", "JSON", "XML / HTML", "Kotlin", "Java",
+            "JavaScript", "TypeScript", "Python", "Shell", "SQL", "C / C++ / C#", "CSS / SCSS",
+            "YAML", "TOML / INI", "UTF-8", "UTF-8 BOM", "UTF-16 LE", "UTF-16 BE",
+            "Windows-1252", "ISO-8859-1", "LF", "CRLF", "CR",
+        )
+        val unresolved = sourceRoot.walkTopDown().filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                val source = file.readText()
+                if (!enumWithLabel.containsMatchIn(source)) emptySequence()
+                else entry.findAll(source).map { file.name to decodeKotlinLiteral(it.groupValues[1]) }
+            }
+            .filter { (_, label) -> label !in technicalNames && !UiTranslator.hasKnownUiEntry(label) }
+            .distinct().toList()
+        assertTrue("Unregistered model-backed UI labels: $unresolved", unresolved.isEmpty())
+    }
+
+    @Test
+    fun translatedStaticAndInterpolatedCopyDoesNotRetainLithuanianFragments() {
+        val sourceRoot = sequenceOf(File("src/main/java"), File("app/src/main/java"))
+            .firstOrNull(File::isDirectory) ?: error("Main source directory not found")
+        val nativeCharacters = Regex("[ĄČĘĖĮŠŲŪŽąčęėįšųūž]")
+        val nativeWords = Regex("""(?iu)(?:^|[^\p{L}])(?:failas|failai|failo|aplankas|aplankai|aplanko|katalogas|katalogo|kataloge|pasirinkite|pasirinkti|netinkamas|netinkama|negalima|nepavyko|nepasiekiamas|nepasiekiama|serveris|serverio|siuntimas|siuntimo|operacija|operacijos|kelias|kelio|vardas|vardo|saugykla|saugyklos|leidimas|leidimo|terminalas|sinchronizavimas|telefonas|elementas|elementai|dydis|baigta|rodoma|rodyti|klaida|klaidos)(?:$|[^\p{L}])""")
+        fun containsNativeCopy(text: String) = nativeCharacters.containsMatchIn(text) || nativeWords.containsMatchIn(text)
+        val mixed = sourceRoot.walkTopDown().filter {
+            it.isFile && it.extension == "kt" && it.name !in setOf("UiTranslator.kt", "RuntimeMessageTranslations.kt", "AppLanguageManager.kt")
+        }.flatMap { file ->
+            val source = file.readText()
+            (kotlinStringLiterals(source).filter { '$' !in it } + sampledInterpolatedKotlinStrings(source))
+                .filter { it != "Lietuvių" && containsNativeCopy(it) }
+                .map { text -> Triple(file.name, text, UiTranslator.translate(text, "en")) }
+        }.filter { (_, _, translated) -> containsNativeCopy(translated) }.distinct().toList()
+        assertTrue("Lithuanian fragments remained after translating interface copy: $mixed", mixed.isEmpty())
+    }
+
     @Test
     fun englishTranslatesStaticAndDynamicInterfaceCopy() {
         assertEquals("Files", UiTranslator.translate("Failai", AppLanguageManager.ENGLISH))
@@ -233,6 +328,9 @@ class UiTranslatorTest {
     fun unknownTextSuchAsAFileNameIsNeverChanged() {
         val fileName = "Sąskaita 2026 – final.pdf"
         assertEquals(fileName, UiTranslator.translate(fileName, AppLanguageManager.ENGLISH))
+        listOf("Šiukšliadėžė.txt", "Šiukšliadėžės dokumentai.pdf").forEach { name ->
+            assertEquals(name, UiTranslator.translate(name, "en"))
+        }
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.affilemanager.app.media
 
+import com.affilemanager.app.ui.localization.appLanguageContext
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -22,7 +24,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import com.affilemanager.app.MainActivity
 import com.affilemanager.app.R
@@ -312,5 +313,5 @@ class BackgroundPlaybackService : Service() {
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
 
     private fun localized(source: String): String = UiTranslator.translate(source,
-        AppCompatDelegate.getApplicationLocales().get(0)?.language ?: resources.configuration.locales[0].language)
+        appLanguageContext().resources.configuration.locales[0].language)
 }

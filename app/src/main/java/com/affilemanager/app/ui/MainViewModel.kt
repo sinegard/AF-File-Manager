@@ -1,5 +1,7 @@
 package com.affilemanager.app.ui
 
+import com.affilemanager.app.ui.localization.appString
+
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
@@ -4163,7 +4165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun extractArchive(file: FileEntry, destinationDirectory: String, password: CharArray? = null) {
-        val fallbackName = getApplication<Application>().getString(R.string.generated_extracted_name)
+        val fallbackName = getApplication<Application>().appString(R.string.generated_extracted_name)
         val destinationRoot = runCatching { File(destinationDirectory).canonicalFile }.getOrElse {
             password?.fill('\u0000')
             message(it.message ?: "Paskirties katalogas nepasiekiamas", true)
@@ -5456,7 +5458,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             runCatching {
                 application.startActivity(
-                    Intent.createChooser(intent, application.getString(R.string.open_with_chooser_short))
+                    Intent.createChooser(intent, application.appString(R.string.open_with_chooser_short))
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
             }

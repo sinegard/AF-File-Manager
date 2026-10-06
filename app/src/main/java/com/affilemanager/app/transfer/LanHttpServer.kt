@@ -82,6 +82,10 @@ class LanHttpServer(
     private val onStopped: (String) -> Unit = {},
     private val onNearbyNamedMessage: (String?, String) -> Unit = { _, message -> onNearbyMessage(message) },
     private val onMutation: (List<File>) -> Unit = {},
+    private val onDiagnostic: (TransferDiagnosticEvent) -> Unit = {},
+    private val diagnosticsEnabled: () -> Boolean = { false },
+    private val systemErrorNumber: (Throwable) -> Int = { 0 },
+    private val storageKind: TransferStorage = TransferStorage.UNKNOWN,
 ) : TemporaryLanServer {
     private val nearbyFiles = NearbyReceiveFiles()
     private val nearbyProgressLock = Any()
@@ -112,6 +116,9 @@ class LanHttpServer(
         return changed
     }
     companion object {
+        const val ERROR_CODE_HEADER = "X-AF-Error-Code"
+        const val ERROR_PHASE_HEADER = "X-AF-Error-Phase"
+        const val RECEIVED_BYTES_HEADER = "X-AF-Received-Bytes"
         const val MAX_SESSION_MINUTES = LanSessionDuration.MAX_TIMED_MINUTES
         const val MAX_CONCURRENT_REQUESTS = 4
         const val MAX_QUEUED_REQUESTS = 16
@@ -237,12 +244,22 @@ class LanHttpServer(
             handleRequest(input, output, socket)
         } catch (error: Throwable) {
             val clientError = error is IllegalArgumentException || error is SecurityException
+            val uploadError = error as? ReceiverUploadException
             runCatching {
                 writeText(
                     output,
-                    if (clientError) 400 else 500,
-                    if (clientError) t(error.message ?: "Užklausa atmesta").take(200) else t("Serverio klaida"),
+                    when {
+                        uploadError?.failure in setOf(TransferFailure.TIMEOUT, TransferFailure.CONNECTION) -> 408
+                        uploadError?.failure == TransferFailure.INVALID || clientError -> 400
+                        else -> 500
+                    },
+                    if (uploadError != null) "${t("Serverio klaida")} (${uploadError.failure.code})"
+                    else if (clientError) t(error.message ?: "Užklausa atmesta").take(200) else t("Serverio klaida"),
                     "text/plain; charset=utf-8",
+                    if (uploadError == null) emptyList() else listOf(
+                        "$ERROR_CODE_HEADER: ${uploadError.failure.code}",
+                        "$ERROR_PHASE_HEADER: ${uploadError.phase.code}",
+                    ),
                 )
             }
         }
@@ -318,9 +335,12 @@ class LanHttpServer(
                     ?: throw IllegalArgumentException("Gavimo sesija nepatvirtinta")
                 val fileIndex = request.query["fileIndex"]?.toIntOrNull()
                     ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
-                val status = nearbyFiles.status(batchId, fileIndex)
+                val detail = nearbyFiles.detail(batchId, fileIndex)
                     ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
-                writeText(output, 200, status.name, "text/plain; charset=utf-8")
+                writeText(output, 200, detail.status.name, "text/plain; charset=utf-8", buildList {
+                    add("$RECEIVED_BYTES_HEADER: ${detail.transferredBytes}")
+                    detail.failure?.let { add("$ERROR_CODE_HEADER: ${it.code}") }
+                })
             }
             request.method == "POST" && request.path == "/nearby/peer" -> {
                 require(!readOnly && request.contentLength in 1..NearbyPairing.MAX_PAYLOAD_LENGTH.toLong()) { "Užklausa atmesta" }
@@ -547,113 +567,161 @@ class LanHttpServer(
 
     private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream, boundPeer: NearbyPairing?) {
         val length = request.contentLength
-        require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
-        val directory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
-        require(directory.canWrite()) { "Pasirinktas katalogas neleidžia įkelti" }
-        val name = FileSystemRules.validateFileName(request.query["name"].orEmpty()).getOrThrow()
-        val requested = File(directory, name)
-        val target = FileSystemRules.keepBothTarget(requested)
-        require(FileSystemRules.isContained(root, target)) { "Tikslas išeina už pasirinkto katalogo" }
-        val partial = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
+        val batchId = request.headers["x-af-batch-id"]
         val totalFiles = request.query["fileCount"]?.toIntOrNull()
             ?.coerceIn(1, NearbySourcePreparer.MAX_FILES) ?: 1
         val fileIndex = request.query["fileIndex"]?.toIntOrNull()?.coerceIn(1, totalFiles) ?: 1
-        val relativePath = directory.relativeTo(root).invariantSeparatorsPath
-            .takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
-        val batchId = request.headers["x-af-batch-id"]
-        nearbyFiles.validate(fileIndex, relativePath, length, batchId)
-        val totalBytes = request.query["batchBytes"]?.toLongOrNull()
-            ?.coerceIn(length, NearbySourcePreparer.MAX_TOTAL_BYTES) ?: length
-        val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
-        var remaining = length
+        var phase = TransferPhase.VALIDATE
         var received = 0L
-        var lastProgressAt = 0L
-        val uploadStartedAt = System.nanoTime()
-        fun publishProgress(completed: Boolean = false, failed: Boolean = false) {
-            val now = System.nanoTime()
-            if (!completed && !failed && received > 0L && now - lastProgressAt < 150_000_000L) return
-            lastProgressAt = now
-            val files = nearbyFiles.update(fileIndex, TransferFileProgress(
-                relativePath = relativePath, sizeBytes = length, transferredBytes = received,
-                status = when {
-                    completed -> TransferFileStatus.COMPLETED
-                    failed -> TransferFileStatus.FAILED
-                    else -> TransferFileStatus.TRANSFERRING
-                },
-                localPath = if (completed) target.absolutePath else null,
-                modifiedAtMillis = if (completed) target.lastModified() else 0,
-            ), batchId)
-            val receivedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.transferredBytes }
-                else (batchOffset + received).coerceAtMost(totalBytes)
-            val expectedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.sizeBytes } else totalBytes
-            val metrics = TransferProgressEstimator.calculate(
-                transferredBytes = received,
-                totalBytes = (expectedTotal - batchOffset).coerceAtLeast(received),
-                elapsedMillis = ((now - uploadStartedAt).coerceAtLeast(0L) / 1_000_000L),
-            )
-            val remainingMillis = TransferProgressEstimator.remainingMillis(
-                (expectedTotal - receivedTotal).coerceAtLeast(0L),
-                metrics.bytesPerSecond,
-            )
-            val announced = nearbyFiles.hasManifest()
-            if (announced) {
-                publishNearbyFiles(metrics.bytesPerSecond, if (completed && receivedTotal >= expectedTotal) 0L else remainingMillis)
-                return
-            }
-            onUploadProgress(
-                LanUploadProgress(
-                    currentFile = name,
-                    currentFileIndex = fileIndex,
-                    totalFiles = if (announced) files.size else totalFiles,
-                    currentFileBytes = received,
-                    currentFileSize = length,
-                    receivedBytes = receivedTotal,
-                    totalBytes = expectedTotal,
-                    completed = completed,
-                    files = files,
-                    bytesPerSecond = metrics.bytesPerSecond,
-                    remainingMillis = if (completed && receivedTotal >= expectedTotal) 0L else remainingMillis,
-                ),
-            )
-        }
-        publishProgress()
         var committed = false
+        var validated = false
+        var partial: File? = null
+        var progress: ((Boolean, TransferFailure?) -> Unit)? = null
+        fun diagnostic(failure: TransferFailure? = null, errno: Int = 0) {
+            if (!diagnosticsEnabled()) return
+            // Diagnostics must never change the outcome of a file operation.
+            runCatching { onDiagnostic(TransferDiagnosticEvent(
+                TransferRole.RECEIVE, phase, batchId, fileIndex, received, length,
+                failure = failure, errno = errno, freeBytes = root.usableSpace, storage = storageKind,
+            )) }
+        }
         try {
-            FileOutputStream(partial).use { fileOutput ->
+            require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
+            val directory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
+            if (!directory.canWrite()) throw java.nio.file.AccessDeniedException(directory.path)
+            val name = FileSystemRules.validateFileName(request.query["name"].orEmpty()).getOrThrow()
+            val requested = File(directory, name)
+            val target = FileSystemRules.keepBothTarget(requested)
+            require(FileSystemRules.isContained(root, target)) { "Tikslas išeina už pasirinkto katalogo" }
+            val staging = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
+            partial = staging
+            val relativePath = directory.relativeTo(root).invariantSeparatorsPath
+                .takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
+            nearbyFiles.validate(fileIndex, relativePath, length, batchId)
+            validated = true
+            val totalBytes = request.query["batchBytes"]?.toLongOrNull()
+                ?.coerceIn(length, NearbySourcePreparer.MAX_TOTAL_BYTES) ?: length
+            val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
+            var remaining = length
+            var lastProgressAt = 0L
+            val uploadStartedAt = System.nanoTime()
+            fun publishProgress(completed: Boolean = false, failure: TransferFailure? = null) {
+                val now = System.nanoTime()
+                if (!completed && failure == null && received > 0L && now - lastProgressAt < 150_000_000L) return
+                lastProgressAt = now
+                val files = nearbyFiles.update(fileIndex, TransferFileProgress(
+                    relativePath = relativePath, sizeBytes = length, transferredBytes = received,
+                    status = when {
+                        completed -> TransferFileStatus.COMPLETED
+                        failure != null -> TransferFileStatus.FAILED
+                        else -> TransferFileStatus.TRANSFERRING
+                    },
+                    localPath = if (completed) target.absolutePath else null,
+                    modifiedAtMillis = if (completed) target.lastModified() else 0,
+                    failure = failure,
+                ), batchId)
+                val receivedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.transferredBytes }
+                    else (batchOffset + received).coerceAtMost(totalBytes)
+                val expectedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.sizeBytes } else totalBytes
+                val metrics = TransferProgressEstimator.calculate(
+                    transferredBytes = received,
+                    totalBytes = (expectedTotal - batchOffset).coerceAtLeast(received),
+                    elapsedMillis = ((now - uploadStartedAt).coerceAtLeast(0L) / 1_000_000L),
+                )
+                val remainingMillis = TransferProgressEstimator.remainingMillis(
+                    (expectedTotal - receivedTotal).coerceAtLeast(0L),
+                    metrics.bytesPerSecond,
+                )
+                val announced = nearbyFiles.hasManifest()
+                if (announced) {
+                    publishNearbyFiles(metrics.bytesPerSecond, if (completed && receivedTotal >= expectedTotal) 0L else remainingMillis)
+                    return
+                }
+                onUploadProgress(
+                    LanUploadProgress(
+                        currentFile = name,
+                        currentFileIndex = fileIndex,
+                        totalFiles = if (announced) files.size else totalFiles,
+                        currentFileBytes = received,
+                        currentFileSize = length,
+                        receivedBytes = receivedTotal,
+                        totalBytes = expectedTotal,
+                        completed = completed,
+                        files = files,
+                        bytesPerSecond = metrics.bytesPerSecond,
+                        remainingMillis = if (completed && receivedTotal >= expectedTotal) 0L else remainingMillis,
+                    ),
+                )
+            }
+            progress = ::publishProgress
+            phase = TransferPhase.NOTIFY
+            publishProgress()
+            phase = TransferPhase.OPEN
+            diagnostic()
+            FileOutputStream(staging).use { fileOutput ->
                 val bufferedFileOutput = BufferedOutputStream(fileOutput, NearbyTransferTuning.IO_BUFFER_BYTES)
                 val buffer = ByteArray(NearbyTransferTuning.IO_BUFFER_BYTES)
                 try {
                     while (remaining > 0) {
-                        check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }
+                        if (!running.get() || nearbyFiles.isCancelled(batchId, fileIndex))
+                            throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
                         check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
+                        phase = TransferPhase.READ
+                        if (received == 0L) diagnostic()
                         val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                        if (read < 0) throw IllegalArgumentException("Įkėlimas nutrūko")
+                        if (read < 0) throw java.io.EOFException("Įkėlimas nutrūko")
+                        phase = TransferPhase.WRITE
                         bufferedFileOutput.write(buffer, 0, read)
                         remaining -= read
                         received = Math.addExact(received, read.toLong())
+                        phase = TransferPhase.NOTIFY
                         publishProgress()
                     }
+                    phase = TransferPhase.SYNC
+                    diagnostic()
                     bufferedFileOutput.flush()
                     fileOutput.fd.sync()
                 } finally {
                     buffer.fill(0)
                 }
             }
-            require(partial.length() == length) { "Įkelto failo dydis nesutampa" }
-            check(running.get() && !nearbyFiles.isCancelled(batchId, fileIndex)) { "Siuntimas atšauktas" }
+            phase = TransferPhase.COMMIT
+            diagnostic()
+            check(staging.length() == length) { "Įkelto failo dydis nesutampa" }
+            if (!running.get() || nearbyFiles.isCancelled(batchId, fileIndex))
+                throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
             check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
             // A file created after keep-both planning must never be silently replaced.
-            java.nio.file.Files.move(partial.toPath(), target.toPath())
+            java.nio.file.Files.move(staging.toPath(), target.toPath())
             committed = true
+            phase = TransferPhase.NOTIFY
             publishProgress(completed = true)
             onMutation(listOf(target))
+            phase = TransferPhase.RESPONSE
             writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
+            phase = TransferPhase.COMPLETE
+            diagnostic()
         } catch (failure: Exception) {
+            val failedPhase = phase
+            val errno = systemErrorNumber(failure).coerceIn(0, 4096)
+            val category = when (errno) {
+                1, 13 -> TransferFailure.PERMISSION
+                28 -> TransferFailure.SPACE
+                17 -> TransferFailure.CONFLICT
+                else -> TransferFailure.classify(failure, phase)
+            }
+            diagnostic(category, errno)
             // A response write can fail after commit; that file is still complete.
-            if (!committed) publishProgress(failed = true)
-            throw failure
+            if (!committed && validated) {
+                // Update the status even if the UI notification callback was the failure.
+                runCatching { progress?.invoke(false, category) }.onFailure { notificationError ->
+                    phase = TransferPhase.NOTIFY
+                    diagnostic(TransferFailure.CALLBACK, systemErrorNumber(notificationError))
+                }
+            }
+            throw ReceiverUploadException(category, failedPhase, errno, failure)
         } finally {
-            if (partial.exists()) partial.delete()
+            partial?.let { if (it.exists()) it.delete() }
         }
     }
 
@@ -809,6 +877,7 @@ class LanHttpServer(
             401 -> "Unauthorized"
             403 -> "Forbidden"
             404 -> "Not Found"
+            408 -> "Request Timeout"
             410 -> "Gone"
             else -> "Error"
         }

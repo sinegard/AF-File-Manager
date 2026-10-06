@@ -4,6 +4,13 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.44.0] - 2026-10-07
+
+- Phone-to-phone transfers recover from a lost reply without sending a second copy of an already received file. Recovery waits for the receiver's actual status instead of cancelling too early.
+- Cancelling a transfer and clearing its history no longer crashes the app. Storage and permission errors are shown without repeatedly uploading the same file.
+- Optional transfer diagnostics help identify receiving errors. They are off by default, stay inside AF, and exclude file names, paths, content and connection credentials. Sharing a report is your choice.
+- Fixed mixed-language labels in Visible features, file creation and Trash errors, system choosers and background-service notifications. These now follow the selected AF language.
+
 ## [0.43.2] - 2026-10-05
 
 - Leaving a phone group now disconnects only that member. Other members stay connected, and removed members can no longer use their old session to access or upload files.

@@ -1,5 +1,7 @@
 package com.affilemanager.app.operations
 
+import com.affilemanager.app.ui.localization.appLanguageContext
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -120,7 +122,7 @@ class FileOperationForegroundService : Service() {
         else -> null
     }
 
-    private fun localized(source: String) = UiTranslator.translate(source, resources.configuration.locales[0].language)
+    private fun localized(source: String) = UiTranslator.translate(source, appLanguageContext().resources.configuration.locales[0].language)
 
     private fun startAsForeground(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

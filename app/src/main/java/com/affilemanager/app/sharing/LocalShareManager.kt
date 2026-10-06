@@ -1,5 +1,7 @@
 package com.affilemanager.app.sharing
 
+import com.affilemanager.app.ui.localization.appString
+
 import android.app.Application
 import android.content.ClipData
 import android.content.Intent
@@ -85,7 +87,7 @@ class LocalShareManager(
             else putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
         }
         application.startActivity(
-            Intent.createChooser(send, application.getString(R.string.share_file_chooser_title))
+            Intent.createChooser(send, application.appString(R.string.share_file_chooser_title))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
     }

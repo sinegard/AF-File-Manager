@@ -1,5 +1,8 @@
 package com.affilemanager.app.transfer
 
+import com.affilemanager.app.ui.localization.appString
+import com.affilemanager.app.ui.localization.appLanguageContext
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -177,6 +180,7 @@ class LanTransferService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        TransferDiagnostics.initialize(this)
         NearbyTransferHistoryController.initialize(this)
         createChannel()
     }
@@ -306,7 +310,7 @@ class LanTransferService : Service() {
                     requestedPort = options.port,
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
-                    language = resources.configuration.locales[0].language,
+                    language = appLanguageContext().resources.configuration.locales[0].language,
                     onNearbyPeer = { peer, expiry ->
                         NearbyChatController.beginSession(peer)
                         NearbyTransferController.connection.remember(peer, expires = expiry)
@@ -322,6 +326,10 @@ class LanTransferService : Service() {
                     onGroupMembers = NearbyGroupController::hostMembers,
                     onUploadProgress = LanTransferController::publishUpload,
                     onMutation = publishFiles,
+                    onDiagnostic = TransferDiagnostics::record,
+                    diagnosticsEnabled = { TransferDiagnostics.enabled.value },
+                    systemErrorNumber = TransferDiagnostics::errno,
+                    storageKind = TransferDiagnostics.storage(root),
                     onStopped = stopped,
                 )
                 LanTransferProtocol.FTP -> LanFtpServer(
@@ -430,22 +438,22 @@ class LanTransferService : Service() {
     }
 
     private fun createChannel() {
-        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.lan_transfer_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
-            description = getString(R.string.lan_transfer_channel_description)
+        val channel = NotificationChannel(CHANNEL_ID, appString(R.string.lan_transfer_channel_name), NotificationManager.IMPORTANCE_LOW).apply {
+            description = appString(R.string.lan_transfer_channel_description)
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun startingNotification(): Notification = notificationBuilder()
-        .setContentTitle(getString(R.string.lan_transfer_starting_title))
-        .setContentText(getString(R.string.lan_transfer_starting_text))
+        .setContentTitle(appString(R.string.lan_transfer_starting_title))
+        .setContentText(appString(R.string.lan_transfer_starting_text))
         .build()
 
     private fun runningNotification(session: LanServerSession): Notification = notificationBuilder()
-        .setContentTitle(getString(R.string.lan_transfer_running_title))
+        .setContentTitle(appString(R.string.lan_transfer_running_title))
         .setContentText(session.url)
-        .addAction(0, getString(R.string.stop), stopPendingIntent())
+        .addAction(0, appString(R.string.stop), stopPendingIntent())
         .build()
 
     private fun notificationBuilder(): NotificationCompat.Builder {

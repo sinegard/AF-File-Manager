@@ -931,7 +931,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         }
                     }
                     LText("Pažymėta: ${selectedPaths.size} iš ${group.paths.size}", style = MaterialTheme.typography.labelLarge)
-                    LText("Failai: ${selectedPaths.size} · aplankai: 0 · dydis: ${FileSystemRules.humanBytes(group.sizeBytes * selectedPaths.size)}",
+                    LText("Failai: ${selectedPaths.size} · aplankai: 0 · ${uiText("Dydis: ${FileSystemRules.humanBytes(group.sizeBytes * selectedPaths.size)}")}",
                         style = MaterialTheme.typography.bodySmall)
                 }
             },

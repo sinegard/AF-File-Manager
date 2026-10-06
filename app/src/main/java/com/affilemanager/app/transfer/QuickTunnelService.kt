@@ -1,5 +1,7 @@
 package com.affilemanager.app.transfer
 
+import com.affilemanager.app.ui.localization.appLanguageContext
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -202,7 +204,7 @@ class QuickTunnelService : Service() {
 
     private fun localized(text: String): String = UiTranslator.translate(
         text,
-        resources.configuration.locales[0]?.language ?: "en",
+        appLanguageContext().resources.configuration.locales[0].language,
     )
 
     private fun requireLocalOrigin(value: String?): String {

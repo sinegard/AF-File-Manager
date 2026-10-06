@@ -244,6 +244,7 @@ internal fun NearbyPhoneTransferCard(
     var showReceiver by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
     var showGroup by remember { mutableStateOf(false) }
     var groupTarget by remember { mutableStateOf<NearbyPairing?>(null) }
     var groupRecipients by remember { mutableStateOf(emptyList<NearbyPairing>()) }
@@ -341,10 +342,13 @@ internal fun NearbyPhoneTransferCard(
                             },
                         )
                     }
+            TextButton(onClick = { showDiagnostics = true }, modifier = Modifier.fillMaxWidth()
+                .testTag("nearby_diagnostics")) { LText("Perdavimo diagnostika") }
             NearbyProgress(state = nearbyState, onCancel = { NearbyTransferController.cancel(context) },
                 onOpenDetails = { showDetails = true })
         }
     }
+    if (showDiagnostics) TransferDiagnosticsDialog(onDismiss = { showDiagnostics = false })
     if (showSender) NearbySendDialog(viewModel, incomingShare, onIncomingShareConsumed,
         onDismiss = { showSender = false; groupTarget = null; groupRecipients = emptyList() }, onTransferStarted = { showDetails = true },
         connectedPairing = groupTarget ?: groupRecipients.firstOrNull() ?: peer, groupRecipients = groupRecipients)

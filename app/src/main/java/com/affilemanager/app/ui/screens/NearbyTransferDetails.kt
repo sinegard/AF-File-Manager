@@ -418,6 +418,8 @@ private fun TransferGridFileCard(
             LText(if (incoming) "Gaunami failai" else "Siunčiami failai",
                 maxLines = 1, style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            file.failure?.let { Text(it.code, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error) }
             LinearProgressIndicator(
                 progress = { if (file.sizeBytes > 0) (file.transferredBytes.toFloat() / file.sizeBytes).coerceIn(0f, 1f)
                     else if (file.status == TransferFileStatus.COMPLETED) 1f else 0f },
@@ -477,6 +479,8 @@ private fun TransferFileRow(
                 style = MaterialTheme.typography.bodySmall)
             LText(status, style = MaterialTheme.typography.labelSmall,
                 color = if (file.status == TransferFileStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            file.failure?.let { Text(it.code, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error) }
             LinearProgressIndicator(
                 progress = { if (file.sizeBytes > 0) (file.transferredBytes.toFloat() / file.sizeBytes).coerceIn(0f, 1f)
                     else if (file.status == TransferFileStatus.COMPLETED) 1f else 0f },

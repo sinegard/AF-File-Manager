@@ -13,7 +13,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Real optimized sending service against a bounded, emulator-private HTTP peer. */
+/** Black-box normal/error checks of the exact optimized APK; no shipping test hooks. */
 public final class NearbyRuntimeVerifier {
     public static boolean verify(Instrumentation test) throws Exception {
         if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
@@ -28,15 +28,19 @@ public final class NearbyRuntimeVerifier {
         File source = new File(root, "source.txt");
         byte[] expected = "AF private fixture bytes".getBytes(StandardCharsets.UTF_8);
         try (FileOutputStream output = new FileOutputStream(source)) { output.write(expected); }
-        AtomicInteger logins = new AtomicInteger(), uploads = new AtomicInteger();
+        AtomicInteger logins = new AtomicInteger(), uploads = new AtomicInteger(), cancellations = new AtomicInteger();
         AtomicReference<Throwable> failed = new AtomicReference<>();
         Set<String> batches = Collections.synchronizedSet(new HashSet<>());
+        Map<String, Integer> order = new HashMap<>(), attempts = new HashMap<>();
+        AtomicInteger acknowledged = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean();
+        long[] busyStartedAt = {0};
         try (ServerSocket server = new ServerSocket(0, 2, address)) {
             server.setSoTimeout(500);
             Thread receiver = new Thread(() -> {
-                long deadline = SystemClock.elapsedRealtime() + 30000;
+                long deadline = SystemClock.elapsedRealtime() + 120000;
                 try {
-                    while (!server.isClosed() && uploads.get() < 2 && SystemClock.elapsedRealtime() < deadline) {
+                    while (!server.isClosed() && !done.get() && SystemClock.elapsedRealtime() < deadline) {
                         try (Socket socket = server.accept()) {
                             socket.setSoTimeout(5000);
                             InputStream input = socket.getInputStream();
@@ -51,7 +55,7 @@ public final class NearbyRuntimeVerifier {
                             if (length < 0 || length > 16384) throw new AssertionError("Fixture request too large");
                             byte[] body = new byte[length];
                             new DataInputStream(input).readFully(body);
-                            String extra = "";
+                            String extra = "", status = "200 OK", responseBody = "OK";
                             boolean uploaded = false;
                             if (start.startsWith("POST /login ")) {
                                 if (logins.incrementAndGet() != 1) throw new AssertionError("Consumed one-time code was used again");
@@ -61,12 +65,32 @@ public final class NearbyRuntimeVerifier {
                                 String batch = headers.get("x-af-batch-id");
                                 if (start.startsWith("POST /nearby/manifest ")) {
                                     if (batch == null || !batches.add(batch)) throw new AssertionError("New batch must have its own identity");
+                                    order.put(batch, batches.size());
                                 } else if (start.startsWith("POST /upload?")) {
                                     if (!batches.contains(batch) || !Arrays.equals(expected, body)) throw new AssertionError("Upload bytes or batch mismatch");
                                     uploaded = true;
+                                    int attempt = attempts.getOrDefault(batch, 0) + 1;
+                                    attempts.put(batch, attempt);
+                                    int scenario = order.get(batch);
+                                    if (scenario == 2 || scenario == 4 || scenario == 5 || (scenario == 3 && attempt == 1)) {
+                                        status = "500 Server error";
+                                        responseBody = "Server error";
+                                        if (scenario == 4) extra = "X-AF-Error-Code: AF-XFER-SPACE\r\nX-AF-Error-Phase: write\r\n";
+                                        if (scenario == 5) busyStartedAt[0] = SystemClock.elapsedRealtime();
+                                    }
+                                } else if (start.startsWith("GET /nearby/file-status")) {
+                                    if (!batches.contains(batch)) throw new AssertionError("Status requested for another batch");
+                                    int scenario = order.get(batch);
+                                    responseBody = scenario == 3 || scenario == 4 ? "FAILED" :
+                                        scenario == 5 && SystemClock.elapsedRealtime() - busyStartedAt[0] < 5000 ? "TRANSFERRING" : "COMPLETED";
+                                    if (scenario == 4) extra = "X-AF-Error-Code: AF-XFER-SPACE\r\n";
+                                    acknowledged.incrementAndGet();
+                                } else if (start.startsWith("POST /nearby/cancel")) {
+                                    cancellations.incrementAndGet();
                                 } else if (!start.startsWith("POST /nearby/peer ")) throw new AssertionError("Unexpected request route");
                             }
-                            socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n" + extra + "\r\nOK").getBytes(StandardCharsets.US_ASCII));
+                            socket.getOutputStream().write(("HTTP/1.1 " + status + "\r\nConnection: close\r\nContent-Length: " +
+                                responseBody.length() + "\r\n" + extra + "\r\n" + responseBody).getBytes(StandardCharsets.US_ASCII));
                             socket.getOutputStream().flush();
                             if (uploaded) uploads.incrementAndGet();
                         } catch (SocketTimeoutException expectedTimeout) { /* Bounded listener lifetime. */ }
@@ -76,7 +100,8 @@ public final class NearbyRuntimeVerifier {
             receiver.start();
             try {
                 String pairing = "af-file-manager://receive?host=" + address.getHostAddress() + "&port=" + server.getLocalPort() + "&code=12345678&name=NativeFixture";
-                for (int batch = 1; batch <= 2; batch++) {
+                int[] expectedUploads = {1, 2, 4, 5, 6};
+                for (int batch = 1; batch <= expectedUploads.length; batch++) {
                     // Exercise the same share -> preview -> explicit Start path as a user.
                     // No unshrunk test API or stale service payload contract in the release APK.
                     android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".files", source);
@@ -96,14 +121,20 @@ public final class NearbyRuntimeVerifier {
                         clickableAncestor(node) != null && clickableAncestor(node).isEnabled());
                     AccessibilityNodeInfo start = clickableAncestor(label);
                     if (!start.performAction(AccessibilityNodeInfo.ACTION_CLICK)) throw new AssertionError("Explicit Start action unavailable");
-                    long deadline = SystemClock.elapsedRealtime() + 10000;
-                    while (failed.get() == null && (uploads.get() < batch || running(context)) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
+                    long deadline = SystemClock.elapsedRealtime() + 20000;
+                    int expectedCount = expectedUploads[batch - 1];
+                    while (failed.get() == null && (uploads.get() < expectedCount || running(context)) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
                     if (failed.get() != null) throw new AssertionError("Native fixture failed", failed.get());
-                    if (uploads.get() != batch || running(context)) throw new AssertionError("Native transfer did not finish");
+                    if (uploads.get() != expectedCount || running(context)) throw new AssertionError("Native transfer did not finish scenario " + batch);
+                    if (batch == 4) awaitNode(test, "stable storage error", node -> node.getText() != null && node.getText().toString().contains("AF-XFER-SPACE"));
+                    if (cancellations.get() != (batch < 4 ? 0 : 1)) throw new AssertionError("Only the permanent failed batch may be cancelled");
                 }
-                if (logins.get() != 1 || batches.size() != 2 || !source.isFile()) throw new AssertionError("Repeated-send contract failed");
+                if (logins.get() != 1 || batches.size() != 5 || uploads.get() != 6 || acknowledged.get() < 5 ||
+                    cancellations.get() != 1 || !source.isFile() || !Arrays.equals(expected, java.nio.file.Files.readAllBytes(source.toPath())))
+                    throw new AssertionError("Normal/recovered/permanent-error/busy transfer contract failed");
                 return true;
             } finally {
+                done.set(true);
                 server.close(); receiver.join(2000);
                 if (receiver.isAlive()) throw new AssertionError("Fixture worker leaked");
             }
@@ -113,6 +144,161 @@ public final class NearbyRuntimeVerifier {
                 .setAction("com.affilemanager.app.action.STOP_LAN_TRANSFER")));
             if (!source.delete() || !root.delete()) throw new AssertionError("Transfer fixture cleanup failed");
         }
+    }
+    public static boolean verifyDiagnostics(Instrumentation test) throws Exception {
+        Context context = test.getTargetContext();
+        if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
+        File journal = new File(context.getFilesDir(), "transfer-diagnostics/events.log");
+        if (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) || journal.exists())
+            throw new AssertionError("Diagnostics must remain off and unwritten before explicit opt-in");
+        clickTag(test, "nav_share");
+        click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
+        awaitNode(test, "English diagnostics privacy label", node -> "Data stays on this phone.".contentEquals(node.getText()));
+        clickTag(test, "transfer_diagnostics_enabled");
+        long deadline = SystemClock.elapsedRealtime() + 5000;
+        while (!context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) &&
+            SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
+        if (!context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false))
+            throw new AssertionError("Visible diagnostic opt-in was not saved");
+        clickTag(test, "transfer_diagnostics_close");
+        verify(test); // Real normal/error sending now records explicit stable codes under R8.
+        if (!journal.isFile() || journal.length() > 128 * 1024) throw new AssertionError("Private diagnostic journal is missing or unbounded");
+        String report = new String(java.nio.file.Files.readAllBytes(journal.toPath()), StandardCharsets.UTF_8);
+        if (!report.contains("AF-XFER-SPACE") || !report.contains("send\trecover") || report.contains("source.txt") ||
+            report.contains("fixture-only") || report.contains("12345678") || report.contains(context.getCacheDir().toString()))
+            throw new AssertionError("Private diagnostic stable codes/privacy contract failed");
+        clickText(test, "Close"); // Transfer details hide; they do not disconnect the session.
+        click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
+        clickTag(test, "transfer_diagnostics_export");
+        awaitNode(test, "system export chooser", node -> node.getPackageName() != null &&
+            !context.getPackageName().contentEquals(node.getPackageName()));
+        File exported = new File(context.getCacheDir(), "transfer-diagnostics/report.txt");
+        if (!exported.isFile() || exported.length() > 129 * 1024) throw new AssertionError("Explicit export did not create bounded private report");
+        android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".files", exported);
+        try (InputStream input = context.getContentResolver().openInputStream(uri)) {
+            if (input == null || !new String(readBounded(input, 129 * 1024), StandardCharsets.UTF_8).contains("AF transfer diagnostics v1"))
+                throw new AssertionError("Export FileProvider read failed");
+        }
+        back(test);
+        clickTag(test, "transfer_diagnostics_clear");
+        deadline = SystemClock.elapsedRealtime() + 5000;
+        while ((!journal.isFile() || journal.length() != 0 || exported.exists()) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
+        if (!journal.isFile() || journal.length() != 0 || exported.exists()) throw new AssertionError("Clear did not clear just private diagnostics");
+        clickTag(test, "transfer_diagnostics_enabled");
+        deadline = SystemClock.elapsedRealtime() + 5000;
+        while (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) &&
+            SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
+        if (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false))
+            throw new AssertionError("Diagnostics could not be disabled");
+        back(test);
+        awaitNode(test, "diagnostics launcher after Back", node -> tag(node, "nearby_diagnostics"));
+        return true;
+    }
+    public static boolean verifyLocales(Instrumentation test) throws Exception {
+        Context context = test.getTargetContext();
+        if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
+        for (String language : new String[]{"en", "lt", "de", "ar", "en"}) {
+            clickTag(test, "nav_tools");
+            scrollTop(test, "tools_list");
+            if (findNode(test, node -> tag(node, "change_language")) == null) clickTag(test, "settings_section_appearance");
+            clickTag(test, "change_language");
+            AccessibilityNodeInfo search = awaitNode(test, "language search", node -> tag(node, "language_search") && node.isEditable());
+            android.os.Bundle text = new android.os.Bundle();
+            text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, language);
+            if (!search.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Language search rejected text");
+            clickTag(test, "language_option_" + language);
+            SystemClock.sleep(400);
+            String terminal = translated(context, language, "Terminal", "Terminalas");
+            scrolledNode(test, "tools_list", "Visible features terminal in " + language, node -> terminal.contentEquals(node.getText()) &&
+                hasParentTag(node, "feature_visibility_settings"));
+            clickTag(test, "nav_share");
+            click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
+            String privacy = translated(context, language, "Data stays on this phone.", "Duomenys lieka šiame telefone.");
+            awaitNode(test, "diagnostics privacy in " + language, node -> privacy.contentEquals(node.getText()));
+            android.graphics.Bitmap screenshot = test.getUiAutomation().takeScreenshot();
+            if (screenshot == null) throw new AssertionError("Exact APK screenshot unavailable");
+            File evidence = new File(context.getExternalFilesDir("validation"), "release-diagnostics-" + language + ".png");
+            try (FileOutputStream output = new FileOutputStream(evidence)) { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output); }
+            finally { screenshot.recycle(); }
+            back(test);
+        }
+        return true;
+    }
+    private static String translated(Context context, String language, String english, String lithuanian) throws Exception {
+        if (language.equals("en")) return english;
+        if (language.equals("lt")) return lithuanian;
+        try (InputStream input = context.getAssets().open("i18n/" + language + ".json");
+             InputStream index = context.getAssets().open("i18n/index.json")) {
+            org.json.JSONArray keys = new org.json.JSONObject(new String(readBounded(index, 2 * 1024 * 1024), StandardCharsets.UTF_8)).getJSONArray("exact");
+            org.json.JSONArray values = new org.json.JSONObject(new String(readBounded(input, 2 * 1024 * 1024), StandardCharsets.UTF_8)).getJSONArray("exact");
+            if (keys.length() != values.length() || keys.length() > 5000) throw new AssertionError("Bounded translation catalog mismatch");
+            for (int i = 0; i < keys.length(); i++) if (keys.getString(i).equals(english)) return values.getString(i);
+            throw new AssertionError("Requested UI phrase missing from shipped catalog");
+        }
+    }
+    private static boolean hasParentTag(AccessibilityNodeInfo node, String id) {
+        for (int depth = 0; node != null && depth < 16; depth++, node = node.getParent()) if (tag(node, id)) return true;
+        return false;
+    }
+    private static AccessibilityNodeInfo scrolledNode(Instrumentation test, String list, String description, NodeMatch match) throws Exception {
+        for (int scroll = 0; scroll < 16; scroll++) {
+            AccessibilityNodeInfo found = findNode(test, match);
+            if (found != null) return found;
+            AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
+            if (!container.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) break;
+            SystemClock.sleep(150);
+        }
+        return awaitNode(test, description, match);
+    }
+    private static void scrollTop(Instrumentation test, String list) throws Exception {
+        AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
+        for (int scroll = 0; scroll < 16; scroll++) {
+            if (!container.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return;
+            SystemClock.sleep(150);
+            container = awaitNode(test, list, node -> tag(node, list));
+        }
+    }
+    private static AccessibilityNodeInfo findNode(Instrumentation test, NodeMatch match) {
+        ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
+        AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
+        if (root != null) nodes.add(root);
+        int count = 0;
+        while (!nodes.isEmpty() && count++ < 2000) {
+            AccessibilityNodeInfo node = nodes.removeFirst();
+            if (node.isVisibleToUser() && match.matches(node)) return node;
+            for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) nodes.add(child); }
+        }
+        return null;
+    }
+    private static byte[] readBounded(InputStream input, int maximum) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        for (int count; (count = input.read(buffer)) >= 0;) {
+            if (bytes.size() + count > maximum) throw new IOException("Export exceeds bound");
+            bytes.write(buffer, 0, count);
+        }
+        return bytes.toByteArray();
+    }
+    private static void clickText(Instrumentation test, String text) throws Exception {
+        click(awaitNode(test, text, node -> text.contentEquals(node.getText()) && clickableAncestor(node) != null));
+    }
+    private static void clickTag(Instrumentation test, String id) throws Exception {
+        click(awaitNode(test, id, node -> tag(node, id) && clickableAncestor(node) != null));
+    }
+    private static boolean tag(AccessibilityNodeInfo node, String id) {
+        String value = node.getViewIdResourceName();
+        return value != null && (value.equals(id) || value.endsWith("/" + id));
+    }
+    private static void click(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo button = clickableAncestor(node);
+        if (button == null || !button.isEnabled() || !button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            throw new AssertionError("Visible action rejected click");
+        SystemClock.sleep(150);
+    }
+    private static void back(Instrumentation test) {
+        test.getUiAutomation().injectInputEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_BACK), true);
+        test.getUiAutomation().injectInputEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_BACK), true);
+        SystemClock.sleep(200);
     }
     @SuppressWarnings("deprecation") private static boolean running(Context context) {
         for (ActivityManager.RunningServiceInfo service : context.getSystemService(ActivityManager.class).getRunningServices(100))

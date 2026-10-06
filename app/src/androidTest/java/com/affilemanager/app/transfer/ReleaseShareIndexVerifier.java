@@ -34,6 +34,7 @@ public final class ReleaseShareIndexVerifier {
             int port = freePort(address);
             start(test, root, address, port, "WEB", true);
             String first = login(address, port), second = login(address, port);
+            interruptedUpload(address, port, first, root);
             String firstPeer = pairing(address, 23001, "NativeFirst");
             String secondPeer = pairing(address, 23002, "NativeSecond");
             expect(request(address, port, "POST", "/nearby/group/join", first, firstPeer.getBytes(StandardCharsets.UTF_8), ""), 200);
@@ -107,6 +108,33 @@ public final class ReleaseShareIndexVerifier {
                     MediaStore.MediaColumns.DATA + " = ?", new String[]{file.getAbsolutePath()});
             }
             if (!root.delete()) throw new AssertionError("Owned fixture directory cleanup failed");
+        }
+    }
+
+    private static void interruptedUpload(InetAddress address, int port, String cookie, File root) throws Exception {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(address, port), 5000);
+            socket.setSoTimeout(10000);
+            String head = "POST /upload?name=incomplete.txt HTTP/1.1\r\nHost: localhost\r\nCookie: " + cookie +
+                "\r\nContent-Length: 100\r\nConnection: close\r\n\r\n";
+            socket.getOutputStream().write(head.getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().write(new byte[]{1, 2, 3, 4});
+            socket.getOutputStream().flush();
+            socket.shutdownOutput();
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[512];
+            for (int count; (count = socket.getInputStream().read(buffer)) >= 0;) {
+                check(bytes.size() + count <= 4096, "Interrupted response bound");
+                bytes.write(buffer, 0, count);
+            }
+            String response = bytes.toString("UTF-8");
+            expect(response, 408);
+            check(response.contains("X-AF-Error-Code: AF-XFER-CONNECTION") &&
+                response.contains("X-AF-Error-Phase: read") && !response.contains(root.getAbsolutePath()),
+                "Optimized receiver stable/private failure identifiers");
+            File[] residue = root.listFiles();
+            check(residue != null && !new File(root, "incomplete.txt").exists(), "Interrupted upload is not committed");
+            for (File file : residue) check(!file.getName().endsWith(".partial"), "Interrupted staging cleanup");
         }
     }
 

@@ -3,6 +3,7 @@ package com.affilemanager.app.ui.localization
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.affilemanager.app.AFFileManagerApplication
+import com.affilemanager.app.data.OptionalFeature
 import com.affilemanager.app.network.NetworkProtocol
 import com.affilemanager.app.network.RemoteErrorPresenter
 import com.affilemanager.app.network.RemoteOperation
@@ -11,11 +12,55 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class UiTranslationCatalogTest {
+    @Test fun composedRuntimeFailuresAndTheirWrappersUseEverySelectedPack() {
+        UiTranslationCatalog.initialize(ApplicationProvider.getApplicationContext<AFFileManagerApplication>())
+        for (language in AppLanguageManager.SUPPORTED_LANGUAGE_TAGS) {
+            val size = UiTranslator.translate("Dydis: 42 KB", language)
+            val summary = UiTranslator.translate("Failai: 3 · aplankai: 0 · $size", language)
+            assertTrue("$language analysis size label was lost", summary.contains(size))
+            if (language != "lt") assertFalse("$language analysis retained Lithuanian", summary.contains("Dydis:"))
+            val failure = UiTranslator.translate("Šiukšliadėžės katalogas neperskaitomas", language)
+            val wrapper = UiTranslator.translate("Įspėjimas: Šiukšliadėžės katalogas neperskaitomas", language)
+            assertTrue("$language warning body wasn't localized", wrapper.contains(failure))
+            val path = "/Download/Šiukšliadėžė.txt"
+            val missing = UiTranslator.translate("Klaida: Failas nepasiekiamas: $path", language)
+            assertTrue("$language changed a user path", missing.contains(path))
+            if (language != "lt") {
+                assertFalse("$language retained a Lithuanian error fragment", failure.contains("neperskaitomas"))
+            }
+        }
+    }
+
+    @Test
+    fun everyModelBackedFeatureLabelResolvesToItsShippedOfflineEntry() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        UiTranslationCatalog.initialize(application)
+        val index = application.assets.open("i18n/index.json").bufferedReader().use {
+            JSONObject(it.readText()).getJSONArray("exact")
+        }
+        val positions = (0 until index.length()).associateBy { index.getString(it) }
+        val protocols = setOf(OptionalFeature.WEB_SHARE, OptionalFeature.FTP_SHARE, OptionalFeature.WEBDAV_SHARE)
+        for (language in AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.filterNot { it in setOf("en", "lt") }) {
+            val exact = application.assets.open("i18n/$language.json").bufferedReader().use {
+                JSONObject(it.readText()).getJSONArray("exact")
+            }
+            OptionalFeature.entries.filterNot { it in protocols }.forEach { feature ->
+                val canonical = UiTranslator.translate(feature.label, "en")
+                val position = positions[canonical] ?: error("Feature not in catalog: ${feature.name}")
+                assertEquals("$language/${feature.name} ignored its pack", exact.getString(position),
+                    UiTranslator.translate(feature.label, language))
+                assertNotEquals("$language/${feature.name} leaked Lithuanian", feature.label,
+                    UiTranslator.translate(feature.label, language))
+            }
+        }
+    }
+
     @Test
     fun webDavHintsUseTheSelectedLanguageWithoutTranslatingTheEndpointPath() {
         UiTranslationCatalog.initialize(ApplicationProvider.getApplicationContext<AFFileManagerApplication>())

@@ -1,5 +1,7 @@
 package com.affilemanager.app.ui.preview
 
+import com.affilemanager.app.ui.localization.appString
+
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
@@ -3411,7 +3413,7 @@ private fun shareFile(context: android.content.Context, source: PreviewSource) {
                 clipData = ClipData.newRawUri(source.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             },
-            context.getString(R.string.share_file_chooser_title),
+            context.appString(R.string.share_file_chooser_title),
         ),
     )
 }
@@ -3425,7 +3427,7 @@ internal fun openWith(context: android.content.Context, source: PreviewSource) {
     }
     val chooser = Intent.createChooser(
         viewIntent,
-        context.getString(R.string.open_with_chooser_title, source.name),
+        context.appString(R.string.open_with_chooser_title, source.name),
     ).apply {
         putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(context, MainActivity::class.java)))
     }
@@ -3453,7 +3455,7 @@ private fun createExternalEditIntent(context: android.content.Context, session: 
     }
     return Intent.createChooser(
         editIntent,
-        context.getString(R.string.edit_with_chooser_title, session.displayName),
+        context.appString(R.string.edit_with_chooser_title, session.displayName),
     ).apply {
         putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(context, MainActivity::class.java)))
     }

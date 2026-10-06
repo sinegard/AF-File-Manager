@@ -37,6 +37,12 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
             } else if ("nearby".equals(suite)) {
                 launchTargetActivity();
                 verified = com.affilemanager.app.transfer.NearbyRuntimeVerifier.verify(this);
+            } else if ("transfer-diagnostics".equals(suite)) {
+                launchTargetActivity();
+                verified = com.affilemanager.app.transfer.NearbyRuntimeVerifier.verifyDiagnostics(this);
+            } else if ("localization".equals(suite)) {
+                launchTargetActivity();
+                verified = com.affilemanager.app.transfer.NearbyRuntimeVerifier.verifyLocales(this);
             } else if ("split-apk".equals(suite)) {
                 launchTargetActivity();
                 verified = com.affilemanager.app.apk.SplitApkRuntimeVerifier.verify(this);

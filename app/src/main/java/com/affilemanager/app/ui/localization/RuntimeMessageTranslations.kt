@@ -3,6 +3,23 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "Perdavimo diagnostika" to "Transfer diagnostics",
+        "Duomenys lieka šiame telefone." to "Data stays on this phone.",
+        "Nepavyko sukurti unikalaus laikino kelio" to "Could not choose a safe temporary name",
+        "Nepavyko sukurti aplanko" to "Could not create the folder",
+        "Nepavyko sukurti paskirties aplanko" to "Could not create destination folder",
+        "Nepavyko sukurti failo" to "Could not create the file",
+        "Nepavyko sukurti laikino aplanko" to "Could not create the temporary local folder",
+        "Šiukšliadėžės vieta nepasiekiama" to "Trash location is unavailable",
+        "Šiukšliadėžės vietos sukurti nepavyko" to "Could not create the Trash folder",
+        "Šiukšliadėžės šaknies kelias turi būti tuščias" to "The top-level Trash path must be empty",
+        "Šiukšliadėžės elementas nėra katalogas" to "Trash item is not a folder",
+        "Šiukšliadėžės elementas neberastas" to "The Trash item could not be found",
+        "Šiukšliadėžės katalogas neberastas" to "The Trash folder could not be found",
+        "Šiukšliadėžės katalogas neperskaitomas" to "The Trash folder cannot be read",
+        "Šiukšliadėžės kataloge per daug elementų" to "The Trash folder contains too many items",
+        "Šiukšliadėžės vaizdo nustatymo išsaugoti nepavyko" to "Could not save the Trash folder view setting",
+        "Šiukšliadėžės rūšiavimo nustatymo išsaugoti nepavyko" to "Could not save the Trash folder sort setting",
         "Android failų indekso atnaujinti nepavyko" to "Could not update Android's file index",
         "AF Quick Tunnel" to "AF Quick Tunnel",
         "Cloudflare Quick Tunnel" to "Cloudflare Quick Tunnel",

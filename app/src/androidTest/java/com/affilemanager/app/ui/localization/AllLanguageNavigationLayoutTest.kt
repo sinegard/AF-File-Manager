@@ -96,6 +96,9 @@ class AllLanguageNavigationLayoutTest {
                         }
                         button.performClick().assertIsSelected()
                         if (section == "tools") {
+                            if (compose.onAllNodesWithTag("change_language").fetchSemanticsNodes().isEmpty()) {
+                                compose.onNodeWithTag("settings_section_appearance").performScrollTo().performClick()
+                            }
                             compose.onNodeWithTag("language_setting_current").performScrollTo().assertIsDisplayed()
                             compose.onNodeWithTag("change_language").performScrollTo().assertIsDisplayed()
                             val languageTitle = mutableListOf<TextLayoutResult>()

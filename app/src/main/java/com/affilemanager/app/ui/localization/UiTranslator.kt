@@ -1690,6 +1690,10 @@ object UiTranslator {
         "Archyvo įrašas jau yra kopijavimo rinkinyje" to "Archive entry is already in the copy set",
         "Ši paskirtis jau yra AF plane" to "This destination is already in the AF Plan",
         "Pasiekta AF plano paskirčių riba" to "AF Plan destination limit reached",
+        // Model-backed labels also pass through LText; they must not bypass the catalog.
+        "Terminalas" to "Terminal",
+        "Sinchronizavimas" to "Sync",
+        "Telefonas ↔ telefonas" to "Phone-to-phone transfer",
     )
 
     /**
@@ -1707,9 +1711,53 @@ object UiTranslator {
         }
     }
 
+    private val runtimeEnglishByLithuanian: Map<String, String> = buildMap {
+        RuntimeMessageTranslations.lithuanian.forEach { (canonicalEnglish, lithuanian) ->
+            putIfAbsent(lithuanian, canonicalEnglish)
+        }
+    }
+
+    // These wrappers contain another interface message, not a filename/path placeholder.
+    private val messageWrappers = listOf(
+        Triple("Įspėjimas: ", "Warning: {0}", "Įspėjimas: {0}"),
+        Triple("Warning: ", "Warning: {0}", "Įspėjimas: {0}"),
+        Triple("Klaida: ", "Error: {0}", "Klaida: {0}"),
+        Triple("Error: ", "Error: {0}", "Klaida: {0}"),
+    )
+
+    private fun translateWrappedMessage(text: String, language: String): String? {
+        var body = text
+        var wrapper = messageWrappers.firstOrNull { body.startsWith(it.first) } ?: return null
+        val wrappers = mutableListOf<Triple<String, String, String>>()
+        // Bound nested exception/warning work. An oversized external chain remains unchanged.
+        while (true) {
+            if (wrappers.size == 8) return text
+            wrappers += wrapper
+            body = body.removePrefix(wrapper.first)
+            wrapper = messageWrappers.firstOrNull { body.startsWith(it.first) } ?: break
+        }
+        if (wrappers.isEmpty() || body.isBlank()) return null
+        var result = translate(body, language)
+        wrappers.asReversed().forEach { (_, englishTemplate, lithuanianTemplate) ->
+            val template = when (language) {
+                AppLanguageManager.ENGLISH -> englishTemplate
+                AppLanguageManager.LITHUANIAN -> lithuanianTemplate
+                else -> UiTranslationCatalog.translate(englishTemplate, language)
+            }
+            result = template.replace("{0}", result)
+        }
+        return result
+    }
+
+    private val codedTransferError = Regex("^(?:Serverio klaida|Server error) \\((AF-XFER-[A-Z]+|[0-9]+)\\)$")
+
     fun translate(text: String, language: String): String {
         if (text.isBlank()) return text
         val normalizedLanguage = AppLanguageManager.normalizeLanguageTag(language)
+        codedTransferError.matchEntire(text)?.let { match ->
+            return "${translate("Serverio klaida", normalizedLanguage)} (${match.groupValues[1]})"
+        }
+        translateWrappedMessage(text, normalizedLanguage)?.let { return it }
         if (
             normalizedLanguage != AppLanguageManager.ENGLISH &&
             normalizedLanguage != AppLanguageManager.LITHUANIAN
@@ -1727,6 +1775,7 @@ object UiTranslator {
         }
         english[text]?.let { return it }
         RuntimeMessageTranslations.english[text]?.let { return it }
+        runtimeEnglishByLithuanian[text]?.let { return it }
 
         if (text.endsWith(" ↑") || text.endsWith(" ↓")) {
             return translate(text.dropLast(2), language) + text.takeLast(2)
@@ -2201,7 +2250,6 @@ object UiTranslator {
             Regex("^(.+) miniatiūra$") to { match: MatchResult -> "${match.groupValues[1]} thumbnail" },
             Regex("^Aplankas · (.+)$") to { match: MatchResult -> "Folder · ${match.groupValues[1]}" },
             Regex("^Katalogas · (.+)$") to { match: MatchResult -> "Folder · ${match.groupValues[1]}" },
-            Regex("^Šiukšliadėžė(.*)$") to { match: MatchResult -> "Trash${match.groupValues[1]}" },
             Regex("^(.+)\\. Paspauskite pieštuką\\.$") to { match: MatchResult -> "${translate(match.groupValues[1], language)}. Tap the pencil icon." },
             Regex("^Atkurti (.+)$") to { match: MatchResult -> "Restore ${match.groupValues[1]}" },
             Regex("^Ištrinti (.+) visam laikui$") to { match: MatchResult -> "Delete ${match.groupValues[1]} permanently" },
@@ -2340,7 +2388,8 @@ object UiTranslator {
         Regex("^Unsupported (.+) version$") to { match: MatchResult -> "Nepalaikoma ${match.groupValues[1]} versija" },
     )
 
-    internal fun hasEnglishEntry(text: String): Boolean = english.containsKey(text) || RuntimeMessageTranslations.english.containsKey(text)
+    internal fun hasEnglishEntry(text: String): Boolean =
+        text in english || text in RuntimeMessageTranslations.english || text in runtimeEnglishByLithuanian
 
     internal fun hasKnownUiEntry(text: String): Boolean =
         text in english || text in english.values ||

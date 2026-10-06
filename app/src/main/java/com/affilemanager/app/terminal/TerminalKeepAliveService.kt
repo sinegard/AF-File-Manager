@@ -1,5 +1,7 @@
 package com.affilemanager.app.terminal
 
+import com.affilemanager.app.ui.localization.appString
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -81,10 +83,10 @@ class TerminalKeepAliveService : Service() {
     private fun createChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            getString(R.string.terminal_channel_name),
+            appString(R.string.terminal_channel_name),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = getString(R.string.terminal_channel_description)
+            description = appString(R.string.terminal_channel_description)
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -106,18 +108,18 @@ class TerminalKeepAliveService : Service() {
         val activeText = when (location) {
             TerminalLocation.PHONE,
             TerminalLocation.PRIVILEGED,
-            -> getString(R.string.terminal_phone_active)
-            TerminalLocation.SERVER -> getString(R.string.terminal_server_active)
+            -> appString(R.string.terminal_phone_active)
+            TerminalLocation.SERVER -> appString(R.string.terminal_server_active)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_app)
-            .setContentTitle(getString(R.string.terminal_notification_title))
+            .setContentTitle(appString(R.string.terminal_notification_title))
             .setContentText(activeText)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addAction(0, getString(R.string.close), closeIntent)
+            .addAction(0, appString(R.string.close), closeIntent)
             .build()
     }
 }
