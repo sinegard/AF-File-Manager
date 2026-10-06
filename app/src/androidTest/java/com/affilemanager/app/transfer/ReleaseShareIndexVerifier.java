@@ -66,21 +66,23 @@ public final class ReleaseShareIndexVerifier {
 
             // Exercise pending, unauthenticated connections during real Service
             // shutdown. They must not escape the socket-open error boundary.
-            for (int round = 0; round < 3; round++) {
-                port = freePort(address);
-                start(test, root, address, port, "WEB", false);
-                List<Socket> pending = new ArrayList<>();
-                try {
-                    for (int connection = 0; connection < 8; connection++) {
-                        Socket socket = new Socket();
-                        pending.add(socket);
-                        socket.connect(new InetSocketAddress(address, port), 5000);
+            for (String protocol : new String[]{"WEB", "FTP", "WEBDAV"}) {
+                for (int round = 0; round < 3; round++) {
+                    port = freePort(address);
+                    start(test, root, address, port, protocol, false);
+                    List<Socket> pending = new ArrayList<>();
+                    try {
+                        for (int connection = 0; connection < 8; connection++) {
+                            Socket socket = new Socket();
+                            pending.add(socket);
+                            socket.connect(new InetSocketAddress(address, port), 5000);
+                        }
+                        stop(test);
+                        awaitStopped(address, port);
+                        check(Arrays.equals(bytes, java.nio.file.Files.readAllBytes(received.toPath())), "Shutdown preserves received files");
+                    } finally {
+                        for (Socket socket : pending) socket.close();
                     }
-                    stop(test);
-                    awaitStopped(address, port);
-                    check(Arrays.equals(bytes, java.nio.file.Files.readAllBytes(received.toPath())), "Shutdown preserves received files");
-                } finally {
-                    for (Socket socket : pending) socket.close();
                 }
             }
 

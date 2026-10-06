@@ -136,6 +136,15 @@ class LanFtpServer(
     }
 
     private fun handleClient(socket: Socket, active: LanServerSession) {
+        try {
+            handleConnectedClient(socket, active)
+        } catch (_: IOException) {
+            // A closed peer cannot receive a greeting or error reply. Its
+            // connection ends; the request worker must not crash the app.
+        }
+    }
+
+    private fun handleConnectedClient(socket: Socket, active: LanServerSession) {
         val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8), 8 * 1_024)
         val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), 8 * 1_024)
         var authenticated = active.anonymous

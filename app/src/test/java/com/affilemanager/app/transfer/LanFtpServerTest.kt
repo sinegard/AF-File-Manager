@@ -16,6 +16,38 @@ import java.nio.charset.StandardCharsets
 class LanFtpServerTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun closedControlSocketDoesNotEscapeItsWorker() {
+        val root = temporary.newFolder("ftp-closed-control")
+        LanFtpServer(root, InetAddress.getLoopbackAddress()).use { server ->
+            val session = server.start()
+            server.close()
+            Socket().also { it.close() }.use { invokeWorker(server, it, session) }
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun disconnectedGreetingRecipientDoesNotCrashOrChangeFiles() {
+        val root = temporary.newFolder("ftp-closed-response")
+        val original = root.resolve("original.txt").apply { writeText("preserved") }
+        LanFtpServer(root, InetAddress.getLoopbackAddress()).use { server ->
+            val session = server.start()
+            val socket = object : Socket() {
+                override fun getInputStream(): java.io.InputStream = java.io.ByteArrayInputStream(byteArrayOf())
+                override fun getOutputStream(): java.io.OutputStream = object : java.io.OutputStream() {
+                    override fun write(value: Int) { throw java.net.SocketException("closed fixture peer") }
+                }
+            }
+            socket.use { invokeWorker(server, it, session) }
+            assertEquals("preserved", original.readText())
+            assertEquals(listOf("original.txt"), root.listFiles().orEmpty().map { it.name })
+        }
+    }
+
+    private fun invokeWorker(server: LanFtpServer, socket: Socket, session: LanServerSession) {
+        LanFtpServer::class.java.getDeclaredMethod("handleClient", Socket::class.java, LanServerSession::class.java)
+            .apply { isAccessible = true }.invoke(server, socket, session)
+    }
+
     @Test
     fun authenticationListingAndContainmentAreEnforced() {
         val root = temporary.newFolder("ftp-root").apply { resolve("visible.txt").writeText("hello") }

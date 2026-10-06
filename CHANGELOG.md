@@ -4,7 +4,14 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.44.2] - 2026-10-07
+## [0.44.3] - 2026-10-07
+
+- Includes the phone-to-phone recovery, private diagnostics and language fixes prepared for 0.44.0 below.
+- Closing LAN sessions or losing a client connection no longer crashes the Web, FTP or WebDAV request worker.
+
+## [0.44.2] - 2026-10-07 (unpublished)
+
+Related connection-error paths in FTP and WebDAV still needed protection. This draft was not published; the fixes are included in 0.44.3.
 
 - Includes the phone-to-phone recovery, private diagnostics and language fixes prepared for 0.44.0 below.
 - Stopping a LAN session with pending connections no longer crashes AF.

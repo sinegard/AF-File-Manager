@@ -15,6 +15,38 @@ import java.util.Base64
 class LanWebDavServerTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun closedRequestSocketDoesNotEscapeItsWorker() {
+        val root = temporary.newFolder("dav-closed-request")
+        LanWebDavServer(root, InetAddress.getLoopbackAddress()).use { server ->
+            server.start()
+            server.close()
+            Socket().also { it.close() }.use { invokeWorker(server, it) }
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun disconnectedErrorRecipientDoesNotCrashOrChangeFiles() {
+        val root = temporary.newFolder("dav-closed-response")
+        val original = root.resolve("original.txt").apply { writeText("preserved") }
+        LanWebDavServer(root, InetAddress.getLoopbackAddress()).use { server ->
+            server.start()
+            val socket = object : Socket() {
+                override fun getInputStream(): java.io.InputStream = java.io.ByteArrayInputStream(byteArrayOf())
+                override fun getOutputStream(): java.io.OutputStream = object : java.io.OutputStream() {
+                    override fun write(value: Int) { throw java.net.SocketException("closed fixture peer") }
+                }
+            }
+            socket.use { invokeWorker(server, it) }
+            assertEquals("preserved", original.readText())
+            assertEquals(listOf("original.txt"), root.listFiles().orEmpty().map { it.name })
+        }
+    }
+
+    private fun invokeWorker(server: LanWebDavServer, socket: Socket) {
+        LanWebDavServer::class.java.getDeclaredMethod("handle", Socket::class.java).apply { isAccessible = true }
+            .invoke(server, socket)
+    }
+
     @Test
     fun basicAuthenticationPropfindAndPutWorkInsideRoot() {
         val root = temporary.newFolder("dav-root").apply { resolve("visible.txt").writeText("hello") }

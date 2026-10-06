@@ -153,6 +153,15 @@ class LanWebDavServer(
     }
 
     private fun handle(socket: Socket) {
+        try {
+            handleConnectedSocket(socket)
+        } catch (_: java.io.IOException) {
+            // Stream acquisition and error replies can race a peer disconnect.
+            // The client sees connection loss, never a successful file write.
+        }
+    }
+
+    private fun handleConnectedSocket(socket: Socket) {
         val input = BufferedInputStream(socket.getInputStream(), 64 * 1_024)
         val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1_024)
         val request = try {
