@@ -4,7 +4,14 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.44.0] - 2026-10-07
+## [0.44.1] - 2026-10-07
+
+- Includes the phone-to-phone recovery, private diagnostics and language fixes prepared for 0.44.0 below.
+- LAN session status messages now follow the selected interface language too.
+
+## [0.44.0] - 2026-10-07 (unpublished)
+
+The final check found a remaining mixed-language LAN status message. This draft was not published; the correction is included in 0.44.1.
 
 - Phone-to-phone transfers recover from a lost reply without sending a second copy of an already received file. Recovery waits for the receiver's actual status instead of cancelling too early.
 - Cancelling a transfer and clearing its history no longer crashes the app. Storage and permission errors are shown without repeatedly uploading the same file.

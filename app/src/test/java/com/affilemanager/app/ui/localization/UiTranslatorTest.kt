@@ -7,6 +7,11 @@ import org.junit.Test
 import com.affilemanager.app.data.OptionalFeature
 
 class UiTranslatorTest {
+    @Test fun lanSessionStatusAliasesUseExistingLocalizedMessages() {
+        assertEquals("LAN service stopped", UiTranslator.translate("Sustabdyta naudotojo", "en"))
+        assertEquals("The LAN server is already running", UiTranslator.translate("LAN sesija jau veikia", "en"))
+        assertTrue(UiTranslator.translate("Sustabdyta naudotojo", "lt") != "LAN service stopped")
+    }
     @Test fun stableTransferCodesKeepTheUsersLanguageAndDoNotTranslateTheirIdentifiers() {
         assertEquals("Server error (AF-XFER-SPACE)", UiTranslator.translate("Serverio klaida (AF-XFER-SPACE)", "en"))
         assertEquals("Serverio klaida (AF-XFER-PERMISSION)", UiTranslator.translate("Server error (AF-XFER-PERMISSION)", "lt"))

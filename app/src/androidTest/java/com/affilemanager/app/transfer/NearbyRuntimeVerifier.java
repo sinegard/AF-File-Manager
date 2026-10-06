@@ -59,7 +59,7 @@ public final class NearbyRuntimeVerifier {
                             boolean uploaded = false;
                             if (start.startsWith("POST /login ")) {
                                 if (logins.incrementAndGet() != 1) throw new AssertionError("Consumed one-time code was used again");
-                                extra = "Set-Cookie: af_session=fixture-only; HttpOnly; Path=/\r\nX-AF-Queue-Version: 1\r\nX-AF-Session-Expires: " + (System.currentTimeMillis() + 60000) + "\r\n";
+                                extra = "Set-Cookie: af_session=fixture-only; HttpOnly; Path=/\r\nX-AF-Queue-Version: 1\r\nX-AF-Session-Expires: " + (System.currentTimeMillis() + 180000) + "\r\n";
                             } else {
                                 if (!"af_session=fixture-only".equals(headers.get("cookie"))) throw new AssertionError("Missing session cookie");
                                 String batch = headers.get("x-af-batch-id");
@@ -104,19 +104,20 @@ public final class NearbyRuntimeVerifier {
                 for (int batch = 1; batch <= expectedUploads.length; batch++) {
                     // Exercise the same share -> preview -> explicit Start path as a user.
                     // No unshrunk test API or stale service payload contract in the release APK.
-                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".files", source);
+                    android.net.Uri uri = cacheUri(context, source);
                     Intent command = new Intent(Intent.ACTION_SEND).setClassName(context, "com.affilemanager.app.MainActivity")
                         .setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     test.runOnMainSync(() -> context.startActivity(command));
                     awaitNode(test, "prepared files", node -> "Ready to send: 1".contentEquals(node.getText() == null ? "" : node.getText()));
-                    if (batch == 1) {
-                        AccessibilityNodeInfo field = awaitNode(test, "pairing input", node -> node.isEditable() &&
-                            "android.widget.EditText".contentEquals(node.getClassName()));
+                    AccessibilityNodeInfo field = findNode(test, node -> node.isEditable() &&
+                        "android.widget.EditText".contentEquals(node.getClassName()));
+                    if (field != null) {
                         android.os.Bundle text = new android.os.Bundle();
                         text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pairing);
                         if (!field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Pairing field rejected input");
-                    }
+                        awaitNode(test, "entered pairing value", node -> node.isEditable() && textEquals(node, pairing));
+                    } else if (batch == 1) throw new AssertionError("Initial pairing input unavailable");
                     AccessibilityNodeInfo label = awaitNode(test, "Start button", node -> "Start transfer".contentEquals(node.getText() == null ? "" : node.getText()) &&
                         clickableAncestor(node) != null && clickableAncestor(node).isEnabled());
                     AccessibilityNodeInfo start = clickableAncestor(label);
@@ -153,38 +154,41 @@ public final class NearbyRuntimeVerifier {
             throw new AssertionError("Diagnostics must remain off and unwritten before explicit opt-in");
         clickTag(test, "nav_share");
         click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
-        awaitNode(test, "English diagnostics privacy label", node -> "Data stays on this phone.".contentEquals(node.getText()));
-        clickTag(test, "transfer_diagnostics_enabled");
+        awaitNode(test, "English diagnostics privacy label", node -> textEquals(node, "Data stays on this phone."));
+        click(awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
         long deadline = SystemClock.elapsedRealtime() + 5000;
         while (!context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) &&
             SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
         if (!context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false))
             throw new AssertionError("Visible diagnostic opt-in was not saved");
-        clickTag(test, "transfer_diagnostics_close");
+        clickText(test, "Close");
         verify(test); // Real normal/error sending now records explicit stable codes under R8.
         if (!journal.isFile() || journal.length() > 128 * 1024) throw new AssertionError("Private diagnostic journal is missing or unbounded");
         String report = new String(java.nio.file.Files.readAllBytes(journal.toPath()), StandardCharsets.UTF_8);
         if (!report.contains("AF-XFER-SPACE") || !report.contains("send\trecover") || report.contains("source.txt") ||
             report.contains("fixture-only") || report.contains("12345678") || report.contains(context.getCacheDir().toString()))
             throw new AssertionError("Private diagnostic stable codes/privacy contract failed");
-        clickText(test, "Close"); // Transfer details hide; they do not disconnect the session.
+        // verify() stops its owned receiver in cleanup; finished progress may
+        // already disappear. Diagnostics are independent of that progress row.
         click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
-        clickTag(test, "transfer_diagnostics_export");
+        clickText(test, "Export");
         awaitNode(test, "system export chooser", node -> node.getPackageName() != null &&
             !context.getPackageName().contentEquals(node.getPackageName()));
+        test.getUiAutomation().waitForIdle(500, 5000);
         File exported = new File(context.getCacheDir(), "transfer-diagnostics/report.txt");
         if (!exported.isFile() || exported.length() > 129 * 1024) throw new AssertionError("Explicit export did not create bounded private report");
-        android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".files", exported);
+        android.net.Uri uri = cacheUri(context, exported);
         try (InputStream input = context.getContentResolver().openInputStream(uri)) {
             if (input == null || !new String(readBounded(input, 129 * 1024), StandardCharsets.UTF_8).contains("AF transfer diagnostics v1"))
                 throw new AssertionError("Export FileProvider read failed");
         }
         back(test);
-        clickTag(test, "transfer_diagnostics_clear");
+        awaitNode(test, "diagnostics after export chooser Back", node -> textEquals(node, "Data stays on this phone."));
+        clickText(test, "Clear");
         deadline = SystemClock.elapsedRealtime() + 5000;
         while ((!journal.isFile() || journal.length() != 0 || exported.exists()) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
         if (!journal.isFile() || journal.length() != 0 || exported.exists()) throw new AssertionError("Clear did not clear just private diagnostics");
-        clickTag(test, "transfer_diagnostics_enabled");
+        click(awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
         deadline = SystemClock.elapsedRealtime() + 5000;
         while (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) &&
             SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
@@ -202,19 +206,24 @@ public final class NearbyRuntimeVerifier {
             scrollTop(test, "tools_list");
             if (findNode(test, node -> tag(node, "change_language")) == null) clickTag(test, "settings_section_appearance");
             clickTag(test, "change_language");
-            AccessibilityNodeInfo search = awaitNode(test, "language search", node -> tag(node, "language_search") && node.isEditable());
+            // Dialog accessibility does not inherit testTagsAsResourceId from the activity.
+            AccessibilityNodeInfo search = awaitNode(test, "language search", AccessibilityNodeInfo::isEditable);
             android.os.Bundle text = new android.os.Bundle();
             text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, language);
             if (!search.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Language search rejected text");
-            clickTag(test, "language_option_" + language);
+            Locale selected = Locale.forLanguageTag(language);
+            String nativeName = selected.getDisplayName(selected);
+            click(awaitNode(test, "language option " + language, node -> node.getText() != null &&
+                nativeName.equalsIgnoreCase(node.getText().toString()) && clickableAncestor(node) != null));
             SystemClock.sleep(400);
             String terminal = translated(context, language, "Terminal", "Terminalas");
-            scrolledNode(test, "tools_list", "Visible features terminal in " + language, node -> terminal.contentEquals(node.getText()) &&
-                hasParentTag(node, "feature_visibility_settings"));
+            // This is the only Terminal label in Tools. Accessibility may flatten
+            // its non-interactive card, so assert its visible translated text.
+            scrolledNode(test, "tools_list", "Visible features terminal in " + language, node -> textEquals(node, terminal));
             clickTag(test, "nav_share");
             click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
             String privacy = translated(context, language, "Data stays on this phone.", "Duomenys lieka šiame telefone.");
-            awaitNode(test, "diagnostics privacy in " + language, node -> privacy.contentEquals(node.getText()));
+            awaitNode(test, "diagnostics privacy in " + language, node -> textEquals(node, privacy));
             android.graphics.Bitmap screenshot = test.getUiAutomation().takeScreenshot();
             if (screenshot == null) throw new AssertionError("Exact APK screenshot unavailable");
             File evidence = new File(context.getExternalFilesDir("validation"), "release-diagnostics-" + language + ".png");
@@ -236,19 +245,39 @@ public final class NearbyRuntimeVerifier {
             throw new AssertionError("Requested UI phrase missing from shipped catalog");
         }
     }
-    private static boolean hasParentTag(AccessibilityNodeInfo node, String id) {
-        for (int depth = 0; node != null && depth < 16; depth++, node = node.getParent()) if (tag(node, id)) return true;
-        return false;
-    }
     private static AccessibilityNodeInfo scrolledNode(Instrumentation test, String list, String description, NodeMatch match) throws Exception {
-        for (int scroll = 0; scroll < 16; scroll++) {
+        scrollTop(test, list);
+        for (int scroll = 0; scroll < 64; scroll++) {
             AccessibilityNodeInfo found = findNode(test, match);
             if (found != null) return found;
             AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
-            if (!container.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) break;
+            scrollPartial(test, container);
             SystemClock.sleep(150);
         }
         return awaitNode(test, description, match);
+    }
+    private static void scrollPartial(Instrumentation test, AccessibilityNodeInfo container) {
+        // Full-viewport steps can skip labels at a viewport boundary with large fonts.
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        container.getBoundsInScreen(bounds);
+        if (bounds.height() < 100) throw new AssertionError("Scrollable fixture viewport unavailable");
+        float x = bounds.exactCenterX(), start = bounds.top + bounds.height() * .70f;
+        float end = bounds.top + bounds.height() * .40f;
+        long down = SystemClock.uptimeMillis();
+        injectTouch(test, down, android.view.MotionEvent.ACTION_DOWN, x, start);
+        for (int step = 1; step <= 8; step++) {
+            SystemClock.sleep(20);
+            injectTouch(test, down, android.view.MotionEvent.ACTION_MOVE, x, start + (end - start) * step / 8);
+        }
+        SystemClock.sleep(120); // Stop at the chosen position instead of flinging past controls.
+        injectTouch(test, down, android.view.MotionEvent.ACTION_MOVE, x, end);
+        injectTouch(test, down, android.view.MotionEvent.ACTION_UP, x, end);
+    }
+    private static void injectTouch(Instrumentation test, long down, int action, float x, float y) {
+        android.view.MotionEvent event = android.view.MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0);
+        event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+        try { if (!test.getUiAutomation().injectInputEvent(event, true)) throw new AssertionError("Fixture scroll rejected"); }
+        finally { event.recycle(); }
     }
     private static void scrollTop(Instrumentation test, String list) throws Exception {
         AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
@@ -260,7 +289,7 @@ public final class NearbyRuntimeVerifier {
     }
     private static AccessibilityNodeInfo findNode(Instrumentation test, NodeMatch match) {
         ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
-        AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
+        AccessibilityNodeInfo root = activeRoot(test);
         if (root != null) nodes.add(root);
         int count = 0;
         while (!nodes.isEmpty() && count++ < 2000) {
@@ -269,6 +298,24 @@ public final class NearbyRuntimeVerifier {
             for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) nodes.add(child); }
         }
         return null;
+    }
+    private static AccessibilityNodeInfo activeRoot(Instrumentation test) {
+        android.app.UiAutomation automation = test.getUiAutomation();
+        AccessibilityNodeInfo active = automation.getRootInActiveWindow();
+        if (active != null && active.isVisibleToUser() && active.getChildCount() > 0) return active;
+        android.accessibilityservice.AccessibilityServiceInfo service = automation.getServiceInfo();
+        if ((service.flags & android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS) == 0) return active;
+        // On API26 the active-window shortcut can be empty after a system chooser
+        // returns to a dialog. Query the actual top application window instead.
+        AccessibilityNodeInfo top = null;
+        int layer = Integer.MIN_VALUE;
+        for (android.view.accessibility.AccessibilityWindowInfo window : automation.getWindows()) {
+            if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && window.getLayer() > layer) {
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root != null) { top = root; layer = window.getLayer(); }
+            }
+        }
+        return top != null ? top : active;
     }
     private static byte[] readBounded(InputStream input, int maximum) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -280,7 +327,21 @@ public final class NearbyRuntimeVerifier {
         return bytes.toByteArray();
     }
     private static void clickText(Instrumentation test, String text) throws Exception {
-        click(awaitNode(test, text, node -> text.contentEquals(node.getText()) && clickableAncestor(node) != null));
+        click(awaitNode(test, text, node -> textEquals(node, text) && clickableAncestor(node) != null));
+    }
+    private static boolean textEquals(AccessibilityNodeInfo node, String expected) {
+        CharSequence actual = node.getText();
+        return actual != null && expected.contentEquals(actual);
+    }
+    private static android.net.Uri cacheUri(Context context, File file) throws IOException {
+        // Public FileProvider contract, independent of the target APK's method mapping.
+        String prefix = context.getCacheDir().getCanonicalPath() + File.separator;
+        String canonical = file.getCanonicalPath();
+        if (!canonical.startsWith(prefix)) throw new AssertionError("Fixture must remain in private cache");
+        android.net.Uri.Builder uri = new android.net.Uri.Builder().scheme("content")
+            .authority(context.getPackageName() + ".files").appendPath("app_cache");
+        for (String segment : canonical.substring(prefix.length()).split("/")) uri.appendPath(segment);
+        return uri.build();
     }
     private static void clickTag(Instrumentation test, String id) throws Exception {
         click(awaitNode(test, id, node -> tag(node, id) && clickableAncestor(node) != null));
@@ -296,8 +357,15 @@ public final class NearbyRuntimeVerifier {
         SystemClock.sleep(150);
     }
     private static void back(Instrumentation test) {
-        test.getUiAutomation().injectInputEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_BACK), true);
-        test.getUiAutomation().injectInputEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_BACK), true);
+        android.accessibilityservice.AccessibilityServiceInfo service = test.getUiAutomation().getServiceInfo();
+        service.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        test.getUiAutomation().setServiceInfo(service);
+        long down = SystemClock.uptimeMillis();
+        test.getUiAutomation().injectInputEvent(new android.view.KeyEvent(down, down,
+            android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_BACK, 0), true);
+        SystemClock.sleep(50);
+        test.getUiAutomation().injectInputEvent(new android.view.KeyEvent(down, SystemClock.uptimeMillis(),
+            android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_BACK, 0), true);
         SystemClock.sleep(200);
     }
     @SuppressWarnings("deprecation") private static boolean running(Context context) {
@@ -317,7 +385,7 @@ public final class NearbyRuntimeVerifier {
         while (SystemClock.elapsedRealtime() < deadline) {
             observed.clear();
             ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
-            AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot(test);
             if (root != null) nodes.add(root);
             int count = 0;
             while (!nodes.isEmpty() && count++ < 2000) {

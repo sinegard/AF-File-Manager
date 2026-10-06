@@ -3,6 +3,8 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "Sustabdyta naudotojo" to "LAN service stopped",
+        "LAN sesija jau veikia" to "The LAN server is already running",
         "Perdavimo diagnostika" to "Transfer diagnostics",
         "Duomenys lieka šiame telefone." to "Data stays on this phone.",
         "Nepavyko sukurti unikalaus laikino kelio" to "Could not choose a safe temporary name",
