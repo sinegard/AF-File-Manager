@@ -22,6 +22,7 @@ public final class ReleaseShareIndexVerifier {
     public static boolean verify(Instrumentation test) throws Exception {
         if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk"))
             throw new AssertionError("Disposable emulator required");
+        ReleaseHttpResponseReader.verifyContract();
         Context context = test.getTargetContext();
         InetAddress address = Collections.list(NetworkInterface.getNetworkInterfaces()).stream()
             .flatMap(iface -> Collections.list(iface.getInetAddresses()).stream())
@@ -143,13 +144,7 @@ public final class ReleaseShareIndexVerifier {
             socket.getOutputStream().write(new byte[]{1, 2, 3, 4});
             socket.getOutputStream().flush();
             socket.shutdownOutput();
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            byte[] buffer = new byte[512];
-            for (int count; (count = socket.getInputStream().read(buffer)) >= 0;) {
-                check(bytes.size() + count <= 4096, "Interrupted response bound");
-                bytes.write(buffer, 0, count);
-            }
-            String response = bytes.toString("UTF-8");
+            String response = ReleaseHttpResponseReader.read(socket.getInputStream(), 4096);
             expect(response, 408);
             check(response.contains("X-AF-Error-Code: AF-XFER-CONNECTION") &&
                 response.contains("X-AF-Error-Phase: read") && !response.contains(root.getAbsolutePath()),
@@ -207,12 +202,7 @@ public final class ReleaseShareIndexVerifier {
             String head = method + " " + path + " HTTP/1.1\r\nHost: " + address.getHostAddress() + ":" + port + "\r\n" +
                 "Connection: close\r\nContent-Length: " + body.length + "\r\n" + headers + (cookie == null ? "" : "Cookie: " + cookie + "\r\n") + "\r\n";
             socket.getOutputStream().write(head.getBytes(StandardCharsets.UTF_8)); socket.getOutputStream().write(body); socket.getOutputStream().flush();
-            ByteArrayOutputStream output = new ByteArrayOutputStream(); byte[] buffer = new byte[4096];
-            for (int count; (count = socket.getInputStream().read(buffer)) >= 0;) {
-                if (output.size() + count > 128 * 1024) throw new AssertionError("Fixture response bound exceeded");
-                output.write(buffer, 0, count);
-            }
-            return output.toString("UTF-8");
+            return ReleaseHttpResponseReader.read(socket.getInputStream(), 128 * 1024);
         }
     }
     private static String indexedName(Context context, File file) {
