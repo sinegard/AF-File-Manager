@@ -153,9 +153,9 @@ public final class NearbyRuntimeVerifier {
         if (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) || journal.exists())
             throw new AssertionError("Diagnostics must remain off and unwritten before explicit opt-in");
         clickTag(test, "nav_share");
-        click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
+        click(test, scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
         awaitNode(test, "English diagnostics privacy label", node -> textEquals(node, "Data stays on this phone."));
-        click(awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
+        click(test, awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
         long deadline = SystemClock.elapsedRealtime() + 5000;
         while (!context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) &&
             SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
@@ -170,7 +170,7 @@ public final class NearbyRuntimeVerifier {
             throw new AssertionError("Private diagnostic stable codes/privacy contract failed");
         // verify() stops its owned receiver in cleanup; finished progress may
         // already disappear. Diagnostics are independent of that progress row.
-        click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
+        click(test, scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
         clickText(test, "Export");
         awaitNode(test, "system export chooser", node -> node.getPackageName() != null &&
             !context.getPackageName().contentEquals(node.getPackageName()));
@@ -188,7 +188,7 @@ public final class NearbyRuntimeVerifier {
         deadline = SystemClock.elapsedRealtime() + 5000;
         while ((!journal.isFile() || journal.length() != 0 || exported.exists()) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
         if (!journal.isFile() || journal.length() != 0 || exported.exists()) throw new AssertionError("Clear did not clear just private diagnostics");
-        click(awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
+        click(test, awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
         deadline = SystemClock.elapsedRealtime() + 5000;
         while (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) &&
             SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
@@ -213,7 +213,7 @@ public final class NearbyRuntimeVerifier {
             if (!search.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Language search rejected text");
             Locale selected = Locale.forLanguageTag(language);
             String nativeName = selected.getDisplayName(selected);
-            click(awaitNode(test, "language option " + language, node -> node.getText() != null &&
+            click(test, awaitNode(test, "language option " + language, node -> node.getText() != null &&
                 nativeName.equalsIgnoreCase(node.getText().toString()) && clickableAncestor(node) != null));
             SystemClock.sleep(400);
             String terminal = translated(context, language, "Terminal", "Terminalas");
@@ -221,7 +221,7 @@ public final class NearbyRuntimeVerifier {
             // its non-interactive card, so assert its visible translated text.
             scrolledNode(test, "tools_list", "Visible features terminal in " + language, node -> textEquals(node, terminal));
             clickTag(test, "nav_share");
-            click(scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
+            click(test, scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
             String privacy = translated(context, language, "Data stays on this phone.", "Duomenys lieka šiame telefone.");
             awaitNode(test, "diagnostics privacy in " + language, node -> textEquals(node, privacy));
             android.graphics.Bitmap screenshot = test.getUiAutomation().takeScreenshot();
@@ -247,12 +247,14 @@ public final class NearbyRuntimeVerifier {
     }
     private static AccessibilityNodeInfo scrolledNode(Instrumentation test, String list, String description, NodeMatch match) throws Exception {
         scrollTop(test, list);
+        test.getUiAutomation().waitForIdle(250, 3000);
         for (int scroll = 0; scroll < 64; scroll++) {
             AccessibilityNodeInfo found = findNode(test, match);
             if (found != null) return found;
             AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
             scrollPartial(test, container);
             SystemClock.sleep(150);
+            test.getUiAutomation().waitForIdle(250, 3000);
         }
         return awaitNode(test, description, match);
     }
@@ -294,7 +296,7 @@ public final class NearbyRuntimeVerifier {
         int count = 0;
         while (!nodes.isEmpty() && count++ < 2000) {
             AccessibilityNodeInfo node = nodes.removeFirst();
-            if (node.isVisibleToUser() && match.matches(node)) return node;
+            if (node.isVisibleToUser() && match.matches(node) && node.refresh() && node.isVisibleToUser() && match.matches(node)) return node;
             for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) nodes.add(child); }
         }
         return null;
@@ -327,7 +329,7 @@ public final class NearbyRuntimeVerifier {
         return bytes.toByteArray();
     }
     private static void clickText(Instrumentation test, String text) throws Exception {
-        click(awaitNode(test, text, node -> textEquals(node, text) && clickableAncestor(node) != null));
+        click(test, awaitNode(test, text, node -> textEquals(node, text) && clickableAncestor(node) != null));
     }
     private static boolean textEquals(AccessibilityNodeInfo node, String expected) {
         CharSequence actual = node.getText();
@@ -344,16 +346,20 @@ public final class NearbyRuntimeVerifier {
         return uri.build();
     }
     private static void clickTag(Instrumentation test, String id) throws Exception {
-        click(awaitNode(test, id, node -> tag(node, id) && clickableAncestor(node) != null));
+        click(test, awaitNode(test, id, node -> tag(node, id) && clickableAncestor(node) != null));
     }
     private static boolean tag(AccessibilityNodeInfo node, String id) {
         String value = node.getViewIdResourceName();
         return value != null && (value.equals(id) || value.endsWith("/" + id));
     }
-    private static void click(AccessibilityNodeInfo node) {
+    private static void click(Instrumentation test, AccessibilityNodeInfo node) throws IOException {
+        String originalId = node.getViewIdResourceName();
         AccessibilityNodeInfo button = clickableAncestor(node);
-        if (button == null || !button.isEnabled() || !button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-            throw new AssertionError("Visible action rejected click");
+        if (button == null || !button.refresh() || !button.isVisibleToUser() || !button.isEnabled() ||
+            !button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            captureFailure(test);
+            throw new AssertionError("Visible action rejected click: " + originalId);
+        }
         SystemClock.sleep(150);
     }
     private static void back(Instrumentation test) {
@@ -381,6 +387,8 @@ public final class NearbyRuntimeVerifier {
     }
     private static AccessibilityNodeInfo awaitNode(Instrumentation test, String description, NodeMatch match) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 8000;
+        long refreshAfter = SystemClock.elapsedRealtime() + 700;
+        boolean refreshed = false;
         List<String> observed = new ArrayList<>();
         while (SystemClock.elapsedRealtime() < deadline) {
             observed.clear();
@@ -390,20 +398,30 @@ public final class NearbyRuntimeVerifier {
             int count = 0;
             while (!nodes.isEmpty() && count++ < 2000) {
                 AccessibilityNodeInfo node = nodes.removeFirst();
-                if (node.isVisibleToUser() && match.matches(node)) return node;
+                if (node.isVisibleToUser() && match.matches(node) && node.refresh() && node.isVisibleToUser() && match.matches(node)) return node;
                 if (node.isVisibleToUser() && observed.size() < 80)
                     observed.add(node.getClassName() + " / " + node.getText() + " / " + node.getViewIdResourceName());
                 for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) nodes.add(child); }
             }
+            if (!refreshed && observed.isEmpty() && SystemClock.elapsedRealtime() >= refreshAfter) {
+                // Reconnect the test's accessibility client once after a window
+                // transition; API26 can retain an empty stale active root.
+                test.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+                test.getUiAutomation();
+                refreshed = true;
+            }
             SystemClock.sleep(50);
         }
+        captureFailure(test);
+        throw new AssertionError("Optimized " + description + " unavailable. Observed: " + observed);
+    }
+    private static void captureFailure(Instrumentation test) throws IOException {
         android.graphics.Bitmap screenshot = test.getUiAutomation().takeScreenshot();
         if (screenshot != null) {
             File evidence = new File(test.getTargetContext().getExternalFilesDir("validation"), "optimized-nearby-control.png");
             try (FileOutputStream output = new FileOutputStream(evidence)) { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output); }
             finally { screenshot.recycle(); }
         }
-        throw new AssertionError("Optimized " + description + " unavailable. Observed: " + observed);
     }
     private static String line(InputStream input) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

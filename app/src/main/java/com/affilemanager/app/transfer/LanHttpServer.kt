@@ -238,8 +238,25 @@ class LanHttpServer(
     }
 
     private fun handle(socket: Socket) {
-        val input = BufferedInputStream(socket.getInputStream(), NearbyTransferTuning.IO_BUFFER_BYTES)
-        val output = BufferedOutputStream(socket.getOutputStream(), 64 * 1_024)
+        val input: BufferedInputStream
+        val output: BufferedOutputStream
+        try {
+            // stop() can close an accepted client before its queued worker runs.
+            input = BufferedInputStream(socket.getInputStream(), NearbyTransferTuning.IO_BUFFER_BYTES)
+            output = BufferedOutputStream(socket.getOutputStream(), 64 * 1_024)
+        } catch (error: java.io.IOException) {
+            // No response stream exists, so the client observes connection loss,
+            // never a successful upload. Intentional shutdown is not an error.
+            runCatching {
+                if (running.get() && diagnosticsEnabled()) onDiagnostic(TransferDiagnosticEvent(
+                    role = TransferRole.RECEIVE,
+                    phase = TransferPhase.OPEN,
+                    failure = TransferFailure.CONNECTION,
+                    errno = systemErrorNumber(error).coerceIn(0, 4096),
+                ))
+            }
+            return
+        }
         try {
             handleRequest(input, output, socket)
         } catch (error: Throwable) {

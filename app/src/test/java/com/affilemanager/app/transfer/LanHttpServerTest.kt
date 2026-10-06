@@ -18,6 +18,46 @@ class LanHttpServerTest {
     @get:Rule
     val temporary = TemporaryFolder()
 
+    @Test fun stoppedServerHandlesASocketClosedBeforeItsWorkerOpensTheStreams() {
+        val root = temporary.newFolder("closed-before-worker")
+        val diagnostics = mutableListOf<TransferDiagnosticEvent>()
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), diagnosticsEnabled = { true },
+            onDiagnostic = diagnostics::add).use { server ->
+            server.start()
+            server.close()
+            val socket = Socket().also { it.close() }
+            invokeHandle(server, socket)
+            assertTrue(diagnostics.isEmpty())
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun activeServerHandlesOutputStreamClosureWithoutLosingFilesOrPrivateErrorDetails() {
+        val root = temporary.newFolder("closed-during-stream-open")
+        val original = root.resolve("original.txt").apply { writeText("preserved") }
+        val diagnostics = mutableListOf<TransferDiagnosticEvent>()
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), diagnosticsEnabled = { true },
+            onDiagnostic = diagnostics::add).use { server ->
+            server.start()
+            val socket = object : Socket() {
+                override fun getInputStream(): java.io.InputStream = java.io.ByteArrayInputStream(byteArrayOf())
+                override fun getOutputStream(): java.io.OutputStream = throw java.net.SocketException("private fixture detail")
+            }
+            socket.use { invokeHandle(server, it) }
+            assertEquals("preserved", original.readText())
+            assertEquals(listOf("original.txt"), root.listFiles().orEmpty().map { it.name })
+            assertEquals(1, diagnostics.size)
+            assertEquals(TransferPhase.OPEN, diagnostics.single().phase)
+            assertEquals(TransferFailure.CONNECTION, diagnostics.single().failure)
+            assertFalse(diagnostics.single().line().contains("private fixture detail"))
+        }
+    }
+
+    private fun invokeHandle(server: LanHttpServer, socket: Socket) {
+        LanHttpServer::class.java.getDeclaredMethod("handle", Socket::class.java).apply { isAccessible = true }
+            .invoke(server, socket)
+    }
+
     @Test fun leavingOneGroupMemberDoesNotStopTheOrganizerOrDisconnectOtherMembers() {
         val root = temporary.newFolder("group-leave")
         val snapshots = java.util.concurrent.CopyOnWriteArrayList<List<NearbyGroupMember>>()

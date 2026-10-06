@@ -4,7 +4,14 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.44.1] - 2026-10-07
+## [0.44.2] - 2026-10-07
+
+- Includes the phone-to-phone recovery, private diagnostics and language fixes prepared for 0.44.0 below.
+- Stopping a LAN session with pending connections no longer crashes AF.
+
+## [0.44.1] - 2026-10-07 (unpublished)
+
+The final check caught a LAN shutdown race. This draft was not published; the fix is included in 0.44.2.
 
 - Includes the phone-to-phone recovery, private diagnostics and language fixes prepared for 0.44.0 below.
 - LAN session status messages now follow the selected interface language too.
