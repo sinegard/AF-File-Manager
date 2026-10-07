@@ -152,6 +152,9 @@ public final class NearbyRuntimeVerifier {
         File journal = new File(context.getFilesDir(), "transfer-diagnostics/events.log");
         if (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) || journal.exists())
             throw new AssertionError("Diagnostics must remain off and unwritten before explicit opt-in");
+        if (context.getSharedPreferences("ui_preferences_v1", Context.MODE_PRIVATE)
+                .getString("feature_visibility", "").contains("NEARBY_SHARE"))
+            throw new AssertionError("Owned fixture unexpectedly hides nearby sharing");
         clickTag(test, "nav_share");
         click(test, scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
         awaitNode(test, "English diagnostics privacy label", node -> textEquals(node, "Data stays on this phone."));
@@ -252,19 +255,20 @@ public final class NearbyRuntimeVerifier {
             AccessibilityNodeInfo found = findNode(test, match);
             if (found != null) return found;
             AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
-            scrollPartial(test, container);
+            scrollPartial(test, container, false);
             SystemClock.sleep(150);
             test.getUiAutomation().waitForIdle(250, 3000);
         }
         return awaitNode(test, description, match);
     }
-    private static void scrollPartial(Instrumentation test, AccessibilityNodeInfo container) {
+    private static void scrollPartial(Instrumentation test, AccessibilityNodeInfo container, boolean backwards) {
         // Full-viewport steps can skip labels at a viewport boundary with large fonts.
         android.graphics.Rect bounds = new android.graphics.Rect();
         container.getBoundsInScreen(bounds);
         if (bounds.height() < 100) throw new AssertionError("Scrollable fixture viewport unavailable");
-        float x = bounds.exactCenterX(), start = bounds.top + bounds.height() * .70f;
-        float end = bounds.top + bounds.height() * .40f;
+        float x = bounds.exactCenterX();
+        float start = bounds.top + bounds.height() * (backwards ? .25f : .70f);
+        float end = bounds.top + bounds.height() * (backwards ? .75f : .40f);
         long down = SystemClock.uptimeMillis();
         injectTouch(test, down, android.view.MotionEvent.ACTION_DOWN, x, start);
         for (int step = 1; step <= 8; step++) {
@@ -284,10 +288,18 @@ public final class NearbyRuntimeVerifier {
     private static void scrollTop(Instrumentation test, String list) throws Exception {
         AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
         for (int scroll = 0; scroll < 16; scroll++) {
-            if (!container.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return;
+            if (!container.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
+                // False means the action was not performed, not necessarily
+                // that the list reached its start. Use a bounded user gesture.
+                android.graphics.Rect bounds = new android.graphics.Rect();
+                container.getBoundsInScreen(bounds);
+                System.out.println("AF_FIXTURE_SCROLL_BACK " + list + " " + scroll + " " + bounds);
+                scrollPartial(test, container, true);
+            }
             SystemClock.sleep(150);
             container = awaitNode(test, list, node -> tag(node, list));
         }
+        test.getUiAutomation().waitForIdle(250, 3000);
     }
     private static AccessibilityNodeInfo findNode(Instrumentation test, NodeMatch match) {
         ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
