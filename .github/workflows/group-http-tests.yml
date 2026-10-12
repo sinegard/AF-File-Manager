@@ -20,7 +20,6 @@ jobs:
       MKL_NUM_THREADS: '4'
       TOKENIZERS_PARALLELISM: 'false'
       HF_HUB_DISABLE_TELEMETRY: '1'
-      HF_HUB_CACHE: ${{ runner.temp }}/af-translation-model
     steps:
       - name: Check out the temporary catalog
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -43,6 +42,8 @@ jobs:
           python -m pip install --no-cache-dir transformers==5.16.1 sentencepiece==0.2.1
           python -m pip check
       - name: Generate only new catalog entries with the pinned model
+        env:
+          HF_HUB_CACHE: ${{ runner.temp }}/af-translation-model
         run: |
           python -m unittest discover -s scripts -p test_generate_ui_translations.py
           python - <<'PY'
