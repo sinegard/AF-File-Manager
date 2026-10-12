@@ -1,4 +1,37 @@
 {
+  "Crop image": {
+    "af": "Sny die prent", "ar": "اقتصاص الصورة", "be": "Абрэзаць відарыс", "bg": "Изрязване на изображение",
+    "bn": "ছবি ক্রপ করুন", "ca": "Retalla la imatge", "cs": "Oříznout obrázek", "cy": "Torri llun",
+    "da": "Beskær billede", "de": "Bild zuschneiden", "el": "Περικοπή εικόνας", "eo": "Tondi bildon",
+    "es": "Recortar imagen", "et": "Pildi kärpimine", "fa": "برش تصویر", "fi": "Rajaa kuva",
+    "fr": "Recadrer l’image", "ga": "Bearr an íomhá", "gl": "Recortar imaxe", "gu": "છબી કાપો",
+    "he": "חיתוך תמונה", "hi": "छवि काटें", "hr": "Obreži sliku", "ht": "Koupe imaj",
+    "hu": "Kép kivágása", "id": "Pangkas gambar", "is": "Skera mynd", "it": "Ritaglia immagine",
+    "ja": "画像を切り抜く", "ka": "სურათის ამოჭრა", "kn": "ಚಿತ್ರವನ್ನು ಕತ್ತರಿಸಿ", "ko": "이미지 자르기",
+    "lv": "Apgriezt attēlu", "mk": "Исечи слика", "mr": "प्रतिमा कापा", "ms": "Pangkas imej",
+    "mt": "Aqta’ l-immaġni", "nl": "Afbeelding bijsnijden", "no": "Beskjær bilde", "pl": "Przytnij obraz",
+    "pt": "Recortar imagem", "ro": "Decupează imaginea", "ru": "Обрезать изображение", "sk": "Orezať obrázok",
+    "sl": "Obreži sliko", "sq": "Prerja e imazhit", "sv": "Beskär bild", "sw": "Kata picha",
+    "ta": "படத்தைச் செதுக்கு", "te": "చిత్రాన్ని కత్తిరించు", "th": "ครอบตัดรูปภาพ", "tl": "I-crop ang larawan",
+    "tr": "Görüntüyü kırp", "uk": "Обрізати зображення", "ur": "تصویر تراشیں", "vi": "Cắt ảnh", "zh": "裁剪图片"
+  },
+  "Crop": {
+    "af": "Sny", "ar": "اقتصاص", "be": "Абрэзаць", "bg": "Изрязване",
+    "bn": "ক্রপ", "ca": "Retalla", "cs": "Oříznout", "cy": "Torri",
+    "da": "Beskær", "de": "Zuschneiden", "el": "Περικοπή", "eo": "Tondi",
+    "es": "Recortar", "et": "Kärbi", "fa": "برش", "fi": "Rajaa",
+    "fr": "Recadrer", "ga": "Bearr", "gl": "Recortar", "gu": "કાપો",
+    "he": "חיתוך", "hi": "काटें", "hr": "Obreži", "ht": "Koupe",
+    "hu": "Kivágás", "id": "Pangkas", "is": "Skera", "it": "Ritaglia",
+    "ja": "切り抜き", "ka": "ამოჭრა", "kn": "ಕತ್ತರಿಸಿ", "ko": "자르기",
+    "lv": "Apgriezt", "mk": "Исечи", "mr": "कापा", "ms": "Pangkas",
+    "mt": "Aqta’", "nl": "Bijsnijden", "no": "Beskjær", "pl": "Przytnij",
+    "pt": "Recortar", "ro": "Decupează", "ru": "Обрезать", "sk": "Orezať",
+    "sl": "Obreži", "sq": "Prit", "sv": "Beskär", "sw": "Kata",
+    "ta": "செதுக்கு", "te": "కత్తిరించు", "th": "ครอบตัด", "tl": "I-crop",
+    "tr": "Kırp", "uk": "Обрізати", "ur": "تراشیں", "vi": "Cắt", "zh": "裁剪"
+  },
+  "Reverse sort order": {"sl": "Obrnjen vrstni red razvrščanja"},
   "Transfer diagnostics": {
     "af": "Oordragdiagnostiek", "ar": "تشخيص نقل الملفات", "be": "Дыягностыка перадачы", "bg": "Диагностика на прехвърлянето",
     "bn": "ফাইল স্থানান্তর নির্ণয়", "ca": "Diagnòstic de transferència", "cs": "Diagnostika přenosu", "cy": "Diagnosteg trosglwyddo",
