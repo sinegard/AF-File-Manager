@@ -342,6 +342,7 @@ fun FilePreviewDialog(
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
     backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem> = emptyList(),
+    onApplyMediaExport: (com.affilemanager.app.media.editing.MediaExportFile) -> Boolean = { false },
 ) {
     val context = LocalContext.current
     val summaryDateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
@@ -355,7 +356,12 @@ fun FilePreviewDialog(
     var showPdfSigner by remember(source.key) { mutableStateOf(false) }
     var pdfApplyBaseline by remember(source.key) { mutableStateOf<String?>(null) }
     var showSaveAs by remember(source.key) { mutableStateOf(false) }
+    var mediaMode by remember(source.key) { mutableStateOf<MediaEditorMode?>(null) }
+    var launchMediaWhenReady by remember(source.key) { mutableStateOf<MediaEditorMode?>(null) }
+    var mediaApplyBaseline by remember(source.key) { mutableStateOf<String?>(null) }
     var showDetails by remember(source.key) { mutableStateOf(false) }
+    val webDocument = source.extension in setOf("html", "htm", "mht", "mhtml")
+    var showWebPage by remember(source.key) { mutableStateOf(source.extension in setOf("mht", "mhtml")) }
     var confirmDelete by remember(source.key) { mutableStateOf(false) }
     var showSplitExtract by remember(source.key) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -372,6 +378,12 @@ fun FilePreviewDialog(
     val actionSource = editSession
         ?.let { PreviewSource.Working(source, it) }
         ?: source
+    val mediaEditingAvailable = target !is PreviewTarget.ArchiveEntry && target !is PreviewTarget.Vault &&
+        actionSource.kind in setOf(EntryKind.AUDIO, EntryKind.VIDEO)
+    val openMediaEditor: (MediaEditorMode) -> Unit = { mode ->
+        if (editSession == null) { launchMediaWhenReady = mode; onPrepareEdit() }
+        else mediaMode = mode
+    }
     val saveAsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.data?.let(onSaveEditAs)
     }
@@ -393,6 +405,17 @@ fun FilePreviewDialog(
 
     LaunchedEffect(source.key, internalEditor) {
         if (internalEditor) onPrepareEdit()
+    }
+    LaunchedEffect(launchMediaWhenReady, editSession?.id, activeEditState?.preparing, activeEditState?.error) {
+        val mode = launchMediaWhenReady ?: return@LaunchedEffect
+        if (activeEditState?.error != null) { launchMediaWhenReady = null; return@LaunchedEffect }
+        if (editSession != null) { launchMediaWhenReady = null; mediaMode = mode }
+    }
+    LaunchedEffect(mediaApplyBaseline, activeEditState?.modifyingMedia, editSession?.workingRevision?.sha256, activeEditState?.error) {
+        val baseline = mediaApplyBaseline ?: return@LaunchedEffect
+        if (activeEditState?.modifyingMedia == true) return@LaunchedEffect
+        if (activeEditState?.error == null && editSession?.workingRevision?.sha256 != baseline) showSaveAs = true
+        if (activeEditState?.error != null || editSession?.workingRevision?.sha256 != baseline) mediaApplyBaseline = null
     }
     LaunchedEffect(
         launchExternalEditorWhenReady,
@@ -461,15 +484,18 @@ fun FilePreviewDialog(
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(editSession?.displayName ?: source.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(entrySummary(context, source, summaryDateFormat), style = MaterialTheme.typography.bodySmall,
+                        Text(entrySummary(context, actionSource, summaryDateFormat), style = MaterialTheme.typography.bodySmall,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     if (hashRunning) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    if (source.extension in setOf("html", "htm")) TextButton(onClick = { showWebPage = !showWebPage }, modifier = Modifier.testTag("web_preview_mode")) {
+                        LText(if (showWebPage) "Pirminis tekstas" else "Puslapis")
+                    }
                     PreviewActionsMenu(
                         sourceKey = source.key,
-                        editEnabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifyingPdf != true,
+                        editEnabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifying != true,
                         hashRunning = hashRunning,
-                        onDetails = if (source.kind in setOf(EntryKind.IMAGE, EntryKind.AUDIO, EntryKind.VIDEO)) ({ showDetails = true }) else null,
+                        onDetails = if (actionSource.kind in setOf(EntryKind.IMAGE, EntryKind.AUDIO, EntryKind.VIDEO)) ({ showDetails = true }) else null,
                         onOpenWith = {
                             runCatching { openWith(context, actionSource) }
                                 .onFailure { actionError = it.message ?: "Programų pasirinkiklio atidaryti nepavyko" }
@@ -504,7 +530,7 @@ fun FilePreviewDialog(
                                 }
                             }
                         },
-                        onDelete = onDelete?.let { action -> { confirmDelete = true } },
+                        onDelete = onDelete?.takeUnless { activeEditState?.exportOnly == true || activeEditState?.modifyingMedia == true }?.let { { confirmDelete = true } },
                     )
                 }
                 HorizontalDivider()
@@ -523,7 +549,18 @@ fun FilePreviewDialog(
                     )
                 }
 
-                when (target) {
+                if (mediaEditingAvailable) com.affilemanager.app.ui.components.AfActionRow(Modifier.padding(horizontal = 10.dp)) {
+                    val enabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifying != true
+                    TextButton(onClick = { openMediaEditor(MediaEditorMode.TRIM) }, enabled = enabled, modifier = Modifier.testTag("open_media_trim")) { LText("Kirpti") }
+                    if (actionSource.kind == EntryKind.VIDEO) {
+                        TextButton(onClick = { openMediaEditor(MediaEditorMode.EXTRACT_AUDIO) }, enabled = enabled, modifier = Modifier.testTag("open_media_audio")) { LText("Išgauti garsą") }
+                        TextButton(onClick = { openMediaEditor(MediaEditorMode.COMPRESS) }, enabled = enabled, modifier = Modifier.testTag("open_media_compress")) { LText("Suspausti") }
+                    }
+                }
+
+                // Dispose the ordinary preview player while editing; two decoders must not compete.
+                if (mediaMode != null || launchMediaWhenReady != null) Spacer(Modifier.weight(1f))
+                else if (webDocument && showWebPage) OfflineWebPreview(actionSource) else when (target) {
                     is PreviewTarget.Archive -> ArchivePreview(
                         file = target.file,
                         entries = target.entries,
@@ -596,7 +633,13 @@ fun FilePreviewDialog(
         }
     }
 
-    if (showDetails) MediaDetailsDialog(source, onDismiss = { showDetails = false })
+    if (showDetails) MediaDetailsDialog(actionSource, onDismiss = { showDetails = false })
+    if (mediaMode != null && editSession != null) MediaEditorDialog(
+        source = PreviewSource.Working(source, editSession), mode = requireNotNull(mediaMode),
+        onDismiss = { mediaMode = null }, onExported = { exported ->
+            onApplyMediaExport(exported).also { accepted -> if (accepted) { hash = null; mediaApplyBaseline = editSession.workingRevision.sha256 } }
+        },
+    )
     if (showSplitExtract) {
         val file = source.localFile
         if (file != null) ArchiveExtractionDialog(
@@ -761,9 +804,9 @@ private fun FileContentPreview(
         ?: source
     when {
         source.extension == "afvault" -> PropertiesPreview(source, "Šifruotas AF File Manager failas. Jį galima iššifruoti tik atidarius iš vietinės saugyklos.")
-        source.kind == EntryKind.IMAGE -> ImagePreview(displayedSource, canNavigateMedia, onPreviousMedia, onNextMedia)
-        source.extension == "pdf" || source.mimeType(context) == "application/pdf" -> PdfPreview(displayedSource)
-        source.kind == EntryKind.VIDEO || source.kind == EntryKind.AUDIO -> MediaPreview(
+        displayedSource.kind == EntryKind.IMAGE -> ImagePreview(displayedSource, canNavigateMedia, onPreviousMedia, onNextMedia)
+        displayedSource.extension == "pdf" || displayedSource.mimeType(context) == "application/pdf" -> PdfPreview(displayedSource)
+        displayedSource.kind == EntryKind.VIDEO || displayedSource.kind == EntryKind.AUDIO -> MediaPreview(
             displayedSource,
             canNavigateMedia,
             onPreviousMedia,
@@ -786,6 +829,33 @@ private fun FileContentPreview(
             onSaveAs = onSaveAs,
         )
         else -> PropertiesPreview(displayedSource)
+    }
+}
+
+@Composable
+internal fun ReadOnlyFilePreview(source: PreviewSource) {
+    val context = LocalContext.current
+    when {
+        source.kind == EntryKind.IMAGE -> ImagePreview(source, false, {}, {})
+        source.extension == "pdf" -> PdfPreview(source)
+        source.extension in setOf("html", "htm", "mht", "mhtml") -> OfflineWebPreview(source)
+        source.kind in setOf(EntryKind.AUDIO, EntryKind.VIDEO) -> MediaPreview(source, false, {}, {}, {}, emptyList())
+        source.kind == EntryKind.APK && source.localFile != null -> ApkPreview(requireNotNull(source.localFile))
+        EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind) -> {
+            val text by produceState<Result<String>?>(null, source.key) {
+                value = withContext(Dispatchers.IO) { runCatching {
+                    source.openInputStream(context).use { input ->
+                        val bytes = OfflineWebDocument.readBounded(input, 256 * 1024)
+                        bytes.toString(Charsets.UTF_8)
+                    }
+                } }
+            }
+            if (text?.isFailure == true) PreviewLoadError(requireNotNull(text?.exceptionOrNull()))
+            else androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(text?.getOrNull().orEmpty(), Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp))
+            }
+        }
+        else -> PropertiesPreview(source)
     }
 }
 
@@ -2067,7 +2137,7 @@ private fun FileEditActions(
     onSaveAs: () -> Unit,
 ) {
     val session = state.session
-    val busy = state.preparing || state.saving || state.modifyingPdf
+    val busy = state.preparing || state.saving || state.modifying
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -2082,6 +2152,7 @@ private fun FileEditActions(
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                 LText(
                     when {
+                        state.modifyingMedia -> "Medija perkeliama į privačią darbinę kopiją…"
                         state.modifyingPdf -> "Parašas įrašomas į privačią darbinę kopiją…"
                         state.preparing -> "Ruošiama saugi redaguojama kopija…"
                         state.saving -> "Išsaugoma ir patikrinama…"
@@ -2101,7 +2172,7 @@ private fun FileEditActions(
             ) {
                 Button(
                     onClick = onSave,
-                    enabled = session != null && state.hasOriginChanges && session.origin.canWrite && !busy,
+                    enabled = session != null && state.hasOriginChanges && session.origin.canWrite && !busy && !state.exportOnly,
                     modifier = Modifier.testTag("save-edit-original"),
                 ) {
                     Icon(Icons.Rounded.Save, contentDescription = null)

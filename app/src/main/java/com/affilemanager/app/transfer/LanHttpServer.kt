@@ -60,6 +60,7 @@ internal interface TemporaryLanServer : AutoCloseable {
     fun cancelNearbyFile(batchId: String, fileIndex: Int): Boolean = false
     fun removeGroupMember(pairing: NearbyPairing): Boolean = false
     fun setGroupMessagesBlocked(pairing: NearbyPairing, blocked: Boolean): Boolean = false
+    fun setGroupBanner(bytes: ByteArray?): Boolean = false
 }
 
 class LanHttpServer(
@@ -84,10 +85,24 @@ class LanHttpServer(
     private val onMutation: (List<File>) -> Unit = {},
     private val onDiagnostic: (TransferDiagnosticEvent) -> Unit = {},
     private val diagnosticsEnabled: () -> Boolean = { false },
-    private val systemErrorNumber: (Throwable) -> Int = { 0 },
+    private val systemErrorNumber: (Throwable) -> Int = TransferFileError::errno,
     private val storageKind: TransferStorage = TransferStorage.UNKNOWN,
+    private val receivedFileCommitter: ReceivedFileCommitter = ReceivedFileCommitter(),
+    private val concurrentUploads: Int = 1,
+    receiveDestinations: Map<com.affilemanager.app.model.EntryKind, File> = emptyMap(),
+    groupBanner: ByteArray? = null,
 ) : TemporaryLanServer {
-    private val nearbyFiles = NearbyReceiveFiles()
+    @Volatile private var banner = groupBanner?.also(NearbyGroupBanner::validate)?.copyOf()
+    private fun bannerRevision() = banner?.let { bytes -> java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { "%02x".format(it) } } ?: "none"
+    override fun setGroupBanner(bytes: ByteArray?): Boolean {
+        if (!groupMode || !running.get()) return false
+        banner = bytes?.also(NearbyGroupBanner::validate)?.copyOf()
+        return true
+    }
+    private val receiveTargets = NearbyReceiveDestinations(rootDirectory, receiveDestinations)
+    private val payloadAdmission = java.util.concurrent.Semaphore(concurrentUploads.also { require(it in 1..5) })
+    private val nearbyFiles = NearbyReceiveFiles(concurrentUploads)
     private val nearbyProgressLock = Any()
     private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
     private data class NearbyUploadKey(val batchId: String?, val fileIndex: Int)
@@ -141,8 +156,8 @@ class LanHttpServer(
     private val codeConsumed = AtomicBoolean(false)
     private val cookieToken = randomToken(24)
     private val executor = ThreadPoolExecutor(
-        MAX_CONCURRENT_REQUESTS,
-        MAX_CONCURRENT_REQUESTS,
+        maxOf(MAX_CONCURRENT_REQUESTS, concurrentUploads + 1),
+        maxOf(MAX_CONCURRENT_REQUESTS, concurrentUploads + 1),
         10L,
         TimeUnit.SECONDS,
         ArrayBlockingQueue(MAX_QUEUED_REQUESTS),
@@ -414,7 +429,14 @@ class LanHttpServer(
                     200,
                     NearbyGroupCodec.encode(members).toString(StandardCharsets.UTF_8),
                     "application/json; charset=utf-8",
+                    listOf("X-AF-Banner-Revision: ${bannerRevision()}"),
                 )
+            }
+            request.method == "GET" && request.path == "/nearby/group/banner" -> {
+                require(groupMode && !readOnly) { "Užklausa atmesta" }
+                val image = banner
+                if (image == null) writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
+                else { writeHeaders(output, 200, "image/jpeg", image.size.toLong(), emptyList()); output.write(image); output.flush() }
             }
             request.method == "POST" && request.path == "/nearby/message" -> {
                 require(!readOnly && request.contentLength in 1..MAX_NEARBY_MESSAGE_BYTES.toLong()) { "Užklausa atmesta" }
@@ -448,15 +470,22 @@ class LanHttpServer(
             request.method == "POST" && request.path == "/mkdir" && readOnly ->
                 writeText(output, 403, t("Ši sesija leidžia tik skaityti"), "text/plain; charset=utf-8")
             request.method == "POST" && request.path == "/mkdir" -> {
-                nearbyFiles.requireBatch(request.headers["x-af-batch-id"])
+                nearbyFiles.requireReadyBatch(request.headers["x-af-batch-id"])
                 createDirectory(request, output)
             }
             request.method == "POST" && request.path == "/upload" -> {
+                // A queued/stale batch is invalid regardless of whether the payload slots are busy.
+                nearbyFiles.requireReadyBatch(request.headers["x-af-batch-id"])
+                if (!payloadAdmission.tryAcquire()) {
+                    writeText(output, 429, t("Gavėjas šiuo metu užimtas"), "text/plain; charset=utf-8")
+                    return
+                }
                 socket.soTimeout = UPLOAD_SOCKET_TIMEOUT_MILLIS
                 val fileIndex = request.query["fileIndex"]?.toIntOrNull() ?: 1
                 uploadClients[socket] = NearbyUploadKey(request.headers["x-af-batch-id"], fileIndex)
                 if (boundPeer != null) uploadPeers[socket] = boundPeer
                 try { upload(request, input, output, boundPeer) } finally {
+                    payloadAdmission.release()
                     uploadClients.remove(socket)
                     uploadPeers.remove(socket)
                 }
@@ -526,7 +555,7 @@ class LanHttpServer(
             page,
             "text/html; charset=utf-8",
             extraHeaders = listOf("Set-Cookie: af_session=$token; HttpOnly; SameSite=Strict; Path=/",
-                "X-AF-Session-Expires: ${active.expiresAtMillis}", "X-AF-Queue-Version: 1"),
+                "X-AF-Session-Expires: ${active.expiresAtMillis}", "X-AF-Queue-Version: 1", "X-AF-Concurrent-Uploads: $concurrentUploads"),
         )
     }
 
@@ -592,6 +621,7 @@ class LanHttpServer(
         var received = 0L
         var committed = false
         var validated = false
+        var diagnosticRoot = root
         var partial: File? = null
         var progress: ((Boolean, TransferFailure?) -> Unit)? = null
         fun diagnostic(failure: TransferFailure? = null, errno: Int = 0) {
@@ -599,23 +629,28 @@ class LanHttpServer(
             // Diagnostics must never change the outcome of a file operation.
             runCatching { onDiagnostic(TransferDiagnosticEvent(
                 TransferRole.RECEIVE, phase, batchId, fileIndex, received, length,
-                failure = failure, errno = errno, freeBytes = root.usableSpace, storage = storageKind,
+                failure = failure, errno = errno, freeBytes = diagnosticRoot.usableSpace,
+                storage = if (diagnosticRoot == root) storageKind else TransferStorage.UNKNOWN,
             )) }
         }
         try {
             require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
-            val directory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
-            if (!directory.canWrite()) throw java.nio.file.AccessDeniedException(directory.path)
+            val requestedDirectory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
             val name = FileSystemRules.validateFileName(request.query["name"].orEmpty()).getOrThrow()
-            val requested = File(directory, name)
-            val target = FileSystemRules.keepBothTarget(requested)
-            require(FileSystemRules.isContained(root, target)) { "Tikslas išeina už pasirinkto katalogo" }
-            val staging = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
-            partial = staging
-            val relativePath = directory.relativeTo(root).invariantSeparatorsPath
-                .takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
+            val requestedRelativeDirectory = requestedDirectory.relativeTo(root).invariantSeparatorsPath
+            val relativePath = requestedRelativeDirectory.takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
+            // Validate the wire path before creating anything in an explicitly chosen type destination.
             nearbyFiles.validate(fileIndex, relativePath, length, batchId)
             validated = true
+            val (destinationRoot, directory) = if (batchId != null && nearbyFiles.hasManifest()) receiveTargets.directory(requestedRelativeDirectory, name)
+                else root to requestedDirectory
+            diagnosticRoot = destinationRoot
+            if (!directory.canWrite()) throw java.nio.file.AccessDeniedException(directory.path)
+            val requested = File(directory, name)
+            val target = FileSystemRules.keepBothTarget(requested)
+            require(FileSystemRules.isContained(destinationRoot, target)) { "Tikslas išeina už pasirinkto katalogo" }
+            val staging = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
+            partial = staging
             val totalBytes = request.query["batchBytes"]?.toLongOrNull()
                 ?.coerceIn(length, NearbySourcePreparer.MAX_TOTAL_BYTES) ?: length
             val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
@@ -709,8 +744,24 @@ class LanHttpServer(
                 throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
             check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
             // A file created after keep-both planning must never be silently replaced.
-            java.nio.file.Files.move(staging.toPath(), target.toPath())
+            receivedFileCommitter.commit(staging, target, length, checkpoint = {
+                if (!running.get() || nearbyFiles.isCancelled(batchId, fileIndex))
+                    throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
+                check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
+            }, onFallback = { failure ->
+                diagnostic(TransferFailure.classify(failure, phase), systemErrorNumber(failure))
+                phase = TransferPhase.COMMIT_COPY
+                diagnostic()
+            })
             committed = true
+            // The fallback leaves the owned staging file behind. Remove it before
+            // publishing success or acknowledging the upload, not afterwards.
+            // A verified destination must never be retried because unlink failed;
+            // retain the finally cleanup attempt and the diagnostic in that case.
+            if (staging.exists() && !staging.delete()) {
+                phase = TransferPhase.NOTIFY
+                diagnostic(TransferFailure.STORAGE)
+            }
             phase = TransferPhase.NOTIFY
             publishProgress(completed = true)
             onMutation(listOf(target))
@@ -896,6 +947,7 @@ class LanHttpServer(
             404 -> "Not Found"
             408 -> "Request Timeout"
             410 -> "Gone"
+            429 -> "Too Many Requests"
             else -> "Error"
         }
         val header = buildString {

@@ -65,6 +65,8 @@ object LanTransferController {
         receiverName: String = "AF File Manager",
         groupName: String = "AF group",
         groupOrganizer: Boolean = true,
+        receiveConfiguration: NearbyReceiveConfiguration = NearbyReceiveConfiguration(),
+        groupBanner: ByteArray? = null,
     ) {
         if (bindAddress == null) WifiDirectController.stop(context)
         if (!groupMode) NearbyGroupController.sessionStopped()
@@ -84,12 +86,22 @@ object LanTransferController {
             .putExtra(LanTransferService.EXTRA_GROUP_NAME, groupName.take(NearbyGroupInvite.MAX_GROUP_NAME_LENGTH))
             .putExtra("bind_address", bindAddress)
             .putExtra("group_organizer", groupOrganizer)
+            .putExtra("concurrent_uploads", receiveConfiguration.concurrentUploads)
+            .putExtra("type_destinations", receiveConfiguration.pathsJson())
+            .putStringArrayListExtra("receive_allowed_roots", ArrayList(receiveConfiguration.approvedRootPaths))
+            .putExtra("group_banner_bytes", groupBanner?.also(NearbyGroupBanner::validate))
         ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {
         context.startService(Intent(context, LanTransferService::class.java).setAction(LanTransferService.ACTION_STOP))
         WifiDirectController.stop(context)
+    }
+
+    internal fun updateGroupBanner(context: Context, bytes: ByteArray?) {
+        bytes?.let(NearbyGroupBanner::validate)
+        context.startService(Intent(context, LanTransferService::class.java).setAction("com.affilemanager.app.action.GROUP_BANNER")
+            .putExtra("group_banner_bytes", bytes))
     }
 
     fun cancelIncomingFile(context: Context, batchId: String, fileIndex: Int) {
@@ -186,6 +198,11 @@ class LanTransferService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "com.affilemanager.app.action.GROUP_BANNER") {
+            runCatching { server?.setGroupBanner(intent.getByteArrayExtra("group_banner_bytes")) }
+                .onFailure { LanTransferController.publish(LanTransferController.state.value.copy(message = "Grupės paveikslėlio pakeisti nepavyko")) }
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_STOP) {
             stopServer("Sustabdyta naudotojo")
             return START_NOT_STICKY
@@ -275,6 +292,11 @@ class LanTransferService : Service() {
         )
         runCatching {
             val root = File(rootPath).canonicalFile
+            val receiveConfiguration = NearbyReceiveConfiguration.parse(intent.getIntExtra("concurrent_uploads", 1), intent.getStringExtra("type_destinations").orEmpty(), intent.getStringArrayListExtra("receive_allowed_roots").orEmpty())
+            receiveConfiguration.checkMemory()
+            // These paths come only from the non-exported service's app-owned start request, never a peer.
+            val approvedRoots = receiveConfiguration.approvedRootPaths.map(::File).ifEmpty { listOf(root) }
+            val typeDestinations = receiveConfiguration.approvedDestinations(approvedRoots)
             require(root.isDirectory && root.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
             val preferred = intent.getStringExtra("bind_address")
             val address = if (preferred == null) privateLanAddress() else {
@@ -310,6 +332,9 @@ class LanTransferService : Service() {
                     requestedPort = options.port,
                     requestedCode = options.password.ifBlank { null },
                     readOnly = options.readOnly,
+                    concurrentUploads = receiveConfiguration.concurrentUploads,
+                    receiveDestinations = typeDestinations,
+                    groupBanner = intent.getByteArrayExtra("group_banner_bytes"),
                     language = appLanguageContext().resources.configuration.locales[0].language,
                     onNearbyPeer = { peer, expiry ->
                         NearbyChatController.beginSession(peer)

@@ -304,18 +304,6 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                             }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 if (state.category == FileCategory.INSTALLED_APPS) {
-                                    com.affilemanager.app.data.InstalledAppScope.entries.forEach { scope ->
-                                        DropdownMenuItem(
-                                            text = { LText(when (scope) {
-                                                com.affilemanager.app.data.InstalledAppScope.USER -> "Naudotojo programos"
-                                                com.affilemanager.app.data.InstalledAppScope.ALL -> "Visos programos"
-                                                com.affilemanager.app.data.InstalledAppScope.SYSTEM -> "Sisteminės programos"
-                                            }) },
-                                            leadingIcon = { Checkbox(checked = state.appScope == scope, onCheckedChange = null) },
-                                            onClick = { menu = false; viewModel.setInstalledAppScope(scope) },
-                                            modifier = Modifier.testTag("installed_apps_scope_${scope.name}"),
-                                        )
-                                    }
                                     DropdownMenuItem(
                                         text = { LText("Programų duomenų aplankai") },
                                         leadingIcon = { Icon(Icons.Rounded.Folder, contentDescription = null) },
@@ -370,7 +358,19 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                         modifier = Modifier.testTag("directory_search_field_category"),
                     )
                 }
-                if (state.category != FileCategory.INSTALLED_APPS) {
+                if (state.category == FileCategory.INSTALLED_APPS) {
+                    LazyRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("installed_apps_filters"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(com.affilemanager.app.data.InstalledAppScope.entries) { scope ->
+                            FilterChip(selected = state.appScope == scope, onClick = { viewModel.setInstalledAppScope(scope) },
+                                label = { LText(when (scope) {
+                                    com.affilemanager.app.data.InstalledAppScope.USER -> "Naudotojo programos"
+                                    com.affilemanager.app.data.InstalledAppScope.ALL -> "Visos programos"
+                                    com.affilemanager.app.data.InstalledAppScope.SYSTEM -> "Sisteminės programos"
+                                }) }, modifier = Modifier.testTag("installed_apps_scope_${scope.name}"))
+                        }
+                    }
+                } else {
                   Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                       horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.widthIn(max = 180.dp)) {
@@ -460,6 +460,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                                 state.gridStyle,
                                 largestSizeBytes,
                                 viewModel,
+                                onOpen = { if (state.category == FileCategory.INSTALLED_APPS) infoTarget = it else viewModel.openFileCategoryEntry(it) },
                             )
                         }
                         if (state.loadingMore) {
@@ -488,6 +489,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                                 state.spacingScalePercent,
                                 largestSizeBytes,
                                 viewModel,
+                                onOpen = { if (state.category == FileCategory.INSTALLED_APPS) infoTarget = it else viewModel.openFileCategoryEntry(it) },
                             )
                             HorizontalDivider()
                         }
@@ -531,7 +533,14 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
             },
         )
     }
-    infoTarget?.let { entry -> FileInfoDialog(entry = entry, onDismiss = { infoTarget = null }) }
+    infoTarget?.let { entry ->
+        if (state.category == FileCategory.INSTALLED_APPS && entry.packageName != null) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            com.affilemanager.app.ui.preview.ApkInstallConfirmationDialog(
+                cacheKey = entry.absolutePath, load = { com.affilemanager.app.apk.ApkInstallMetadataReader.standalone(context, entry.file) },
+                onDismiss = { infoTarget = null }, onInstall = { infoTarget = null; viewModel.launchInstalledApp(entry) }, installedApp = true)
+        } else FileInfoDialog(entry = entry, onDismiss = { infoTarget = null })
+    }
     if (confirmTrash) {
         val selected = state.entries.filter { it.absolutePath in state.selectedPaths }
         DeleteConfirmationDialog(
@@ -554,12 +563,13 @@ private fun CategoryListItem(
     spacingScalePercent: Int,
     largestSizeBytes: Long?,
     viewModel: MainViewModel,
+    onOpen: (FileEntry) -> Unit,
 ) {
     val iconSize = (46f * iconScalePercent / 100f).dp
     val verticalPadding = (8f * spacingScalePercent / 100f).dp
     Row(
         modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else viewModel.openFileCategoryEntry(entry) },
+            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else onOpen(entry) },
             onLongClick = { viewModel.toggleFileCategorySelection(entry.absolutePath) },
         ).padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -599,12 +609,13 @@ private fun CategoryGridItem(
     gridStyle: DirectoryGridStyle,
     largestSizeBytes: Long?,
     viewModel: MainViewModel,
+    onOpen: (FileEntry) -> Unit,
 ) {
     val height = (100f * iconScalePercent / 100f).dp
     val padding = (8f * spacingScalePercent / 100f).dp
     Card(
         modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else viewModel.openFileCategoryEntry(entry) },
+            onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else onOpen(entry) },
             onLongClick = { viewModel.toggleFileCategorySelection(entry.absolutePath) },
         ),
         shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),

@@ -57,7 +57,7 @@ object FileSystemRules {
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg" -> EntryKind.IMAGE
             "mp4", "mkv", "webm", "avi", "mov", "m4v", "3gp" -> EntryKind.VIDEO
             "mp3", "wav", "flac", "ogg", "m4a", "aac", "opus" -> EntryKind.AUDIO
-            "pdf", "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "html", "htm", "smil", "smi",
+            "pdf", "txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "html", "htm", "mht", "mhtml", "smil", "smi",
             "lua", "kt", "kts", "java", "c", "h", "cpp", "hpp", "cs", "js", "jsx", "ts", "tsx", "py", "sh", "sql",
             "css", "scss", "sass", "less", "php", "rb", "go", "rs", "swift", "dart", "vue", "svelte", "smali",
             "gradle", "properties", "toml", "ini", "conf", "cfg", "proto", "graphql", "gql", "env", "gitignore",

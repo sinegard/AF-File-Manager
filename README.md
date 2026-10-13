@@ -14,6 +14,7 @@ AF File Manager is built for Android phones and tablets with Kotlin and Jetpack 
 - Add missed items with **Copy more**, then paste one combined clipboard between local storage and connected servers.
 - Preview images, PDFs, media, text, code, APKs, metadata, and archive contents. PDFs can also receive a visible handwritten signature on a chosen page, with placement and size controls.
 - Edit text and code locally or on a server, with Save, Save As, encoding and line-ending controls, conflict detection, and temporary-file cleanup.
+- Trim or crop media, extract audio, change speed, pitch, volume, tags and cover art, and save MP4, M4A, WAV or GIF copies. These optional tools run on the device; codec support and available memory determine the supported settings.
 - Analyze storage for large files, duplicates, similar photos, empty folders, and leftovers without deleting anything automatically.
 - Connect through SMB 2/3, SFTP, WebDAV, FTP, and FTPS, or authorize a Nextcloud account in the browser, with editable profiles and Android Keystore-protected secrets.
 - Open a local Android terminal or reuse an active SFTP connection for a remote SSH terminal.
@@ -49,10 +50,10 @@ If you choose to install or use the app, you do so at your own risk and remain r
 
 ## Build
 
-Requirements: JDK 17, Android SDK 36, and Android NDK `27.3.13750724`. Building the bundled Quick Tunnel component also requires Go 1.26.
+Requirements: JDK 21, Android SDK 36, and Android NDK `27.3.13750724`. Building the bundled Quick Tunnel component also requires Go 1.26.
 
 ```powershell
-$env:JAVA_HOME = 'path-to-jdk-17'
+$env:JAVA_HOME = 'path-to-jdk-21'
 $env:ANDROID_HOME = 'path-to-android-sdk'
 $env:AF_GO_EXE = 'path-to-go-1.26\bin\go.exe'
 .\scripts\build-cloudflared-android.ps1

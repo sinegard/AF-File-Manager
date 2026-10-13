@@ -7,6 +7,7 @@ import android.os.Build
 import android.media.MediaScannerConnection
 import android.os.Bundle
 import android.provider.MediaStore
+import com.affilemanager.app.thumbnail.ThumbnailInvalidation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -27,9 +28,12 @@ class SharedStorageIndex(context: Context) {
     private val context = context.applicationContext
     private val lock = Mutex()
     var onChanged: () -> Unit = {}
+    var onFilesChanged: suspend (List<File>) -> Unit = ThumbnailInvalidation::local
 
     suspend fun changed(paths: List<File>) = withContext(Dispatchers.IO) {
         require(paths.size <= MAX_NODES) { "Per daug elementų" }
+        // Includes AF-private Trash paths; a scanner failure must not leave old thumbnails.
+        onFilesChanged(paths)
         lock.withLock {
             val roots = LocalFileRepository(context).roots().map { File(it.path).toPath().normalize() }
             var visited = 0

@@ -31,15 +31,21 @@ import kotlin.math.roundToInt
 @Composable
 internal fun WallpaperSettings(settings: AppearanceSettings, onWallpaper: (Uri?) -> Unit, onTransparency: (Int) -> Unit,
     onShading: (Int) -> Unit = {}, onTransparentMenus: (Boolean) -> Unit = {}) {
+    var chooseCrop by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var cropUri by remember { androidx.compose.runtime.mutableStateOf<Uri?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) onWallpaper(uri)
+        if (uri != null) { if (chooseCrop) cropUri = uri else onWallpaper(uri) }
     }
     var transparency by remember(settings.cardTransparency) { mutableFloatStateOf(settings.cardTransparency.toFloat()) }
     var shading by remember(settings.wallpaperShading) { mutableFloatStateOf(settings.wallpaperShading.toFloat()) }
     Column {
         AfActionRow {
-            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                modifier = Modifier.testTag("wallpaper_choose")) { LText("Fono paveikslėlis") }
+            com.affilemanager.app.ui.components.CropChooseButton("Fono paveikslėlis",
+                onClick = { chooseCrop = false; picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onCrop = { chooseCrop = true; picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                modifier = Modifier.testTag("wallpaper_choose"))
+            TextButton(onClick = { chooseCrop = true; picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                modifier = Modifier.testTag("wallpaper_crop")) { LText("Apkirpti") }
             if (settings.wallpaperRevision != 0L) TextButton(onClick = { onWallpaper(null) },
                 modifier = Modifier.testTag("wallpaper_remove")) { LText("Pašalinti") }
         }
@@ -60,4 +66,6 @@ internal fun WallpaperSettings(settings: AppearanceSettings, onWallpaper: (Uri?)
                 modifier = Modifier.testTag("transparent_menus"))
         }
     }
+    cropUri?.let { com.affilemanager.app.ui.components.ImageCropDialog(it, "wallpaper", null,
+        onDismiss = { cropUri = null }, onCropped = { cropped -> cropUri = null; onWallpaper(cropped) }) }
 }

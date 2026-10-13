@@ -88,6 +88,7 @@ class FileOperationForegroundService : Service() {
         val progress = operation?.progressPair()
         val current = operation?.currentName?.let { File(it).name.take(100) }
         val summary = when {
+            operation?.stage == OperationStage.PUBLISHING_INDEX -> localized("Atnaujinamas failų indeksas")
             current != null -> current
             operation?.totalBytes != null -> "${FileSystemRules.humanBytes(operation.completedBytes)} / ${FileSystemRules.humanBytes(operation.totalBytes)}"
             operation?.totalItems != null -> "${operation.completedItems} / ${operation.totalItems}"
@@ -113,14 +114,8 @@ class FileOperationForegroundService : Service() {
         return builder.build()
     }
 
-    private fun OperationSnapshot.progressPair(): Pair<Int, Int>? = when {
-        totalBytes != null && totalBytes > 0 -> {
-            val max = 10_000
-            max to ((completedBytes.coerceIn(0, totalBytes).toDouble() / totalBytes) * max).toInt()
-        }
-        totalItems != null && totalItems > 0 -> totalItems.coerceAtMost(Int.MAX_VALUE) to completedItems.coerceIn(0, totalItems)
-        else -> null
-    }
+    private fun OperationSnapshot.progressPair(): Pair<Int, Int>? =
+        visibleProgress()?.let { 10_000 to (it * 10_000).toInt() }
 
     private fun localized(source: String) = UiTranslator.translate(source, appLanguageContext().resources.configuration.locales[0].language)
 

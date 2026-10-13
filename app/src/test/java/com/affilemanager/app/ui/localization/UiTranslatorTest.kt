@@ -457,7 +457,7 @@ class UiTranslatorTest {
         val unresolved = File(sourceRoot, "com/affilemanager/app/ui").walkTopDown()
             .filter { it.isFile && it.extension == "kt" && it.name != "UiTranslator.kt" }
             .flatMap { file ->
-                sequenceOf("LText", "uiText").flatMap { call ->
+                sequenceOf("LText", "uiText", "MetadataLine").flatMap { call ->
                     localizedCallBodies(file.readText(), call).flatMap { body ->
                         kotlinStringLiterals(body).map { literal -> file.name to literal }
                     }

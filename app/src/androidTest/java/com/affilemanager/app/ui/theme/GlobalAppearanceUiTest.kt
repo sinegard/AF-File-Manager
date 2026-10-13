@@ -19,10 +19,12 @@ class GlobalAppearanceUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
     @Test fun customBackgroundAndWallpaperReachEveryBrowserInsteadOfOnlyTheHomeScreen() {
-        check(android.os.Build.MODEL.contains("sdk"))
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true)) { "This test requires the owned Android SDK emulator" }
         val context = compose.activity
         val model = ViewModelProvider(context)[MainViewModel::class.java]
         val before = model.appearanceSettings.value
+        val beforeLeftPath = model.leftPanel.value.path
+        val beforePanel = model.activePanel.value
         val source = File(context.cacheDir, "global-appearance-${System.nanoTime()}.png")
         val folder = File(context.cacheDir, "appearance-browser-${System.nanoTime()}").apply { mkdirs(); resolve("test.txt").writeText("fixture") }
         val wallpaperColor = 0xff2156ae.toInt()
@@ -48,7 +50,12 @@ class GlobalAppearanceUiTest {
                 model.closeFileCategory(); model.closeTrashBrowser(); model.closeAdvancedBrowser(); model.closeHomeToolPage()
                 model.setWallpaper(null); model.setCustomColors(before.customColors); model.setColorPalette(before.colorPalette)
                 model.setCardTransparency(before.cardTransparency); model.setWallpaperShading(before.wallpaperShading)
-                model.setTransparentMenus(before.transparentMenus); model.showFilesHome()
+                model.setTransparentMenus(before.transparentMenus)
+                // The fixture must not persist a soon-to-be-deleted directory
+                // as the next workflow's active Save As location.
+                model.navigate(com.affilemanager.app.ui.PanelId.LEFT, beforeLeftPath, rememberHistory = false)
+                model.activatePanel(beforePanel)
+                model.showFilesHome()
             }
             source.delete(); folder.deleteRecursively()
         }

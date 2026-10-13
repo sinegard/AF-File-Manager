@@ -146,9 +146,13 @@ class SafDialogLayoutTest {
             File(root, "$name-full-$width.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             bitmap.recycle()
         }
-        compose.onNodeWithTag(if (name.startsWith("saf-create")) "saf_create_dialog" else "saf_name_dialog")
-            .captureToImage().asAndroidBitmap().let { bitmap ->
-            File(root, "$name-$width.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // Android's full-window capture above is the evidence on API 26/27;
+        // Compose's additional Dialog PixelCopy crop requires API 28.
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            compose.onNodeWithTag(if (name.startsWith("saf-create")) "saf_create_dialog" else "saf_name_dialog")
+                .captureToImage().asAndroidBitmap().let { bitmap ->
+                File(root, "$name-$width.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
         }
     }
 }

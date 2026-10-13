@@ -148,6 +148,7 @@ class FileCategoryRepository(
         val query: String = "",
         val appScope: InstalledAppScope = InstalledAppScope.USER,
         val parentFolderPath: String? = null,
+        val includeHidden: Boolean = false,
     )
 
     private data class CachedPage(val page: FileCategoryPage, val createdAtNanos: Long)
@@ -241,14 +242,17 @@ class FileCategoryRepository(
         storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
         viewMode: CategoryViewMode = CategoryViewMode.FILES,
         appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
+        includeHidden: Boolean = false,
     ): FileCategoryPage = withContext(Dispatchers.IO) {
         require(offset >= 0 && offset % FileCategoryPagingRules.BROWSE_PAGE_ROWS == 0) { "Invalid category page offset" }
         val normalizedQuery = query.trim().take(200)
         if (forceRefresh) invalidate(category)
-        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, storageScope, viewMode, true, normalizedQuery, appScope)
+        val key = PageKey(category, offset, sortMode, sortDirection, showSystemApps, storageScope, viewMode, true, normalizedQuery, appScope,
+            includeHidden = includeHidden)
         cached(key)?.let { return@withContext it }
         val page = queryCategoryPage(category, offset, sortMode, sortDirection, showSystemApps,
-            storageScope = storageScope, viewMode = viewMode, browseAll = true, search = normalizedQuery, appScope = appScope)
+            storageScope = storageScope, viewMode = viewMode, browseAll = true, search = normalizedQuery, appScope = appScope,
+            includeHidden = includeHidden)
         coroutineContext.ensureActive()
         synchronized(cacheLock) { cache[key] = CachedPage(page, System.nanoTime()) }
         page
@@ -324,6 +328,7 @@ class FileCategoryRepository(
         search: String = "",
         appScope: InstalledAppScope = if (showSystemApps) InstalledAppScope.ALL else InstalledAppScope.USER,
         parentFolderPath: String? = null,
+        includeHidden: Boolean = false,
     ): FileCategoryPage {
         val resultLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.resultLimit(offset)
         val rowLimit = if (browseAll) FileCategoryPagingRules.BROWSE_PAGE_ROWS else FileCategoryPagingRules.MAX_SCANNED_ROWS_PER_PAGE
@@ -421,14 +426,14 @@ class FileCategoryRepository(
                     val name = file.name
                     val mime = cursor.getString(mimeIndex)
                     val kind = FileSystemRules.detectKind(name, mime, isDirectory = false)
-                    if (name.startsWith('.') || kind != category.kind) continue
+                    if ((!includeHidden && name.startsWith('.')) || kind != category.kind) continue
                     entries += FileEntry(
                         absolutePath = file.absolutePath,
                         name = name,
                         kind = kind,
                         sizeBytes = cursor.getLong(sizeIndex).coerceAtLeast(0L),
                         modifiedAtMillis = cursor.getLong(modifiedIndex).coerceAtLeast(0L) * 1_000L,
-                        isHidden = false,
+                        isHidden = name.startsWith('.'),
                         isReadable = true,
                         isWritable = file.canWrite(),
                     )

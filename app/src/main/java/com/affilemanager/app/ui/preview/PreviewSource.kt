@@ -155,8 +155,8 @@ internal sealed interface PreviewSource {
     ) : PreviewSource {
         override val key: String = "edit|${session.id}|${session.workingRevision.sha256}"
         override val name: String = session.displayName
-        override val kind: EntryKind = original.kind
-        override val extension: String = original.extension
+        override val kind: EntryKind = FileSystemRules.detectKind(session.displayName, session.mimeType, false)
+        override val extension: String = session.displayName.substringAfterLast('.', "").lowercase()
         override val sizeBytes: Long = session.workingRevision.sizeBytes
         override val modifiedAtMillis: Long? = session.workingRevision.modifiedAtMillis
         override val isReadable: Boolean = session.workingFile.isFile && session.workingFile.canRead()

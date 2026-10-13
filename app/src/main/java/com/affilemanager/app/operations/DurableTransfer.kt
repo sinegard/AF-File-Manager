@@ -340,6 +340,9 @@ class DurableTransferEngine {
             val item = plan.items[itemIndex]
             try {
                 copyOne(plan, item, context)
+                // Before leaving COPY, expose all committed items while rollback is still possible.
+                // Ordinary files remain throttled; this is a single phase boundary, not a per-file event.
+                if (workOffset == work.lastIndex) context.flushProgress()
                 state = if (retry.isEmpty()) {
                     state.copy(nextItemIndex = itemIndex + 1, failedItemIndices = state.failedItemIndices - itemIndex, lastMessage = null)
                 } else {

@@ -11,7 +11,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-class ContentFileRepository(private val context: Context) {
+class ContentFileRepository(
+    private val context: Context,
+    private val onDocumentsChanged: suspend (List<String>) -> Unit = com.affilemanager.app.thumbnail.ThumbnailInvalidation::documents,
+) {
     companion object {
         private const val MAX_DISPLAY_NAME_LENGTH = 240
     }
@@ -63,6 +66,7 @@ class ContentFileRepository(private val context: Context) {
                 context.contentResolver.delete(uri, null, null) > 0
             }
             require(deleted) { "Android dokumentų teikėjas failo neištrynė" }
+            onDocumentsChanged(listOf(uriText))
         }
     }
 

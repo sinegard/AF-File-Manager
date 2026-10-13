@@ -133,7 +133,8 @@ class DurableTransferSafetyTest {
         var progress = OperationSnapshot(transfer.id, "test", OperationStatus.RUNNING)
         val context = OperationContext(transfer.id, MutableStateFlow(false)) { update ->
             progress = update(progress)
-            if (progress.completedItems == 33) throw CancellationException("test cancellation after checkpoint")
+            // UI updates are batched. Cancel at the next update after the persisted 32-item checkpoint.
+            if (progress.completedItems >= 33) throw CancellationException("test cancellation after checkpoint")
         }
         val failure = runCatching {
             engine.execute(transfer, DurableTransferState(planId = transfer.id), writer, context)

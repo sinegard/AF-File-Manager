@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
@@ -183,7 +184,10 @@ internal fun AfAlertDialog(
             usePlatformDefaultWidth = false,
             decorFitsSystemWindows = properties.decorFitsSystemWindows,
         )) {
-        BoxWithConstraints(Modifier.imePadding(), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(
+            Modifier.then(if (properties.decorFitsSystemWindows) Modifier else Modifier.systemBarsPadding()).imePadding(),
+            contentAlignment = Alignment.Center,
+        ) {
             Surface(
                 modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(.94f)
                     .heightIn(max = maxHeight * .92f).then(modifier),

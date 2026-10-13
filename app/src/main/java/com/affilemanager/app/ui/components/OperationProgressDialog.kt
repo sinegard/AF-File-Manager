@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationSnapshot
 import com.affilemanager.app.operations.OperationStatus
+import com.affilemanager.app.operations.OperationStage
+import com.affilemanager.app.operations.visibleProgress
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.theme.AfButton as Button
 
@@ -29,13 +31,7 @@ internal fun OperationProgressDialog(
     onPause: () -> Unit,
     onResume: () -> Unit,
 ) {
-    val progress = when {
-        operation.totalBytes != null && operation.totalBytes > 0 ->
-            (operation.completedBytes.toFloat() / operation.totalBytes).coerceIn(0f, 1f)
-        operation.totalItems != null && operation.totalItems > 0 ->
-            (operation.completedItems.toFloat() / operation.totalItems).coerceIn(0f, 1f)
-        else -> null
-    }
+    val progress = operation.visibleProgress()
     AfModalDialog(
         title = operation.title,
         icon = Icons.Rounded.Sync,
@@ -54,6 +50,11 @@ internal fun OperationProgressDialog(
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             if (progress == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             else LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            when (operation.stage) {
+                OperationStage.PREPARING -> LText("Ruošiama…", modifier = Modifier.testTag("operation_stage"))
+                OperationStage.PUBLISHING_INDEX -> LText("Atnaujinamas failų indeksas", modifier = Modifier.testTag("operation_stage"))
+                OperationStage.PROCESSING -> Unit
+            }
             operation.currentName?.let {
                 Text(java.io.File(it).name, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall, modifier = Modifier.testTag("operation_current_name"))

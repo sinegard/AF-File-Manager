@@ -478,11 +478,13 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 }
 
 @Composable
-private fun SharedFolderPickerDialog(
+internal fun SharedFolderPickerDialog(
     initialPath: String,
     loadDirectory: suspend (String) -> Result<List<FileEntry>>,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit,
+    title: String = "Pasirinkti bendrinamą aplanką",
+    onUseDefault: (() -> Unit)? = null,
 ) {
     var navigation by remember(initialPath) { mutableStateOf(LocalUploadNavigationState(initialPath)) }
     var directories by remember(initialPath) { mutableStateOf<List<FileEntry>>(emptyList()) }
@@ -520,12 +522,13 @@ private fun SharedFolderPickerDialog(
 
     BackHandler(onBack = ::dismissOrBack)
     AfModalDialog(
-        title = "Pasirinkti bendrinamą aplanką",
+        title = title,
         icon = Icons.Rounded.Folder,
         onDismissRequest = ::dismissOrBack,
         expandedContent = true,
         modifier = Modifier.testTag("share_folder_picker_dialog"),
         actions = {
+            onUseDefault?.let { reset -> TextButton(onClick = reset) { LText("Naudoti pagrindinį gavimo aplanką") } }
             TextButton(onClick = ::dismissOrBack) { LText(if (navigation.canNavigateBack) "Grįžti" else "Atšaukti") }
             Button(
                 onClick = { onSelect(currentPath) },

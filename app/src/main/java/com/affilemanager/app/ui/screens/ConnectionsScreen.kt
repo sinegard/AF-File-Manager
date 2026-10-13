@@ -61,6 +61,17 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.SdStorage
+import androidx.compose.material.icons.rounded.Usb
+import androidx.compose.foundation.lazy.LazyRow
+import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
+import com.affilemanager.app.data.FileCategory
+import com.affilemanager.app.data.FileCategoryPage
+import com.affilemanager.app.model.StorageRoot
+import com.affilemanager.app.model.StorageRootKind
+import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.preview.PickerPreviewDialog
 import androidx.compose.material.icons.rounded.Terminal
 import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.AssistChip
@@ -367,6 +378,9 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             initialEntries = activeLocalState.entries,
             initiallySelected = activeSelection,
             loadDirectory = viewModel::listLocalDirectoryForUpload,
+            storageRoots = viewModel.roots.collectAsStateWithLifecycle().value,
+            loadWithHidden = viewModel::listLocalPickerDirectory,
+            loadCategory = viewModel::loadLocalPickerCategory,
             onDismiss = { showUploadPicker = false },
             onCopy = { paths ->
                 if (viewModel.remoteUpload(paths)) {
@@ -1324,8 +1338,12 @@ internal fun LocalUploadDialog(
     parentDirectory: (String) -> String? = { File(it).parentFile?.absolutePath },
     message: String? = null,
     confirming: Boolean = false,
+    storageRoots: List<StorageRoot> = emptyList(),
+    loadWithHidden: (suspend (String, Boolean) -> Result<List<FileEntry>>)? = null,
+    loadCategory: (suspend (FileCategory, StorageRoot, Int, Boolean) -> Result<FileCategoryPage>)? = null,
 ) {
     val maxSelection = if (allowMultiple) selectionLimit.coerceIn(1, RemoteCopyEngine.MAX_SELECTED_ROOTS) else 1
+    val pickerLanguage = androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language
     var navigation by remember(initialDirectoryPath, remotePath) {
         mutableStateOf(LocalUploadNavigationState(initialDirectoryPath))
     }
@@ -1337,6 +1355,13 @@ internal fun LocalUploadDialog(
     var showOnlyFolders by remember { mutableStateOf(false) }
     var showOnlyFiles by remember { mutableStateOf(false) }
     var pickerSort by remember { mutableStateOf(SortMode.NAME) }
+    var includeHidden by remember { mutableStateOf(false) }
+    var showThumbnails by remember { mutableStateOf(true) }
+    var category by remember { mutableStateOf<FileCategory?>(null) }
+    var categoryRoot by remember { mutableStateOf<StorageRoot?>(null) }
+    var categoryOffset by remember { mutableStateOf(0) }
+    var nextCategoryOffset by remember { mutableStateOf<Int?>(null) }
+    var preview by remember { mutableStateOf<FileEntry?>(null) }
     var displayedEntries by remember(currentPath) { mutableStateOf(initialEntries) }
     LaunchedEffect(currentPath, entries, searchQuery, showOnlyFolders, showOnlyFiles, pickerSort) {
         val source = entries
@@ -1356,11 +1381,24 @@ internal fun LocalUploadDialog(
         mutableStateOf(initiallySelected.take(maxSelection).toCollection(linkedSetOf()))
     }
 
-    LaunchedEffect(currentPath, refreshToken) {
+    LaunchedEffect(currentPath, refreshToken, includeHidden, category, categoryRoot, categoryOffset) {
         loading = true
         error = null
+        nextCategoryOffset = null
         if (currentPath != initialDirectoryPath) entries = emptyList()
-        loadDirectory(currentPath).fold(
+        val chosenCategory = category
+        val chosenRoot = categoryRoot
+        val result = if (chosenCategory != null && chosenRoot != null && loadCategory != null) {
+            loadCategory(chosenCategory, chosenRoot, categoryOffset, includeHidden).map { page ->
+                nextCategoryOffset = page.nextOffset
+                if (page.truncated) error = "Rezultatas sutrumpintas pasiekus saugos ribą"
+                page.entries
+            }
+        } else if (currentPath.isEmpty() && storageRoots.isNotEmpty()) {
+            Result.success(storageRoots.map { root -> FileEntry(root.path, com.affilemanager.app.ui.localization.UiTranslator.translate(root.title, pickerLanguage), com.affilemanager.app.model.EntryKind.DIRECTORY,
+                0, 0, false, true, false) })
+        } else loadWithHidden?.invoke(currentPath, includeHidden) ?: loadDirectory(currentPath)
+        result.fold(
             onSuccess = { loaded -> entries = loaded },
             onFailure = { failure ->
                 entries = emptyList()
@@ -1383,14 +1421,29 @@ internal fun LocalUploadDialog(
     }
 
     fun navigateTo(path: String) {
+        if (category != null) {
+            categoryRoot = storageRoots.firstOrNull { it.path == path }
+            categoryOffset = 0
+        }
         navigation = navigation.navigateTo(path)
     }
 
     fun navigateBack() {
+        if (category != null && categoryRoot != null) {
+            categoryRoot = null
+            categoryOffset = 0
+            navigation = LocalUploadNavigationState("")
+            return
+        }
+        if (category != null) {
+            category = null
+            navigation = LocalUploadNavigationState("")
+            return
+        }
         navigation = navigation.navigateBack()
     }
 
-    val parentPath = parentDirectory(currentPath)
+    val parentPath = if (category != null) null else parentDirectory(currentPath)
     val visiblePaths = remember(displayedEntries, filesOnly, maxSelection) {
         displayedEntries.asSequence().filter { !filesOnly || !it.isDirectory }
             .take(maxSelection).map(FileEntry::absolutePath).toList()
@@ -1398,7 +1451,7 @@ internal fun LocalUploadDialog(
     val allSelected = visiblePaths.isNotEmpty() && visiblePaths.all(selected::contains)
 
     com.affilemanager.app.ui.components.AfModalDialog(
-        onDismissRequest = { if (navigation.canNavigateBack) navigateBack() else onDismiss() },
+        onDismissRequest = { if (category != null || navigation.canNavigateBack) navigateBack() else onDismiss() },
         onClose = onDismiss,
         icon = if (filesOnly) Icons.Rounded.FolderOpen else Icons.Rounded.CloudUpload,
         title = title,
@@ -1409,6 +1462,7 @@ internal fun LocalUploadDialog(
             Button(
                 onClick = { onCopy(selected.toList()) },
                 enabled = selected.isNotEmpty() && !confirming,
+                modifier = Modifier.testTag("local_upload_confirm"),
             ) { Text("${uiText(confirmLabel)} (${selected.size})") }
         },
     ) {
@@ -1430,6 +1484,11 @@ internal fun LocalUploadDialog(
                         Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
                     }
                     DropdownMenu(expanded = pickerMenu, onDismissRequest = { pickerMenu = false }) {
+                        if (loadWithHidden != null || loadCategory != null) DropdownMenuItem(
+                            text = { LText("Rodyti paslėptus") }, leadingIcon = { Checkbox(includeHidden, onCheckedChange = null) },
+                            onClick = { includeHidden = !includeHidden; pickerMenu = false }, modifier = Modifier.testTag("local_upload_hidden"))
+                        DropdownMenuItem(text = { LText("Miniatiūros") }, leadingIcon = { Checkbox(showThumbnails, onCheckedChange = null) },
+                            onClick = { showThumbnails = !showThumbnails; pickerMenu = false })
                         DropdownMenuItem(text = { LText("Visi elementai") }, onClick = {
                             showOnlyFolders = false; showOnlyFiles = false; pickerMenu = false
                         }, leadingIcon = if (!showOnlyFolders && !showOnlyFiles) ({ Icon(Icons.Rounded.CheckCircle, contentDescription = null) }) else null)
@@ -1451,6 +1510,15 @@ internal fun LocalUploadDialog(
                 }
             }
             if (remotePath.isNotBlank()) LText("Į: $remotePath", style = MaterialTheme.typography.bodySmall)
+            if (storageRoots.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("picker_categories")) {
+                item { FilterChip(selected = category == null, onClick = { category = null; categoryRoot = null; navigation = navigation.navigateTo("") },
+                    label = { LText("Failai") }) }
+                if (loadCategory != null) items(listOf(FileCategory.IMAGES, FileCategory.VIDEOS, FileCategory.AUDIO, FileCategory.DOCUMENTS, FileCategory.ARCHIVES, FileCategory.APPS)) { kind ->
+                    FilterChip(selected = category == kind, onClick = { category = kind; categoryRoot = null; categoryOffset = 0; navigation = navigation.navigateTo("") },
+                        label = { LText(pickerCategoryLabel(kind)) }, modifier = Modifier.testTag("picker_category_${kind.name}"))
+                }
+            }
+            if (category != null && categoryRoot == null) LText("Pasirinkite saugyklą")
             if (searchVisible) OutlinedTextField(
                 value = searchQuery, onValueChange = { searchQuery = it.take(200) },
                 label = { LText("Ieškoti šiame sąraše") }, singleLine = true,
@@ -1530,10 +1598,13 @@ internal fun LocalUploadDialog(
                                 checked = entrySelected,
                                 onCheckedChange = { toggle(entry.absolutePath) },
                             )
-                            Icon(
-                                if (entry.isDirectory) Icons.Rounded.Folder else Icons.AutoMirrored.Rounded.InsertDriveFile,
-                                contentDescription = null,
-                            )
+                            val root = storageRoots.firstOrNull { it.path == entry.absolutePath }
+                            if (root != null) Icon(when(root.kind) {
+                                StorageRootKind.INTERNAL -> Icons.Rounded.PhoneAndroid
+                                StorageRootKind.USB_STORAGE -> Icons.Rounded.Usb
+                                else -> Icons.Rounded.SdStorage
+                            }, contentDescription = null, modifier = Modifier.size(40.dp))
+                            else LocalFileVisual(entry, 40.dp, 40.dp, showThumbnails, Modifier.size(40.dp))
                             Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
                                 Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (entry.isDirectory) {
@@ -1549,14 +1620,28 @@ internal fun LocalUploadDialog(
                                 ) {
                                     Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Atidaryti aplanką"))
                                 }
+                            } else IconButton(onClick = { preview = entry }, modifier = Modifier.testTag("picker_preview_${entry.absolutePath}")) {
+                                Icon(Icons.Rounded.Visibility, contentDescription = uiText("Peržiūra"))
                             }
                         }
+                    }
+                }
+                if (categoryRoot != null && (categoryOffset > 0 || nextCategoryOffset != null)) item {
+                    Row(Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { categoryOffset = (categoryOffset - com.affilemanager.app.data.FileCategoryPagingRules.BROWSE_PAGE_ROWS).coerceAtLeast(0) }, enabled = categoryOffset > 0) { LText("Ankstesnis") }
+                        TextButton(onClick = { nextCategoryOffset?.let { categoryOffset = it } }, enabled = nextCategoryOffset != null) { LText("Kitas") }
                     }
                 }
             }
             }
         }
     }
+    preview?.let { PickerPreviewDialog(it, onClose = { preview = null }) }
+}
+
+internal fun pickerCategoryLabel(category: FileCategory): String = when (category) {
+    FileCategory.IMAGES -> "Nuotraukos"; FileCategory.VIDEOS -> "Vaizdo įrašai"; FileCategory.AUDIO -> "Muzika"
+    FileCategory.DOCUMENTS -> "Dokumentai"; FileCategory.ARCHIVES -> "Archyvai"; else -> "APK"
 }
 
 internal data class LocalUploadNavigationState(

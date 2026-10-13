@@ -70,4 +70,22 @@ class TransferDiagnosticLogTest {
         assertEquals(TransferFailure.PERMISSION, TransferFailure.classify(java.nio.file.AccessDeniedException("secret"), TransferPhase.OPEN))
         assertEquals(TransferFailure.SPACE, TransferFailure.classify(java.nio.file.FileSystemException("secret", null, "No space left on device"), TransferPhase.WRITE))
     }
+
+    @Test fun nioCommitReasonsProduceOnlyKnownErrnoAndTypedPrivateEvents() {
+        listOf("Operation not permitted" to 1, "Permission denied" to 13,
+            "No space left on device" to 28, "Read-only file system" to 30,
+            "private arbitrary error 45.1.2.3 password" to 0).forEach { (reason, expected) ->
+            val error = java.nio.file.FileSystemException("/private/personal", "/another/secret", reason)
+            assertEquals(expected, TransferFileError.errno(IOException("wrapper", error)))
+            val event = TransferDiagnosticEvent(TransferRole.RECEIVE, TransferPhase.COMMIT_COPY,
+                failure = TransferFailure.classify(error, TransferPhase.COMMIT_COPY), errno = TransferFileError.errno(error))
+            assertFalse(event.line().contains(reason))
+            assertFalse(event.line().contains("personal"))
+            val journalFile = temporary.newFile("reason-$expected.log")
+            TransferDiagnosticLog(journalFile).apply { enabled = true }.record(event)
+            assertTrue(TransferDiagnosticLog(journalFile).report().contains("\tcommit_copy\t"))
+        }
+        assertEquals(TransferFailure.PERMISSION, TransferFailure.classify(
+            java.nio.file.FileSystemException("private", null, "Operation not permitted"), TransferPhase.COMMIT))
+    }
 }

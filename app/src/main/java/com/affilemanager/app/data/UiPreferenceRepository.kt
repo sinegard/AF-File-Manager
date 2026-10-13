@@ -24,6 +24,9 @@ data class ShareScreenPreferences(
     val nearbyPathHistory: List<String> = emptyList(),
     val receiverAvatarUri: String = "",
     val groupAvatarUri: String = "",
+    val hideOwnGroupRow: Boolean = false,
+    val nearbyConcurrentUploads: Int = 1,
+    val nearbyTypePaths: Map<EntryKind, String> = emptyMap(),
 ) {
     fun withNearbyReceivePath(path: String): ShareScreenPreferences = copy(
         nearbyReceivePath = path,
@@ -91,6 +94,11 @@ class UiPreferenceRepository(context: Context) {
                 }.orEmpty(),
                 receiverAvatarUri = json.optString("receiverAvatarUri"),
                 groupAvatarUri = json.optString("groupAvatarUri"),
+                hideOwnGroupRow = json.optBoolean("hideOwnGroupRow", false),
+                nearbyConcurrentUploads = json.optInt("nearbyConcurrentUploads", 1),
+                nearbyTypePaths = json.optJSONObject("nearbyTypePaths")?.let { paths ->
+                    EntryKind.entries.mapNotNull { kind -> paths.optString(kind.name).takeIf(String::isNotBlank)?.let { kind to it } }.toMap()
+                }.orEmpty(),
             ),
             defaultPath = defaultPath,
             defaultReceiverName = defaultReceiverName,
@@ -108,6 +116,9 @@ class UiPreferenceRepository(context: Context) {
             .put("nearbyPathHistory", JSONArray(normalized.nearbyPathHistory))
             .put("receiverAvatarUri", normalized.receiverAvatarUri)
             .put("groupAvatarUri", normalized.groupAvatarUri)
+            .put("hideOwnGroupRow", normalized.hideOwnGroupRow)
+            .put("nearbyConcurrentUploads", normalized.nearbyConcurrentUploads)
+            .put("nearbyTypePaths", JSONObject(normalized.nearbyTypePaths.mapKeys { it.key.name }))
             .put("protocol", normalized.protocol.name)
             .put("durationMinutes", normalized.durationMinutes)
             .put("portText", normalized.portText)
@@ -260,6 +271,9 @@ internal object UiPreferenceRules {
                 .filter(String::isNotBlank).distinct().take(6).toList(),
             receiverAvatarUri = value.receiverAvatarUri.takeIf { it.startsWith("content://") && it.length <= 2_048 }.orEmpty(),
             groupAvatarUri = value.groupAvatarUri.takeIf { it.startsWith("content://") && it.length <= 2_048 }.orEmpty(),
+            nearbyConcurrentUploads = value.nearbyConcurrentUploads.coerceIn(1, 5),
+            nearbyTypePaths = value.nearbyTypePaths.filterKeys { it in setOf(EntryKind.IMAGE, EntryKind.VIDEO, EntryKind.AUDIO, EntryKind.DOCUMENT, EntryKind.ARCHIVE, EntryKind.APK) }
+                .mapValues { cleanSingleLine(it.value, MAX_PATH_LENGTH) }.filterValues(String::isNotBlank),
             durationMinutes = LanSessionDuration.normalize(value.durationMinutes),
             portText = value.portText.filter(Char::isDigit).take(5),
             username = cleanSingleLine(value.username, MAX_USERNAME_LENGTH),

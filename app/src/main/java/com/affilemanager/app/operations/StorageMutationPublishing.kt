@@ -9,6 +9,7 @@ import java.io.File
 internal suspend fun <T> publishingStorageChanges(
     onMutation: suspend (List<File>) -> Unit,
     changedPaths: () -> List<File>,
+    operation: OperationContext? = null,
     block: suspend () -> T,
 ): T {
     var primaryFailure: Throwable? = null
@@ -21,7 +22,10 @@ internal suspend fun <T> publishingStorageChanges(
         withContext(NonCancellable + Dispatchers.IO) {
             try {
                 val paths = changedPaths()
-                if (paths.isNotEmpty()) onMutation(paths)
+                if (paths.isNotEmpty()) {
+                    operation?.setStage(OperationStage.PUBLISHING_INDEX)
+                    onMutation(paths)
+                }
             } catch (indexFailure: Throwable) {
                 val failure = primaryFailure
                 if (failure != null) failure.addSuppressed(indexFailure)

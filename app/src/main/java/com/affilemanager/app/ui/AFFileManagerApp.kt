@@ -89,6 +89,8 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.components.OperationProgressDialog
+import com.affilemanager.app.ui.components.OperationResultDialog
+import com.affilemanager.app.ui.components.ArchiveUnlockDialog
 import com.affilemanager.app.IncomingViewRequest
 import com.affilemanager.app.IncomingShareRequest
 import com.affilemanager.app.ui.preview.FilePreviewDialog
@@ -155,6 +157,8 @@ fun AFFileManagerApp(
     val filesHomeVisible by viewModel.filesHomeVisible.collectAsStateWithLifecycle()
     val homeToolPage by viewModel.homeToolPage.collectAsStateWithLifecycle()
     val operations by viewModel.operations.collectAsStateWithLifecycle()
+    val operationResults by viewModel.operationResults.collectAsStateWithLifecycle()
+    val archiveUnlock by viewModel.archiveUnlock.collectAsStateWithLifecycle()
     val preview by viewModel.preview.collectAsStateWithLifecycle()
     val fileEditState by viewModel.fileEditState.collectAsStateWithLifecycle()
     val signatureLibrary by viewModel.signatureLibrary.collectAsStateWithLifecycle()
@@ -450,6 +454,7 @@ fun AFFileManagerApp(
             onDelete = (viewModel::deletePreviewTarget).takeIf { viewModel.canDeletePreview(target) },
             onPrepareEdit = viewModel::prepareFileEdit,
             onApplyPdfSignature = viewModel::applyPdfVisualSignature,
+            onApplyMediaExport = viewModel::acceptMediaExport,
             onRefreshSignatureLibrary = viewModel::refreshSignatureLibrary,
             onSaveSignature = viewModel::saveSignature,
             onDeleteSavedSignature = viewModel::deleteSavedSignature,
@@ -492,6 +497,7 @@ fun AFFileManagerApp(
     }
 
     BatchRenameDialog(viewModel)
+    archiveUnlock?.takeIf { unlocked }?.let { ArchiveUnlockDialog(it, viewModel::unlockArchive, viewModel::cancelArchiveUnlock) }
 
     AfWorkflowDialog(viewModel)
 
@@ -510,7 +516,11 @@ fun AFFileManagerApp(
         onToggleAlt = viewModel::toggleTerminalAlt,
     )
 
-    visibleOperation?.let { operation ->
+    val operationResult = operationResults.firstOrNull().takeIf { unlocked }
+    operationResult?.let { result ->
+        OperationResultDialog(result, onClose = { viewModel.dismissOperationResult(result.id) })
+    }
+    visibleOperation?.takeIf { operationResult == null && unlocked }?.let { operation ->
         OperationProgressDialog(
             operation = operation,
             onCancel = { viewModel.cancelOperation(operation.id) },

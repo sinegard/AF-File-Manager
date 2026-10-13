@@ -79,8 +79,9 @@ internal object NearbyTransferManifest {
     }
 }
 
-/** One upload at a time, with separately identified pending batches and bounded visible history. */
-internal class NearbyReceiveFiles {
+/** Receiver-bounded payloads within one active batch, plus separately identified pending batches. */
+internal class NearbyReceiveFiles(private val maximumConcurrentUploads: Int = 1) {
+    init { require(maximumConcurrentUploads in 1..5) }
     private val batches = linkedMapOf<String?, List<TransferFileProgress>>()
     private val seenBatches = mutableSetOf<String>()
     @Synchronized fun hasManifest(): Boolean = batches.isNotEmpty()
@@ -116,11 +117,15 @@ internal class NearbyReceiveFiles {
         require((id == null && batches.isEmpty()) || batches.containsKey(id)) { "Siuntimo rinkinio keliai nesutampa" }
     }
 
-    @Synchronized fun validate(index: Int, path: String, size: Long, id: String? = null) {
+    @Synchronized fun requireReadyBatch(id: String?) {
         requireBatch(id)
+        require(batches.entries.takeWhile { it.key != id }.all { it.value.all { file -> file.status.isTerminal() } }) { "Gavimo sesija nepatvirtinta" }
+    }
+
+    @Synchronized fun validate(index: Int, path: String, size: Long, id: String? = null) {
+        requireReadyBatch(id)
         val files = batches[id] ?: return // Older senders have no manifest.
-        require(batches.entries.takeWhile { it.key != id }.all { it.value.all { file -> file.status.isTerminal() } } &&
-            batches.values.all { it.none { file -> file.status == TransferFileStatus.TRANSFERRING } }) {
+        require(batches.values.sumOf { files -> files.count { file -> file.status == TransferFileStatus.TRANSFERRING } } < maximumConcurrentUploads) {
             "Gavimo sesija nepatvirtinta"
         }
         val item = files.getOrNull(index - 1)

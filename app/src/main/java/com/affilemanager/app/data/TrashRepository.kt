@@ -5,6 +5,7 @@ import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.model.EntryKind
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.operations.OperationContext
+import com.affilemanager.app.operations.publishingStorageChanges
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -92,6 +93,7 @@ class TrashRepository(
     private val context: Context,
     private val configuredRoot: File? = null,
     private val onMutation: suspend (List<File>) -> Unit = {},
+    private val onCacheMutation: suspend (List<File>) -> Unit = com.affilemanager.app.thumbnail.ThumbnailInvalidation::local,
 ) {
     companion object {
         private const val MAX_TRASH_ITEMS = 10_000
@@ -222,22 +224,27 @@ class TrashRepository(
                 totalBytes,
             )
             var movedItems = 0
-            scans.forEach { (source, sourceScan) ->
-                operation.checkpoint()
-                try {
-                    movePreparedSource(source, sourceScan, operation)
-                    operation.progress(itemDelta = sourceScan.first, byteDelta = sourceScan.second, currentName = source.name)
-                    movedItems += 1
-                    onMutation(listOf(source))
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    failures += failureMessage(error)
+            val changedRoots = linkedSetOf<File>()
+            publishingStorageChanges(onMutation, { changedRoots.toList() }, operation) {
+                scans.forEach { (source, sourceScan) ->
+                    operation.checkpoint()
+                    try {
+                        movePreparedSource(source, sourceScan, operation)
+                        operation.progress(itemDelta = sourceScan.first, byteDelta = sourceScan.second, currentName = source.name)
+                        movedItems += 1
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        failures += failureMessage(error)
+                    } finally {
+                        // A failed source cleanup can still have removed some descendants.
+                        changedRoots += source
+                    }
                 }
-            }
-            if (failures.isNotEmpty()) {
-                if (movedItems == 0) throw IllegalStateException(failures.first())
-                operation.completeWithErrors(failures.size, failures.first())
+                if (failures.isNotEmpty()) {
+                    if (movedItems == 0) throw IllegalStateException(failures.first())
+                    operation.completeWithErrors(failures.size, failures.first())
+                }
             }
             TrashMoveResult(movedItems = movedItems, failedItems = failures.size)
         }
@@ -313,7 +320,7 @@ class TrashRepository(
                 val target = if (requested.exists()) FileSystemRules.keepBothTarget(requested) else requested
                 require(stored.renameTo(target)) { "Atkurti nepavyko" }
                 check(metadata.delete() || !metadata.exists()) { "Nepavyko pašalinti metaduomenų" }
-                onMutation(listOf(target))
+                onMutation(listOf(stored, target))
                 target.absolutePath
             }
         }
@@ -566,15 +573,20 @@ class TrashRepository(
         val rootPath = containmentRoot.absoluteFile.toPath().normalize()
         val candidatePath = file.absoluteFile.toPath().normalize()
         require(candidatePath.startsWith(rootPath)) { "Trynimo kelias išeina už leistinos ribos" }
-        if (Files.isSymbolicLink(candidatePath)) {
+        try {
+            if (Files.isSymbolicLink(candidatePath)) {
+                require(file.delete()) { "Nepavyko ištrinti ${file.name}" }
+                operation?.progress(itemDelta = 1, currentName = file.name)
+                return
+            }
+            if (file.isDirectory) file.listFiles()?.forEach { deleteTree(containmentRoot, it, depth + 1, operation, budget) }
+            val bytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L
             require(file.delete()) { "Nepavyko ištrinti ${file.name}" }
-            operation?.progress(itemDelta = 1, currentName = file.name)
-            return
+            operation?.progress(itemDelta = 1, byteDelta = bytes, currentName = file.name)
+        } finally {
+            // One bounded cache notification per top-level tree, including partial deletion.
+            if (depth == 0) onCacheMutation(listOf(file))
         }
-        if (file.isDirectory) file.listFiles()?.forEach { deleteTree(containmentRoot, it, depth + 1, operation, budget) }
-        val bytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L
-        require(file.delete()) { "Nepavyko ištrinti ${file.name}" }
-        operation?.progress(itemDelta = 1, byteDelta = bytes, currentName = file.name)
     }
 
     private fun scan(rootFile: File): Pair<Int, Long> {

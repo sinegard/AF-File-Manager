@@ -4,6 +4,23 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
+## [0.45.0] - 2026-10-13
+
+- Trim and crop video, extract or trim audio, adjust speed, pitch and volume, and prepare MP4, M4A, WAV or GIF copies. Audio tags and cover art can be edited before saving to a phone or connected server. Originals stay unchanged; available resolution depends on the device, and smaller files can lose quality.
+- Thumbnails now use a bounded private disk cache. Reopening a folder can reuse them; moving, renaming or deleting a file clears its old thumbnail.
+- Receiving files has a verified copy fallback when the normal final rename fails. Transfer progress distinguishes preparation, copying and indexing, and completed errors stay available to review.
+- File pickers support hidden items and previews more consistently. Installed apps have an information view and clearer filters; unlocked archives remember their password for that session.
+- Local HTML and MHT previews support bounded offline resources and text selection without enabling scripts or network access.
+- Sharing pictures can be cropped before use. Phone groups offer clearer receiving-folder and limited parallel-transfer settings, with an option to hide your own row only on your screen.
+- Fixed translated dialog titles and crop controls at large text sizes. GIF and MP4 keep independent frame-rate and resolution choices instead of applying hidden settings from another format.
+- Fixed WAV extraction from videos carrying container metadata. Export errors are brought into view instead of remaining above the scrolled settings.
+- GIF creation handles audio continuing beyond the last video frame. Active transfers show their status before the first payload bytes arrive.
+- Save As keeps its actions available while the keyboard is open on older Android versions.
+- Save As waits for its folder listing before enabling Save, and does not allow saving into an unreadable folder.
+- Dialogs stay clear of system bars, and app information can be scrolled instead of cutting off its final details.
+- Fixed the untranslated minimum Android API label in app information. Moving from file selection to phone pairing no longer carries over the search field's keyboard focus.
+- Phone-sharing search keeps a scrollable results area when the keyboard and wrapped buttons leave little screen space.
+
 ## [0.44.3] - 2026-10-07
 
 - Includes the phone-to-phone recovery, private diagnostics and language fixes prepared for 0.44.0 below.

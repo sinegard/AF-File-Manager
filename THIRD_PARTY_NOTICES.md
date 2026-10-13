@@ -63,6 +63,18 @@ terms and availability; AF embeds no Cloudflare account or token.
 - Copyright Cloudflare, Inc. and contributors
 - License: Apache License 2.0 — https://github.com/cloudflare/cloudflared/blob/f11dea9cb7079e90a982c1a2d5548ab40847fdcf/LICENSE
 
+## AndroidX Media3
+
+`androidx.media3` 1.11.1 provides the optional, on-device media editor's preview,
+audio processing, video effects and export. It uses Android's available codecs;
+AF does not include a cloud conversion service or require an account.
+
+- Project: https://github.com/androidx/media
+- Copyright The Android Open Source Project and contributors
+- License: Apache License 2.0 — https://github.com/androidx/media/blob/1.11.1/LICENSE
+- A copy of the license is included in the APK at `assets/licenses/media3-LICENSE.txt`.
+- Guava and its failureaccess helper: Apache License 2.0 — https://github.com/google/guava
+
 ## Offline interface translation assets
 
 The generated language packs were prepared during development with Meta's NLLB-200 distilled 600M model. The model and translation runtime are not included in the Android app. Standard Android action labels are taken from the Android Open Source Project translations where an exact match exists.

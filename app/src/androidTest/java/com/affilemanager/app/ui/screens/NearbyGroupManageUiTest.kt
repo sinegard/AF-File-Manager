@@ -7,6 +7,8 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -21,6 +23,7 @@ import com.affilemanager.app.transfer.NearbyPairing
 import com.affilemanager.app.ui.MainViewModel
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.*
 
 class NearbyGroupManageUiTest {
     @get:Rule val compose = createComposeRule()
@@ -47,6 +50,17 @@ class NearbyGroupManageUiTest {
                 }
             }
             compose.onNodeWithText("Group (2)").performClick()
+            val ownRow = "group_member_${organizer.host}_${organizer.port}"
+            val peerRow = "group_member_${member.host}_${member.port}"
+            compose.onNodeWithTag(ownRow).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("group_hide_own_row").performScrollTo().performClick()
+            compose.waitUntil(5000) { vm.shareScreenPreferences.value.hideOwnGroupRow }
+            compose.onAllNodesWithTag(ownRow).assertCountEquals(0)
+            compose.onNodeWithTag(peerRow).performScrollTo().assertIsDisplayed()
+            assertEquals(2, NearbyGroupController.state.value.members.size)
+            compose.onNodeWithTag("group_hide_own_row").performScrollTo().performClick()
+            compose.waitUntil(5000) { !vm.shareScreenPreferences.value.hideOwnGroupRow }
+            compose.onNodeWithTag(ownRow).performScrollTo().assertIsDisplayed()
             compose.onNodeWithTag("nearby_group_manage_devices").performScrollTo().performClick()
             compose.onNodeWithTag("nearby_group_devices_dialog").assertIsDisplayed()
             compose.onNode(hasText("Peer phone") and hasAnyAncestor(hasTestTag("nearby_group_devices_dialog")))

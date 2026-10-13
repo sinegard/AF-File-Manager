@@ -52,7 +52,11 @@ data class SafEntry(
     val canWrite: Boolean,
 )
 
-class SafFileRepository(private val context: Context, private val onMutation: suspend (List<File>) -> Unit = {}) {
+class SafFileRepository(
+    private val context: Context,
+    private val onMutation: suspend (List<File>) -> Unit = {},
+    private val onDocumentsChanged: suspend (List<String>) -> Unit = com.affilemanager.app.thumbnail.ThumbnailInvalidation::documents,
+) {
     companion object {
         private const val PREFS = "saf_locations_v1"
         private const val KEY_LOCATIONS = "locations"
@@ -161,12 +165,16 @@ class SafFileRepository(private val context: Context, private val onMutation: su
         runCatching {
             val file = document(uri)
             check(file.renameTo(name)) { "Pervadinti nepavyko" }
+            onDocumentsChanged(listOf(uri, file.uri.toString()))
             toEntry(file)
         }
     }
 
     suspend fun delete(uri: String): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching { check(document(uri).delete()) { "Ištrinti nepavyko" } }
+        runCatching {
+            try { check(document(uri).delete()) { "Ištrinti nepavyko" } }
+            finally { onDocumentsChanged(listOf(uri)) }
+        }
     }
 
     suspend fun selectionInfo(uris: Collection<String>): Result<FileSelectionSummary> = withContext(Dispatchers.IO) {
@@ -215,7 +223,8 @@ class SafFileRepository(private val context: Context, private val onMutation: su
             runCatching {
                 require(source.exists()) { "Vietinis šaltinis nebeegzistuoja" }
                 val counter = CopyCounter()
-                copyLocalNode(source, document(parentUri), operation, counter, 0)
+                try { copyLocalNode(source, document(parentUri), operation, counter, 0) }
+                finally { onDocumentsChanged(listOf(parentUri)) }
             }
         }
 

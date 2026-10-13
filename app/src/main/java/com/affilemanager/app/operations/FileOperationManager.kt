@@ -27,6 +27,8 @@ enum class OperationStatus {
     INTERRUPTED,
 }
 
+enum class OperationStage { PREPARING, PROCESSING, PUBLISHING_INDEX }
+
 data class OperationSnapshot(
     val id: String,
     val title: String,
@@ -41,7 +43,19 @@ data class OperationSnapshot(
     val finishedAtMillis: Long? = null,
     val retryable: Boolean = false,
     val errorCount: Int = 0,
+    val stage: OperationStage = OperationStage.PREPARING,
 )
+
+/** Byte/item progress is not the completion of a later index commit. */
+fun OperationSnapshot.visibleProgress(): Float? {
+    if (status == OperationStatus.SUCCEEDED) return 1f
+    if (stage != OperationStage.PROCESSING) return null
+    return when {
+        totalBytes != null && totalBytes > 0 -> (completedBytes.toDouble() / totalBytes).coerceIn(0.0, 1.0).toFloat()
+        totalItems != null && totalItems > 0 -> (completedItems.toDouble() / totalItems).coerceIn(0.0, 1.0).toFloat()
+        else -> null
+    }
+}
 
 class OperationContext internal constructor(
     private val id: String,
@@ -72,7 +86,12 @@ class OperationContext internal constructor(
     }
 
     fun setTotals(items: Int?, bytes: Long?) {
-        publish { copy(totalItems = items, totalBytes = bytes) }
+        publish { copy(totalItems = items, totalBytes = bytes, stage = OperationStage.PROCESSING) }
+    }
+
+    fun setStage(stage: OperationStage) {
+        flushProgress()
+        publish { copy(stage = stage) }
     }
 
     @Synchronized
@@ -81,7 +100,7 @@ class OperationContext internal constructor(
         pendingBytes = Math.addExact(pendingBytes, byteDelta)
         if (currentName != null) pendingName = currentName
         val now = System.nanoTime()
-        if (itemDelta != 0 || lastProgressPublishNanos == 0L ||
+        if (lastProgressPublishNanos == 0L ||
             now - lastProgressPublishNanos >= PROGRESS_PUBLISH_INTERVAL_NANOS
         ) {
             flushProgressLocked(now)
@@ -107,6 +126,7 @@ class OperationContext internal constructor(
                 completedItems = completedItems + itemDelta,
                 completedBytes = completedBytes + byteDelta,
                 currentName = currentName ?: this.currentName,
+                stage = if (itemDelta > 0 || byteDelta > 0) OperationStage.PROCESSING else stage,
             )
         }
     }
@@ -149,6 +169,10 @@ class FileOperationManager(
     private val cancelledBeforeStart = ConcurrentHashMap.newKeySet<String>()
     private val _operations = MutableStateFlow<List<OperationSnapshot>>(emptyList())
     val operations: StateFlow<List<OperationSnapshot>> = _operations.asStateFlow()
+    // New results only: restored history must never reopen old error dialogs.
+    // The visible history retains details if more than 64 results arrive before the UI returns.
+    private val _resultNotifications = MutableStateFlow<List<OperationSnapshot>>(emptyList())
+    val resultNotifications = _resultNotifications.asStateFlow()
 
     init {
         scope.launch {
@@ -159,8 +183,8 @@ class FileOperationManager(
                     copy(status = OperationStatus.RUNNING, startedAtMillis = System.currentTimeMillis())
                 }
                 val operationJob = launch(start = CoroutineStart.LAZY) {
+                    val context = OperationContext(request.id, paused) { transform -> update(request.id, transform) }
                     try {
-                        val context = OperationContext(request.id, paused) { transform -> update(request.id, transform) }
                         request.block(context)
                         context.flushProgress()
                         update(request.id) {
@@ -170,11 +194,14 @@ class FileOperationManager(
                                 finishedAtMillis = System.currentTimeMillis(),
                             )
                         }
+                        if (context.completionStatus == OperationStatus.COMPLETED_WITH_ERRORS) notifyResult(request.id)
                     } catch (_: CancellationException) {
+                        context.flushProgress()
                         update(request.id) {
                             copy(status = OperationStatus.CANCELLED, finishedAtMillis = System.currentTimeMillis())
                         }
                     } catch (error: Throwable) {
+                        context.flushProgress()
                         update(request.id) {
                             copy(
                                 status = OperationStatus.FAILED,
@@ -182,6 +209,7 @@ class FileOperationManager(
                                 finishedAtMillis = System.currentTimeMillis(),
                             )
                         }
+                        notifyResult(request.id)
                     } finally {
                         runningJobs.remove(request.id)
                         pauseSignals.remove(request.id)
@@ -256,4 +284,12 @@ class FileOperationManager(
     private fun update(id: String, transform: OperationSnapshot.() -> OperationSnapshot) {
         _operations.update { snapshots -> snapshots.map { if (it.id == id) it.transform() else it } }
     }
+
+    private fun notifyResult(id: String) {
+        _operations.value.firstOrNull { it.id == id }?.let { result ->
+            _resultNotifications.update { (it.filterNot { old -> old.id == id } + result).takeLast(MAX_VISIBLE_HISTORY) }
+        }
+    }
+
+    fun dismissResult(id: String) { _resultNotifications.update { it.filterNot { result -> result.id == id } } }
 }

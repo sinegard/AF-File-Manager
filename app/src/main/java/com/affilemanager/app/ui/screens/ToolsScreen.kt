@@ -85,6 +85,8 @@ import com.affilemanager.app.advanced.AdvancedAccessMode
 import com.affilemanager.app.advanced.CapabilityState
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.operations.OperationSnapshot
+import com.affilemanager.app.operations.OperationStage
+import com.affilemanager.app.operations.visibleProgress
 import com.affilemanager.app.operations.OperationStatus
 import com.affilemanager.app.ui.MainViewModel
 import com.affilemanager.app.ui.components.AfModalDialog
@@ -920,7 +922,9 @@ private fun OperationCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     LText(operation.title, fontWeight = FontWeight.SemiBold)
-                    operation.currentName?.let {
+                    if (operation.stage == OperationStage.PUBLISHING_INDEX && operation.status == OperationStatus.RUNNING) {
+                        LText("Atnaujinamas failų indeksas", style = MaterialTheme.typography.bodySmall)
+                    } else operation.currentName?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                     } ?: LText(operation.message ?: operation.status.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 }
@@ -937,14 +941,14 @@ private fun OperationCard(
                 }
             }
             val totalBytes = operation.totalBytes
+            val progress = operation.visibleProgress()
+            if (progress != null) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            else if (operation.status == OperationStatus.RUNNING) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             if (totalBytes != null && totalBytes > 0) {
-                LinearProgressIndicator(
-                    progress = { (operation.completedBytes.toFloat() / totalBytes).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 LText("${FileSystemRules.humanBytes(operation.completedBytes)} / ${FileSystemRules.humanBytes(totalBytes)}", style = MaterialTheme.typography.labelSmall)
                 val startedAt = operation.startedAtMillis
-                if (startedAt != null && operation.completedBytes > 0 && operation.status == OperationStatus.RUNNING) {
+                if (startedAt != null && operation.completedBytes > 0 && operation.status == OperationStatus.RUNNING &&
+                    operation.stage == OperationStage.PROCESSING) {
                     val elapsedSeconds = ((System.currentTimeMillis() - startedAt).coerceAtLeast(1L) / 1_000.0)
                     val bytesPerSecond = (operation.completedBytes / elapsedSeconds).toLong().coerceAtLeast(1L)
                     val remainingSeconds = ((totalBytes - operation.completedBytes).coerceAtLeast(0L) / bytesPerSecond)
@@ -953,8 +957,6 @@ private fun OperationCard(
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
-            } else if (operation.status == OperationStatus.RUNNING) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (operation.errorCount > 0) {
                 LText("Klaidų: ${operation.errorCount}. Galima bandyti dar kartą.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)

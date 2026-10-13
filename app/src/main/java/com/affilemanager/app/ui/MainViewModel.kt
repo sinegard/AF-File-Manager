@@ -1,6 +1,8 @@
 package com.affilemanager.app.ui
 
 import com.affilemanager.app.ui.localization.appString
+import com.affilemanager.app.media.editing.MediaExportEngine
+import com.affilemanager.app.media.editing.MediaExportFile
 
 import android.app.Application
 import android.content.Intent
@@ -20,6 +22,8 @@ import com.affilemanager.app.advanced.AdvancedAccessState
 import com.affilemanager.app.advanced.ClonedAppStorage
 import com.affilemanager.app.advanced.PrivilegedPathRules
 import com.affilemanager.app.archive.ArchiveEntryInfo
+import com.affilemanager.app.archive.ArchivePasswordSession
+import com.affilemanager.app.archive.ArchivePasswordRequiredException
 import com.affilemanager.app.archive.ArchiveFormat
 import com.affilemanager.app.archive.ArchiveCompressionRules
 import com.affilemanager.app.archive.ArchiveMutationRules
@@ -474,6 +478,8 @@ data class FileEditUiState(
     val preparing: Boolean = false,
     val saving: Boolean = false,
     val modifyingPdf: Boolean = false,
+    val modifyingMedia: Boolean = false,
+    val exportOnly: Boolean = false,
     val status: String? = null,
     val error: String? = null,
     val conflict: EditConflict? = null,
@@ -481,6 +487,7 @@ data class FileEditUiState(
     val confirmDiscard: Boolean = false,
     val closeAfterSave: Boolean = false,
 ) {
+    val modifying: Boolean get() = modifyingPdf || modifyingMedia
     val formatChanged: Boolean get() = encoding != stagedEncoding || lineEnding != stagedLineEnding
     val hasOriginChanges: Boolean get() = textChanged || formatChanged || session?.hasOriginChanges == true
     val hasUnsavedChanges: Boolean get() = textChanged || formatChanged || session?.hasUnsavedChanges == true
@@ -519,6 +526,12 @@ data class SignatureLibraryUiState(
     val error: String? = null,
 )
 
+data class ArchiveUnlockUiState(
+    val target: PreviewTarget,
+    val busy: Boolean = false,
+    val error: String? = null,
+)
+
 enum class NextcloudLoginPhase { IDLE, STARTING, WAITING_FOR_BROWSER, SAVING }
 
 data class NextcloudLoginUiState(
@@ -550,6 +563,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val legacyFilesHomeDisplayIdentity = "virtual:files-home"
     private val remotePreviewCache = RemotePreviewCache(application.cacheDir)
     private val archiveMaterializationMutex = Mutex()
+    private val archivePasswords = ArchivePasswordSession()
+    private val _archiveUnlock = MutableStateFlow<ArchiveUnlockUiState?>(null)
+    val archiveUnlock = _archiveUnlock.asStateFlow()
+    private var archiveUnlockJob: Job? = null
+    private var archiveBrowseRequestId = 0L
     private var archiveReturnTarget: PreviewTarget? = null
     private var archiveMaterializationKey: String? = null
     private var archiveMaterializationRoot: File? = null
@@ -792,6 +810,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val terminalState: StateFlow<TerminalUiState> = graph.terminalSessions.state
 
     val operations = graph.operationManager.operations
+    val operationResults = graph.operationManager.resultNotifications
+    fun dismissOperationResult(id: String) = graph.operationManager.dismissResult(id)
 
     private val _messages = MutableSharedFlow<UiMessage>(extraBufferCapacity = 16)
     val messages: SharedFlow<UiMessage> = _messages.asSharedFlow()
@@ -2343,17 +2363,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sortDirection: SortDirection = SortDirection.ASCENDING,
         query: String = "",
         forceRefresh: Boolean = false,
+        includeHidden: Boolean = false,
     ): Result<com.affilemanager.app.data.FileCategoryPage> =
         withContext(Dispatchers.IO) {
             try {
-                Result.success(graph.fileCategories.loadBrowsePage(
+                val page = graph.fileCategories.loadBrowsePage(
                     category = category,
                     offset = offset,
                     sortMode = sortMode,
                     sortDirection = sortDirection,
                     query = query,
                     forceRefresh = forceRefresh,
-                ))
+                    includeHidden = includeHidden,
+                )
+                Result.success(page.copy(entries = page.entries.filter { includeHidden || !it.absolutePath.replace('\\', '/').split('/').any { segment -> segment.startsWith('.') } }))
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -2719,6 +2742,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.onFailure { message(it.message ?: "Programos šalinimo lango atidaryti nepavyko", true) }
     }
 
+    fun launchInstalledApp(entry: FileEntry) {
+        runCatching {
+            val context = getApplication<Application>()
+            val intent = context.packageManager.getLaunchIntentForPackage(requireNotNull(entry.packageName))
+                ?: throw IllegalStateException("Ši programa neturi paleidimo lango")
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { message(it.message ?: "Programos atidaryti nepavyko", true) }
+    }
+
     fun exportSelectedInstalledApps(destinationUri: Uri) {
         val state = _fileCategory.value
         if (state.category != FileCategory.INSTALLED_APPS) return
@@ -2916,6 +2948,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun open(entry: FileEntry) {
+        cancelArchiveUnlock()
+        if (entry.kind != EntryKind.ARCHIVE) archivePasswords.clear()
         if (entry.isDirectory) {
             if (shouldOpenWithAdvancedAccess(entry.absolutePath)) {
                 openAdvancedBrowser(entry.absolutePath)
@@ -2949,9 +2983,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             when (entry.kind) {
-                com.affilemanager.app.model.EntryKind.ARCHIVE -> runCatching { graph.archives.list(entry.file) }
-                    .onSuccess { _preview.value = PreviewTarget.Archive(entry, it) }
-                    .onFailure { message(it.message ?: "Archyvo perskaityti nepavyko", true) }
+                com.affilemanager.app.model.EntryKind.ARCHIVE -> openArchivePreview(PreviewTarget.Archive(entry, emptyList()))
                 else -> {
                     val directlyExposed = withContext(Dispatchers.IO) { canExposeLocalPreview(entry.file) }
                     if (directlyExposed) _preview.value = PreviewTarget.LocalFile(entry)
@@ -2986,7 +3018,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun navigatePreviewMedia(delta: Int) {
         if (delta == 0) return
-        if (_fileEditState.value.hasUnsavedChanges || _fileEditState.value.saving || _fileEditState.value.modifyingPdf) {
+        if (_fileEditState.value.hasUnsavedChanges || _fileEditState.value.saving || _fileEditState.value.modifying) {
             message("Pirmiausia išsaugokite arba atmeskite redagavimo pakeitimus", true)
             return
         }
@@ -3147,7 +3179,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateEditText(text: String) {
         _fileEditState.update { state ->
-            if (state.session?.usesInternalTextEditor != true || state.saving || state.modifyingPdf) state
+            if (state.session?.usesInternalTextEditor != true || state.saving || state.modifying) state
             else state.copy(
                 text = text,
                 textChanged = text != state.stagedText,
@@ -3161,21 +3193,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateEditEncoding(encoding: TextEncoding) {
         _fileEditState.update { state ->
-            if (state.session?.usesInternalTextEditor != true || state.saving || state.modifyingPdf) state
+            if (state.session?.usesInternalTextEditor != true || state.saving || state.modifying) state
             else state.copy(encoding = encoding, status = null, error = null, conflict = null, saveAsConflict = null)
         }
     }
 
     fun updateEditLineEnding(lineEnding: LineEnding) {
         _fileEditState.update { state ->
-            if (state.session?.usesInternalTextEditor != true || state.saving || state.modifyingPdf) state
+            if (state.session?.usesInternalTextEditor != true || state.saving || state.modifying) state
             else state.copy(lineEnding = lineEnding, status = null, error = null, conflict = null, saveAsConflict = null)
         }
     }
 
     fun saveFileEdit(forceOverwrite: Boolean = false) {
         val snapshot = _fileEditState.value
-        if (snapshot.session == null || snapshot.saving || snapshot.preparing || snapshot.modifyingPdf) return
+        if (snapshot.session == null || snapshot.saving || snapshot.preparing || snapshot.modifying) return
+        if (snapshot.exportOnly) {
+            _fileEditState.update { it.copy(error = "Medijos rezultatą išsaugokite kaip naują failą") }
+            return
+        }
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
         _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null, saveAsConflict = null) }
@@ -3287,7 +3323,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveFileEditAs(destination: Uri) {
         val snapshot = _fileEditState.value
-        if (snapshot.session == null || snapshot.saving || snapshot.preparing || snapshot.modifyingPdf) return
+        if (snapshot.session == null || snapshot.saving || snapshot.preparing || snapshot.modifying) return
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
         _fileEditState.update { it.copy(saving = true, status = null, error = null, conflict = null, saveAsConflict = null) }
@@ -3413,7 +3449,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun saveFileEditAsDestination(destination: EditDestination, policy: EditExistingPolicy) {
         val snapshot = _fileEditState.value
-        if (snapshot.session == null || snapshot.saving || snapshot.preparing || snapshot.modifyingPdf) return
+        if (snapshot.session == null || snapshot.saving || snapshot.preparing || snapshot.modifying) return
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
         _fileEditState.update {
@@ -3580,7 +3616,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val snapshot = _fileEditState.value
         val session = snapshot.session ?: return
-        if (snapshot.saving || snapshot.preparing || snapshot.modifyingPdf) return
+        if (snapshot.saving || snapshot.preparing || snapshot.modifying) return
         if (!session.displayName.endsWith(".pdf", ignoreCase = true) && session.mimeType != "application/pdf") {
             _fileEditState.update { it.copy(error = "Pasirašyti galima tik PDF failą") }
             return
@@ -3631,10 +3667,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** The editor hands off an owned, verified export, not an arbitrary file path from an Intent. */
+    fun acceptMediaExport(result: MediaExportFile): Boolean {
+        val snapshot = _fileEditState.value
+        val session = snapshot.session ?: return false
+        val context = getApplication<Application>()
+        if (snapshot.saving || snapshot.preparing || snapshot.modifying ||
+            !MediaExportEngine.ownedFile(context, result.file) || result.sourceFile.canonicalFile != session.workingFile.canonicalFile ||
+            result.sourceSha256 != session.workingRevision.sha256) return false
+        val requestId = ++fileEditRequestId
+        fileEditJob?.cancel()
+        _fileEditState.update { it.copy(modifyingMedia = true, error = null, status = null, conflict = null, saveAsConflict = null) }
+        fileEditJob = viewModelScope.launch {
+            try {
+                val jobContext = coroutineContext
+                val refreshed = withContext(Dispatchers.IO) {
+                    graph.editSessions.transformWorking(session) { _, destination ->
+                        result.file.inputStream().use { input -> destination.outputStream().use { output ->
+                            val buffer = ByteArray(64 * 1024); var bytes = 0L
+                            while (true) {
+                                jobContext.ensureActive()
+                                val count = input.read(buffer); if (count < 0) break
+                                bytes += count; require(bytes <= com.affilemanager.app.editing.EditLimits.MAX_FILE_BYTES)
+                                output.write(buffer, 0, count)
+                            }
+                        } }
+                    }.copy(displayName = result.displayName, mimeType = result.format.mimeType, usesInternalTextEditor = false)
+                }
+                _fileEditState.update { if (it.session?.id == session.id) it.copy(session = refreshed, exportOnly = true,
+                    modifyingMedia = false, status = "Medija paruošta. Pasirinkite Išsaugoti kaip.", error = null) else it }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Throwable) {
+                _fileEditState.update { if (it.session?.id == session.id) it.copy(modifyingMedia = false,
+                    error = failure.message ?: "Medijos konvertuoti nepavyko", status = null) else it }
+            } finally {
+                try { withContext(NonCancellable + Dispatchers.IO) { if (MediaExportEngine.ownedFile(context, result.file)) result.file.delete() } }
+                finally { if (fileEditRequestId == requestId) {
+                    fileEditJob = null
+                    _fileEditState.update { if (it.session?.id == session.id) it.copy(modifyingMedia = false) else it }
+                } }
+            }
+        }
+        return true
+    }
+
     fun refreshFileEditAfterExternalEditor() {
         val snapshot = _fileEditState.value
         val session = snapshot.session ?: return
-        if (snapshot.saving || snapshot.preparing || snapshot.modifyingPdf) return
+        if (snapshot.saving || snapshot.preparing || snapshot.modifying) return
         val requestId = ++fileEditRequestId
         fileEditJob?.cancel()
         _fileEditState.update { it.copy(preparing = true, status = null, error = null) }
@@ -3697,7 +3777,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             message("Trijų versijų sujungimas dabar galimas nuotoliniams teksto failams", true)
             return
         }
-        if (!session.usesInternalTextEditor || snapshot.conflict == null || snapshot.saving || snapshot.modifyingPdf) return
+        if (!session.usesInternalTextEditor || snapshot.conflict == null || snapshot.saving || snapshot.modifying) return
         val profile = _networkState.value.connectedProfile
         val client = remoteClient
         if (profile?.id != origin.profileId || client == null) {
@@ -4120,7 +4200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ).normalized()
 
     fun closePreview() {
-        if (_fileEditState.value.modifyingPdf) {
+        if (_fileEditState.value.modifying) {
             return
         } else if (_fileEditState.value.saving) {
             _fileEditState.update { it.copy(closeAfterSave = true) }
@@ -4165,14 +4245,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun extractArchive(file: FileEntry, destinationDirectory: String, password: CharArray? = null) {
+        val secret = password ?: archivePasswords.borrow(file.file)
         val fallbackName = getApplication<Application>().appString(R.string.generated_extracted_name)
         val destinationRoot = runCatching { File(destinationDirectory).canonicalFile }.getOrElse {
-            password?.fill('\u0000')
+            secret?.fill('\u0000')
             message(it.message ?: "Paskirties katalogas nepasiekiamas", true)
             return
         }
         if (!destinationRoot.isDirectory || !destinationRoot.canWrite()) {
-            password?.fill('\u0000')
+            secret?.fill('\u0000')
             message("Paskirties katalogas neleidžia rašyti", true)
             return
         }
@@ -4185,7 +4266,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 graph.archives.extract(
                     archiveFile = file.file,
                     destinationDirectory = staging,
-                    password = password,
+                    password = secret,
                     operation = this,
                     fallbackExtractedName = fallbackName,
                 )
@@ -4194,11 +4275,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 closePreview()
                 refreshPanel(_activePanel.value)
             } finally {
-                password?.fill('\u0000')
+                secret?.fill('\u0000')
                 if (staging.exists()) staging.deleteRecursively()
             }
         }.onFailure {
-            password?.fill('\u0000')
+            secret?.fill('\u0000')
             message(it.message ?: "Išpakavimo pradėti nepavyko", true)
         }
     }
@@ -4535,7 +4616,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deletePreviewTarget() {
         val target = _preview.value ?: return
         if (!canDeletePreview(target)) return
-        if (_fileEditState.value.hasUnsavedChanges || _fileEditState.value.saving || _fileEditState.value.modifyingPdf) {
+        if (_fileEditState.value.hasUnsavedChanges || _fileEditState.value.saving || _fileEditState.value.modifying) {
             message("Pirmiausia išsaugokite arba atmeskite redagavimo pakeitimus", true)
             return
         }
@@ -4997,10 +5078,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val target = _preview.value ?: return
         val archiveFile = target.archiveFile() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { graph.archives.list(archiveFile) }
+            runCatching { withArchivePassword(archiveFile) { graph.archives.list(archiveFile, it) } }
                 .onSuccess { entries -> updateArchivePreviewEntries(target, entries) }
                 .onFailure { message(it.message ?: "Archyvo perskaityti nepavyko", true) }
         }
+    }
+
+    private suspend fun <T> withArchivePassword(file: File, block: suspend (CharArray?) -> T): T {
+        val borrowed = archivePasswords.borrow(file)
+        return try { block(borrowed) } finally { borrowed?.fill('\u0000') }
+    }
+
+    private suspend fun openArchivePreview(target: PreviewTarget, password: CharArray? = null) {
+        val file = requireNotNull(target.archiveFile())
+        val job = kotlinx.coroutines.currentCoroutineContext()[Job]
+        if (archiveUnlockJob !== job) archiveUnlockJob?.cancel()
+        archiveUnlockJob = job
+        val request = ++archiveBrowseRequestId
+        try {
+            val entries = graph.archives.listForBrowsing(file, password)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (request != archiveBrowseRequestId) return
+            if (password != null) archivePasswords.remember(file, password) else archivePasswords.clear()
+            val previousFile = _preview.value.remoteCachedFile()
+            _preview.value = when (target) {
+                is PreviewTarget.Archive -> target.copy(entries = entries)
+                is PreviewTarget.RemoteArchive -> target.copy(entries = entries)
+                else -> error("Not an archive preview")
+            }
+            _archiveUnlock.value = null
+            if (previousFile != null && previousFile.absolutePath != file.absolutePath) remotePreviewCache.discard(previousFile)
+        } catch (error: ArchivePasswordRequiredException) {
+            if (request == archiveBrowseRequestId) _archiveUnlock.value = ArchiveUnlockUiState(target)
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (error: Throwable) {
+            if (request != archiveBrowseRequestId) return
+            if (password != null) _archiveUnlock.value = ArchiveUnlockUiState(target, error = "Archyvo atrakinti nepavyko. Patikrinkite slaptažodį ir failą.")
+            else {
+                remotePreviewCache.discard(target.remoteCachedFile())
+                message(error.message ?: "Archyvo perskaityti nepavyko", true)
+            }
+        } finally {
+            password?.fill('\u0000')
+            if (archiveUnlockJob === job) archiveUnlockJob = null
+            val pendingFile = _archiveUnlock.value?.target.remoteCachedFile()
+            val shownFile = _preview.value.remoteCachedFile()
+            val cached = target.remoteCachedFile()
+            if (cached != null && cached != pendingFile && cached != shownFile) {
+                withContext(NonCancellable + Dispatchers.IO) { remotePreviewCache.discard(cached) }
+            }
+        }
+    }
+
+    fun unlockArchive(password: CharArray) {
+        val state = _archiveUnlock.value
+        if (state == null || state.busy || password.size !in 1..1024) { password.fill('\u0000'); return }
+        _archiveUnlock.value = state.copy(busy = true, error = null)
+        archiveUnlockJob = viewModelScope.launch { openArchivePreview(state.target, password) }
+    }
+
+    fun cancelArchiveUnlock() {
+        archiveBrowseRequestId++
+        archiveUnlockJob?.cancel()
+        archiveUnlockJob = null
+        val target = _archiveUnlock.value?.target
+        _archiveUnlock.value = null
+        graph.applicationScope.launch { remotePreviewCache.discard(target.remoteCachedFile()) }
     }
 
     suspend fun materializeArchiveThumbnail(entryPath: String): Result<File> =
@@ -5029,7 +5172,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val stage = File(getApplication<Application>().cacheDir, "archive-share-${UUID.randomUUID()}")
             runCatching {
-                graph.archives.extractEntries(archive, entryPaths, stage)
+                withArchivePassword(archive) { graph.archives.extractEntries(archive, entryPaths, stage, password = it) }
                 val files = stage.walkTopDown().filter(File::isFile).take(MAX_ARCHIVE_SHARE_FILES + 1).toList()
                 require(files.isNotEmpty()) { "Pasirinktuose archyvo įrašuose nėra failų" }
                 require(files.size <= MAX_ARCHIVE_SHARE_FILES) { "Pasirinkta per daug archyvo failų bendrinimui" }
@@ -5042,13 +5185,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun extractArchiveEntries(entryPaths: Set<String>, destinationDirectory: String, password: CharArray? = null) {
         val target = _preview.value
         val archive = target.archiveFile() ?: return
+        val secret = password ?: archivePasswords.borrow(archive)
         val destinationParent = runCatching { File(destinationDirectory).canonicalFile }.getOrElse {
-            password?.fill('\u0000')
+            secret?.fill('\u0000')
             message(it.message ?: "Paskirties katalogas nepasiekiamas", true)
             return
         }
         if (!destinationParent.isDirectory || !destinationParent.canWrite()) {
-            password?.fill('\u0000')
+            secret?.fill('\u0000')
             message("Paskirties katalogas neleidžia rašyti", true)
             return
         }
@@ -5057,16 +5201,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val staging = File(destinationParent, ".af-extract-${UUID.randomUUID()}")
         graph.operationManager.submit("Išpakuojami pasirinkti archyvo įrašai") {
             try {
-                graph.archives.extractEntries(archive, entryPaths, staging, this, password)
+                graph.archives.extractEntries(archive, entryPaths, staging, this, secret)
                 require(!destination.exists() && staging.renameTo(destination)) { "Išpakavimo užbaigti nepavyko" }
                 message("Pasirinkti archyvo įrašai išpakuoti į ${destination.absolutePath}")
                 refreshPanel(_activePanel.value)
             } finally {
-                password?.fill('\u0000')
+                secret?.fill('\u0000')
                 if (staging.exists()) staging.deleteRecursively()
             }
         }.onFailure {
-            password?.fill('\u0000')
+            secret?.fill('\u0000')
             message(it.message ?: "Išpakavimo pradėti nepavyko", true)
         }
     }
@@ -5077,8 +5221,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         graph.operationManager.submit("Pervadinamas archyvo įrašas") {
-            runCatching { graph.archives.renameZipEntry(target.file.file, entryPath, newName) }
-                .onSuccess { entries -> updateArchivePreviewEntries(target, entries) }
+            runCatching { withArchivePassword(target.file.file) { graph.archives.renameZipEntry(target.file.file, entryPath, newName, it) } }
+                .onSuccess { entries -> archivePasswords.rebindAfterOwnedMutation(target.file.file); updateArchivePreviewEntries(target, entries) }
                 .onFailure { error -> message(error.message ?: "Archyvo įrašo pervadinti nepavyko", true); throw error }
         }.onFailure { message(it.message ?: "Pervadinimo pradėti nepavyko", true) }
     }
@@ -5089,8 +5233,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         graph.operationManager.submit("Šalinami archyvo įrašai") {
-            runCatching { graph.archives.deleteZipEntries(target.file.file, entryPaths) }
-                .onSuccess { entries -> updateArchivePreviewEntries(target, entries) }
+            runCatching { withArchivePassword(target.file.file) { graph.archives.deleteZipEntries(target.file.file, entryPaths, it) } }
+                .onSuccess { entries -> archivePasswords.rebindAfterOwnedMutation(target.file.file); updateArchivePreviewEntries(target, entries) }
                 .onFailure { error -> message(error.message ?: "Archyvo įrašų pašalinti nepavyko", true); throw error }
         }.onFailure { message(it.message ?: "Šalinimo pradėti nepavyko", true) }
     }
@@ -5103,8 +5247,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val archive = target.file.file
         val destination = FileSystemRules.keepBothTarget(File(archive.parentFile, "${archive.name.substringBeforeLast('.')} - moved"))
         graph.operationManager.submit("Perkeliami archyvo įrašai") {
-            graph.archives.extractEntries(archive, entryPaths, destination, this)
-            val entries = graph.archives.deleteZipEntries(archive, entryPaths)
+            val entries = withArchivePassword(archive) {
+                graph.archives.extractEntries(archive, entryPaths, destination, this, it)
+                graph.archives.deleteZipEntries(archive, entryPaths, it)
+            }
+            archivePasswords.rebindAfterOwnedMutation(archive)
             updateArchivePreviewEntries(target, entries)
             refreshPanel(_activePanel.value)
             message("Archyvo įrašai perkelti į ${destination.name}")
@@ -6065,14 +6212,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isReadable = cachedFile.canRead(),
                         isWritable = false,
                     )
-                    val archiveEntries = graph.archives.list(cachedFile)
-                    PreviewTarget.RemoteArchive(
+                    val archiveTarget = PreviewTarget.RemoteArchive(
                         remote = entry,
                         file = previewEntry,
                         profileId = profile.id,
                         connectionName = profile.name,
-                        entries = archiveEntries,
+                        entries = emptyList(),
                     )
+                    openArchivePreview(archiveTarget)
+                    return@launch
                 } else {
                     PreviewTarget.RemoteFile(
                         remote = entry,
@@ -6463,6 +6611,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sortDirection = SortDirection.ASCENDING,
     )
 
+    suspend fun listLocalPickerDirectory(path: String, includeHidden: Boolean): Result<List<FileEntry>> = graph.localFiles.list(
+        directoryPath = path, includeHidden = includeHidden, sortMode = SortMode.NAME, sortDirection = SortDirection.ASCENDING)
+
+    suspend fun loadLocalPickerCategory(category: FileCategory, root: StorageRoot, offset: Int, includeHidden: Boolean): Result<com.affilemanager.app.data.FileCategoryPage> =
+        withContext(Dispatchers.IO) { runCatching {
+            require(_roots.value.any { it.path == root.path && it.kind == root.kind }) { "Saugykla nepasiekiama" }
+            val scope = when(root.kind) {
+                com.affilemanager.app.model.StorageRootKind.INTERNAL -> CategoryStorageScope.INTERNAL
+                com.affilemanager.app.model.StorageRootKind.USB_STORAGE -> CategoryStorageScope.USB
+                com.affilemanager.app.model.StorageRootKind.SD_CARD -> CategoryStorageScope.SD_CARD
+                else -> CategoryStorageScope.ALL
+            }
+            val page = graph.fileCategories.loadBrowsePage(category, offset, SortMode.NAME, SortDirection.ASCENDING, storageScope = scope,
+                includeHidden = includeHidden)
+            page.copy(entries = page.entries.filter { entry ->
+                ensureActive()
+                FileSystemRules.isContained(File(root.path), entry.file) &&
+                    (includeHidden || !entry.absolutePath.replace('\\', '/').split('/').any { it.startsWith('.') })
+            })
+        }.onFailure { if (it is CancellationException) throw it } }
+
     fun remoteCreateDirectory(name: String) {
         remoteCreateItem(name, directory = true)
     }
@@ -6669,6 +6838,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun activePanelState(): PanelUiState = panelFlow(_activePanel.value).value
 
     override fun onCleared() {
+        archivePasswords.clear()
+        cancelArchiveUnlock()
         workspaceSaveRequests.trySend(currentWorkspace())
         workspaceSaveRequests.close()
         // Let queued writes finish, then release the workers' reference to this screen.
@@ -6989,6 +7160,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         archiveReturnTarget = null
         _preview.value = null
+        cancelArchiveUnlock()
+        archivePasswords.clear()
         graph.applicationScope.launch {
             val editRemoved = graph.editSessions.discard(session)
             val previewRemoved = remotePreviewCache.discard(target.remoteCachedFile())
@@ -7052,7 +7225,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     requireNotNull(archiveMaterializationRoot),
                     "${UUID.randomUUID()}${extension.takeIf(String::isNotBlank)?.let { ".$it" }.orEmpty()}",
                 )
-                graph.archives.extractEntry(archive, info.name, destination)
+                withArchivePassword(archive) { graph.archives.extractEntry(archive, info.name, destination, password = it) }
                 archiveMaterializedFiles[normalizedPath] = destination
                 destination
             }
@@ -7078,7 +7251,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         root == null || !root.exists() || root.deleteRecursively()
     }
 
-    private fun saveContentOrigin(session: EditSession, forceOverwrite: Boolean): EditSaveResult {
+    private suspend fun saveContentOrigin(session: EditSession, forceOverwrite: Boolean): EditSaveResult {
         val origin = session.origin as? EditOrigin.Content ?: error("Edit session is not a content URI")
         val uri = Uri.parse(origin.uri)
         val current = currentContentRevision(uri)
@@ -7112,12 +7285,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
-    private fun writeContentDestination(session: EditSession, destination: Uri): FileRevision {
+    private suspend fun writeContentDestination(session: EditSession, destination: Uri): FileRevision {
         require(destination.scheme == "content") { "Pasirinkta vieta neįrašoma per Android dokumentų sistemą" }
         val resolver = getApplication<Application>().contentResolver
         graph.editSessions.writeWorkingCopy(session) {
             openContentOutput(resolver, destination)
         }
+        com.affilemanager.app.thumbnail.ThumbnailInvalidation.documents(listOf(destination.toString()))
         return graph.editSessions.revisionFromStream(modifiedAtMillis = null) {
             resolver.openInputStream(destination) ?: throw FileNotFoundException("Išsaugoto failo patikrinti nepavyko")
         }

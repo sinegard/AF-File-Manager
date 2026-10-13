@@ -36,7 +36,7 @@ enum class TransferFailure(val code: String, val retryable: Boolean = false) {
                         // Inspect only for a known category; never retain a message or path.
                         val reason = current.reason.orEmpty().lowercase(java.util.Locale.ROOT)
                         if ("no space" in reason || "enospc" in reason) return SPACE
-                        if ("permission denied" in reason || "eacces" in reason || "eperm" in reason) return PERMISSION
+                        if ("permission denied" in reason || "operation not permitted" in reason || "eacces" in reason || "eperm" in reason) return PERMISSION
                     }
                 }
                 cause = cause?.cause
@@ -53,8 +53,29 @@ enum class TransferFailure(val code: String, val retryable: Boolean = false) {
 
 enum class TransferPhase(val code: String) {
     VALIDATE("validate"), SOURCE("source"), OPEN("open"), READ("read"), WRITE("write"),
-    SYNC("sync"), COMMIT("commit"), NOTIFY("notify"), RESPONSE("response"),
+    SYNC("sync"), COMMIT("commit"), COMMIT_COPY("commit_copy"), NOTIFY("notify"), RESPONSE("response"),
     RECOVER("recover"), COMPLETE("complete"), CANCEL("cancel");
+}
+
+/** NIO drops the native errno cause; recognize only explicit, known OS reasons. */
+internal object TransferFileError {
+    fun errno(error: Throwable): Int {
+        var cause: Throwable? = error
+        repeat(8) {
+            when (val current = cause) {
+                is AccessDeniedException -> return 13
+                is FileAlreadyExistsException -> return 17
+                is FileSystemException -> when (current.reason.orEmpty().lowercase(java.util.Locale.ROOT)) {
+                    "operation not permitted", "eperm" -> return 1
+                    "permission denied", "eacces" -> return 13
+                    "no space left on device", "enospc" -> return 28
+                    "read-only file system", "erofs" -> return 30
+                }
+            }
+            cause = cause?.cause
+        }
+        return 0
+    }
 }
 enum class TransferRole(val code: String) { SEND("send"), RECEIVE("receive") }
 enum class TransferStorage(val code: String) { INTERNAL("internal"), REMOVABLE("removable"), UNKNOWN("unknown") }

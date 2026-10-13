@@ -181,7 +181,7 @@ class LanHttpServerTest {
                 assertEquals(-1, upload.getInputStream().read())
                 assertEquals(TransferFileStatus.CANCELLED, updates.last().files.first().status)
             }
-            val next = request(port, "POST /upload?name=two.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $second\r\nContent-Length: 2\r\n\r\nok")
+            val next = afterPayloadSlotReleased(port, "POST /upload?name=two.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nX-AF-Batch-ID: $second\r\nContent-Length: 2\r\n\r\nok")
             assertTrue(next.startsWith("HTTP/1.1 201"))
             assertEquals("ok", root.resolve("two.txt").readText())
             assertFalse(root.resolve("one.txt").exists())
@@ -239,7 +239,7 @@ class LanHttpServerTest {
             )
             assertTrue(firstStatus.startsWith("HTTP/1.1 200"))
             assertTrue(firstStatus.endsWith("CANCELLED"))
-            val second = request(
+            val second = afterPayloadSlotReleased(
                 port,
                 "POST /upload?name=two.txt&fileCount=2&fileIndex=2 HTTP/1.1\r\nHost: localhost\r\n" +
                     "Cookie: $cookie\r\nX-AF-Batch-ID: $batch\r\nContent-Length: 2\r\n\r\nok",
@@ -252,6 +252,16 @@ class LanHttpServerTest {
                 updates.last().files.map { it.status },
             )
         }
+    }
+
+    /** Cancellation acknowledges stopping the file; its owned cleanup may briefly retain the new one-file slot. */
+    private fun afterPayloadSlotReleased(port: Int, message: String): String {
+        repeat(20) {
+            val response = request(port, message)
+            if (!response.startsWith("HTTP/1.1 429")) return response
+            Thread.sleep(10)
+        }
+        throw AssertionError("The cancelled upload did not release its payload slot within 200 ms")
     }
 
     @Test fun nearbyManifestRequiresAuthenticationAndPublishesOnlyCommittedKeepBothPaths() {
@@ -430,6 +440,51 @@ class LanHttpServerTest {
         }
     }
 
+    @Test fun renameFailureUsesVerifiedCopyBeforeReportingUploadComplete() {
+        val root = temporary.newFolder("rename-fallback")
+        val events = java.util.concurrent.CopyOnWriteArrayList<TransferDiagnosticEvent>()
+        val progress = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
+        val content = "received".repeat(227_302) + "xx"
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678",
+            receivedFileCommitter = ReceivedFileCommitter { source, target ->
+                throw java.nio.file.FileSystemException(source.path, target.path, "Operation not permitted")
+            }, diagnosticsEnabled = { true }, onDiagnostic = events::add, onUploadProgress = progress::add,
+        ).use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            val response = request(port,
+                "POST /upload?dir=&name=received.mp4 HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: ${content.length}\r\n\r\n$content")
+            assertTrue(response, response.startsWith("HTTP/1.1 201"))
+            assertEquals(content, root.resolve("received.mp4").readText())
+            assertTrue(progress.last().completed)
+            assertFalse(root.listFiles().orEmpty().any { it.name.endsWith(".partial") })
+            assertTrue(events.any { it.phase == TransferPhase.COMMIT && it.errno == 1 })
+            assertTrue(events.any { it.phase == TransferPhase.COMMIT_COPY && it.failure == null })
+            assertEquals(TransferPhase.COMPLETE, events.last().phase)
+        }
+    }
+
+    @Test fun failedCommitCannotReplaceAFileCreatedAfterDestinationPlanning() {
+        val root = temporary.newFolder("commit-collision")
+        val progress = java.util.concurrent.CopyOnWriteArrayList<LanUploadProgress>()
+        LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678",
+            receivedFileCommitter = ReceivedFileCommitter { _, target ->
+                target.writeText("original")
+                throw java.nio.file.FileAlreadyExistsException(target.path)
+            }, onUploadProgress = progress::add,
+        ).use { server ->
+            val port = server.start().port
+            val cookie = login(port)
+            val response = request(port,
+                "POST /upload?dir=&name=original.txt HTTP/1.1\r\nHost: localhost\r\nCookie: $cookie\r\nContent-Length: 8\r\n\r\nreceived")
+            assertTrue(response, response.startsWith("HTTP/1.1 500"))
+            assertTrue(response.contains("AF-XFER-CONFLICT"))
+            assertEquals("original", root.resolve("original.txt").readText())
+            assertFalse(progress.any { it.completed })
+            assertFalse(root.listFiles().orEmpty().any { it.name.endsWith(".partial") })
+        }
+    }
+
     @Test
     fun phoneTransferFolderCreationRejectsTraversal() {
         val parent = temporary.newFolder("phone-tree-boundary")
@@ -566,6 +621,44 @@ class LanHttpServerTest {
     }
 
     private fun privateAddress(): InetAddress = LanTestNetwork.privateAddress()
+
+    @Test fun groupPictureRequiresAuthenticationTracksUpdatesAndNeverAppearsInSharedStorage() {
+        val root = temporary.newFolder("private-group-picture")
+        val address = privateAddress()
+        val picture = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xd9.toByte())
+        LanHttpServer(root, address, requestedCode = "12345678", groupMode = true, groupBanner = picture).use { server ->
+            val port = server.start().port
+            fun get(path: String, cookie: String? = null) = request(port,
+                "GET $path HTTP/1.1\r\nHost: localhost\r\n" + (cookie?.let { "Cookie: $it\r\n" } ?: "") + "\r\n", address)
+            assertStatus(401, get("/nearby/group/banner"))
+            val cookie = login(port, address)
+            val accepted = get("/nearby/group/banner", cookie)
+            assertStatus(200, accepted)
+            assertTrue(accepted.contains("Content-Type: image/jpeg"))
+            assertTrue(accepted.contains("Content-Length: 4\r\n"))
+            val revision = get("/nearby/group/members", cookie).lineSequence().first { it.startsWith("X-AF-Banner-Revision:") }
+            assertTrue(server.setGroupBanner(picture + byteArrayOf(1)))
+            val changed = get("/nearby/group/members", cookie).lineSequence().first { it.startsWith("X-AF-Banner-Revision:") }
+            assertFalse(revision == changed)
+            assertTrue(server.setGroupBanner(null))
+            assertStatus(404, get("/nearby/group/banner", cookie))
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun loginAdvertisesOnlyTheExplicitReceiverLimitAndDefaultsToOne() {
+        for (limit in listOf(1, 5)) {
+            val root = temporary.newFolder("receiver-limit-$limit")
+            LanHttpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678", concurrentUploads = limit).use { server ->
+                val port = server.start().port
+                val body = "code=12345678"
+                val response = request(port, "POST /login HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n$body")
+                assertStatus(200, response)
+                assertTrue(response.contains("X-AF-Concurrent-Uploads: $limit\r\n"))
+                assertTrue(response.contains("X-AF-Queue-Version: 1\r\n"))
+            }
+        }
+    }
 
     private fun login(port: Int, address: InetAddress = InetAddress.getLoopbackAddress()): String {
         val body = "code=12345678"

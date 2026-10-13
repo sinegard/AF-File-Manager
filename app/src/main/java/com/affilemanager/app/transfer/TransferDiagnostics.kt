@@ -70,7 +70,7 @@ internal object TransferDiagnostics {
             (cause as? ErrnoException)?.let { return it.errno.coerceIn(0, 4096) }
             cause = cause?.cause
         }
-        return 0
+        return TransferFileError.errno(error)
     }
 
     fun storage(root: File): TransferStorage = runCatching {

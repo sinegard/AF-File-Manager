@@ -41,31 +41,42 @@ class LocalFileOperator(private val onMutation: suspend (List<File>) -> Unit = {
         }
 
         val totals = sources.fold(Scan(0, 0)) { total, source ->
-            val scan = scan(source)
+            val scan = scan(source, context)
             Scan(Math.addExact(total.items, scan.items), Math.addExact(total.bytes, scan.bytes))
         }
         require(totals.items <= MAX_OPERATION_ENTRIES) { "Operacija viršija $MAX_OPERATION_ENTRIES elementų ribą" }
         context.setTotals(totals.items, totals.bytes)
 
-        sources.forEach { source ->
-            context.checkpoint()
-            val initialTarget = File(destination, source.name)
-            require(initialTarget.canonicalFile != source) { "Šaltinis ir paskirtis yra tas pats failas" }
-            val target = resolveTarget(initialTarget, source.isDirectory, conflictPolicy) ?: return@forEach
+        val publishedRoots = linkedSetOf<File>()
+        publishingStorageChanges(onMutation, { publishedRoots.toList() }, context) {
+            sources.forEach { source ->
+                context.checkpoint()
+                val initialTarget = File(destination, source.name)
+                require(initialTarget.canonicalFile != source) { "Šaltinis ir paskirtis yra tas pats failas" }
+                val target = resolveTarget(initialTarget, source.isDirectory, conflictPolicy) ?: return@forEach
+                val existingTarget = target.exists()
 
-            val changed = mutableListOf<File>()
-            publishingStorageChanges(onMutation, { changed }) {
-            if (move && !target.exists() && source.renameTo(target)) {
-                changed += source
-                changed += target
-                val movedScan = scan(target)
-                context.progress(movedScan.items, movedScan.bytes, source.name)
-            } else {
-                val fullyCopied = copyRecursively(source, target, conflictPolicy, context, changed, depth = 0)
-                if (move && fullyCopied) {
-                    deleteRecursively(source, context = null, depth = 0, changed = changed)
+                val changed = mutableListOf<File>()
+                try {
+                    if (move && !target.exists() && source.renameTo(target)) {
+                        changed += source
+                        changed += target
+                        val movedScan = scan(target, context)
+                        context.progress(movedScan.items, movedScan.bytes, source.name)
+                    } else {
+                        val fullyCopied = copyRecursively(source, target, conflictPolicy, context, changed, depth = 0)
+                        if (move && fullyCopied) {
+                            publishedRoots += source
+                            deleteRecursively(source, context = null, depth = 0, changed = changed)
+                        }
+                    }
+                } finally {
+                    if (changed.isNotEmpty()) {
+                        // A merge must not rescan unchanged children of an existing directory.
+                        if (existingTarget) publishedRoots.addAll(changed) else publishedRoots += target
+                        if (source in changed) publishedRoots += source
+                    }
                 }
-            }
             }
         }
     }
@@ -73,14 +84,19 @@ class LocalFileOperator(private val onMutation: suspend (List<File>) -> Unit = {
     suspend fun deletePermanently(paths: List<String>, context: OperationContext) = withContext(Dispatchers.IO) {
         val sources = paths.distinct().map { File(it).canonicalFile }
         val total = sources.fold(Scan(0, 0)) { sum, source ->
-            val scan = scan(source)
+            val scan = scan(source, context)
             Scan(Math.addExact(sum.items, scan.items), Math.addExact(sum.bytes, scan.bytes))
         }
         context.setTotals(total.items, total.bytes)
-        sources.forEach {
-            val changed = mutableListOf<File>()
-            publishingStorageChanges(onMutation, { changed }) {
-                deleteRecursively(it, context, depth = 0, changed = changed)
+        val publishedRoots = linkedSetOf<File>()
+        publishingStorageChanges(onMutation, { publishedRoots.toList() }, context) {
+            sources.forEach {
+                val changed = mutableListOf<File>()
+                try {
+                    deleteRecursively(it, context, depth = 0, changed = changed)
+                } finally {
+                    if (changed.isNotEmpty()) publishedRoots += it
+                }
             }
         }
     }
@@ -98,7 +114,10 @@ class LocalFileOperator(private val onMutation: suspend (List<File>) -> Unit = {
         val target = resolveTarget(requestedTarget, source.isDirectory, conflictPolicy) ?: return false
 
         if (source.isDirectory) {
-            if (!target.exists()) check(target.mkdir()) { "Nepavyko sukurti ${target.name}" }
+            if (!target.exists()) {
+                check(target.mkdir()) { "Nepavyko sukurti ${target.name}" }
+                changed += target
+            }
             val children = source.listFiles() ?: throw SecurityException("Nepavyko perskaityti ${source.name}")
             var fullyCopied = true
             children.forEach { child ->
@@ -152,16 +171,17 @@ class LocalFileOperator(private val onMutation: suspend (List<File>) -> Unit = {
         val regularFile = file.isFile
         val size = if (regularFile) file.length() else 0
         if (!file.delete()) throw IllegalStateException("Nepavyko ištrinti ${file.name}")
-        if (regularFile) changed += file
+        changed += file
         context?.progress(itemDelta = 1, byteDelta = size, currentName = file.name)
     }
 
-    private fun scan(root: File): Scan {
+    private suspend fun scan(root: File, context: OperationContext): Scan {
         var items = 0
         var bytes = 0L
         val pending = ArrayDeque<Pair<File, Int>>()
         pending.add(root to 0)
         while (pending.isNotEmpty()) {
+            if (items % 64 == 0) context.checkpoint()
             val (current, depth) = pending.removeLast()
             require(depth <= MAX_TREE_DEPTH) { "Aplankų gylis viršija $MAX_TREE_DEPTH ribą" }
             items = Math.addExact(items, 1)

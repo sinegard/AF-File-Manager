@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.ArrowUpward
@@ -37,8 +39,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.editing.EditDestinationRules
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.network.RemoteEntry
@@ -86,7 +92,9 @@ fun EditSaveAsDialog(
     }
     var name by remember(initialFileName) { mutableStateOf(initialFileName) }
     var directories by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
+    // Do not briefly enable Save before the initial directory effect starts.
+    // Its loading body can still resize the window underneath a user's touch.
+    var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     val navigation = if (location == SaveAsLocation.PHONE) localNavigation else remoteNavigation
     val currentPath = navigation.path
@@ -121,14 +129,22 @@ fun EditSaveAsDialog(
     }
 
     fun navigateTo(path: String) {
+        if (path == currentPath) return
+        loading = true
         if (location == SaveAsLocation.PHONE) localNavigation = localNavigation.navigate(path)
         else remoteNavigation = remoteNavigation.navigate(RemotePath.normalize(path))
     }
 
     fun navigateBackOrDismiss() {
         when {
-            location == SaveAsLocation.PHONE && localNavigation.backStack.isNotEmpty() -> localNavigation = localNavigation.back()
-            location == SaveAsLocation.SERVER && remoteNavigation.backStack.isNotEmpty() -> remoteNavigation = remoteNavigation.back()
+            location == SaveAsLocation.PHONE && localNavigation.backStack.isNotEmpty() -> {
+                loading = true
+                localNavigation = localNavigation.back()
+            }
+            location == SaveAsLocation.SERVER && remoteNavigation.backStack.isNotEmpty() -> {
+                loading = true
+                remoteNavigation = remoteNavigation.back()
+            }
             else -> onDismiss()
         }
     }
@@ -144,23 +160,36 @@ fun EditSaveAsDialog(
 
     AlertDialog(
         onDismissRequest = ::navigateBackOrDismiss,
+        // Explicit resize on older Android; otherwise the keyboard can cover
+        // the shared Save As actions instead of shrinking its content viewport.
+        properties = DialogProperties(decorFitsSystemWindows = false),
         icon = { Icon(Icons.Rounded.Folder, contentDescription = null) },
         title = { LText("Išsaugoti kaip") },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 AfActionRow {
                     FilterChip(
                         selected = location == SaveAsLocation.PHONE,
-                        onClick = { location = SaveAsLocation.PHONE },
+                        onClick = {
+                            if (location != SaveAsLocation.PHONE) {
+                                loading = true
+                                location = SaveAsLocation.PHONE
+                            }
+                        },
                         label = { LText("Telefonas") },
                         leadingIcon = { Icon(Icons.Rounded.PhoneAndroid, contentDescription = null) },
                     )
                     FilterChip(
                         selected = location == SaveAsLocation.SERVER,
-                        onClick = { if (remoteAvailable) location = SaveAsLocation.SERVER },
+                        onClick = {
+                            if (remoteAvailable && location != SaveAsLocation.SERVER) {
+                                loading = true
+                                location = SaveAsLocation.SERVER
+                            }
+                        },
                         enabled = remoteAvailable,
                         label = { LText("Serveris") },
                         leadingIcon = { Icon(Icons.Rounded.Cloud, contentDescription = null) },
@@ -206,7 +235,7 @@ fun EditSaveAsDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(255) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("save_as_filename"),
                     label = { LText("Failo pavadinimas") },
                     singleLine = true,
                     isError = name.isNotEmpty() && validatedName == null,
@@ -229,10 +258,16 @@ fun EditSaveAsDialog(
                     if (location == SaveAsLocation.PHONE) onSaveLocal(currentPath, safeName)
                     else onSaveRemote(currentPath, safeName)
                 },
-                enabled = validatedName != null && !loading,
+                enabled = validatedName != null && !loading && error == null,
             ) { LText("Išsaugoti čia") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { LText("Atšaukti") } },
+        dismissButton = {
+            // The proposed name is already filled in. Do not open a late IME
+            // and move Save under a user's touch before they choose to rename.
+            val initialFocus = com.affilemanager.app.ui.components.rememberDialogInitialFocusTarget()
+            TextButton(onClick = onDismiss, modifier = Modifier
+                .focusProperties { canFocus = true }.focusRequester(initialFocus)) { LText("Atšaukti") }
+        },
     )
 }
 

@@ -209,6 +209,7 @@ data class NearbyGroupState(
     val members: List<NearbyGroupMember> = emptyList(),
     val memberNotice: String? = null,
     val error: String? = null,
+    val banner: ByteArray? = null,
 )
 
 internal fun groupPairingConfirmed(previous: NearbyGroupState, current: NearbyGroupState): Boolean {
@@ -283,6 +284,10 @@ object NearbyGroupController {
                     cookie = activeCookie
                 }
                 postPairing(invite.organizer, activeCookie, "/nearby/group/join", ownPairing)
+                var banner: ByteArray? = null
+                var bannerRevision: String? = null
+                var bannerAttempts = 0
+                var bannerError: String? = null
                 coroutineContext.ensureActive()
                 synchronized(this@NearbyGroupController) {
                     if (generation != activeGeneration) return@launch
@@ -290,7 +295,7 @@ object NearbyGroupController {
                 }
                 while (true) {
                     coroutineContext.ensureActive()
-                    val members = try {
+                    val snapshot = try {
                         postPairing(invite.organizer, activeCookie, "/nearby/group/heartbeat", ownPairing)
                         loadMembers(invite.organizer, activeCookie)
                     } catch (failure: java.io.IOException) {
@@ -300,6 +305,17 @@ object NearbyGroupController {
                         postPairing(invite.organizer, activeCookie, "/nearby/group/heartbeat", ownPairing)
                         loadMembers(invite.organizer, activeCookie)
                     }
+                    val members = snapshot.first
+                    val newRevision = snapshot.second ?: "legacy"
+                    if (newRevision != bannerRevision) { bannerRevision = newRevision; bannerAttempts = 0 }
+                    if (bannerAttempts < 3 && (bannerAttempts == 0 || bannerError != null)) {
+                        bannerAttempts++
+                        try {
+                            banner = if (newRevision == "none") null else loadBanner(invite.organizer, activeCookie)
+                            bannerError = null
+                        } catch (cancelled: CancellationException) { throw cancelled
+                        } catch (_: Exception) { bannerError = "Grupės paveikslėlio gauti nepavyko" }
+                    }
                     coroutineContext.ensureActive()
                     synchronized(this@NearbyGroupController) {
                       if (generation != activeGeneration) return@launch
@@ -307,12 +323,13 @@ object NearbyGroupController {
                       _state.value = current.copy(
                         status = NearbyGroupStatus.JOINED,
                         members = members,
+                        banner = banner,
                         memberNotice = if (current.status == NearbyGroupStatus.JOINED) {
                             membershipNotice(current.members, members) ?: current.memberNotice
                         } else {
                             null
                         },
-                        error = null,
+                        error = bannerError,
                       )
                     }
                     delay(HEARTBEAT_MILLIS)
@@ -395,7 +412,7 @@ object NearbyGroupController {
         }
     }
 
-    private fun loadMembers(organizer: NearbyPairing, cookie: String): List<NearbyGroupMember> {
+    private fun loadMembers(organizer: NearbyPairing, cookie: String): Pair<List<NearbyGroupMember>, String?> {
         val request = Request.Builder().url(url(organizer, "/nearby/group/members")).header("Cookie", cookie).get().build()
         return client.newCall(request).execute().use { response ->
             if (response.code == 403 && response.header("X-AF-Group-State") == "removed") throw GroupMemberRemovedException()
@@ -415,11 +432,32 @@ object NearbyGroupController {
                 output.toByteArray()
             }
             require(bytes.size <= NearbyGroupCodec.MAX_BYTES) { "Grupės sąrašas per didelis" }
-            NearbyGroupCodec.decode(bytes)
+            NearbyGroupCodec.decode(bytes) to response.header("X-AF-Banner-Revision")?.takeIf { it == "none" || it.matches(Regex("[0-9a-f]{64}")) }
         }
     }
 
     private fun url(pairing: NearbyPairing, path: String): String = "http://${pairing.host}:${pairing.port}$path"
 
     private class GroupMemberRemovedException : IllegalStateException()
+
+    private fun loadBanner(pairing: NearbyPairing, activeCookie: String): ByteArray? {
+        val request = Request.Builder().url("http://${pairing.host}:${pairing.port}/nearby/group/banner").header("Cookie", activeCookie).build()
+        return client.newCall(request).execute().use { response ->
+            if (response.code == 404) return@use null
+            require(response.isSuccessful && response.header("Content-Type")?.substringBefore(';') == "image/jpeg") { "Grupės paveikslėlio gauti nepavyko" }
+            val body = requireNotNull(response.body)
+            require(body.contentLength() <= NearbyGroupBanner.MAX_BYTES) { "Grupės paveikslėlis per didelis" }
+            body.byteStream().use { stream ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(4096)
+                while (true) {
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    require(output.size() + count <= NearbyGroupBanner.MAX_BYTES) { "Grupės paveikslėlis per didelis" }
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray().also(NearbyGroupBanner::validate)
+            }
+        }
+    }
 }

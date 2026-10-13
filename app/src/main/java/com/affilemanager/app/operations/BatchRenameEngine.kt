@@ -161,7 +161,7 @@ class BatchRenameEngine(
         val stages = mutableListOf<RenameStage>()
         publishingStorageChanges(onMutation, {
             stages.flatMap { listOf(File(it.item.originalPath), File(it.item.targetPath), it.temporary) }
-        }) {
+        }, context) {
         try {
             mappings.forEach { item ->
                 context.checkpoint()

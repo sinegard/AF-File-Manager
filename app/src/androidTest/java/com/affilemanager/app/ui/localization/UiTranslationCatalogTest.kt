@@ -18,6 +18,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class UiTranslationCatalogTest {
+    @Test fun apkApiLabelsNeverRetainLithuanianInAnotherLanguage() {
+        UiTranslationCatalog.initialize(ApplicationProvider.getApplicationContext<AFFileManagerApplication>())
+        assertEquals("Minimum Android API", UiTranslator.translate("Minimali Android API", "en"))
+        for (language in AppLanguageManager.SUPPORTED_LANGUAGE_TAGS) {
+            val translated = UiTranslator.translate("Minimali Android API", language)
+            assertTrue("$language lost the Android API label", translated.contains("Android") && translated.contains("API"))
+            if (language != "lt") assertNotEquals("$language retained Lithuanian", "Minimali Android API", translated)
+        }
+    }
+
     @Test fun composedRuntimeFailuresAndTheirWrappersUseEverySelectedPack() {
         UiTranslationCatalog.initialize(ApplicationProvider.getApplicationContext<AFFileManagerApplication>())
         for (language in AppLanguageManager.SUPPORTED_LANGUAGE_TAGS) {

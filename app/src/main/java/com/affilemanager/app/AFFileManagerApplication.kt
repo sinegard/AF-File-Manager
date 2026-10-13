@@ -52,6 +52,7 @@ import com.affilemanager.app.workflow.AfStorageSessionFactory
 import com.affilemanager.app.workflow.AfTimelineRepository
 import com.affilemanager.app.workflow.AfWorkflowCoordinator
 import com.affilemanager.app.ui.TerminalSessionStore
+import com.affilemanager.app.ui.components.FileVisualLoader
 import com.affilemanager.app.ui.localization.UiTranslationCatalog
 import com.affilemanager.app.ui.theme.AppearanceRepository
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -70,6 +71,11 @@ class AFFileManagerApplication : Application() {
         QuickTunnelController.initialize(this)
         PDFBoxResourceLoader.init(this)
         graph = AppGraph(this)
+        FileVisualLoader.startMaintenance(this, graph.applicationScope)
+        graph.applicationScope.launch {
+            runCatching { com.affilemanager.app.media.editing.MediaExportStorage.cleanAbandoned(this@AFFileManagerApplication) }
+                .onFailure { android.util.Log.w("AFMediaEdit", "AF_MEDIA_PRIVATE_CLEANUP_FAILED", it) }
+        }
         graph.applicationScope.launch {
             graph.syncSchedules.restoreWork()
             graph.durableTransfers.restore()

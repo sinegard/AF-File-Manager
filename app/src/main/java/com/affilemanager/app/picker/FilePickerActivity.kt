@@ -70,6 +70,7 @@ class FilePickerActivity : AppCompatActivity() {
     private var hasAccess by mutableStateOf(false)
     private var boundary by mutableStateOf<FilePickerBoundary?>(null)
     private var rootEntries by mutableStateOf<List<FileEntry>>(emptyList())
+    private var storageRoots by mutableStateOf<List<com.affilemanager.app.model.StorageRoot>>(emptyList())
     private var error by mutableStateOf<String?>(null)
     private var warning by mutableStateOf<String?>(null)
     private var confirming by mutableStateOf(false)
@@ -135,6 +136,7 @@ class FilePickerActivity : AppCompatActivity() {
                     }
                 }
                 boundary = discovered
+                storageRoots = roots.filter { root -> rootEntries.any { it.absolutePath == root.path } }
                 if (rootEntries.isEmpty()) error = "Saugykla nepasiekiama"
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -152,6 +154,28 @@ class FilePickerActivity : AppCompatActivity() {
                 title = "AF File Manager", confirmLabel = "Pasirinkti",
                 filesOnly = true, allowMultiple = request.allowMultiple, selectionLimit = request.selectionLimit,
                 parentDirectory = allowed::parent, message = error ?: warning, confirming = confirming,
+                storageRoots = storageRoots,
+                loadWithHidden = { path, hidden -> loadDirectory(path, allowed, request, hidden) },
+                loadCategory = { category, root, offset, hidden ->
+                    withContext(Dispatchers.IO) { runCatching {
+                        require(allowed.permitted(root.path)?.isDirectory == true) { "Saugykla nepasiekiama" }
+                        val scope = when (root.kind) {
+                            com.affilemanager.app.model.StorageRootKind.INTERNAL -> com.affilemanager.app.data.CategoryStorageScope.INTERNAL
+                            com.affilemanager.app.model.StorageRootKind.USB_STORAGE -> com.affilemanager.app.data.CategoryStorageScope.USB
+                            com.affilemanager.app.model.StorageRootKind.SD_CARD -> com.affilemanager.app.data.CategoryStorageScope.SD_CARD
+                            else -> com.affilemanager.app.data.CategoryStorageScope.ALL
+                        }
+                        val page = graph.fileCategories.loadBrowsePage(category, offset, SortMode.NAME, SortDirection.ASCENDING, storageScope = scope,
+                            includeHidden = hidden)
+                        page.copy(entries = page.entries.filter { entry ->
+                            ensureActive()
+                            val file = allowed.permitted(entry.absolutePath)
+                            file != null && file.isFile && file.canRead() && request.accepts(mimeType(file)) &&
+                                com.affilemanager.app.core.FileSystemRules.isContained(File(root.path), file) &&
+                                (hidden || !file.path.replace('\\', '/').split('/').any { it.startsWith('.') })
+                        })
+                    }.onFailure { if (it is CancellationException) throw it } }
+                },
             )
         } else {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -176,7 +200,7 @@ class FilePickerActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun loadDirectory(path: String, allowed: FilePickerBoundary, request: FilePickerRequest): Result<List<FileEntry>> {
+    private suspend fun loadDirectory(path: String, allowed: FilePickerBoundary, request: FilePickerRequest, hidden: Boolean = false): Result<List<FileEntry>> {
         error = null
         warning = null
         if (path.isEmpty()) return Result.success(rootEntries)
@@ -185,7 +209,7 @@ class FilePickerActivity : AppCompatActivity() {
             val entries = withContext(Dispatchers.IO) {
                 val directory = allowed.permitted(path)
                 require(directory != null && directory.isDirectory) { "Pasirinkta dokumentų vieta nepasiekiama" }
-                graph.localFiles.listProgressively(directory.path, false, SortMode.NAME, SortDirection.ASCENDING) {
+                graph.localFiles.listProgressively(directory.path, hidden, SortMode.NAME, SortDirection.ASCENDING) {
                     truncated = it.truncated
                 }.getOrThrow().filter { entry ->
                     ensureActive()

@@ -4,6 +4,7 @@ import com.github.junrar.Archive
 import com.affilemanager.app.operations.OperationContext
 import com.affilemanager.app.operations.publishingStorageChanges
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import net.lingala.zip4j.ZipFile
 import net.lingala.zip4j.model.ZipParameters
@@ -13,6 +14,8 @@ import net.lingala.zip4j.model.enums.CompressionMethod
 import net.lingala.zip4j.model.enums.EncryptionMethod
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
+import org.apache.commons.compress.PasswordRequiredException
+import org.apache.commons.compress.archivers.sevenz.SevenZMethod
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
@@ -44,8 +47,8 @@ class ArchiveEngine(
         require(archiveFile.isFile) { "Archyvas nepasiekiamas" }
         when (detectFormat(archiveFile)) {
             ArchiveFormat.ZIP -> listZip(archiveFile, password)
-            ArchiveFormat.SEVEN_Z -> listSevenZ(archiveFile)
-            ArchiveFormat.RAR -> listRar(archiveFile)
+            ArchiveFormat.SEVEN_Z -> listSevenZ(archiveFile, password)
+            ArchiveFormat.RAR -> listRar(archiveFile, password)
             ArchiveFormat.TAR, ArchiveFormat.TAR_GZ -> listTar(archiveFile)
             ArchiveFormat.GZIP -> listOf(
                 ArchiveEntryInfo(
@@ -56,6 +59,51 @@ class ArchiveEngine(
             )
         }
     }
+
+    /** Listing ZIP names does not validate a password. Challenge before exposing a protected preview. */
+    suspend fun listForBrowsing(file: File, password: CharArray? = null): List<ArchiveEntryInfo> = withContext(Dispatchers.IO) {
+        require(password == null || password.size in 1..1024) { "Netinkamas slaptažodis" }
+        when (detectFormat(file)) {
+            ArchiveFormat.ZIP -> ZipFile(file).use { zip ->
+                val header = zip.fileHeaders.takeChecked().firstOrNull { it.isEncrypted && !it.isDirectory }
+                if (header != null) {
+                    if (password == null) throw ArchivePasswordRequiredException()
+                    zip.setPassword(password)
+                    zip.getInputStream(header).use { it.read() }
+                }
+            }
+            ArchiveFormat.SEVEN_Z -> try {
+                openSevenZ(file, password).use { archive ->
+                    var count = 0
+                    while (true) {
+                        if (count % 64 == 0) kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        val entry = archive.nextEntry ?: break
+                        require(++count <= limits.maxEntries) { "Archyve per daug įrašų" }
+                        if (entry.contentMethods?.any { it.method == SevenZMethod.AES256SHA256 } == true) {
+                            if (password == null) throw ArchivePasswordRequiredException()
+                            if (!entry.isDirectory && entry.size > 0) archive.read()
+                            break
+                        }
+                    }
+                }
+            } catch (error: PasswordRequiredException) { throw ArchivePasswordRequiredException() }
+            ArchiveFormat.RAR -> try {
+                openRar(file, password).use { archive ->
+                    if (archive.isPasswordProtected && password == null) throw ArchivePasswordRequiredException()
+                }
+            } catch (error: com.github.junrar.exception.InitDeciphererFailedException) {
+                if (password == null) throw ArchivePasswordRequiredException() else throw error
+            }
+            else -> Unit
+        }
+        list(file, password)
+    }
+
+    private fun openSevenZ(file: File, password: CharArray?): SevenZFile =
+        SevenZFile.builder().setFile(file).setPassword(password).setMaxMemoryLimitKiB(64 * 1024).get()
+
+    // Junrar requires String; it is confined to the closeable library instance, never persisted.
+    private fun openRar(file: File, password: CharArray?) = if (password == null) Archive(file) else Archive(file, String(password))
 
     suspend fun extract(
         archiveFile: File,
@@ -68,11 +116,11 @@ class ArchiveEngine(
         require(destinationDirectory.isDirectory || destinationDirectory.mkdirs()) { "Paskirties aplankas nepasiekiamas" }
         val affected = list(archiveFile, password).filterNot(ArchiveEntryInfo::directory)
             .map { SafeArchivePath.resolve(destinationDirectory, it.name, limits.maxDepth) }
-        publishingStorageChanges(onMutation, { affected }) {
+        publishingStorageChanges(onMutation, { affected }, operation) {
         when (detectFormat(archiveFile)) {
             ArchiveFormat.ZIP -> extractZip(archiveFile, destinationDirectory, password, operation)
-            ArchiveFormat.SEVEN_Z -> extractSevenZ(archiveFile, destinationDirectory, operation)
-            ArchiveFormat.RAR -> extractRar(archiveFile, destinationDirectory, operation)
+            ArchiveFormat.SEVEN_Z -> extractSevenZ(archiveFile, destinationDirectory, operation, password)
+            ArchiveFormat.RAR -> extractRar(archiveFile, destinationDirectory, operation, password)
             ArchiveFormat.TAR, ArchiveFormat.TAR_GZ -> extractTar(archiveFile, destinationDirectory, operation)
             ArchiveFormat.GZIP -> extractGzip(archiveFile, destinationDirectory, operation, fallbackExtractedName)
         }
@@ -108,7 +156,7 @@ class ArchiveEngine(
             }
             ArchiveFormat.SEVEN_Z -> {
                 var found = false
-                SevenZFile(archiveFile).use { archive ->
+                openSevenZ(archiveFile, password).use { archive ->
                     while (true) {
                         val entry = archive.nextEntry ?: break
                         if (normalizedEntryPath(entry.name) != requested) continue
@@ -124,7 +172,7 @@ class ArchiveEngine(
                 require(found) { "Archive entry was not found" }
             }
             ArchiveFormat.RAR -> {
-                Archive(archiveFile).use { archive ->
+                openRar(archiveFile, password).use { archive ->
                     val header = archive.fileHeaders.takeChecked().firstOrNull {
                         normalizedEntryPath(it.fileName) == requested
                     } ?: throw IllegalArgumentException("Archive entry was not found")
@@ -209,7 +257,7 @@ class ArchiveEngine(
             chosenEntries.filterNot(ArchiveEntryInfo::directory).map {
                 SafeArchivePath.resolve(destinationDirectory, it.name, limits.maxDepth)
             }
-        }) {
+        }, operation) {
         when (detectFormat(archiveFile)) {
             ArchiveFormat.ZIP -> {
                 val zip = if (password == null) ZipFile(archiveFile) else ZipFile(archiveFile, password)
@@ -228,7 +276,7 @@ class ArchiveEngine(
                     completed(normalized)
                 }
             }
-            ArchiveFormat.SEVEN_Z -> SevenZFile(archiveFile).use { archive ->
+            ArchiveFormat.SEVEN_Z -> openSevenZ(archiveFile, password).use { archive ->
                 while (true) {
                     val entry = archive.nextEntry ?: break
                     val normalized = ArchiveMutationRules.normalizePath(entry.name)
@@ -243,7 +291,7 @@ class ArchiveEngine(
                     completed(normalized)
                 }
             }
-            ArchiveFormat.RAR -> Archive(archiveFile).use { archive ->
+            ArchiveFormat.RAR -> openRar(archiveFile, password).use { archive ->
                 archive.fileHeaders.takeChecked().forEach { header ->
                     val normalized = ArchiveMutationRules.normalizePath(header.fileName)
                     if (normalized !in chosenByPath) return@forEach
@@ -468,9 +516,9 @@ class ArchiveEngine(
     }
 
     @Suppress("DEPRECATION")
-    private fun listSevenZ(file: File): List<ArchiveEntryInfo> {
+    private fun listSevenZ(file: File, password: CharArray?): List<ArchiveEntryInfo> {
         val result = mutableListOf<ArchiveEntryInfo>()
-        SevenZFile(file).use { archive ->
+        openSevenZ(file, password).use { archive ->
             while (true) {
                 val entry = archive.nextEntry ?: break
                 require(result.size < limits.maxEntries) { "Archyve per daug įrašų" }
@@ -485,7 +533,7 @@ class ArchiveEngine(
         return result
     }
 
-    private fun listRar(file: File): List<ArchiveEntryInfo> = Archive(file).use { archive ->
+    private fun listRar(file: File, password: CharArray?): List<ArchiveEntryInfo> = openRar(file, password).use { archive ->
         archive.fileHeaders.takeChecked().map { header ->
             ArchiveEntryInfo(
                 name = header.fileName,
@@ -538,10 +586,10 @@ class ArchiveEngine(
     }
 
     @Suppress("DEPRECATION")
-    private suspend fun extractSevenZ(file: File, destination: File, operation: OperationContext?) {
+    private suspend fun extractSevenZ(file: File, destination: File, operation: OperationContext?, password: CharArray?) {
         var entries = 0
         var expanded = 0L
-        SevenZFile(file).use { archive ->
+        openSevenZ(file, password).use { archive ->
             while (true) {
                 val entry = archive.nextEntry ?: break
                 entries += 1
@@ -562,8 +610,8 @@ class ArchiveEngine(
         }
     }
 
-    private suspend fun extractRar(file: File, destination: File, operation: OperationContext?) {
-        Archive(file).use { archive ->
+    private suspend fun extractRar(file: File, destination: File, operation: OperationContext?, password: CharArray?) {
+        openRar(file, password).use { archive ->
             val headers = archive.fileHeaders.takeChecked()
             enforceDeclaredLimits(headers.map { it.fullUnpackSize })
             operation?.setTotals(headers.size, headers.sumOf { it.fullUnpackSize.coerceAtLeast(0) })

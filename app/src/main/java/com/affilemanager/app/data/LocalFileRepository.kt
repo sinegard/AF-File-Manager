@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.storage.StorageManager
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.thumbnail.ThumbnailInvalidation
 import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.SortDirection
 import com.affilemanager.app.model.SortMode
@@ -126,6 +127,7 @@ internal object LegacyStorageRootPolicy {
 class LocalFileRepository(
     private val context: Context,
     private val onMutation: suspend (List<File>) -> Unit = {},
+    private val onDirectoryOpened: () -> Unit = ThumbnailInvalidation::directoryOpened,
 ) {
     suspend fun roots(): List<StorageRoot> = withContext(Dispatchers.IO) {
         val storageManager = context.getSystemService(StorageManager::class.java)
@@ -218,6 +220,7 @@ class LocalFileRepository(
         try {
             val directory = File(directoryPath).canonicalFile
             require(directory.isDirectory) { "Tai nėra aplankas" }
+            onDirectoryOpened()
             val entries = ArrayList<FileEntry>()
             var scanned = 0
             var truncated = false

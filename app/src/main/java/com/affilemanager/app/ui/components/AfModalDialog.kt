@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -50,16 +51,20 @@ fun AfModalDialog(
     translateTitle: Boolean = true,
     showFooter: Boolean = true,
     expandedContent: Boolean = false,
+    decorFitsSystemWindows: Boolean = true,
     actions: @Composable () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
     AfDialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = decorFitsSystemWindows),
     ) {
         // Keep the dialog window fitted to its surface so Android can still dismiss
         // an outside tap; a full-screen wrapper consumes that tap as dialog content.
-        BoxWithConstraints(modifier = Modifier.imePadding(), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(
+            modifier = Modifier.then(if (decorFitsSystemWindows) Modifier else Modifier.systemBarsPadding()).imePadding(),
+            contentAlignment = Alignment.Center,
+        ) {
             val maximumDialogHeight = maxHeight * 0.92f
             val compactHeight = maximumDialogHeight < 300.dp
             Surface(
@@ -92,8 +97,6 @@ fun AfModalDialog(
                                     title,
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
                                 )
                             } else {
                                 Text(

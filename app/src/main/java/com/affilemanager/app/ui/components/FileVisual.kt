@@ -4,6 +4,7 @@ import com.affilemanager.app.ui.localization.uiText
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -18,6 +19,7 @@ import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.LruCache
+import android.util.Log
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -71,11 +73,22 @@ import com.affilemanager.app.model.FileEntry
 import com.affilemanager.app.model.StorageRoot
 import com.affilemanager.app.model.StorageRootKind
 import com.affilemanager.app.network.RemoteEntry
+import com.affilemanager.app.thumbnail.ThumbnailDiskCache
+import com.affilemanager.app.thumbnail.ThumbnailInvalidation
+import com.affilemanager.app.thumbnail.ThumbnailLoadTracker
+import com.affilemanager.app.thumbnail.ThumbnailSources
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 private const val MAX_THUMBNAIL_DIMENSION = 512
@@ -220,6 +233,8 @@ internal data class LoadedFileVisual(
     val bitmap: Bitmap,
     val crop: Boolean,
     val contentThumbnail: Boolean,
+    val sourceIdentity: String? = null,
+    val sourceRevision: String? = null,
 )
 
 @Composable
@@ -550,10 +565,165 @@ internal object FileVisualLoader {
             size > MAX_MISSING_CACHE_ENTRIES
     }
     private val decodePermits = Semaphore(2)
+    private val activeLoads = ThumbnailLoadTracker()
+    private val diskHits = AtomicLong()
+    private val sourceDecodes = AtomicLong()
+    private val diskWrites = AtomicLong()
+    private val diskLock = Any()
+    private var diskCache: ThumbnailDiskCache? = null
+    private val cleanupRequests = Channel<Unit>(Channel.CONFLATED)
+    private val reportedFailures = hashSetOf<String>()
+    private var maintenanceStarted = false
 
     fun peek(key: String): LoadedFileVisual? = synchronized(cache) { cache.get(key) }
 
     internal fun isKnownMissing(key: String): Boolean = synchronized(missingCache) { missingCache.containsKey(key) }
+
+    internal fun startMaintenance(context: Context, scope: CoroutineScope) {
+        synchronized(diskLock) {
+            if (maintenanceStarted) return
+            maintenanceStarted = true
+        }
+        val application = context.applicationContext
+        ThumbnailInvalidation.install(
+            local = { invalidateLocal(application, it) },
+            documents = { invalidateDocuments(application, it) },
+            opened = ::requestCleanup,
+        )
+        val observer = object : ContentObserver(null) {
+            override fun onChange(selfChange: Boolean) { requestCleanup() }
+        }
+        optionalCache("AF-THUMB-OBSERVER") {
+            application.contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"), true, observer)
+        }
+        scope.launch(Dispatchers.IO) {
+            for (request in cleanupRequests) {
+                delay(250L)
+                val root = File(application.cacheDir, "af-thumbnails-v1")
+                if (root.exists()) optionalCache("AF-THUMB-CLEANUP") {
+                    pruneMissingMemorySources()
+                    disk(application).pruneMissingLocalSources()
+                }
+            }
+        }
+        requestCleanup()
+    }
+
+    internal fun requestCleanup() { cleanupRequests.trySend(Unit) }
+
+    internal suspend fun invalidateLocal(context: Context, paths: List<File>) = withContext(Dispatchers.IO) {
+        val normalized = ThumbnailSources.localPaths(paths.map(File::getAbsolutePath))
+        invalidateMemory { ThumbnailSources.affectedLocal(it, normalized) }
+        optionalCache("AF-THUMB-INVALIDATE") { disk(context).invalidateLocal(paths.map(File::getAbsolutePath)) }
+    }
+
+    internal suspend fun invalidateDocuments(context: Context, uris: List<String>) = withContext(Dispatchers.IO) {
+        val authorities = ThumbnailSources.documentAuthorities(uris)
+        invalidateMemory { ThumbnailSources.affectedDocument(it, authorities) }
+        optionalCache("AF-THUMB-INVALIDATE") { disk(context).invalidateDocuments(uris) }
+    }
+
+    private fun invalidateMemory(affected: (String) -> Boolean) = synchronized(cache) {
+        activeLoads.invalidate(affected)
+        cache.snapshot().filterValues { it.sourceIdentity?.let(affected) == true }.keys.forEach(cache::remove)
+    }
+
+    private fun pruneMissingMemorySources() {
+        val candidates = synchronized(cache) { cache.snapshot().values.toList() }
+        val currentRevisions = hashMapOf<String, String?>()
+        val stale = hashSetOf<String>()
+        candidates.forEach { visual ->
+            val source = visual.sourceIdentity
+            if (source != null && source.startsWith("local|")) {
+                if (!currentRevisions.containsKey(source)) {
+                    val file = File(source.removePrefix("local|"))
+                    currentRevisions[source] = if (file.isFile) "${file.lastModified()}:${file.length()}" else null
+                }
+                if (currentRevisions[source] == null ||
+                    (visual.sourceRevision != null && currentRevisions[source] != visual.sourceRevision)) stale += source
+            }
+        }
+        if (stale.isNotEmpty()) invalidateMemory { it in stale }
+    }
+
+    /** Deterministic test isolation; production never clears a user's cache on launch. */
+    internal fun resetMemoryAndDiskIndexForTests() {
+        synchronized(cache) { cache.evictAll() }
+        synchronized(missingCache) { missingCache.clear() }
+        synchronized(diskLock) { diskCache = null }
+    }
+
+    internal fun cacheCounters(): List<Long> = listOf(diskHits.get(), sourceDecodes.get(), diskWrites.get())
+
+    private fun disk(context: Context): ThumbnailDiskCache = synchronized(diskLock) {
+        val directory = File(context.applicationContext.cacheDir, "af-thumbnails-v1")
+        diskCache?.takeIf { it.directory == directory }
+            ?: ThumbnailDiskCache(directory).also { diskCache = it }
+    }
+
+    private inline fun <T> optionalCache(code: String, block: () -> T): T? = try {
+        block()
+    } catch (_: IOException) {
+        reportCacheFailure(code)
+        null
+    } catch (_: SecurityException) {
+        reportCacheFailure(code)
+        null
+    } catch (_: IllegalArgumentException) {
+        reportCacheFailure(code)
+        null
+    } catch (_: IllegalStateException) {
+        reportCacheFailure(code)
+        null
+    }
+
+    private fun reportCacheFailure(code: String) {
+        if (synchronized(reportedFailures) { reportedFailures.add(code) }) Log.w("AFThumbnailCache", code)
+    }
+
+    private fun diskVisual(context: Context, key: String, source: String, revision: String): LoadedFileVisual? {
+        val record = optionalCache("AF-THUMB-READ") {
+            val store = disk(context)
+            val before = store.corruptionCount
+            val result = store.read(key, source, revision)
+            if (store.corruptionCount > before) reportCacheFailure("AF-THUMB-CORRUPT")
+            result
+        } ?: return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(record.bytes, 0, record.bytes.size, bounds)
+        if (bounds.outWidth !in 1..MAX_THUMBNAIL_DIMENSION || bounds.outHeight !in 1..MAX_THUMBNAIL_DIMENSION) {
+            reportCacheFailure("AF-THUMB-BITMAP")
+            return null
+        }
+        val bitmap = BitmapFactory.decodeByteArray(record.bytes, 0, record.bytes.size) ?: return null
+        diskHits.incrementAndGet()
+        return LoadedFileVisual(bitmap, record.crop, record.contentThumbnail, source, revision)
+    }
+
+    private fun persistVisual(context: Context, key: String, source: String, revision: String, visual: LoadedFileVisual, ticket: ThumbnailLoadTracker.Ticket) {
+        if (!visual.contentThumbnail || !ticket.isCurrent) return
+        if (visual.bitmap.width !in 1..MAX_THUMBNAIL_DIMENSION || visual.bitmap.height !in 1..MAX_THUMBNAIL_DIMENSION) return
+        optionalCache("AF-THUMB-WRITE") {
+            val output = ByteArrayOutputStream()
+            if (visual.bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                val record = ThumbnailDiskCache.Record(output.toByteArray(), visual.crop, visual.contentThumbnail)
+                if (disk(context).write(key, source, revision, record) { ticket.isCurrent }) diskWrites.incrementAndGet()
+            }
+        }
+    }
+
+    private inline fun decodeVisual(block: () -> LoadedFileVisual?): LoadedFileVisual? = try {
+        sourceDecodes.incrementAndGet()
+        block()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: IOException) {
+        reportCacheFailure("AF-THUMB-DECODE")
+        null
+    } catch (_: RuntimeException) {
+        reportCacheFailure("AF-THUMB-DECODE")
+        null
+    }
 
     suspend fun loadLocal(
         context: Context,
@@ -569,12 +739,38 @@ internal object FileVisualLoader {
         return decodePermits.withPermit {
             peek(key)?.let { return@withPermit it }
             if (isKnownMissing(key)) return@withPermit null
-            val result = withContext(Dispatchers.IO) {
-                runCatching { createLocalVisual(context, entry, widthPx, heightPx, showThumbnails) }.getOrNull()
+            withContext(Dispatchers.IO) {
+                val ticket = activeLoads.begin(ThumbnailSources.local(entry.absolutePath))
+                try {
+                    val source = ticket.source
+                    val revision = "${entry.modifiedAtMillis}:${entry.sizeBytes}"
+                    val sourcePath = File(source.removePrefix("local|")).toPath()
+                    val temporarySource = sourcePath.startsWith(File(ThumbnailSources.localPath(context.cacheDir.path)).toPath()) ||
+                        sourcePath.toString().contains("/${context.packageName}/cache/")
+                    val persistent = showThumbnails && !temporarySource && entry.kind != EntryKind.APK &&
+                        FileVisualRules.hasContentThumbnail(entry.kind, entry.extension)
+                    if (persistent && (!entry.file.isFile || entry.file.lastModified() != entry.modifiedAtMillis || entry.file.length() != entry.sizeBytes)) {
+                        optionalCache("AF-THUMB-INVALIDATE") { disk(context).invalidateLocal(listOf(entry.absolutePath)) }
+                        return@withContext null
+                    }
+                    val cached = if (persistent) diskVisual(context, key, source, revision) else null
+                    val visual = cached ?: decodeVisual {
+                        createLocalVisual(context, entry, widthPx, heightPx, showThumbnails)?.copy(sourceIdentity = source, sourceRevision = revision)?.also { visual ->
+                            if (persistent && entry.file.isFile && entry.file.lastModified() == entry.modifiedAtMillis && entry.file.length() == entry.sizeBytes) {
+                                persistVisual(context, key, source, revision, visual, ticket)
+                            }
+                        }
+                    }
+                    val result = if (persistent && (!entry.file.isFile || entry.file.lastModified() != entry.modifiedAtMillis || entry.file.length() != entry.sizeBytes)) {
+                        optionalCache("AF-THUMB-INVALIDATE") { disk(context).invalidateLocal(listOf(entry.absolutePath)) }
+                        null
+                    } else visual
+                    if (!ticket.isCurrent) return@withContext null
+                    result?.bitmap?.prepareToDraw()
+                    cacheResult(key, result, rememberMissing = key.startsWith("local-type|"), ticket = ticket)
+                    result
+                } finally { activeLoads.finish(ticket) }
             }
-            result?.bitmap?.prepareToDraw()
-            cacheResult(key, result, rememberMissing = key.startsWith("local-type|"))
-            result
         }
     }
 
@@ -591,12 +787,28 @@ internal object FileVisualLoader {
         return decodePermits.withPermit {
             peek(key)?.let { return@withPermit it }
             if (isKnownMissing(key)) return@withPermit null
+            val ticket = activeLoads.begin(ThumbnailSources.document(entry.uri))
+            try {
             val result = withContext(Dispatchers.IO) {
-                runCatching { createSafVisual(context, entry, widthPx, heightPx) }.getOrNull()
+                val source = ticket.source
+                val revision = "${entry.modifiedAtMillis}:${entry.sizeBytes}"
+                // Providers without a modification timestamp cannot promise a stable revision.
+                val uri = entry.uri.toUri()
+                val ownTemporaryProvider = uri.authority == "${context.packageName}.files" &&
+                    uri.pathSegments.firstOrNull() == "app_cache"
+                val persistent = !ownTemporaryProvider && entry.modifiedAtMillis > 0L && entry.sizeBytes > 0L
+                val cached = if (persistent) diskVisual(context, key, source, revision) else null
+                cached ?: decodeVisual {
+                    createSafVisual(context, entry, widthPx, heightPx)?.copy(sourceIdentity = source, sourceRevision = revision)?.also { visual ->
+                        if (persistent) persistVisual(context, key, source, revision, visual, ticket)
+                    }
+                }
             }
+            if (!ticket.isCurrent) return@withPermit null
             result?.bitmap?.prepareToDraw()
-            cacheResult(key, result, rememberMissing = false)
+            cacheResult(key, result, rememberMissing = false, ticket = ticket)
             result
+            } finally { activeLoads.finish(ticket) }
         }
     }
 
@@ -627,9 +839,9 @@ internal object FileVisualLoader {
         }
     }
 
-    private fun cacheResult(key: String, result: LoadedFileVisual?, rememberMissing: Boolean) {
+    private fun cacheResult(key: String, result: LoadedFileVisual?, rememberMissing: Boolean, ticket: ThumbnailLoadTracker.Ticket? = null) {
         if (result != null) {
-            synchronized(cache) { cache.put(key, result) }
+            synchronized(cache) { if (ticket?.isCurrent != false) cache.put(key, result) }
             synchronized(missingCache) { missingCache.remove(key) }
         } else if (rememberMissing) {
             synchronized(missingCache) { missingCache[key] = Unit }

@@ -79,7 +79,7 @@ class DurableTransferCoordinator(
             try {
                 publishingStorageChanges(onMutation, {
                     destinations + if (plan.move) files.map { java.io.File(it.sourcePath) } else emptyList()
-                }) {
+                }, this) {
                     val latest = repository.load(plan.id).state
                     engine.execute(plan, latest, repository, this)
                 }
