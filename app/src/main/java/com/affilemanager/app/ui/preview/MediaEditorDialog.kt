@@ -368,6 +368,12 @@ private fun MediaEditError(error: Throwable) {
         val knownMessage = error.message?.takeIf(UiTranslator::hasKnownUiEntry)
         LText(if (error is PlaybackException) "Failo peržiūros sukurti nepavyko" else knownMessage ?: "Medijos konvertuoti nepavyko", color = MaterialTheme.colorScheme.error)
         if (knownMessage == null && error !is PlaybackException) Text("AF_MEDIA_${error.javaClass.simpleName.uppercase(Locale.ROOT)}", style = MaterialTheme.typography.bodySmall)
+        com.affilemanager.app.media.editing.mediaLinkageDiagnostic(error)?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall)
+        }
+        com.affilemanager.app.media.editing.mediaLinkageOrigin(error)?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall)
+        }
         if (error is PlaybackException) Text(error.errorCodeName, style = MaterialTheme.typography.bodySmall)
         (error.cause as? androidx.media3.transformer.ExportException)?.let { Text(it.errorCodeName, style = MaterialTheme.typography.bodySmall) }
         if (error.cause is TimeoutCancellationException) Text(MediaExportEngine.TIMEOUT_CODE, style = MaterialTheme.typography.bodySmall)

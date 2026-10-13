@@ -4,6 +4,17 @@
 -dontwarn javax.naming.**
 -dontwarn org.apache.commons.compress.archivers.sevenz.**
 
+# These factories' nullable API31 LogSessionId stays null on older Android.
+# Horizontal merging erases the field to Object and introduces an unconditional
+# LogSessionId check-cast, which Android8 resolves even for null (native regression).
+# Preserve only the two typed fields, not entire classes or the Media3 library.
+-keepclassmembers,allowobfuscation class androidx.media3.transformer.DefaultAssetLoaderFactory {
+    android.media.metrics.LogSessionId logSessionId;
+}
+-keepclassmembers,allowobfuscation class androidx.media3.transformer.ExoPlayerAssetLoader$Factory {
+    android.media.metrics.LogSessionId logSessionId;
+}
+
 # PdfBox-Android keeps JPEG 2000 support behind Gemalto's optional JP2 codec.
 # AF File Manager only appends its own lossless signature image and leaves
 # existing PDF streams untouched, so this optional decoder/encoder is not part

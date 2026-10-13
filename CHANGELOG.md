@@ -4,7 +4,14 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.45.0] - 2026-10-13
+## [0.45.1] - 2026-10-14
+
+- Includes the media, thumbnail, browsing and transfer improvements listed for 0.45.0 below.
+- Fixed optimized media exports on Android 8 without disabling the app's other optimizations.
+
+## [0.45.0] - 2026-10-13 (unpublished)
+
+The final checks found an Android 8 media-export problem. This version was not published; the correction is included in 0.45.1.
 
 - Trim and crop video, extract or trim audio, adjust speed, pitch and volume, and prepare MP4, M4A, WAV or GIF copies. Audio tags and cover art can be edited before saving to a phone or connected server. Originals stay unchanged; available resolution depends on the device, and smaller files can lose quality.
 - Thumbnails now use a bounded private disk cache. Reopening a folder can reuse them; moving, renaming or deleting a file clears its old thumbnail.

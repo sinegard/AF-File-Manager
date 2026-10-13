@@ -110,8 +110,13 @@ public final class NearbyRuntimeVerifier {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     test.runOnMainSync(() -> context.startActivity(command));
                     awaitNode(test, "prepared files", node -> "Ready to send: 1".contentEquals(node.getText() == null ? "" : node.getText()));
-                    AccessibilityNodeInfo field = findNode(test, node -> node.isEditable() &&
-                        "android.widget.EditText".contentEquals(node.getClassName()));
+                    // Large fonts legitimately put the field below the scrollable
+                    // pairing body's initial viewport. Reach it as a user would;
+                    // prepared source visibility does not imply the field is visible.
+                    NodeMatch pairingField = node -> node.isEditable() &&
+                        "android.widget.EditText".contentEquals(node.getClassName());
+                    AccessibilityNodeInfo field = batch == 1
+                        ? pairingInput(test, pairingField) : findNode(test, pairingField);
                     if (field != null) {
                         android.os.Bundle text = new android.os.Bundle();
                         text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pairing);
@@ -235,6 +240,19 @@ public final class NearbyRuntimeVerifier {
             back(test);
         }
         return true;
+    }
+    private static AccessibilityNodeInfo pairingInput(Instrumentation test, NodeMatch match) throws Exception {
+        // Dialog accessibility windows do not inherit the activity's resource-ID
+        // test-tag export. Observe the real visible ScrollView, not a Compose tag.
+        for (int step = 0; step < 16; step++) {
+            AccessibilityNodeInfo field = findNode(test, match);
+            if (field != null) return field;
+            AccessibilityNodeInfo body = awaitNode(test, "pairing scroll body", node -> node.isScrollable() &&
+                "android.widget.ScrollView".contentEquals(node.getClassName()));
+            scrollPartial(test, body, false);
+            SystemClock.sleep(150);
+        }
+        return awaitNode(test, "initial pairing input after scrolling", match);
     }
     private static String translated(Context context, String language, String english, String lithuanian) throws Exception {
         if (language.equals("en")) return english;
