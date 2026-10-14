@@ -17,6 +17,40 @@ class CatalogUpdatesTest(unittest.TestCase):
         for language in generator.LANGUAGES:
             self.assertTrue(generator.manual_overrides(language)["Terminal"].strip())
 
+    def test_clear_is_an_action_not_an_adjective(self):
+        self.assertEqual("Leeren", generator.manual_overrides("de")["Clear"])
+        self.assertEqual("مسح", generator.manual_overrides("ar")["Clear"])
+        self.assertEqual("Effacer", generator.manual_overrides("fr")["Clear"])
+        self.assertEqual("清除", generator.manual_overrides("zh")["Clear"])
+
+    def test_every_shipped_pack_has_the_explicit_clear_action(self):
+        index = generator.load_catalog_index(generator.INDEX_PATH)
+        position = index.exact.index("Clear")
+        for language in generator.LANGUAGES:
+            expected = generator.manual_overrides(language)["Clear"]
+            self.assertTrue(expected.strip())
+            exact, _ = generator.load_pack(generator.ASSET_DIRECTORY / f"{language}.json")
+            self.assertEqual(expected, exact[position], language)
+
+    def test_pairing_actions_are_contextual_and_preserve_the_af_name(self):
+        index = generator.load_catalog_index(generator.INDEX_PATH)
+        for language in ("de", "ar"):
+            overrides = generator.manual_overrides(language)
+            self.assertIn("AF", overrides["Find nearby AF devices"])
+            self.assertEqual(overrides["Scan QR code"], overrides["Scan QR"])
+            exact, _ = generator.load_pack(generator.ASSET_DIRECTORY / f"{language}.json")
+            for key in ("Scan QR code", "Scan QR", "Find nearby AF devices"):
+                self.assertEqual(overrides[key], exact[index.exact.index(key)])
+
+    def test_german_transfer_buttons_use_actions_not_receipt_nouns(self):
+        overrides = generator.manual_overrides("de")
+        self.assertEqual("Senden", overrides["Send"])
+        self.assertEqual("Empfangen", overrides["Receive"])
+        index = generator.load_catalog_index(generator.INDEX_PATH)
+        exact, _ = generator.load_pack(generator.ASSET_DIRECTORY / "de.json")
+        for key in ("Send", "Receive"):
+            self.assertEqual(overrides[key], exact[index.exact.index(key)])
+
     def test_contextual_failures_are_composed_from_the_selected_pack_not_english_fragments(self):
         for language in generator.LANGUAGES:
             overrides = generator.manual_overrides(language)

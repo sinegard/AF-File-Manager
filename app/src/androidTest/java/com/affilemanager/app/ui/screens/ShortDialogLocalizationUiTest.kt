@@ -23,6 +23,42 @@ import java.util.Locale
 class ShortDialogLocalizationUiTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun diagnosticsTitlesKeepEveryGlyphAcrossLongAndRtlLocales() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val selected = mutableStateOf("de" to 1.5f)
+        compose.setContent {
+            val (language, scale) = selected.value
+            val configuration = Configuration(context.resources.configuration).apply {
+                setLocales(LocaleList(Locale.forLanguageTag(language))); fontScale = scale
+            }
+            val density = LocalDensity.current
+            CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalContext provides context.createConfigurationContext(configuration),
+                LocalConfiguration provides configuration, LocalDensity provides Density(density.density, scale),
+                LocalLayoutDirection provides if (language == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr,
+            ) { com.affilemanager.app.ui.theme.AFFileManagerTheme { TransferDiagnosticsDialog({}) } }
+        }
+        for (language in listOf("de", "en", "lt", "ar")) for (scale in listOf(1.5f, 2f)) {
+            compose.runOnIdle { selected.value = language to scale }
+            val title = compose.onNodeWithText(UiTranslator.translate("Perdavimo diagnostika", language), useUnmergedTree = true)
+                .assertIsDisplayed().fetchSemanticsNode()
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            assertTrue(title.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts))
+            assertTrue(layouts.isNotEmpty())
+            val test = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            val bitmap = requireNotNull(test.uiAutomation.takeScreenshot())
+            try { java.io.File(context.getExternalFilesDir("validation"), "diagnostics-title-$language-$scale.png")
+                .outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
+            finally { bitmap.recycle() }
+            for (layout in layouts) {
+                val widths = (0 until layout.lineCount).map { layout.getLineRight(it) - layout.getLineLeft(it) }
+                assertTrue("$language/$scale title clips glyphs: size=${layout.size}, paragraph=${layout.multiParagraph.width}x${layout.multiParagraph.height}, widths=$widths",
+                    !layout.multiParagraph.didExceedMaxLines && layout.multiParagraph.height <= layout.size.height + 1f &&
+                        (0 until layout.lineCount).all { !layout.isLineEllipsized(it) && widths[it] <= layout.size.width + 1f })
+            }
+        }
+    }
+
     @Test fun addShortcutFieldsUseTheWholeDialogAndActionsFitAcrossFourLanguages() {
         val language = mutableStateOf("en")
         compose.setContent {

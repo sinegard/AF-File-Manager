@@ -125,6 +125,9 @@ class SafDialogLayoutTest {
         compose.onNodeWithTag("bounded_dialog_list").performScrollToIndex(50)
         // Scroll the outer short-dialog viewport as well as the nested lazy list.
         reachable(compose.onNodeWithText("Done"))
+        // Reaching the outer footer can change the inner lazy viewport. Scroll
+        // that list to the real item, even if it is no longer composed.
+        compose.onNodeWithTag("bounded_dialog_list").performScrollToNode(hasText("Row 49"))
         reachable(compose.onNodeWithText("Row 49"))
         reachable(compose.onNodeWithText("Done")).performClick()
         compose.runOnIdle { assertTrue(dismissed) }

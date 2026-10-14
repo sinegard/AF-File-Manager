@@ -44,7 +44,7 @@ class NearbyPickerPagingUiTest {
                     else put(MediaStore.MediaColumns.DATA, File(requireNotNull(legacyRoot), name).path)
                     put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
                     put(MediaStore.MediaColumns.DATE_MODIFIED, 1_700_000_000L + index * 86_400)
-                    if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.IS_PENDING, 1)
                 })!!
                 val image = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
                 try { resolver.openOutputStream(uri)!!.use { check(image.compress(Bitmap.CompressFormat.JPEG, 90, it)) } }
@@ -78,16 +78,29 @@ class NearbyPickerPagingUiTest {
             compose.onNodeWithTag("nearby_search").performTextInput(prefix)
             // The search remains live while the keyboard is shown. Close it so
             // the first sorted row can be checked in a stable viewport.
-            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
-                .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            val automation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+            val service = automation.serviceInfo
+            service.flags = service.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            automation.serviceInfo = service
+            check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            compose.waitUntil(5_000) { automation.windows.none {
+                it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            } }
+            automation.waitForIdle(500, 3000)
             compose.onNodeWithTag("nearby_sort_direction").performTouchInput { longClick() }
             compose.onNodeWithTag("nearby_sort_MODIFIED").performScrollTo().assertIsDisplayed().performClick()
             waitForFirstEntry(names.first())
             compose.onNodeWithTag("nearby_sort_direction").assertIsDisplayed().performClick()
             waitForFirstEntry(names.last())
             compose.onNodeWithTag("nearby_select_all").performClick()
+            waitForNext(3)
             compose.onNodeWithText("Next (3)").assertIsEnabled()
             compose.onNodeWithTag("nearby_select_all").performClick()
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithTag("nearby_continue").fetchSemanticsNodes()
+                    .singleOrNull()?.config?.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Disabled) == null &&
+                    compose.onAllNodesWithTag("nearby_continue").fetchSemanticsNodes().size == 1
+            }
             reach(compose.onNodeWithTag("nearby_continue")).assertIsDisplayed().assertIsEnabled().performClick()
             waitFor("Pair the receiving phone")
             compose.onNodeWithTag("nearby_pairing_input").assertIsNotFocused()
@@ -113,14 +126,17 @@ class NearbyPickerPagingUiTest {
             if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
             else put(MediaStore.MediaColumns.DATA, File(requireNotNull(legacyRoot), "$prefix-${index.toString().padStart(3, '0')}.jpg").path)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.IS_PENDING, 0)
+            // Publish only after the bytes are written. A factory scanner must
+            // not observe hundreds of empty files while this corpus is prepared.
+            if (Build.VERSION.SDK_INT >= 29) put(MediaStore.MediaColumns.IS_PENDING, 1)
         } }
         val store = ViewModelStore()
         try {
             assertEquals(265, resolver.bulkInsert(collection, values))
             // Every visible row must be a real published file, including search-only rows.
             // Pending or stale metadata is not a valid paging/sorting fixture.
-            resolver.query(collection, arrayOf(BaseColumns._ID),
+            val preparingCollection = if (Build.VERSION.SDK_INT >= 29) MediaStore.setIncludePending(collection) else collection
+            resolver.query(preparingCollection, arrayOf(BaseColumns._ID),
                 fixtureSelection(), fixtureArguments(relative, legacyRoot), null)!!.use { cursor ->
                 assertEquals(265, cursor.count)
                 val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
@@ -133,7 +149,9 @@ class NearbyPickerPagingUiTest {
                         if (Build.VERSION.SDK_INT >= 29) resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
                         resolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)!!.use { actual ->
                             check(actual.moveToFirst())
-                            val file = File(actual.getString(0)); check(file.isFile)
+                            val file = File(actual.getString(0))
+                            check(file.isFile) { "Published paging fixture absent: $file; exists=${file.exists()}, readable=${file.canRead()}, " +
+                                "allFiles=${Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager()}" }
                             kotlinx.coroutines.runBlocking { application.graph.sharedStorageIndex.changed(listOf(file)) }
                         }
                     }

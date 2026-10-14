@@ -4,14 +4,24 @@ This file records the user-visible changes in AF File Manager releases.
 
 ## Unreleased
 
-## [0.45.1] - 2026-10-14
+## [0.45.2] - 2026-10-14
+
+- Includes the media, thumbnail, browsing and transfer improvements listed for 0.45.0 below, and the Android 8 export fix.
+- Corrected the Clear action in every generated language pack so it describes emptying or removing data, rather than "clear" as an adjective.
+- Phone-pairing buttons now move onto another line when translated labels or larger text need more room.
+- Send and Receive buttons also keep whole labels at larger text sizes.
+- German Send and Receive buttons use more natural wording.
+
+## [0.45.1] - 2026-10-14 (unpublished)
 
 - Includes the media, thumbnail, browsing and transfer improvements listed for 0.45.0 below.
 - Fixed optimized media exports on Android 8 without disabling the app's other optimizations.
 
+Final language checks found an incorrectly translated Clear action. This version was not published; the corrected labels are included in 0.45.2.
+
 ## [0.45.0] - 2026-10-13 (unpublished)
 
-The final checks found an Android 8 media-export problem. This version was not published; the correction is included in 0.45.1.
+The final checks found an Android 8 media-export problem. This version was not published; the correction is included in 0.45.2.
 
 - Trim and crop video, extract or trim audio, adjust speed, pitch and volume, and prepare MP4, M4A, WAV or GIF copies. Audio tags and cover art can be edited before saving to a phone or connected server. Originals stay unchanged; available resolution depends on the device, and smaller files can lose quality.
 - Thumbnails now use a bounded private disk cache. Reopening a folder can reuse them; moving, renaming or deleting a file clears its old thumbnail.

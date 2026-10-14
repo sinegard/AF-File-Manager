@@ -177,6 +177,34 @@ import kotlin.math.roundToInt
 private enum class NearbySendStep { PICK, PAIR }
 
 @Composable
+internal fun NearbyMainActionButtons(sendingEnabled: Boolean, onSend: () -> Unit, onReceive: () -> Unit) {
+    AfActionRow {
+        OutlinedButton(onClick = onSend, enabled = sendingEnabled, modifier = Modifier.testTag("nearby_main_send")) {
+            Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
+            LText("Siųsti", modifier = Modifier.padding(start = 6.dp))
+        }
+        Button(onClick = onReceive, modifier = Modifier.testTag("nearby_main_receive")) {
+            Icon(Icons.Rounded.QrCode2, contentDescription = null)
+            LText("Gauti", modifier = Modifier.padding(start = 6.dp))
+        }
+    }
+}
+
+@Composable
+internal fun NearbyPairingActionButtons(onScanQr: () -> Unit, onFindDevices: () -> Unit) {
+    AfActionRow {
+        Button(onClick = onScanQr, modifier = Modifier.testTag("nearby_scan_qr")) {
+            Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
+            LText("Nuskaityti QR kodą", modifier = Modifier.padding(start = 7.dp))
+        }
+        OutlinedButton(onClick = onFindDevices, modifier = Modifier.testTag("nearby_find_devices")) {
+            Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
+            LText("Rasti artimus AF įrenginius", modifier = Modifier.padding(start = 7.dp))
+        }
+    }
+}
+
+@Composable
 private fun NearbyReceiveModeButtons(
     onNetwork: () -> Unit,
     onWifiDirect: () -> Unit,
@@ -313,16 +341,7 @@ internal fun NearbyPhoneTransferCard(
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             AfActionRow {
                 if (peer == null) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { showSender = true }, enabled = !nearbyState.isActive(), modifier = Modifier.weight(1f)) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
-                        LText("Siųsti", modifier = Modifier.padding(start = 6.dp))
-                    }
-                    Button(onClick = { showReceiver = true }, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Rounded.QrCode2, contentDescription = null)
-                        LText("Gauti", modifier = Modifier.padding(start = 6.dp))
-                    }
-                    }
+                    NearbyMainActionButtons(!nearbyState.isActive(), { showSender = true }, { showReceiver = true })
                 } else {
                     OutlinedButton(onClick = { showSender = true }, modifier = Modifier.testTag("nearby_add_files")) {
                         Icon(Icons.Rounded.Add, contentDescription = null); LText("Siųsti daugiau", Modifier.padding(start = 6.dp)) }
@@ -1992,25 +2011,13 @@ internal fun NearbySendDialog(
                     modifier = Modifier.fillMaxWidth().testTag("nearby_pairing_input"),
                     isError = pairingPayload.isNotBlank() && parsedPairing?.isFailure == true,
                 )
-                Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = scanQr, modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    Icon(Icons.Rounded.QrCodeScanner, contentDescription = null)
-                    LText("Nuskaityti QR kodą", modifier = Modifier.padding(start = 7.dp))
-                }
-                OutlinedButton(
-                    onClick = {
+                NearbyPairingActionButtons(onScanQr = scanQr, onFindDevices = {
                         val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                             ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) ==
                             android.content.pm.PackageManager.PERMISSION_GRANTED
                         if (granted) showNearbyDiscovery = true
                         else nearbyPermissionLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
-                    },
-                    modifier = Modifier.weight(1f).fillMaxHeight().testTag("nearby_find_devices"),
-                ) {
-                    Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
-                    LText("Rasti artimus AF įrenginius", modifier = Modifier.padding(start = 7.dp))
-                }
-                }
+                    })
                 OutlinedButton(
                     onClick = {
                         if (WifiDirectController.hasPermission(context)) showWifiDirectDiscovery = true

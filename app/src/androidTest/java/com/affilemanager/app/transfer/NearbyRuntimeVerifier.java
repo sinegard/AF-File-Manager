@@ -123,10 +123,19 @@ public final class NearbyRuntimeVerifier {
                         if (!field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Pairing field rejected input");
                         awaitNode(test, "entered pairing value", node -> node.isEditable() && textEquals(node, pairing));
                     } else if (batch == 1) throw new AssertionError("Initial pairing input unavailable");
+                    if (batch == 1) {
+                        pairingInput(test, node -> textEquals(node, "Find nearby AF devices"));
+                        awaitNode(test, "readable scan action", node -> textEquals(node, "Scan QR code"));
+                        android.graphics.Bitmap snapshot = test.getUiAutomation().takeScreenshot();
+                        if (snapshot == null) throw new AssertionError("Native pairing screenshot unavailable");
+                        File evidence = new File(context.getExternalFilesDir("validation"), "release-pairing-actions.png");
+                        try (FileOutputStream output = new FileOutputStream(evidence)) {
+                            if (!snapshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) throw new AssertionError("Pairing evidence write failed");
+                        } finally { snapshot.recycle(); }
+                    }
                     AccessibilityNodeInfo label = awaitNode(test, "Start button", node -> "Start transfer".contentEquals(node.getText() == null ? "" : node.getText()) &&
                         clickableAncestor(node) != null && clickableAncestor(node).isEnabled());
-                    AccessibilityNodeInfo start = clickableAncestor(label);
-                    if (!start.performAction(AccessibilityNodeInfo.ACTION_CLICK)) throw new AssertionError("Explicit Start action unavailable");
+                    click(test, label);
                     long deadline = SystemClock.elapsedRealtime() + 20000;
                     int expectedCount = expectedUploads[batch - 1];
                     while (failed.get() == null && (uploads.get() < expectedCount || running(context)) && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50);
@@ -208,6 +217,11 @@ public final class NearbyRuntimeVerifier {
     }
     public static boolean verifyLocales(Instrumentation test) throws Exception {
         Context context = test.getTargetContext();
+        android.accessibilityservice.AccessibilityServiceInfo access = test.getUiAutomation().getServiceInfo();
+        access.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        test.getUiAutomation().setServiceInfo(access);
+        Map<String, ?> appearance = new HashMap<>(context.getSharedPreferences("appearance_v1", Context.MODE_PRIVATE).getAll());
+        String features = context.getSharedPreferences("ui_preferences_v1", Context.MODE_PRIVATE).getString("feature_visibility", "");
         if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
         for (String language : new String[]{"en", "lt", "de", "ar", "en"}) {
             clickTag(test, "nav_tools");
@@ -219,6 +233,16 @@ public final class NearbyRuntimeVerifier {
             android.os.Bundle text = new android.os.Bundle();
             text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, language);
             if (!search.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Language search rejected text");
+            for (android.view.accessibility.AccessibilityWindowInfo window : test.getUiAutomation().getWindows()) {
+                if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD &&
+                    window.getRoot() != null && window.getRoot().isVisibleToUser()) {
+                    if (!test.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+                        throw new AssertionError("Observed language-search keyboard Back rejected");
+                    test.getUiAutomation().waitForIdle(500, 3000);
+                    awaitNode(test, "retained language filter", current -> current.isEditable() && textEquals(current, language));
+                    break;
+                }
+            }
             Locale selected = Locale.forLanguageTag(language);
             String nativeName = selected.getDisplayName(selected);
             click(test, awaitNode(test, "language option " + language, node -> node.getText() != null &&
@@ -228,11 +252,18 @@ public final class NearbyRuntimeVerifier {
             // This is the only Terminal label in Tools. Accessibility may flatten
             // its non-interactive card, so assert its visible translated text.
             scrolledNode(test, "tools_list", "Visible features terminal in " + language, node -> textEquals(node, terminal));
+            assertUnchangedSettings(context, appearance, features);
             clickTag(test, "nav_share");
             click(test, scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
             String privacy = translated(context, language, "Data stays on this phone.", "Duomenys lieka šiame telefone.");
             awaitNode(test, "diagnostics privacy in " + language, node -> textEquals(node, privacy));
-            android.graphics.Bitmap screenshot = test.getUiAutomation().takeScreenshot();
+            // Accessibility text appears before the platform's dialog fade ends.
+            // Capture the settled window, not a partially transparent animation frame.
+            test.getUiAutomation().waitForIdle(500, 3000);
+            SystemClock.sleep(750);
+            awaitNode(test, "settled diagnostics privacy in " + language, node -> textEquals(node, privacy));
+            assertUnchangedSettings(context, appearance, features);
+            android.graphics.Bitmap screenshot = settledScreenshot(test);
             if (screenshot == null) throw new AssertionError("Exact APK screenshot unavailable");
             File evidence = new File(context.getExternalFilesDir("validation"), "release-diagnostics-" + language + ".png");
             try (FileOutputStream output = new FileOutputStream(evidence)) { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output); }
@@ -241,9 +272,41 @@ public final class NearbyRuntimeVerifier {
         }
         return true;
     }
+    private static void assertUnchangedSettings(Context context, Map<String, ?> appearance, String features) {
+        if (!appearance.equals(context.getSharedPreferences("appearance_v1", Context.MODE_PRIVATE).getAll()) ||
+            !Objects.equals(features, context.getSharedPreferences("ui_preferences_v1", Context.MODE_PRIVATE).getString("feature_visibility", "")))
+            throw new AssertionError("Native language/scroll driver changed appearance or visible features");
+    }
+    private static android.graphics.Bitmap settledScreenshot(Instrumentation test) {
+        long deadline = SystemClock.elapsedRealtime() + 5000;
+        android.graphics.Bitmap previous = test.getUiAutomation().takeScreenshot();
+        if (previous == null) throw new AssertionError("Native screenshot unavailable");
+        while (SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(500);
+            android.graphics.Bitmap current = test.getUiAutomation().takeScreenshot();
+            if (current == null) { previous.recycle(); throw new AssertionError("Native screenshot unavailable"); }
+            boolean unchanged = current.sameAs(previous);
+            previous.recycle();
+            if (unchanged) return current;
+            previous = current;
+        }
+        previous.recycle();
+        throw new AssertionError("Native dialog pixels did not settle within five seconds");
+    }
     private static AccessibilityNodeInfo pairingInput(Instrumentation test, NodeMatch match) throws Exception {
         // Dialog accessibility windows do not inherit the activity's resource-ID
         // test-tag export. Observe the real visible ScrollView, not a Compose tag.
+        AccessibilityNodeInfo visible = findNode(test, match);
+        if (visible != null) return visible;
+        // An incoming share can reopen the existing pairing dialog at its old
+        // scroll position. Rewind that observed body before searching forward;
+        // a forward-only driver cannot reach a field above the viewport.
+        for (int step = 0; step < 16; step++) {
+            AccessibilityNodeInfo body = awaitNode(test, "pairing scroll body", node -> node.isScrollable() &&
+                "android.widget.ScrollView".contentEquals(node.getClassName()));
+            if (!body.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) scrollPartial(test, body, true);
+            SystemClock.sleep(150);
+        }
         for (int step = 0; step < 16; step++) {
             AccessibilityNodeInfo field = findNode(test, match);
             if (field != null) return field;
@@ -280,11 +343,19 @@ public final class NearbyRuntimeVerifier {
         return awaitNode(test, description, match);
     }
     private static void scrollPartial(Instrumentation test, AccessibilityNodeInfo container, boolean backwards) {
-        // Full-viewport steps can skip labels at a viewport boundary with large fonts.
+        AccessibilityNodeInfo viewport = scrollViewport(container);
+        // Sharing and Tools have tall cards. Full accessibility-page steps can
+        // pass over a label without exposing it at large fonts. Use partial
+        // native drags in the observed viewport, checking the tree each time.
         android.graphics.Rect bounds = new android.graphics.Rect();
-        container.getBoundsInScreen(bounds);
+        viewport.getBoundsInScreen(bounds);
         if (bounds.height() < 100) throw new AssertionError("Scrollable fixture viewport unavailable");
-        float x = bounds.exactCenterX();
+        // Appearance forms contain sliders and switches in the middle. Drag in
+        // the observed padded gutter so scrolling cannot edit their settings.
+        boolean rtl = test.getTargetContext().getResources().getConfiguration().getLayoutDirection() == android.view.View.LAYOUT_DIRECTION_RTL;
+        float inset = Math.min(8f, bounds.width() * .05f);
+        float x = tag(container, "tools_list") ?
+            (rtl ? bounds.right - inset : bounds.left + inset) : bounds.exactCenterX();
         float start = bounds.top + bounds.height() * (backwards ? .25f : .70f);
         float end = bounds.top + bounds.height() * (backwards ? .75f : .40f);
         long down = SystemClock.uptimeMillis();
@@ -306,7 +377,7 @@ public final class NearbyRuntimeVerifier {
     private static void scrollTop(Instrumentation test, String list) throws Exception {
         AccessibilityNodeInfo container = awaitNode(test, list, node -> tag(node, list));
         for (int scroll = 0; scroll < 16; scroll++) {
-            if (!container.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
+            if (!scrollViewport(container).performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
                 // False means the action was not performed, not necessarily
                 // that the list reached its start. Use a bounded user gesture.
                 android.graphics.Rect bounds = new android.graphics.Rect();
@@ -318,6 +389,23 @@ public final class NearbyRuntimeVerifier {
             container = awaitNode(test, list, node -> tag(node, list));
         }
         test.getUiAutomation().waitForIdle(250, 3000);
+    }
+    private static AccessibilityNodeInfo scrollViewport(AccessibilityNodeInfo tagged) {
+        ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
+        nodes.add(tagged);
+        int count = 0;
+        while (!nodes.isEmpty() && count++ < 2000) {
+            AccessibilityNodeInfo node = nodes.removeFirst();
+            android.graphics.Rect bounds = new android.graphics.Rect();
+            node.getBoundsInScreen(bounds);
+            if (node.isVisibleToUser() && node.isScrollable() && bounds.height() >= 100 && bounds.width() >= 100)
+                return node;
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) nodes.add(child);
+            }
+        }
+        return tagged;
     }
     private static AccessibilityNodeInfo findNode(Instrumentation test, NodeMatch match) {
         ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
@@ -333,6 +421,10 @@ public final class NearbyRuntimeVerifier {
     }
     private static AccessibilityNodeInfo activeRoot(Instrumentation test) {
         android.app.UiAutomation automation = test.getUiAutomation();
+        // API34+ exposes an official cache reset. Read the current native tree
+        // after gestures instead of trusting stale off-screen Compose nodes.
+        if (android.os.Build.VERSION.SDK_INT >= 34 && !automation.clearCache())
+            throw new AssertionError("Native accessibility cache refresh failed");
         AccessibilityNodeInfo active = automation.getRootInActiveWindow();
         if (active != null && active.isVisibleToUser() && active.getChildCount() > 0) return active;
         android.accessibilityservice.AccessibilityServiceInfo service = automation.getServiceInfo();
@@ -382,13 +474,37 @@ public final class NearbyRuntimeVerifier {
         String value = node.getViewIdResourceName();
         return value != null && (value.equals(id) || value.endsWith("/" + id));
     }
-    private static void click(Instrumentation test, AccessibilityNodeInfo node) throws IOException {
+    private static void click(Instrumentation test, AccessibilityNodeInfo node) throws Exception {
         String originalId = node.getViewIdResourceName();
-        AccessibilityNodeInfo button = clickableAncestor(node);
-        if (button == null || !button.refresh() || !button.isVisibleToUser() || !button.isEnabled() ||
-            !button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            captureFailure(test);
-            throw new AssertionError("Visible action rejected click: " + originalId);
+        CharSequence originalText = node.getText(), description = node.getContentDescription(), type = node.getClassName();
+        boolean checkable = node.isCheckable();
+        NodeMatch identity = originalId != null ? current -> tag(current, originalId) :
+            originalText != null ? current -> textEquals(current, originalText.toString()) :
+            description != null ? current -> description.equals(current.getContentDescription()) :
+            current -> type != null && type.equals(current.getClassName()) && checkable && current.isCheckable();
+        android.graphics.Rect previous = new android.graphics.Rect();
+        long stableSince = SystemClock.elapsedRealtime(), deadline = stableSince + 5000;
+        while (true) {
+            AccessibilityNodeInfo current = awaitNode(test, "fresh visible touch target", identity);
+            AccessibilityNodeInfo button = clickableAncestor(current);
+            android.graphics.Rect bounds = new android.graphics.Rect();
+            if (button == null || !button.refresh() || !button.isVisibleToUser() || !button.isEnabled())
+                throw new AssertionError("Visible touch action unavailable: " + originalId);
+            button.getBoundsInScreen(bounds);
+            android.graphics.Rect labelBounds = new android.graphics.Rect();
+            current.getBoundsInScreen(labelBounds);
+            if (!bounds.intersect(labelBounds)) throw new AssertionError("Touch label is outside its action");
+            if (bounds.isEmpty()) throw new AssertionError("Visible touch action has empty bounds");
+            if (!bounds.equals(previous)) stableSince = SystemClock.elapsedRealtime();
+            previous.set(bounds);
+            if (SystemClock.elapsedRealtime() - stableSince >= 800) {
+                long down = SystemClock.uptimeMillis();
+                injectTouch(test, down, android.view.MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY());
+                injectTouch(test, down, android.view.MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY());
+                break;
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) throw new AssertionError("Visible touch action did not settle");
+            SystemClock.sleep(100);
         }
         SystemClock.sleep(150);
     }
