@@ -13,6 +13,29 @@ spec.loader.exec_module(generator)
 
 
 class CatalogUpdatesTest(unittest.TestCase):
+    def test_critical_audio_labels_use_reviewed_context_in_every_pack(self):
+        index = generator.load_catalog_index(generator.INDEX_PATH)
+        for language in generator.LANGUAGES:
+            manual = generator.manual_overrides(language)
+            exact, _ = generator.load_pack(generator.ASSET_DIRECTORY / f"{language}.json")
+            for source in ("Fade in", "Fade out", "Pitch", "Noise gate"):
+                self.assertTrue(manual[source].strip(), (language, source))
+                self.assertEqual(manual[source], exact[index.exact.index(source)], (language, source))
+            self.assertNotEqual(manual["Fade in"], manual["Fade out"], language)
+        self.assertEqual("Tonhöhe", generator.manual_overrides("de")["Pitch"])
+        self.assertEqual("音高", generator.manual_overrides("ja")["Pitch"])
+        self.assertEqual("Sianeli", generator.manual_overrides("cy")["Channels"])
+
+    def test_media_control_metadata_labels_are_not_collapsed_into_unrelated_concepts(self):
+        index = generator.load_catalog_index(generator.INDEX_PATH)
+        keys = ("Trim range", "Channels", "Sample rate", "Volume", "Pitch", "Speed", "Fade in", "Fade out",
+                "Echo", "Noise gate", "Name", "Artist", "Album", "Album artist", "Composer", "Publisher",
+                "Date", "Genre", "Lyrics", "Comment")
+        for language in generator.LANGUAGES:
+            exact, _ = generator.load_pack(generator.ASSET_DIRECTORY / f"{language}.json")
+            labels = [exact[index.exact.index(key)].strip().casefold() for key in keys]
+            self.assertEqual(len(keys), len(set(labels)), (language, dict(zip(keys, labels, strict=True))))
+
     def test_lost_marker_retries_the_natural_sentence_without_changing_protected_terms(self):
         source = generator.CatalogSource(["Open Android storage settings"], [], {})
         class Translator:

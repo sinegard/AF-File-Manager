@@ -102,6 +102,7 @@ object UiTranslator {
         "Kompozitorius" to "Composer",
         "Leidėjas" to "Publisher",
         "Dainos tekstas" to "Lyrics",
+        "Įrašo data" to "Date",
         "Pasirinkti viršelį" to "Choose cover art",
         "Pašalinti viršelį" to "Remove cover art",
         "Viršelis pasirinktas" to "Cover art selected",
