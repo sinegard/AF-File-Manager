@@ -1,4 +1,50 @@
 {
+  "Android app info": {
+    "bn": "Android অ্যাপের তথ্য", "cs": "Informace o aplikaci Android", "da": "Appoplysninger i Android",
+    "el": "Πληροφορίες εφαρμογής Android", "eo": "Informoj pri Android-aplikaĵo", "es": "Información de la aplicación en Android",
+    "fa": "اطلاعات برنامه در Android", "fi": "Android-sovelluksen tiedot", "he": "פרטי האפליקציה ב-Android",
+    "hr": "Informacije o aplikaciji za Android", "hu": "Android-alkalmazás adatai", "id": "Info aplikasi Android",
+    "it": "Informazioni sull'app Android", "ms": "Maklumat aplikasi Android", "no": "Appinformasjon i Android",
+    "pl": "Informacje o aplikacji Android", "pt": "Informações da aplicação no Android", "ro": "Informații despre aplicația Android",
+    "sl": "Podatki o aplikaciji Android", "sv": "Appinformation i Android", "tr": "Android uygulama bilgileri",
+    "vi": "Thông tin ứng dụng Android", "zh": "Android 应用信息"
+  },
+  "Android refreshes home screen widgets no more often than every 30 minutes. You can change the image with the arrow buttons.": {
+    "zh": "Android 主屏幕小组件的自动刷新间隔至少为 30 分钟。你可以使用箭头按钮切换图片。"
+  },
+  "Android storage settings": {
+    "cy": "Gosodiadau storio Android", "et": "Androidi salvestusruumi seaded", "zh": "Android 存储设置"
+  },
+  "Could not open Android app info": {
+    "bn": "Android অ্যাপের তথ্য খোলা যায়নি", "fi": "Android-sovelluksen tietoja ei voitu avata",
+    "gu": "Android ઍપની માહિતી ખોલી શકાઈ નહીં", "he": "לא ניתן לפתוח את פרטי האפליקציה ב-Android",
+    "hi": "Android ऐप की जानकारी नहीं खोली जा सकी", "kn": "Android ಅಪ್ಲಿಕೇಶನ್ ಮಾಹಿತಿ ತೆರೆಯಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ",
+    "te": "Android యాప్ సమాచారాన్ని తెరవలేకపోయాము", "th": "ไม่สามารถเปิดข้อมูลแอป Android ได้",
+    "tr": "Android uygulama bilgileri açılamadı", "ur": "Android ایپ کی معلومات نہیں کھولی جا سکیں"
+  },
+  "Could not open Android storage settings": {
+    "de": "Die Android-Speichereinstellungen konnten nicht geöffnet werden",
+    "fi": "Androidin tallennustilan asetuksia ei voitu avata"
+  },
+  "Reverse audio (WAV)": {
+    "is": "Spila hljóð afturábak (WAV)", "lv": "Atskaņot audio atpakaļgaitā (WAV)", "tl": "Baligtarin ang audio (WAV)"
+  },
+  "Echo": {
+    "ca": "Eco", "cs": "Ozvěna", "cy": "Atsain", "da": "Ekko", "et": "Kaja", "fi": "Kaiku",
+    "ga": "Macalla", "gl": "Eco", "hu": "Visszhang", "id": "Gema", "ms": "Gema", "mt": "Eku",
+    "pt": "Eco", "sk": "Ozvena", "sl": "Odmev", "sq": "Jehonë", "sw": "Mwangwi", "tl": "Alingawngaw",
+    "tr": "Yankı", "vi": "Tiếng vang"
+  },
+  "Slide": {
+    "cy": "Sleidio", "da": "Glidning", "ga": "Sleamhnú", "id": "Geser", "it": "Scorrimento",
+    "lv": "Bīdīšana", "ms": "Gelongsor", "mt": "Żerżiq", "sw": "Kuteleza", "tl": "Pag-slide"
+  },
+  "Rotation": { "ca": "Rotació", "it": "Rotazione" },
+  "Widget": {
+    "ca": "Giny", "cy": "Teclyn", "fi": "Pienoisohjelma", "ga": "Giuirléid", "lv": "Logrīks",
+    "pl": "Widżet", "sw": "Wijeti", "vi": "Tiện ích"
+  },
+  "Vertical": { "tl": "Bertikal" },
   "Minimum Android API": {
     "af": "Minimum Android API", "ar": "الحد الأدنى لواجهة Android API", "be": "Мінімальны Android API", "bg": "Минимален Android API",
     "bn": "ন্যূনতম Android API", "ca": "API mínima d’Android", "cs": "Minimální Android API", "cy": "Android API lleiaf",

@@ -42,7 +42,7 @@ jobs:
           python -m pip install --no-cache-dir transformers==5.16.1 sentencepiece==0.2.1
           python -m pip check
           python -m pip freeze > language-generation-dependencies.txt
-      - name: Generate only new catalog entries with the pinned model
+      - name: Generate missing copy and repair English prose fallbacks with the pinned model
         env:
           HF_HUB_CACHE: ${{ runner.temp }}/af-translation-model
         run: |
@@ -67,8 +67,19 @@ jobs:
           inputs = [module.UI_TRANSLATOR, module.RUNTIME_TRANSLATIONS, module.DEFAULT_STRINGS,
               Path('scripts/generate-ui-translations.py'), module.OVERRIDES_PATH]
           fingerprint = {str(p): hashlib.sha256(p.read_text(encoding='utf-8').replace('\r\n', '\n').encode('utf-8')).hexdigest() for p in inputs}
-          sys.argv = ['generate-ui-translations.py', '--update-existing', '--batch-size', '16']
+          before_fallbacks = {}
+          for language in module.LANGUAGES:
+              exact, templates = module.load_pack(module.ASSET_DIRECTORY / f'{language}.json')
+              before_fallbacks[language] = [value for value, translated in zip(source.exact + source.templates, exact + templates, strict=True)
+                  if module.is_english_prose_fallback(value, translated)]
+          sys.argv = ['generate-ui-translations.py', '--update-existing', '--retry-english-fallbacks', '--batch-size', '16']
           module.main()
+          after_fallbacks = {}
+          for language in module.LANGUAGES:
+              exact, templates = module.load_pack(module.ASSET_DIRECTORY / f'{language}.json')
+              after_fallbacks[language] = [value for value, translated in zip(source.exact + source.templates, exact + templates, strict=True)
+                  if module.is_english_prose_fallback(value, translated)]
+          Path('language-fallback-audit.json').write_text(json.dumps({'before': before_fallbacks, 'after': after_fallbacks}, ensure_ascii=False, indent=2) + '\n')
           sys.argv = ['generate-ui-translations.py', '--verify-only']
           module.main()
           outputs = sorted(module.ASSET_DIRECTORY.glob('*.json'))
@@ -90,3 +101,4 @@ jobs:
             app/src/main/res/values-*/strings.xml
             language-generation-manifest.json
             language-generation-dependencies.txt
+            language-fallback-audit.json

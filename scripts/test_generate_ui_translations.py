@@ -13,6 +13,61 @@ spec.loader.exec_module(generator)
 
 
 class CatalogUpdatesTest(unittest.TestCase):
+    def test_lost_marker_retries_the_natural_sentence_without_changing_protected_terms(self):
+        source = generator.CatalogSource(["Open Android storage settings"], [], {})
+        class Translator:
+            def translate_many(self, values, target):
+                return {value: {"Open <AFPH0> storage settings": "marqueur perdu",
+                    "Open Android storage settings": "Ouvrir les paramètres de stockage Android"}.get(value, value) for value in values}
+        exact, _ = generator.translate_catalog(source, "fr", "fra_Latn", Translator(), None)
+        self.assertEqual(["Ouvrir les paramètres de stockage Android"], exact)
+
+    def test_protected_phrase_fallback_keeps_the_original_terms_and_format_arguments(self):
+        source = generator.CatalogSource(["Open Android settings"], ["Saved to {0}"], {})
+        class Translator:
+            def translate_many(self, values, target):
+                return {value: {"Open <AFPH0> settings": "marqueur perdu", "Open Android settings": "Ouvrir les paramètres Androïde",
+                    "Open": "Ouvrir", "settings": "paramètres", "Saved to <AFPH0>": "marqueur perdu",
+                    "Saved to {0}": "Enregistré ici", "Saved to": "Enregistré dans"}.get(value, value) for value in values}
+        exact, templates = generator.translate_catalog(source, "fr", "fra_Latn", Translator(), None)
+        self.assertEqual(["Ouvrir Android paramètres"], exact)
+        self.assertEqual(["Enregistré dans {0}"], templates)
+        generator.validate_pack(source, "fr", exact, templates)
+
+    def test_opt_in_retries_only_unchanged_prose_and_preserves_good_translations(self):
+        source = generator.CatalogSource(["Files", "Open Android storage settings", "FTP"], ["Saved to {0}", "Copied {0}"] , {})
+        class Translator:
+            def translate_many(self, values, target):
+                return {value: {"Open <AFPH0> storage settings": "Ouvrir les paramètres de stockage <AFPH0>",
+                    "Saved to <AFPH0>": "Enregistré dans <AFPH0>"}.get(value, value) for value in values}
+        previous_exact = ["Fichiers", "Open Android storage settings", "FTP"]
+        previous_templates = ["Saved to {0}", "Copié {0}"]
+        exact, templates = generator.update_catalog(source, source, previous_exact, previous_templates,
+            "fr", "fra_Latn", Translator(), None, retry_english_fallbacks=True)
+        self.assertEqual(["Fichiers", "Ouvrir les paramètres de stockage Android", "FTP"], exact)
+        self.assertEqual(["Enregistré dans {0}", "Copié {0}"], templates)
+
+    def test_default_update_does_not_silently_retranslate_existing_copy(self):
+        source = generator.CatalogSource(["Open Android storage settings"], [], {})
+        exact, _ = generator.update_catalog(source, source, source.exact, [], "fr", "fra_Latn", None, None)
+        self.assertEqual(source.exact, exact)
+
+    def test_technical_names_and_single_word_loans_are_not_english_prose(self):
+        for value in ("AF File Manager", "SMB 2/3 · SFTP · WebDAV · FTP/FTPS", "Stereo", "Mono", "Rotation"):
+            self.assertFalse(generator.is_english_prose_fallback(value, value), value)
+        self.assertTrue(generator.is_english_prose_fallback("Open Android storage settings", "Open Android storage settings"))
+        self.assertTrue(generator.is_english_prose_fallback("Files: {0}", "Files: {0}"))
+        self.assertFalse(generator.is_english_prose_fallback("Open settings", "Ouvrir les paramètres"))
+
+    def test_unsafe_direct_result_cannot_introduce_or_drop_an_argument(self):
+        source = generator.CatalogSource([], ["Saved to {0}"], {})
+        class Translator:
+            def translate_many(self, values, target):
+                return {value: {"Saved to <AFPH0>": "ici", "Saved to {0}": "Enregistré dans {1}",
+                    "Saved to": "Enregistré dans"}.get(value, value) for value in values}
+        _, templates = generator.translate_catalog(source, "fr", "fra_Latn", Translator(), None)
+        self.assertEqual(["Enregistré dans {0}"], templates)
+
     def test_manual_entry_covers_every_shipped_pack(self):
         for language in generator.LANGUAGES:
             self.assertTrue(generator.manual_overrides(language)["Terminal"].strip())
