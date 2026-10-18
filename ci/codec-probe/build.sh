@@ -75,16 +75,17 @@ for abi in arm64-v8a x86_64; do
       --enable-decoder=aac,h264,mp3,mp3float,flac,wmav1,wmav2,pcm_s16le,rawvideo \
       --enable-encoder=aac,h264_mediacodec,libmp3lame,flac,wmav2,pcm_s16le,rawvideo \
       --enable-parser=aac,h264,mpegaudio,flac \
-      --enable-bsf=aac_adtstoasc,h264_mp4toannexb,extract_extradata \
+      --enable-bsf=aac_adtstoasc,h264_mp4toannexb,h264_metadata,extract_extradata \
       --enable-filter=buffer,abuffer,buffersink,abuffersink,format,aformat,scale,fps,trim,atrim,setpts,asetpts,reverse,areverse,afftdn,volume,afade,aecho,atempo,aresample,crop,pad,transpose,anull,null,split,asplit,concat \
       "${asm[@]}"
-    make -j4
+    make -j4 REVISION="$revision"
+    grep -q '^#define FFMPEG_VERSION "9.0.2"$' libavutil/ffversion.h
     for lib in avutil avcodec avformat avfilter swresample swscale; do
       cp "lib$lib/lib$lib.so" "$out/lib/lib$lib.so"
       "$STRIP" --strip-unneeded "$out/lib/lib$lib.so"
     done
     cp ffmpeg "$out/lib/libffmpeg-cli.so"
-    cp config.h config_components.h ffbuild/config.mak "$out/config/"
+    cp config.h config_components.h ffbuild/config.mak libavutil/ffversion.h "$out/config/"
     for binary in "$out/lib/"*.so; do "$llvm/llvm-readelf" -h -d -l "$binary" > "$out/config/$(basename "$binary").elf.txt"; done
   ) 2>&1 | tee "$out/build.log"
   guard
@@ -94,7 +95,7 @@ cp "$root/sources/lame-4.0/COPYING" "$root/dist/LAME-LGPL-2.txt"
 python3 - "$root/dist" <<'PY'
 import hashlib, json, os, pathlib, sys, zipfile
 root = pathlib.Path(sys.argv[1])
-required = ('LIBMP3LAME_ENCODER','FLAC_ENCODER','WMAV2_ENCODER','H264_MEDIACODEC_ENCODER','AAC_ENCODER','MOV_MUXER','MATROSKA_MUXER','MP3_MUXER','FLAC_MUXER','ASF_MUXER','REVERSE_FILTER','AREVERSE_FILTER','AFFTDN_FILTER')
+required = ('LIBMP3LAME_ENCODER','FLAC_ENCODER','WMAV2_ENCODER','H264_MEDIACODEC_ENCODER','AAC_ENCODER','MOV_MUXER','MATROSKA_MUXER','MP3_MUXER','FLAC_MUXER','ASF_MUXER','H264_METADATA_BSF','REVERSE_FILTER','AREVERSE_FILTER','AFFTDN_FILTER')
 files = []
 for abi in ('arm64-v8a', 'x86_64'):
     components = (root / abi / 'config/config_components.h').read_text()

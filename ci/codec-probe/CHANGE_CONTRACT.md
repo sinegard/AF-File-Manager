@@ -20,6 +20,10 @@ encode-then-remux path: API 26 synchronous MediaCodec/global-header handling
 stalled. Preserve that failure and do not label it a working export. Also pin
 the FFmpeg version banner to the verified source RELEASE instead of allowing
 the nested source archive to inherit the surrounding AF Git commit.
+The version is passed through upstream make's REVISION variable and the emitted
+header is checked. Include h264_metadata for MediaCodec's mandatory 16-pixel
+padding; test a 94 by 62 export to catch missing crop support rather than only
+testing already aligned video sizes. These do not add GPL or network features.
 Keep existing 256 MiB/1-hour/25-percent runtime contracts unchanged; actual
 integration and bounded chunked reverse still require implementation/testing.
 
