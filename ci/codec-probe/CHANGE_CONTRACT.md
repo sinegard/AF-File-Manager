@@ -15,6 +15,11 @@ Scope: reproduce the restricted FFmpeg 9.0.2/LAME 4.0 export payload on Ubuntu
 with the exact Android NDK 27.3.13750724, normal speed-oriented -O3 optimization,
 no --enable-small. ARM64 is the phone size comparison. Also compile x86_64 for
 optional owned headless Android runtime smoke tests. This is not an AF APK.
+After the first runtime probe, include raw H.264 demux/mux for testing a bounded
+encode-then-remux path: API 26 synchronous MediaCodec/global-header handling
+stalled. Preserve that failure and do not label it a working export. Also pin
+the FFmpeg version banner to the verified source RELEASE instead of allowing
+the nested source archive to inherit the surrounding AF Git commit.
 Keep existing 256 MiB/1-hour/25-percent runtime contracts unchanged; actual
 integration and bounded chunked reverse still require implementation/testing.
 

@@ -5,6 +5,11 @@ root="$PWD/codec-probe"
 test ! -e "$root"
 mkdir -p "$root/dist/sources" "$root/dist/build-source"
 python3 ci/codec-probe/fetch-sources.py "$root"
+# The source archive is nested in another Git checkout. Do not let upstream's
+# version.sh mistake the surrounding AF commit for the FFmpeg source version.
+revision="$(cat "$root/sources/FFmpeg-946fcce07b6dcd0331c8cc609192aeff5e1924f8/RELEASE")"
+test "$revision" = 9.0.2
+export revision
 cp "$root/downloads/"*.tar.gz "$root/dist/sources/"
 cp ci/codec-probe/build.sh ci/codec-probe/fetch-sources.py ci/codec-probe/CHANGE_CONTRACT.md "$root/dist/build-source/"
 cp "$root/source-manifest.json" "$root/dist/"
@@ -65,8 +70,8 @@ for abi in arm64-v8a x86_64; do
       --disable-programs --enable-ffmpeg --disable-ffprobe --disable-avdevice \
       --enable-avfilter --enable-swscale --enable-swresample --enable-jni --enable-mediacodec --enable-libmp3lame \
       --enable-protocol=file,pipe \
-      --enable-demuxer=mov,matroska,mp3,flac,asf,wav,pcm_s16le \
-      --enable-muxer=mp4,mov,matroska,mp3,flac,asf,wav,pcm_s16le \
+      --enable-demuxer=mov,matroska,h264,mp3,flac,asf,wav,pcm_s16le \
+      --enable-muxer=mp4,mov,matroska,h264,mp3,flac,asf,wav,pcm_s16le \
       --enable-decoder=aac,h264,mp3,mp3float,flac,wmav1,wmav2,pcm_s16le,rawvideo \
       --enable-encoder=aac,h264_mediacodec,libmp3lame,flac,wmav2,pcm_s16le,rawvideo \
       --enable-parser=aac,h264,mpegaudio,flac \
