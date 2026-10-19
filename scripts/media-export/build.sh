@@ -36,8 +36,8 @@ for abi in arm64-v8a armeabi-v7a x86_64 x86; do
   case "$abi" in
     arm64-v8a) triple=aarch64-linux-android; arch=aarch64; host=aarch64-linux-android; asm=();;
     armeabi-v7a) triple=armv7a-linux-androideabi; arch=arm; host=arm-linux-androideabi; asm=();;
-    x86_64) triple=x86_64-linux-android; arch=x86_64; host=x86_64-linux-android; asm=(--disable-x86asm);;
-    x86) triple=i686-linux-android; arch=x86; host=i686-linux-android; asm=(--disable-x86asm);;
+    x86_64) triple=x86_64-linux-android; arch=x86_64; host=x86_64-linux-android; asm=(--disable-x86asm --disable-inline-asm);;
+    x86) triple=i686-linux-android; arch=x86; host=i686-linux-android; asm=(--disable-x86asm --disable-inline-asm);;
   esac
   # ARM keeps normal assembly; x86 variants explicitly use O3 C paths.
   # Per-device export throughput is not inferred from emulator results.
