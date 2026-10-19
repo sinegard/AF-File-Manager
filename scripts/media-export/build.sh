@@ -72,13 +72,13 @@ for abi in arm64-v8a armeabi-v7a x86_64 x86; do
       --disable-programs --enable-ffmpeg --enable-ffprobe --disable-avdevice \
       --enable-avfilter --enable-swscale --enable-swresample --enable-jni --enable-mediacodec --enable-libmp3lame \
       --enable-protocol=file,pipe \
-      --enable-demuxer=mov,matroska,mpegts,h264,mp3,flac,asf,wav,pcm_s16le,image2,jpeg_pipe,png_pipe \
-      --enable-muxer=mp4,mov,matroska,mpegts,h264,mp3,flac,asf,wav,pcm_s16le \
-      --enable-decoder=aac,h264,mp3,mp3float,flac,wmav1,wmav2,pcm_s16le,rawvideo,mjpeg,png \
+      --enable-demuxer=mov,matroska,mpegts,h264,mp3,flac,asf,wav,ogg,aac,aiff,pcm_s16le,image2,jpeg_pipe,png_pipe \
+      --enable-muxer=mp4,mov,matroska,mpegts,h264,mp3,flac,asf,wav,pcm_s16le,segment \
+      --enable-decoder=aac,h264,mp3,mp3float,flac,wmav1,wmav2,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_s16be,alac,opus,vorbis,rawvideo,mjpeg,png \
       --enable-encoder=aac,h264_mediacodec,libmp3lame,flac,wmav2,pcm_s16le,rawvideo \
       --enable-parser=aac,h264,mpegaudio,flac \
       --enable-bsf=aac_adtstoasc,h264_mp4toannexb,h264_metadata,extract_extradata \
-      --enable-filter=buffer,abuffer,buffersink,abuffersink,format,aformat,scale,fps,trim,atrim,setpts,asetpts,reverse,areverse,afftdn,volume,afade,aecho,atempo,aresample,crop,pad,transpose,anull,null,split,asplit,concat \
+      --enable-filter=buffer,abuffer,buffersink,abuffersink,format,aformat,scale,fps,trim,atrim,setpts,asetpts,reverse,areverse,afftdn,volume,afade,aecho,atempo,asetrate,aresample,crop,pad,transpose,anull,null,split,asplit,concat \
       "${asm[@]}"
     make -j4 REVISION="$revision"
     grep -q '^#define FFMPEG_VERSION "9.0.2"$' libavutil/ffversion.h
