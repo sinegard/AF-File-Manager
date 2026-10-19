@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - name: Check out experiment source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -31,12 +31,12 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
       - name: Build the restricted export payloads
         shell: bash
-        run: bash ci/codec-probe/build.sh
+        run: bash scripts/media-export/build.sh
       - name: Retain experiment outputs
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: codec-probe-${{ github.sha }}
-          path: codec-probe/dist/
+          path: app/build/native-media/dist/
           retention-days: 3
           if-no-files-found: error
