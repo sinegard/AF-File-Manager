@@ -78,7 +78,7 @@ for abi in arm64-v8a armeabi-v7a x86_64 x86; do
       --enable-encoder=aac,h264_mediacodec,libmp3lame,flac,wmav2,pcm_s16le,rawvideo \
       --enable-parser=aac,h264,mpegaudio,flac \
       --enable-bsf=aac_adtstoasc,h264_mp4toannexb,h264_metadata,extract_extradata \
-      --enable-filter=buffer,abuffer,buffersink,abuffersink,format,aformat,scale,fps,trim,atrim,setpts,asetpts,reverse,areverse,afftdn,volume,afade,aecho,atempo,asetrate,aresample,crop,pad,transpose,anull,null,split,asplit,concat \
+      --enable-filter=buffer,abuffer,buffersink,abuffersink,format,aformat,scale,fps,trim,atrim,setpts,asetpts,reverse,areverse,afftdn,agate,volume,afade,aecho,atempo,asetrate,aresample,crop,pad,transpose,anull,null,split,asplit,concat \
       "${asm[@]}"
     make -j4 REVISION="$revision"
     grep -q '^#define FFMPEG_VERSION "9.0.2"$' libavutil/ffversion.h
