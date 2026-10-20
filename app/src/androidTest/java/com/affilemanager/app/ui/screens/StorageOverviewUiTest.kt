@@ -24,6 +24,19 @@ class StorageOverviewUiTest {
     private val internal = StorageRoot("primary", "Internal", "/storage/emulated/0", 1_000L, 400L, false, StorageRootKind.INTERNAL)
     private val usb = StorageRoot("usb", "USB fixture", "/storage/AF_USB", 2_000L, 1_000L, true, StorageRootKind.USB_STORAGE)
 
+    @Test fun internalStorageHoldOpensSettingsWithoutStartingAnalysis() {
+        var scanned: String? = null
+        var settings = 0
+        compose.setContent { MaterialTheme {
+            StorageOverviewCard(internal, listOf(internal), null, emptyList(), false, false, null,
+                { scanned = it }, {}, {}, {}, {}, onOpenSystemStorage = { settings++ })
+        } }
+        compose.onNodeWithTag("analyze_storage_primary").performTouchInput { longClick() }
+        compose.runOnIdle { org.junit.Assert.assertNull(scanned); org.junit.Assert.assertEquals(1, settings) }
+        compose.onNodeWithTag("analyze_storage_primary").performClick()
+        compose.runOnIdle { org.junit.Assert.assertEquals(internal.path, scanned); org.junit.Assert.assertEquals(1, settings) }
+    }
+
     @Test fun mountedVolumesAppearAndDisappearTogetherWithTheAllStorageAction() {
         val mounted = mutableStateOf(listOf(internal))
         compose.setContent { MaterialTheme {

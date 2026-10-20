@@ -21,6 +21,7 @@ data class DeviceCleanupApp(
     val firstInstalledMillis: Long,
     val cacheBytes: Long?,
     val ramBytes: Long? = null,
+    val storageBytes: Long? = null,
 )
 
 data class DeviceCleanupSnapshot(
@@ -35,6 +36,7 @@ data class DeviceCleanupSnapshot(
     val privilegedAppAccessAvailable: Boolean = false,
     val privilegedAppAccessError: String? = null,
     val runningAppsTruncated: Boolean = false,
+    val heavyApps: List<DeviceCleanupApp> = emptyList(),
 )
 
 internal object DeviceCleanupRules {
@@ -75,15 +77,17 @@ class DeviceCleanupRepository(private val application: Application) {
         val items = applications.take(MAX_APPS).mapNotNull { info ->
             currentCoroutineContext().ensureActive()
             val packageInfo = runCatching { packageInfo(packageManager, info.packageName) }.getOrNull() ?: return@mapNotNull null
-            val cacheBytes = runCatching {
-                storage.queryStatsForPackage(info.storageUuid, info.packageName, Process.myUserHandle()).cacheBytes.coerceAtLeast(0L)
+            val stats = runCatching {
+                storage.queryStatsForPackage(info.storageUuid, info.packageName, Process.myUserHandle())
             }.onSuccess { cacheQueriesSucceeded += 1 }.getOrNull()
             DeviceCleanupApp(
                 packageName = info.packageName,
                 label = info.loadLabel(packageManager).toString().ifBlank { info.packageName },
                 lastUsedMillis = usage[info.packageName]?.lastTimeUsed?.takeIf { it > 0L },
                 firstInstalledMillis = packageInfo.firstInstallTime.coerceAtLeast(0L),
-                cacheBytes = cacheBytes,
+                cacheBytes = stats?.cacheBytes?.coerceAtLeast(0L),
+                // StorageStats.dataBytes already includes cacheBytes; do not count it twice.
+                storageBytes = stats?.let { it.appBytes.coerceAtLeast(0L) + it.dataBytes.coerceAtLeast(0L) },
             )
         }
         DeviceCleanupSnapshot(
@@ -95,6 +99,7 @@ class DeviceCleanupRepository(private val application: Application) {
             cacheSizesAvailable = cacheQueriesSucceeded > 0,
             appsTruncated = applications.size > MAX_APPS,
             usageHistoryAvailable = usageResult.isSuccess,
+            heavyApps = items.sortedWith(compareByDescending<DeviceCleanupApp> { it.storageBytes ?: -1L }.thenBy { it.packageName }),
         )
     }
 

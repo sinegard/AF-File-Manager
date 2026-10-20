@@ -17,6 +17,7 @@ internal object MediaExportStorage {
     }
     fun cleanOnce(context: Context) {
         if (startupCleaned) return
+        MediaWorkspace.cleanAbandoned(context)
         val root = File(context.cacheDir, "media-exports")
         if (root.isDirectory) Files.newDirectoryStream(root.toPath()).use { entries ->
             entries.asSequence().take(32).map { it.toFile() }.filter { ownedFile(context, it) }.forEach {

@@ -35,6 +35,7 @@ data class AppearanceSettings(
     val wallpaperShading: Int = 72,
     val transparentMenus: Boolean = false,
     val interfaceScalePercent: Int = AppearanceRules.DEFAULT_INTERFACE_SCALE_PERCENT,
+    val automaticDualPane: Boolean = true,
 )
 
 object AppearanceRules {
@@ -84,6 +85,7 @@ class AppearanceRepository(context: Context) {
     fun setWallpaperShading(percent: Int) = update { it.copy(wallpaperShading = percent.coerceIn(0, 100)) }
 
     fun setTransparentMenus(enabled: Boolean) = update { it.copy(transparentMenus = enabled) }
+    fun setAutomaticDualPane(enabled: Boolean) = update { it.copy(automaticDualPane = enabled) }
 
     @Synchronized
     fun setInterfaceScalePercent(percent: Int) {
@@ -112,6 +114,7 @@ class AppearanceRepository(context: Context) {
                 .putInt("card_transparency", updated.cardTransparency)
                 .putInt("wallpaper_shading", updated.wallpaperShading)
                 .putBoolean("transparent_menus", updated.transparentMenus)
+                .putBoolean("automatic_dual_pane", updated.automaticDualPane)
                 .putInt("interface_scale_percent", updated.interfaceScalePercent)
                 .putString("custom_colors_v1", updated.customColors.values().take(5).joinToString(",", transform = CustomThemeRules::hex))
                 .putString("custom_colors_v2", updated.customColors.values().joinToString(",", transform = CustomThemeRules::hex))
@@ -134,6 +137,7 @@ class AppearanceRepository(context: Context) {
         cardTransparency = preferences.getInt("card_transparency", 0).coerceIn(0, 100),
         wallpaperShading = preferences.getInt("wallpaper_shading", 72).coerceIn(0, 100),
         transparentMenus = preferences.getBoolean("transparent_menus", false),
+        automaticDualPane = preferences.getBoolean("automatic_dual_pane", true),
         interfaceScalePercent = AppearanceRules.normalizeInterfaceScale(
             preferences.getInt("interface_scale_percent", AppearanceRules.DEFAULT_INTERFACE_SCALE_PERCENT),
         ),

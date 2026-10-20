@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
@@ -88,6 +89,7 @@ internal fun NearbyTransferDetails(
     bytesPerSecond: Long = 0L,
     remainingMillis: Long? = null,
     allowFolderDrilldown: Boolean = true,
+    onRetryFile: ((TransferFileProgress, Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
@@ -111,6 +113,7 @@ internal fun NearbyTransferDetails(
             totalBytes = selectedFiles.sumOf(TransferFileProgress::sizeBytes), totalFiles = selectedFiles.size,
             onPreview = onPreview, onDismiss = { openedFolder = null },
             onCancelFile = onCancelFile?.let { stop -> ({ file, index -> stop(file, currentIndices[index]) }) },
+            onRetryFile = onRetryFile?.let { retry -> ({ file, index -> retry(file, currentIndices[index]) }) },
             outgoingCount = if (folder.incoming) 0 else selectedFiles.size,
             localName = localName, peerName = peerName, message = folder.path,
             allowFolderDrilldown = false,
@@ -184,7 +187,8 @@ internal fun NearbyTransferDetails(
             if (files.isNotEmpty()) {
                 val completed = files.count { it.status == TransferFileStatus.COMPLETED }
                 val failed = files.count { it.status == TransferFileStatus.FAILED }
-                val cancelled = files.count { it.status == TransferFileStatus.CANCELLED }
+                val cancelled = files.count { it.status == TransferFileStatus.CANCELLED && !it.notAttempted }
+                val notSent = files.count { it.notAttempted }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     shape = RoundedCornerShape(16.dp),
@@ -197,6 +201,9 @@ internal fun NearbyTransferDetails(
                             ReceiptMetric("Baigta", completed, Modifier.weight(1f))
                             ReceiptMetric("Nepavyko", failed, Modifier.weight(1f))
                             ReceiptMetric("Atšaukta", cancelled, Modifier.weight(1f))
+                        }
+                        if (notSent > 0) Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                            ReceiptMetric("Not sent", notSent, Modifier.weight(1f))
                         }
                     }
                 }
@@ -252,7 +259,7 @@ internal fun NearbyTransferDetails(
                         item("outgoing_header") { SenderCapsule(resolvedLocalName, outgoing = true) }
                         items((outgoingFileCount + 3) / 4, key = { "outgoing_grid_$it" }) { row ->
                             TransferGridRow(files, row * 4, minOf(outgoingFileCount, (row + 1) * 4),
-                                incoming = false, onPreview = onPreview, onCancelFile = onCancelFile)
+                                incoming = false, onPreview = onPreview, onCancelFile = onCancelFile, onRetryFile = onRetryFile)
                         }
                     }
                     if (incomingFileCount > 0) {
@@ -260,7 +267,7 @@ internal fun NearbyTransferDetails(
                         items((incomingFileCount + 3) / 4, key = { "incoming_grid_$it" }) { row ->
                             val start = outgoingFileCount + row * 4
                             TransferGridRow(files, start, minOf(files.size, start + 4),
-                                incoming = true, onPreview = onPreview, onCancelFile = onCancelFile)
+                                incoming = true, onPreview = onPreview, onCancelFile = onCancelFile, onRetryFile = onRetryFile)
                         }
                     }
                 } else {
@@ -282,6 +289,7 @@ internal fun NearbyTransferDetails(
                             onPreview,
                             outgoingCount?.let { index >= it },
                             onCancelFile?.let { stop -> ({ stop(file, index) }) },
+                            onRetry = if (outgoingCount == null || index < outgoingCount) onRetryFile?.let { retry -> ({ retry(file, index) }) } else null,
                         )
                         HorizontalDivider()
                     }
@@ -380,12 +388,14 @@ private fun TransferGridRow(
     incoming: Boolean,
     onPreview: (FileEntry) -> Unit,
     onCancelFile: ((TransferFileProgress, Int) -> Unit)?,
+    onRetryFile: ((TransferFileProgress, Int) -> Unit)?,
 ) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         for (index in start until endExclusive) {
             val file = files[index]
             TransferGridFileCard(file, index, incoming, onPreview,
-                onCancelFile?.let { stop -> ({ stop(file, index) }) }, Modifier.weight(1f))
+                onCancelFile?.let { stop -> ({ stop(file, index) }) }, Modifier.weight(1f),
+                onRetry = if (!incoming) onRetryFile?.let { retry -> ({ retry(file, index) }) } else null)
         }
         repeat(4 - (endExclusive - start)) { Spacer(Modifier.weight(1f)) }
     }
@@ -399,6 +409,7 @@ private fun TransferGridFileCard(
     onPreview: (FileEntry) -> Unit,
     onStop: (() -> Unit)?,
     modifier: Modifier,
+    onRetry: (() -> Unit)? = null,
 ) {
     val entry = remember(file.localPath, file.name, file.sizeBytes, file.modifiedAtMillis) {
         FileEntry(file.localPath.orEmpty(), file.localPath?.let { java.io.File(it).name } ?: file.name,
@@ -426,6 +437,10 @@ private fun TransferGridFileCard(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
             when {
+                onRetry != null && !file.retrySubmitted && file.status in setOf(TransferFileStatus.FAILED, TransferFileStatus.CANCELLED) ->
+                    IconButton(onClick = onRetry, modifier = Modifier.size(36.dp).testTag("nearby_transfer_retry_$index")) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = uiText("Bandyti dar kartą"), modifier = Modifier.size(18.dp))
+                    }
                 file.status == TransferFileStatus.COMPLETED && file.localPath != null ->
                     IconButton(onClick = { onPreview(entry) }, modifier = Modifier.size(36.dp)
                         .testTag("nearby_transfer_preview_$index")) {
@@ -452,6 +467,7 @@ private fun TransferFileRow(
     onPreview: (FileEntry) -> Unit,
     incoming: Boolean? = null,
     onStop: (() -> Unit)? = null,
+    onRetry: (() -> Unit)? = null,
 ) {
     // Pure metadata mapping, no filesystem stat or decoding on the UI thread.
     val entry = remember(file.localPath, file.relativePath, file.sizeBytes, file.modifiedAtMillis) {
@@ -461,7 +477,7 @@ private fun TransferFileRow(
     }
     val visiblePath = file.relativePath.substringBeforeLast('/', "").takeIf(String::isNotEmpty)
         ?.let { "$it/${entry.name}" } ?: entry.name
-    val status = when (file.status) {
+    val status = if (file.notAttempted) "Not sent" else when (file.status) {
         TransferFileStatus.WAITING -> "Eilėje"
         TransferFileStatus.TRANSFERRING -> "Vykdoma"
         TransferFileStatus.COMPLETED -> "Baigta"
@@ -487,7 +503,11 @@ private fun TransferFileRow(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
         }
-        if (file.status == TransferFileStatus.COMPLETED && file.localPath != null) {
+        if (onRetry != null && !file.retrySubmitted && file.status in setOf(TransferFileStatus.FAILED, TransferFileStatus.CANCELLED)) {
+            IconButton(onClick = onRetry, modifier = Modifier.testTag("nearby_transfer_retry_$index")) {
+                Icon(Icons.Rounded.Refresh, contentDescription = uiText("Bandyti dar kartą"))
+            }
+        } else if (file.status == TransferFileStatus.COMPLETED && file.localPath != null) {
             TextButton(
                 onClick = { onPreview(entry) },
                 modifier = Modifier.testTag("nearby_transfer_preview_$index"),

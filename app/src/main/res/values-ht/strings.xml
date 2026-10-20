@@ -10,7 +10,7 @@
     <string name="share_file_chooser_title">Pataje dosye</string>
     <string name="open_with_chooser_short">Louvri ak</string>
     <string name="lan_transfer_channel_name">Transfè dosye rezo lokal</string>
-    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_channel_description">Montre sèlman pandan y ap kouri LAN dosye transfè</string>
     <string name="lan_transfer_starting_title">transfè AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Kòmanse sèvè...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN transfè ap kouri</string>

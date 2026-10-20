@@ -19,7 +19,7 @@
     <string name="nearby_transfer_starting_text">- Jeg forbereder overførslen.</string>
     <string name="terminal_channel_name">Aktiv terminal</string>
     <string name="terminal_channel_description">Hold en åben telefon eller server terminal kører i baggrunden</string>
-    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_notification_title">AF File Manager-terminal</string>
     <string name="terminal_phone_active">Telefonterminalen er aktiv</string>
     <string name="terminal_server_active">Serverterminal aktiveret</string>
     <string name="generated_extracted_name">udvindt</string>

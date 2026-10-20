@@ -14,7 +14,7 @@ AF File Manager is built for Android phones and tablets with Kotlin and Jetpack 
 - Add missed items with **Copy more**, then paste one combined clipboard between local storage and connected servers.
 - Preview images, PDFs, media, text, code, APKs, metadata, and archive contents. PDFs can also receive a visible handwritten signature on a chosen page, with placement and size controls.
 - Edit text and code locally or on a server, with Save, Save As, encoding and line-ending controls, conflict detection, and temporary-file cleanup.
-- Trim or crop media, extract audio, change speed, pitch, volume, tags and cover art, and save MP4, M4A, WAV or GIF copies. These optional tools run on the device; codec support and available memory determine the supported settings.
+- Trim or crop media, extract audio, reverse video or audio, reduce noise, and change speed, pitch, volume, tags and cover art. Save MP4, MKV, MOV, GIF, M4A, MP3, WAV, FLAC or WMA copies through the same local or server Save As browser. These optional tools run on the device; codec support and available memory determine the supported settings.
 - Analyze storage for large files, duplicates, similar photos, empty folders, and leftovers without deleting anything automatically.
 - Connect through SMB 2/3, SFTP, WebDAV, FTP, and FTPS, or authorize a Nextcloud account in the browser, with editable profiles and Android Keystore-protected secrets.
 - Open a local Android terminal or reuse an active SFTP connection for a remote SSH terminal.
@@ -61,6 +61,8 @@ $env:AF_GO_EXE = 'path-to-go-1.26\bin\go.exe'
 ```
 
 The generated `cloudflared` binaries are not stored in Git. The pinned build script compiles them from the exact upstream commit used by the release workflow.
+
+Media export also needs the source-built offline worker staged before assembling the APK. See [docs/MEDIA_EXPORT.md](docs/MEDIA_EXPORT.md) for the pinned Linux build, verification and LGPL source bundle. Release CI builds it automatically; native executables are never committed to Git.
 
 Release signing keys are not stored in the repository. See [docs/RELEASING.md](docs/RELEASING.md) for the release process and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled components.
 

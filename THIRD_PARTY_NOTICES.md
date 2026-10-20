@@ -75,6 +75,20 @@ AF does not include a cloud conversion service or require an account.
 - A copy of the license is included in the APK at `assets/licenses/media3-LICENSE.txt`.
 - Guava and its failureaccess helper: Apache License 2.0 — https://github.com/google/guava
 
+## FFmpeg and LAME
+
+The optional media-export worker includes FFmpeg 9.0.2 from commit
+`946fcce07b6dcd0331c8cc609192aeff5e1924f8` and LAME 4.0. It is built from
+hash-pinned sources without GPL, nonfree or native networking components.
+
+- FFmpeg: https://ffmpeg.org/ — LGPL 2.1 or later.
+- LAME: https://lame.sourceforge.io/ — LGPL; the original license accompanies the component.
+- Original license texts and build/source identities are included under `assets/licenses/media-export/`.
+- Matching sources and recipes accompany each release as `AF-media-export-sources-<version>.zip`; see [docs/MEDIA_EXPORT.md](docs/MEDIA_EXPORT.md).
+
+These libraries retain their own licenses. AF's non-commercial restriction
+does not apply to FFmpeg or LAME.
+
 ## Offline interface translation assets
 
 The generated language packs were prepared during development with Meta's NLLB-200 distilled 600M model. The model and translation runtime are not included in the Android app. Standard Android action labels are taken from the Android Open Source Project translations where an exact match exists.

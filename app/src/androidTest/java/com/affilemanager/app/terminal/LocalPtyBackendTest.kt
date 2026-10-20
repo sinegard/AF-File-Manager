@@ -11,9 +11,41 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
 import java.io.File
+import android.os.SystemClock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 
 @RunWith(AndroidJUnit4::class)
 class LocalPtyBackendTest {
+    @Test
+    fun idleOutputReadDoesNotDelayInteractiveKeystrokes() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "pty-latency-${System.nanoTime()}").apply { mkdirs() }
+        val backend = LocalPtyBackend.open(root, File(root, "home"), File(root, "tmp"))
+        val reader = launch(Dispatchers.IO) {
+            val buffer = ByteArray(8 * 1024)
+            while (backend.read(buffer) >= 0) { /* Drain the real PTY, as the AF controller does. */ }
+        }
+        try {
+            // The shell has emitted its prompt and the reader is waiting for output.
+            SystemClock.sleep(400)
+            val elapsed = LongArray(20) {
+                SystemClock.sleep(20)
+                val start = SystemClock.elapsedRealtimeNanos()
+                backend.write(byteArrayOf('x'.code.toByte()))
+                (SystemClock.elapsedRealtimeNanos() - start) / 1_000_000
+            }
+            val p95 = elapsed.sorted()[18]
+            android.util.Log.i("AFPTYLatency", "p95=${p95}ms, samples=${elapsed.joinToString()}")
+            assertTrue("Interactive PTY p95=${p95}ms, samples=${elapsed.joinToString()}", p95 < 100)
+        } finally {
+            backend.close()
+            reader.cancelAndJoin()
+            root.deleteRecursively()
+        }
+    }
+
     @Test
     fun interactiveShellStartsInRequestedDirectoryAndReturnsOutput() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()

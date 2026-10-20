@@ -80,6 +80,7 @@ internal fun NearbyTransferHistoryDialog(
                 status = file.status,
                 localPath = availablePaths[file.id],
                 batchId = file.id,
+                notAttempted = file.notAttempted,
             )
         }
         NearbyTransferDetails(

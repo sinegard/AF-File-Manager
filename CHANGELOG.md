@@ -2,7 +2,20 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
-## Unreleased
+## [0.46.0] - 2026-10-20
+
+- Removed the local terminal's read/write lock contention, which could delay each keystroke while waiting for output.
+- Renaming a file keeps the current list or grid position instead of jumping during a partial refresh.
+- File menus and selection bars follow the same Visible features choices. Per-file menus stay hidden while a selection is active.
+- Grid columns can be set separately for portrait and landscape. Automatic dual-pane layout can be switched off.
+- Folder addresses can be edited directly. Android document-provider locations still require the normal folder permission.
+- Copy path produces single-line, quoted POSIX arguments without changing AF's file clipboard. Document-provider items offer a reusable URI instead.
+- The text editor recognizes lyrics, subtitles and common shell configuration files. Unsupported previews have a direct Open with button.
+- Image double-tap zoom animates around the tapped point and can be interrupted by a new gesture.
+- Media editing adds MKV, MOV, MP3, FLAC and WMA output, reverse playback and audio cleanup, using the existing preview and Save As workflow. Available encoding choices are shown before preparing a copy; originals are not changed.
+- Added configurable standard home-screen widgets for storage, cleanup, sharing, files, search, photos and media controls. Video widgets open the existing player rather than playing inside the widget.
+- Phone groups support clearer receiver information, retrying one failed file and sharper group pictures while keeping older clients compatible.
+- Installed-app filters and information are easier to reach. Opening a file inside an archive preserves the archive's folder and return position.
 
 ## [0.45.2] - 2026-10-14
 

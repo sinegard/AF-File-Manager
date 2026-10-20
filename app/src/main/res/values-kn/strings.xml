@@ -10,7 +10,7 @@
     <string name="share_file_chooser_title">ಫೈಲ್ ಹಂಚಿಕೆ</string>
     <string name="open_with_chooser_short">ಇದರ ಮೂಲಕ ತೆರೆಯಿರಿ</string>
     <string name="lan_transfer_channel_name">ಸ್ಥಳೀಯ ನೆಟ್ವರ್ಕ್ ಫೈಲ್ ವರ್ಗಾವಣೆ</string>
-    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_channel_description">ನೀವು LAN ಫೈಲ್ ವರ್ಗಾವಣೆ ನಡೆಸುವಾಗ ಮಾತ್ರ ತೋರಿಸಲಾಗಿದೆ</string>
     <string name="lan_transfer_starting_title">AF File Manager LAN ವರ್ಗಾವಣೆ</string>
     <string name="lan_transfer_starting_text">ಆರಂಭಿಕ ಸರ್ವರ್...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN ವರ್ಗಾವಣೆ ಚಾಲನೆಯಲ್ಲಿರುತ್ತದೆ</string>

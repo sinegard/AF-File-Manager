@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.preview
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
 import com.affilemanager.app.ui.localization.appString
 
 import com.affilemanager.app.ui.localization.LText
@@ -133,6 +137,10 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
+import com.affilemanager.app.ui.ArchiveBrowserUiState
+import com.affilemanager.app.ui.FileScrollKey
+import com.affilemanager.app.ui.FileScrollPosition
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -299,6 +307,9 @@ fun FilePreviewDialog(
     editState: FileEditUiState,
     signatureLibrary: SignatureLibraryUiState,
     archiveDisplayDefaults: DirectoryDisplayDefaults,
+    onUpdateArchiveBrowser: (String, (ArchiveBrowserUiState) -> ArchiveBrowserUiState) -> Unit,
+    loadArchiveScrollPosition: (FileScrollKey) -> FileScrollPosition,
+    onSaveArchiveScrollPosition: (FileScrollKey, Int, Int) -> Unit,
     onApplyArchiveDisplayToAll: (DirectoryDisplaySettings, SortMode?, SortDirection) -> Unit,
     onClose: () -> Unit,
     onDelete: (() -> Unit)?,
@@ -347,10 +358,15 @@ fun FilePreviewDialog(
     val context = LocalContext.current
     val summaryDateFormat = rememberLocalizedDateTimeFormat(DateFormat.SHORT, DateFormat.SHORT)
     val source = target.previewSource()
+    val archiveNavigation = when (target) {
+        is PreviewTarget.Archive -> target.browser
+        is PreviewTarget.RemoteArchive -> target.browser
+        else -> null
+    }
+    val archivePath = archiveNavigation?.path.orEmpty()
     var hash by remember(source.key) { mutableStateOf<String?>(null) }
     var hashRunning by remember { mutableStateOf(false) }
     var actionError by remember(source.key) { mutableStateOf<String?>(null) }
-    var archivePath by remember(source.key) { mutableStateOf("") }
     var launchExternalEditorWhenReady by remember(source.key) { mutableStateOf(false) }
     var launchPdfSignerWhenReady by remember(source.key) { mutableStateOf(false) }
     var showPdfSigner by remember(source.key) { mutableStateOf(false) }
@@ -462,8 +478,10 @@ fun FilePreviewDialog(
         }
     }
     val navigateBack: () -> Unit = {
-        if ((target is PreviewTarget.Archive || target is PreviewTarget.RemoteArchive) && archivePath.isNotEmpty()) {
-            archivePath = ArchiveBrowserIndex.parentOf(archivePath)
+        if (archiveNavigation != null && archivePath.isNotEmpty()) {
+            onUpdateArchiveBrowser(archiveNavigation.id) {
+                it.copy(path = ArchiveBrowserIndex.parentOf(it.path), searchVisible = false, query = "", filters = emptySet())
+            }
         } else {
             onClose()
         }
@@ -495,6 +513,9 @@ fun FilePreviewDialog(
                         sourceKey = source.key,
                         editEnabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifying != true,
                         hashRunning = hashRunning,
+                        onTrim = if (mediaEditingAvailable) ({ openMediaEditor(MediaEditorMode.TRIM) }) else null,
+                        onExtractAudio = if (mediaEditingAvailable && actionSource.kind == EntryKind.VIDEO) ({ openMediaEditor(MediaEditorMode.EXTRACT_AUDIO) }) else null,
+                        onCompress = if (mediaEditingAvailable && actionSource.kind == EntryKind.VIDEO) ({ openMediaEditor(MediaEditorMode.COMPRESS) }) else null,
                         onDetails = if (actionSource.kind in setOf(EntryKind.IMAGE, EntryKind.AUDIO, EntryKind.VIDEO)) ({ showDetails = true }) else null,
                         onOpenWith = {
                             runCatching { openWith(context, actionSource) }
@@ -549,23 +570,16 @@ fun FilePreviewDialog(
                     )
                 }
 
-                if (mediaEditingAvailable) com.affilemanager.app.ui.components.AfActionRow(Modifier.padding(horizontal = 10.dp)) {
-                    val enabled = activeEditState?.preparing != true && activeEditState?.saving != true && activeEditState?.modifying != true
-                    TextButton(onClick = { openMediaEditor(MediaEditorMode.TRIM) }, enabled = enabled, modifier = Modifier.testTag("open_media_trim")) { LText("Kirpti") }
-                    if (actionSource.kind == EntryKind.VIDEO) {
-                        TextButton(onClick = { openMediaEditor(MediaEditorMode.EXTRACT_AUDIO) }, enabled = enabled, modifier = Modifier.testTag("open_media_audio")) { LText("Išgauti garsą") }
-                        TextButton(onClick = { openMediaEditor(MediaEditorMode.COMPRESS) }, enabled = enabled, modifier = Modifier.testTag("open_media_compress")) { LText("Suspausti") }
-                    }
-                }
-
                 // Dispose the ordinary preview player while editing; two decoders must not compete.
                 if (mediaMode != null || launchMediaWhenReady != null) Spacer(Modifier.weight(1f))
                 else if (webDocument && showWebPage) OfflineWebPreview(actionSource) else when (target) {
                     is PreviewTarget.Archive -> ArchivePreview(
                         file = target.file,
                         entries = target.entries,
-                        currentPath = archivePath,
-                        onPathChanged = { archivePath = it },
+                        navigation = target.browser,
+                        onUpdateBrowser = onUpdateArchiveBrowser,
+                        loadScrollPosition = loadArchiveScrollPosition,
+                        saveScrollPosition = onSaveArchiveScrollPosition,
                         onCopyEntry = onCopyArchiveEntry,
                         onCopyEntries = onCopyArchiveEntries,
                         onOpenEntry = onOpenArchiveEntry,
@@ -586,8 +600,10 @@ fun FilePreviewDialog(
                     is PreviewTarget.RemoteArchive -> ArchivePreview(
                         file = target.file,
                         entries = target.entries,
-                        currentPath = archivePath,
-                        onPathChanged = { archivePath = it },
+                        navigation = target.browser,
+                        onUpdateBrowser = onUpdateArchiveBrowser,
+                        loadScrollPosition = loadArchiveScrollPosition,
+                        saveScrollPosition = onSaveArchiveScrollPosition,
                         onCopyEntry = null,
                         onCopyEntries = null,
                         onOpenEntry = onOpenArchiveEntry,
@@ -614,6 +630,11 @@ fun FilePreviewDialog(
                     is PreviewTarget.ArchiveEntry,
                     -> FileContentPreview(
                         source = source,
+                        initialPlayback = when (target) {
+                            is PreviewTarget.LocalFile -> target.playbackStart
+                            is PreviewTarget.PrivilegedFile -> target.playbackStart
+                            else -> null
+                        },
                         editState = activeEditState,
                         onPrepareEdit = onPrepareEdit,
                         onEditTextChanged = onEditTextChanged,
@@ -796,6 +817,7 @@ private fun FileContentPreview(
     onMinimizeMedia: () -> Unit,
     onExtractSplitApk: () -> Unit,
     backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
+    initialPlayback: com.affilemanager.app.ui.InitialMediaPlayback? = null,
 ) {
     val context = LocalContext.current
     val displayedSource = editState?.session
@@ -813,6 +835,7 @@ private fun FileContentPreview(
             onNextMedia,
             onMinimizeMedia,
             backgroundPlaylist,
+            initialPlayback,
         )
         source.kind == EntryKind.APK && source.localFile != null -> {
             val file = requireNotNull(source.localFile)
@@ -868,15 +891,21 @@ internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPreviou
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
     var offset by remember(source.key) { mutableStateOf(Offset.Zero) }
     var viewportSize by remember(source.key) { mutableStateOf(IntSize.Zero) }
+    val zoomScope = rememberCoroutineScope()
+    var zoomAnimation by remember(source.key) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val currentScale by rememberUpdatedState(scale)
+    val currentOffset by rememberUpdatedState(offset)
+    DisposableEffect(source.key) { onDispose { zoomAnimation?.cancel() } }
     @Suppress("DEPRECATION")
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        zoomAnimation?.cancel()
         val nextScale = PreviewZoomRules.clamp(scale * zoomChange, PreviewZoomRules.IMAGE_MAX_SCALE)
         scale = nextScale
         offset = if (nextScale <= PreviewZoomRules.MIN_SCALE) Offset.Zero
         else boundedOffset(offset + panChange, viewportSize, nextScale)
     }
     val updateScale: (Float) -> Unit = { requested ->
+        zoomAnimation?.cancel()
         scale = PreviewZoomRules.clamp(requested, PreviewZoomRules.IMAGE_MAX_SCALE)
         offset = if (scale <= PreviewZoomRules.MIN_SCALE) Offset.Zero else boundedOffset(offset, viewportSize, scale)
     }
@@ -920,8 +949,21 @@ internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPreviou
                             }
                             .pointerInput(source.key) {
                                 detectTapGestures(
-                                    onDoubleTap = {
-                                        updateScale(if (currentScale > PreviewZoomRules.MIN_SCALE) PreviewZoomRules.MIN_SCALE else 2f)
+                                    onDoubleTap = { tap ->
+                                        zoomAnimation?.cancel()
+                                        val startScale = currentScale
+                                        val startOffset = currentOffset
+                                        val targetScale = if (startScale > PreviewZoomRules.MIN_SCALE) PreviewZoomRules.MIN_SCALE else 2f
+                                        val focus = tap - Offset(viewportSize.width / 2f, viewportSize.height / 2f)
+                                        val targetOffset = if (targetScale == PreviewZoomRules.MIN_SCALE) Offset.Zero
+                                            else boundedOffset(focus - (focus - startOffset) * (targetScale / startScale), viewportSize, targetScale)
+                                        zoomAnimation = zoomScope.launch {
+                                            androidx.compose.animation.core.animate(0f, 1f,
+                                                animationSpec = androidx.compose.animation.core.tween(durationMillis = 180)) { fraction, _ ->
+                                                scale = startScale + (targetScale - startScale) * fraction
+                                                offset = startOffset + (targetOffset - startOffset) * fraction
+                                            }
+                                        }
                                     },
                                 )
                             }
@@ -1615,6 +1657,7 @@ private fun MediaPreview(
     onNextMedia: () -> Unit,
     onMinimizeMedia: () -> Unit,
     backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
+    initialPlayback: com.affilemanager.app.ui.InitialMediaPlayback? = null,
 ) {
     val context = LocalContext.current
     val infoResult by produceState<Result<MediaPreviewInfo>?>(initialValue = null, source.key) {
@@ -1631,8 +1674,8 @@ private fun MediaPreview(
                 AudioPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, onMinimizeMedia, backgroundPlaylist)
                 }
             } else {
-                androidx.compose.runtime.key(source.key) {
-                VideoPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, backgroundPlaylist)
+                androidx.compose.runtime.key(source.key, initialPlayback?.requestId) {
+                VideoPreview(source, info, canNavigateMedia, onPreviousMedia, onNextMedia, backgroundPlaylist, initialPlayback)
                 }
             }
         }
@@ -1841,6 +1884,7 @@ private fun VideoPreview(
     onPreviousMedia: () -> Unit,
     onNextMedia: () -> Unit,
     backgroundPlaylist: List<com.affilemanager.app.media.BackgroundMediaItem>,
+    initialPlayback: com.affilemanager.app.ui.InitialMediaPlayback? = null,
 ) {
     val context = LocalContext.current
     val background by BackgroundPlaybackService.state.collectAsStateWithLifecycle()
@@ -1853,8 +1897,8 @@ private fun VideoPreview(
     var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
     var playbackError by remember(source.key) { mutableStateOf(false) }
     var preparedPlayer by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
-    var loopEnabled by remember(source.key) { mutableStateOf(true) }
-    var playbackSpeed by remember(source.key) { mutableFloatStateOf(1f) }
+    var loopEnabled by remember(source.key) { mutableStateOf(initialPlayback?.loop ?: true) }
+    var playbackSpeed by remember(source.key) { mutableFloatStateOf(initialPlayback?.speed ?: 1f) }
     var volume by remember(source.key) { mutableFloatStateOf(1f) }
     var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
     var controlsVisible by remember(source.key) { mutableStateOf(true) }
@@ -1924,6 +1968,11 @@ private fun VideoPreview(
                             prepared = true
                             playbackError = false
                             seekTo(1)
+                            if (initialPlayback?.autoPlay == true && !playingInBackground) {
+                                ready.playbackParams = ready.playbackParams.setSpeed(playbackSpeed)
+                                start()
+                                playing = true
+                            }
                             }.onFailure { prepared = false; playbackError = true }
                         }
                         setOnCompletionListener {
@@ -2397,8 +2446,10 @@ private fun ApkPreview(file: File) {
 private fun ArchivePreview(
     file: FileEntry,
     entries: List<ArchiveEntryInfo>,
-    currentPath: String,
-    onPathChanged: (String) -> Unit,
+    navigation: ArchiveBrowserUiState,
+    onUpdateBrowser: (String, (ArchiveBrowserUiState) -> ArchiveBrowserUiState) -> Unit,
+    loadScrollPosition: (FileScrollKey) -> FileScrollPosition,
+    saveScrollPosition: (FileScrollKey, Int, Int) -> Unit,
     onCopyEntry: ((String) -> Unit)?,
     onCopyEntries: ((Set<String>) -> Unit)?,
     onOpenEntry: (String) -> Unit,
@@ -2418,30 +2469,55 @@ private fun ArchivePreview(
 ) {
     var extractAllRequested by remember { mutableStateOf(false) }
     var extractSelectionRequested by remember { mutableStateOf<Set<String>?>(null) }
-    var searchVisible by remember(file.absolutePath) { mutableStateOf(false) }
-    var searchQuery by remember(file.absolutePath) { mutableStateOf("") }
-    var entryFilters by remember(file.absolutePath, currentPath) { mutableStateOf<Set<DirectoryEntryFilter>>(emptySet()) }
+    val currentPath = navigation.path
+    val searchVisible = navigation.searchVisible
+    val searchQuery = navigation.query
+    val entryFilters = navigation.filters
+    fun updateBrowser(update: (ArchiveBrowserUiState) -> ArchiveBrowserUiState) = onUpdateBrowser(navigation.id, update)
+    val onPathChanged: (String) -> Unit = { path ->
+        updateBrowser { it.copy(path = path, searchVisible = false, query = "", filters = emptySet()) }
+    }
+    val defaults = navigation.display ?: initialDisplayDefaults
+    fun updateDisplay(update: (DirectoryDisplayDefaults) -> DirectoryDisplayDefaults) {
+        updateBrowser { it.copy(display = update(it.display ?: initialDisplayDefaults)) }
+    }
     var showEntryFilter by remember(file.absolutePath, currentPath) { mutableStateOf(false) }
     var menu by remember(file.absolutePath) { mutableStateOf(false) }
     var showDisplaySettings by remember(file.absolutePath) { mutableStateOf(false) }
-    var displaySettings by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.settings) }
-    var sortMode by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.sortMode) }
-    var sortDirection by remember(file.absolutePath) { mutableStateOf(initialDisplayDefaults.sortDirection) }
+    val displaySettings = defaults.settings
+    val sortMode = defaults.sortMode
+    val sortDirection = defaults.sortDirection
     var selectedPaths by remember(file.absolutePath, currentPath) { mutableStateOf(emptySet<String>()) }
     var renameTarget by remember(file.absolutePath) { mutableStateOf<ArchiveBrowserItem?>(null) }
     var renameText by remember(file.absolutePath) { mutableStateOf("") }
     var deleteRequested by remember(file.absolutePath) { mutableStateOf<Set<String>?>(null) }
     var moveRequested by remember(file.absolutePath) { mutableStateOf<Set<String>?>(null) }
     var refreshing by remember(file.absolutePath) { mutableStateOf(false) }
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
+    val listKey = FileScrollKey(navigation.id, currentPath, false)
+    val gridKey = FileScrollKey(navigation.id, currentPath, true)
+    val initialList = remember(listKey) { loadScrollPosition(listKey) }
+    val initialGrid = remember(gridKey) { loadScrollPosition(gridKey) }
+    val listState = androidx.compose.runtime.key(listKey) { rememberLazyListState() }
+    val gridState = androidx.compose.runtime.key(gridKey) { rememberLazyGridState() }
+    var listRestored by remember(listKey) { mutableStateOf(initialList == FileScrollPosition()) }
+    var gridRestored by remember(gridKey) { mutableStateOf(initialGrid == FileScrollPosition()) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(currentPath) {
-        searchVisible = false
-        searchQuery = ""
         selectedPaths = emptySet()
-        listState.scrollToItem(0)
-        gridState.scrollToItem(0)
+    }
+    LaunchedEffect(listKey, listState) {
+        snapshotFlow { Triple(listRestored, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
+            .collect { (restored, index, offset) -> if (restored) saveScrollPosition(listKey, index, offset) }
+    }
+    LaunchedEffect(gridKey, gridState) {
+        snapshotFlow { Triple(gridRestored, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
+            .collect { (restored, index, offset) -> if (restored) saveScrollPosition(gridKey, index, offset) }
+    }
+    DisposableEffect(listKey, gridKey) {
+        onDispose {
+            if (listRestored) saveScrollPosition(listKey, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+            if (gridRestored) saveScrollPosition(gridKey, gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+        }
     }
     LaunchedEffect(entries) {
         selectedPaths = selectedPaths.filterTo(linkedSetOf()) { selected ->
@@ -2460,7 +2536,6 @@ private fun ArchivePreview(
         val requestedChildren = children
         val query = searchQuery.trim()
         transforming = true
-        visibleEntries = emptyList()
         visibleEntries = withContext(Dispatchers.Default) {
             val ordered = orderArchiveEntries(requestedChildren, sortMode, sortDirection)
             ordered.filter { entry ->
@@ -2474,6 +2549,20 @@ private fun ArchivePreview(
         transforming = false
     }
     val grid = displaySettings.layoutMode == DirectoryLayoutMode.GRID
+    LaunchedEffect(visibleEntries, transforming, grid) {
+        if (!transforming && visibleEntries.isNotEmpty()) {
+            if (!grid && !listRestored) {
+                val index = initialList.firstVisibleItemIndex.coerceAtMost(visibleEntries.lastIndex)
+                listState.scrollToItem(index, if (index == initialList.firstVisibleItemIndex) initialList.firstVisibleItemScrollOffset else 0)
+                listRestored = true
+            }
+            if (grid && !gridRestored) {
+                val index = initialGrid.firstVisibleItemIndex.coerceAtMost(visibleEntries.lastIndex)
+                gridState.scrollToItem(index, if (index == initialGrid.firstVisibleItemIndex) initialGrid.firstVisibleItemScrollOffset else 0)
+                gridRestored = true
+            }
+        }
+    }
     val goUp = { if (currentPath.isNotEmpty()) onPathChanged(ArchiveBrowserIndex.parentOf(currentPath)) }
     val visiblePaths = visibleEntries.mapTo(linkedSetOf(), ArchiveBrowserItem::path)
     val allVisibleSelected = visiblePaths.isNotEmpty() && visiblePaths.all(selectedPaths::contains)
@@ -2512,23 +2601,23 @@ private fun ArchivePreview(
                 },
             ) {
                 onCopyEntries?.let { copy ->
-                    IconButton(onClick = { copy(selectedPaths); selectedPaths = emptySet() }) {
+                    BrowserActionIconButton(BrowserAction.COPY, onClick = { copy(selectedPaths); selectedPaths = emptySet() }) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                     }
                 }
-                IconButton(onClick = { onShareEntries(selectedPaths); selectedPaths = emptySet() }) {
+                BrowserActionIconButton(BrowserAction.SHARE, onClick = { onShareEntries(selectedPaths); selectedPaths = emptySet() }) {
                     Icon(Icons.Rounded.Share, contentDescription = uiText("Dalintis"))
                 }
-                IconButton(onClick = { extractSelectionRequested = selectedPaths }) {
+                BrowserActionIconButton(BrowserAction.ARCHIVE, onClick = { extractSelectionRequested = selectedPaths }) {
                     Icon(Icons.Rounded.Archive, contentDescription = uiText("Išpakuoti"))
                 }
                 if (mutable && onMoveEntries != null) {
-                    IconButton(onClick = { moveRequested = selectedPaths }) {
+                    BrowserActionIconButton(BrowserAction.MOVE, onClick = { moveRequested = selectedPaths }) {
                         Icon(Icons.Rounded.DriveFileMove, contentDescription = uiText("Perkelti iš archyvo"))
                     }
                 }
                 if (mutable && selectedPaths.size == 1 && onRenameEntry != null) {
-                    IconButton(onClick = {
+                    BrowserActionIconButton(BrowserAction.RENAME, onClick = {
                         renameTarget = visibleEntries.firstOrNull { it.path == selectedPaths.single() }
                             ?: children.firstOrNull { it.path == selectedPaths.single() }
                         renameText = renameTarget?.name.orEmpty()
@@ -2537,7 +2626,7 @@ private fun ArchivePreview(
                     }
                 }
                 if (mutable && onDeleteEntries != null) {
-                    IconButton(onClick = { deleteRequested = selectedPaths }) {
+                    BrowserActionIconButton(BrowserAction.DELETE, onClick = { deleteRequested = selectedPaths }) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Ištrinti"))
                     }
                 }
@@ -2552,17 +2641,22 @@ private fun ArchivePreview(
             searchActive = searchVisible,
             grid = grid,
             testTagPrefix = "archive",
+            addressPath = "/$currentPath",
+            onOpenPath = { entered ->
+                val normalized = com.affilemanager.app.network.RemotePath.normalize(
+                    if (entered.startsWith('/')) entered else "/$currentPath/$entered").trim('/')
+                require(normalized.isEmpty() || browser.children(normalized).isNotEmpty() ||
+                    entries.any { it.directory && it.name.replace('\\', '/').trim('/') == normalized }) { "Aplankas nepasiekiamas" }
+                onPathChanged(normalized)
+            },
             onBack = goUp,
             onForward = {},
             onUp = goUp,
             onToggleSearch = {
-                searchVisible = !searchVisible
-                if (!searchVisible) searchQuery = ""
+                updateBrowser { it.copy(searchVisible = !it.searchVisible, query = if (it.searchVisible) "" else it.query) }
             },
             onToggleLayout = {
-                displaySettings = displaySettings.copy(
-                    layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
-                )
+                updateDisplay { it.copy(settings = it.settings.copy(layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID)) }
             },
             onOpenSettings = { showDisplaySettings = true },
         ) {
@@ -2572,14 +2666,14 @@ private fun ArchivePreview(
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     if (onExtract != null) {
-                        DropdownMenuItem(
+                        BrowserActionMenuItem(BrowserAction.ARCHIVE,
                             text = { LText("Išpakuoti") },
                             leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
                             onClick = { menu = false; extractAllRequested = true },
                         )
                     }
                     if (onCopyEntry != null && currentPath.isNotEmpty()) {
-                        DropdownMenuItem(
+                        BrowserActionMenuItem(BrowserAction.COPY,
                             text = { LText("Kopijuoti archyvo aplanką") },
                             leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
                             onClick = { menu = false; onCopyEntry(currentPath) },
@@ -2597,13 +2691,11 @@ private fun ArchivePreview(
                         displaySettingsTestTag = "archive_display_settings",
                         onToggleHidden = {},
                         onToggleLayout = {
-                            displaySettings = displaySettings.copy(
-                                layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID,
-                            )
+                            updateDisplay { it.copy(settings = it.settings.copy(layoutMode = if (grid) DirectoryLayoutMode.LIST else DirectoryLayoutMode.GRID)) }
                         },
-                        onToggleThumbnails = { displaySettings = displaySettings.copy(showThumbnails = !displaySettings.showThumbnails) },
+                        onToggleThumbnails = { updateDisplay { it.copy(settings = it.settings.copy(showThumbnails = !it.settings.showThumbnails)) } },
                         onOpenSettings = { showDisplaySettings = true },
-                        onSort = { sortMode = it },
+                        onSort = { mode -> updateDisplay { it.copy(sortMode = mode) } },
                         onDismissMenu = { menu = false },
                         filterActive = entryFilters.isNotEmpty(),
                         onOpenFilter = { showEntryFilter = true },
@@ -2622,8 +2714,8 @@ private fun ArchivePreview(
         if (searchVisible) {
             DirectoryQuickSearchField(
                 query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                onClose = { searchVisible = false; searchQuery = "" },
+                onQueryChange = { query -> updateBrowser { it.copy(query = query) } },
+                onClose = { updateBrowser { it.copy(searchVisible = false, query = "") } },
                 filterActive = entryFilters.isNotEmpty(),
                 onOpenFilter = { showEntryFilter = true },
                 modifier = Modifier.testTag("directory_search_field_archive"),
@@ -2644,9 +2736,9 @@ private fun ArchivePreview(
             }
             grid -> {
                 LazyVerticalGrid(
-                columns = GridCells.Fixed(displaySettings.gridColumns.coerceIn(1, 6)),
+                columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(displaySettings.gridColumns, displaySettings.gridColumnsLandscape)),
                 state = gridState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().testTag("archive_entries_grid"),
                 horizontalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
                 verticalArrangement = Arrangement.spacedBy((8f * displaySettings.spacingScalePercent / 100f).dp),
             ) {
@@ -2675,7 +2767,7 @@ private fun ArchivePreview(
                 LazyGridFastScroller(gridState)
             }
             else -> {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("archive_entries_list")) {
                     items(visibleEntries, key = { it.path }) { entry ->
                     ArchiveListItem(
                         entry = entry,
@@ -2712,17 +2804,15 @@ private fun ArchivePreview(
             initialSortDirection = sortDirection,
             onDismiss = { showDisplaySettings = false },
             onApply = {
-                displaySettings = it
+                val settings = it
+                updateDisplay { it.copy(settings = settings) }
                 showDisplaySettings = false
             },
             onApplySort = { mode, direction ->
-                sortMode = mode
-                sortDirection = direction
+                updateDisplay { it.copy(sortMode = mode, sortDirection = direction) }
             },
             onApplyToAll = { settings, mode, direction ->
-                displaySettings = settings
-                mode?.let { sortMode = it }
-                sortDirection = direction
+                updateDisplay { it.copy(settings = settings, sortMode = mode ?: it.sortMode, sortDirection = direction) }
                 onApplyDisplayToAll(settings, mode, direction)
                 showDisplaySettings = false
             },
@@ -2731,7 +2821,7 @@ private fun ArchivePreview(
     if (showEntryFilter) {
         DirectoryEntryFilterDialog(
             selected = entryFilters,
-            onSelectedChange = { entryFilters = it },
+            onSelectedChange = { filters -> updateBrowser { it.copy(filters = filters) } },
             onDismiss = { showEntryFilter = false },
         )
     }
@@ -2865,7 +2955,7 @@ private fun ArchiveListItem(
         if (!entry.directory && entry.sizeBytes >= 0) {
             Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.labelSmall)
         }
-        Box {
+        if (!selectionMode) Box {
             IconButton(onClick = { menuExpanded = true }) {
                 Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
             }
@@ -2948,7 +3038,7 @@ private fun ArchiveGridItem(
                     modifier = Modifier.align(Alignment.TopStart),
                 )
             }
-            Box(modifier = Modifier.align(Alignment.TopEnd)) {
+            if (!selectionMode) Box(modifier = Modifier.align(Alignment.TopEnd)) {
                 IconButton(onClick = { menuExpanded = true }) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
                 }
@@ -3179,39 +3269,39 @@ private fun ArchiveEntryActionMenu(
             onClick = { run(onSelect) },
         )
         onCopy?.let { copy ->
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.COPY,
                 text = { LText("Kopijuoti") },
                 leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
                 onClick = { run(copy) },
             )
         }
-        DropdownMenuItem(
+        BrowserActionMenuItem(BrowserAction.SHARE,
             text = { LText("Dalintis") },
             leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
             onClick = { run(onShare) },
         )
-        DropdownMenuItem(
+        BrowserActionMenuItem(BrowserAction.ARCHIVE,
             text = { LText("Išpakuoti") },
             leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
             onClick = { run(onExtract) },
         )
         if (onRename != null || onMove != null || onDelete != null) HorizontalDivider()
         onMove?.let { move ->
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.MOVE,
                 text = { LText("Perkelti iš archyvo") },
                 leadingIcon = { Icon(Icons.Rounded.DriveFileMove, contentDescription = null) },
                 onClick = { run(move) },
             )
         }
         onRename?.let { rename ->
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.RENAME,
                 text = { LText("Pervadinti") },
                 leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                 onClick = { run(rename) },
             )
         }
         onDelete?.let { delete ->
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.DELETE,
                 text = { LText("Ištrinti") },
                 leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                 onClick = { run(delete) },
@@ -3270,10 +3360,19 @@ private fun VaultPreview(target: PreviewTarget.Vault, onDecrypt: (FileEntry, Cha
 
 @Composable
 private fun PropertiesPreview(source: PreviewSource, note: String? = null) {
+    val context = LocalContext.current
+    val chooserError = uiText("Programų pasirinkiklio atidaryti nepavyko")
     val dateFormat = rememberLocalizedDateTimeFormat()
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
         Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         note?.let { LText(it, modifier = Modifier.padding(vertical = 10.dp)) }
+        if (source.isReadable && source.extension != "afvault") {
+            OutlinedButton(onClick = {
+                runCatching { openWith(context, source) }.onFailure {
+                    android.widget.Toast.makeText(context, chooserError, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }, modifier = Modifier.testTag("unsupported_open_with")) { LText("Atidaryti su kita programa") }
+        }
         PropertyRow("Pavadinimas", source.name)
         PropertyRow("Vieta", source.locationLabel)
         PropertyRow("Dydis", source.sizeBytes?.let(FileSystemRules::humanBytes) ?: uiText("Nežinomas"))

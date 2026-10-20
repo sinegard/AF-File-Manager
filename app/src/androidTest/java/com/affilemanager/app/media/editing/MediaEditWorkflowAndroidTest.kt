@@ -18,6 +18,46 @@ import java.security.MessageDigest
 import java.util.UUID
 
 class MediaEditWorkflowAndroidTest {
+    @Test fun convertedWmaCanBeEditedAgainInTheSameAfWorkingSession()=runBlocking<Unit> {
+        val app=ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root=File(app.cacheDir,"media-reedit-${UUID.randomUUID()}").apply{check(mkdir())}
+        val original=root.resolve("original.wav").also{MediaTestFixtures.wav(it)}
+        val before=MessageDigest.getInstance("SHA-256").digest(original.readBytes())
+        val owner=ViewModelStore()
+        val model=withContext(Dispatchers.Main){MainViewModel(app).also{owner.put("media",it)}}
+        var pending:MediaExportFile?=null
+        try {
+            withContext(Dispatchers.Main){model.open(FileEntry(original.path,original.name,EntryKind.AUDIO,original.length(),original.lastModified(),false,true,true))}
+            withTimeout(10000){model.preview.filter{it!=null}.first()}
+            withContext(Dispatchers.Main){model.prepareFileEdit()}
+            val session=requireNotNull(withTimeout(10000){model.fileEditState.filter{it.session!=null && !it.preparing}.first()}.session)
+            val working=session.workingFile
+            var info=MediaExportEngine.readInfo(app,Uri.fromFile(working),working)
+            pending=MediaExportEngine(app).export(working,Uri.fromFile(working),info,MediaEditOptions(MediaExportFormat.WMA,0,2000),"converted")
+            val wma=requireNotNull(pending)
+            withContext(Dispatchers.Main){assertTrue(model.acceptMediaExport(wma))}
+            withTimeout(10000){model.fileEditState.filter{!it.modifying && it.session?.displayName=="converted.wma"}.first()}
+            withTimeout(10000){while(wma.file.exists())delay(20)};pending=null
+            assertEquals("wav",working.extension) // AF keeps the private session path, not the display suffix.
+            info=MediaExportEngine.readInfo(app,Uri.fromFile(working),working)
+            val options=MediaEditOptions(MediaExportFormat.M4A,0,1000)
+            assertTrue("AF must detect the actual WMA data after a format change",NativeMediaExport.needed(working,options))
+            pending=MediaExportEngine(app).export(working,Uri.fromFile(working),info,options,"edited-again")
+            val m4a=requireNotNull(pending)
+            withContext(Dispatchers.Main){assertTrue(model.acceptMediaExport(m4a))}
+            withTimeout(10000){model.fileEditState.filter{!it.modifying && it.session?.displayName=="edited-again.m4a"}.first()}
+            withTimeout(10000){while(m4a.file.exists())delay(20)};pending=null
+            withContext(Dispatchers.Main){model.saveFileEditAsLocal(root.path,"edited-again.m4a")}
+            withTimeout(10000){model.fileEditState.filter{!it.saving && !it.hasUnsavedChanges}.first()}
+            val saved=root.resolve("edited-again.m4a")
+            val extractor=android.media.MediaExtractor()
+            try{extractor.setDataSource(saved.path);assertEquals("audio/mp4a-latm",extractor.getTrackFormat(0).getString("mime"))}finally{extractor.release()}
+            withContext(Dispatchers.Main){model.closePreview()}
+            withTimeout(10000){while(working.exists())delay(20)}
+            assertArrayEquals(before,MessageDigest.getInstance("SHA-256").digest(original.readBytes()))
+            println("AF_WAV_WMA_M4A_SAME_SESSION_SAVEAS_CLOSE OK")
+        }finally{pending?.file?.delete();withContext(Dispatchers.Main){owner.clear()};root.deleteRecursively()}
+    }
     @Test fun privateExportHandoffSharedSaveAsConflictKeepBothAndCloseHaveNoLeftovers() = runBlocking<Unit> {
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val root = File(app.cacheDir, "media-workflow-${UUID.randomUUID()}").apply { check(mkdir()) }

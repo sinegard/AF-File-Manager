@@ -4,12 +4,11 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.LocaleList
 import androidx.annotation.StringRes
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 
-/** Service/Application contexts do not inherit AppCompatActivity's locale on Android 8–12. */
+/** Background contexts can precede an Activity or a framework configuration update. */
 fun Context.appLanguageContext(): Context {
-    val chosen = AppCompatDelegate.getApplicationLocales()
+    val chosen = AppLanguageManager.applicationLocales(this)
     if (chosen.isEmpty) {
         // AndroidX reads the persisted app locale even before an Activity starts in this process.
         return ContextCompat.getContextForLanguage(this)

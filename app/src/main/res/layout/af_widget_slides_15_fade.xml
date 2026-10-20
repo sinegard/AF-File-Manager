@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<android.widget.AdapterViewFlipper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@id/widget_flipper" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:autoStart="true" android:flipInterval="15000" android:inAnimation="@animator/af_widget_fade_in" android:outAnimation="@animator/af_widget_fade_out" />

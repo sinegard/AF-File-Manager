@@ -50,6 +50,7 @@ import com.affilemanager.app.data.CategoryStorageScope
 import com.affilemanager.app.data.CategoryViewMode
 import com.affilemanager.app.data.DirectoryDisplayDefaults
 import com.affilemanager.app.data.DirectoryDisplaySettings
+import com.affilemanager.app.data.DirectoryDisplayRules
 import com.affilemanager.app.data.DirectorySortSettings
 import com.affilemanager.app.data.DirectoryGridStyle
 import com.affilemanager.app.data.DirectoryLayoutMode
@@ -194,6 +195,8 @@ enum class PanelId {
     RIGHT,
 }
 
+data class SharingWidgetTarget(val phone: Boolean, val sequence: Long)
+
 data class PanelUiState(
     val path: String = Environment.getExternalStorageDirectory().absolutePath,
     val entries: List<FileEntry> = emptyList(),
@@ -206,6 +209,7 @@ data class PanelUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridColumnsLandscape: Int? = null,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val loading: Boolean = false,
     val listingScannedEntries: Int = 0,
@@ -295,6 +299,7 @@ data class FileCategoryUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridColumnsLandscape: Int? = null,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val showSystemApps: Boolean = false,
@@ -335,6 +340,7 @@ data class AdvancedBrowserUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridColumnsLandscape: Int? = null,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
@@ -374,6 +380,7 @@ data class NetworkUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridColumnsLandscape: Int? = null,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val sortMode: SortMode = SortMode.NAME,
     val sortDirection: SortDirection = SortDirection.ASCENDING,
@@ -424,6 +431,7 @@ data class SafBrowserUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridColumnsLandscape: Int? = null,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
@@ -442,6 +450,7 @@ data class TrashBrowserUiState(
     val iconScalePercent: Int = 100,
     val spacingScalePercent: Int = 100,
     val gridColumns: Int = 3,
+    val gridColumnsLandscape: Int? = null,
     val gridStyle: DirectoryGridStyle = DirectoryGridStyle.CARDS,
     val showThumbnails: Boolean = false,
     val sortMode: SortMode = SortMode.NAME,
@@ -493,8 +502,13 @@ data class FileEditUiState(
     val hasUnsavedChanges: Boolean get() = textChanged || formatChanged || session?.hasUnsavedChanges == true
 }
 
+data class InitialMediaPlayback(val speed: Float, val loop: Boolean, val autoPlay: Boolean,
+    val requestId: String = java.util.UUID.randomUUID().toString()) {
+    init { require(speed.isFinite() && speed in .5f..2f) }
+}
+
 sealed interface PreviewTarget {
-    data class LocalFile(val entry: FileEntry) : PreviewTarget
+    data class LocalFile(val entry: FileEntry, val playbackStart: InitialMediaPlayback? = null) : PreviewTarget
     data class TrashFile(val itemId: String, val entry: FileEntry) : PreviewTarget
     data class ContentFile(val entry: ContentFileEntry) : PreviewTarget
     data class RemoteFile(
@@ -507,14 +521,17 @@ sealed interface PreviewTarget {
         val entry: FileEntry,
         val cachedFile: File,
         val localOrigin: Boolean = false,
+        val playbackStart: InitialMediaPlayback? = null,
     ) : PreviewTarget
-    data class Archive(val file: FileEntry, val entries: List<ArchiveEntryInfo>) : PreviewTarget
+    data class Archive(val file: FileEntry, val entries: List<ArchiveEntryInfo>,
+        val browser: ArchiveBrowserUiState = ArchiveBrowserUiState()) : PreviewTarget
     data class RemoteArchive(
         val remote: RemoteEntry,
         val file: FileEntry,
         val profileId: String,
         val connectionName: String,
         val entries: List<ArchiveEntryInfo>,
+        val browser: ArchiveBrowserUiState = ArchiveBrowserUiState(),
     ) : PreviewTarget
     data class ArchiveEntry(val file: FileEntry) : PreviewTarget
     data class Vault(val file: FileEntry, val header: VaultHeader) : PreviewTarget
@@ -639,6 +656,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _section = MutableStateFlow(AppSection.FILES)
     val section: StateFlow<AppSection> = _section.asStateFlow()
+    private val _sharingWidgetTarget = MutableStateFlow<SharingWidgetTarget?>(null)
+    val sharingWidgetTarget = _sharingWidgetTarget.asStateFlow()
 
     val updateState: StateFlow<AppUpdateState> = graph.updates.state
     val appearanceSettings = graph.appearance.settings
@@ -895,7 +914,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openSharingFromWidget(phone: Boolean) {
+        setSection(AppSection.SHARE)
+        _sharingWidgetTarget.value = SharingWidgetTarget(phone, android.os.SystemClock.elapsedRealtimeNanos())
+    }
+
     fun setSection(section: AppSection) {
+        if (section != AppSection.SHARE) _sharingWidgetTarget.value = null
         val previousSection = _section.value
         val filesDestinationReselected = SectionNavigationRules.shouldShowFilesHome(previousSection, section)
         if (filesDestinationReselected && _fileCategory.value.open) closeFileCategory()
@@ -1096,6 +1121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridColumnsLandscape = state.gridColumnsLandscape,
                 gridStyle = state.gridStyle,
                 showThumbnails = false,
             ),
@@ -1130,6 +1156,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         iconScalePercent = normalized.iconScalePercent,
                         spacingScalePercent = normalized.spacingScalePercent,
                         gridColumns = normalized.gridColumns,
+                        gridColumnsLandscape = normalized.gridColumnsLandscape,
                         gridStyle = normalized.gridStyle,
                     )
                 }
@@ -1311,6 +1338,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iconScalePercent = display.iconScalePercent,
                 spacingScalePercent = display.spacingScalePercent,
                 gridColumns = display.gridColumns,
+                gridColumnsLandscape = display.gridColumnsLandscape,
                 gridStyle = display.gridStyle,
                 loading = false,
                 error = null,
@@ -1320,6 +1348,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setThemeMode(mode: AppThemeMode) {
         runCatching { graph.appearance.setThemeMode(mode) }
+            .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
+    }
+
+    fun setAutomaticDualPane(enabled: Boolean) {
+        runCatching { graph.appearance.setAutomaticDualPane(enabled) }
             .onFailure { message(it.message ?: "Išvaizdos nustatymo išsaugoti nepavyko", true) }
     }
 
@@ -1379,8 +1412,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showThumbnails = false,
         gridColumns = settings.gridColumns.coerceIn(
             1,
-            if (area == HomeDisplayArea.STORAGE) 3 else 6,
+            if (area == HomeDisplayArea.STORAGE) 3 else DirectoryDisplayRules.MAX_GRID_COLUMNS,
         ),
+        gridColumnsLandscape = settings.gridColumnsLandscape?.coerceIn(1,
+            if (area == HomeDisplayArea.STORAGE) 3 else DirectoryDisplayRules.MAX_GRID_COLUMNS),
     )
 
     private fun homeDisplayFlow(area: HomeDisplayArea): MutableStateFlow<DirectoryDisplaySettings> = when (area) {
@@ -1430,6 +1465,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             iconScalePercent = settings.iconScalePercent,
             spacingScalePercent = settings.spacingScalePercent,
             gridColumns = settings.gridColumns,
+            gridColumnsLandscape = settings.gridColumnsLandscape,
             gridStyle = settings.gridStyle,
             showThumbnails = settings.showThumbnails,
         )
@@ -1460,6 +1496,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     iconScalePercent = normalized.iconScalePercent,
                     spacingScalePercent = normalized.spacingScalePercent,
                     gridColumns = normalized.gridColumns,
+                    gridColumnsLandscape = normalized.gridColumnsLandscape,
                     gridStyle = normalized.gridStyle,
                     sortMode = sortMode,
                     sortDirection = sortDirection,
@@ -1754,6 +1791,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
+    fun openLocalAddress(panel: PanelId, requested: String) {
+        if (requested.startsWith("content://")) { openSafAddress(requested); return }
+        viewModelScope.launch {
+            runCatching {
+                require(requested.length <= 4096 && requested.none(Char::isISOControl)) { "Netinkamas kelias" }
+                val directory = withContext(Dispatchers.IO) {
+                    val input = File(requested)
+                    (if (input.isAbsolute) input else File(panelFlow(panel).value.path, requested)).canonicalFile
+                }
+                if (shouldOpenWithAdvancedAccess(directory.path)) openAdvancedBrowser(directory.path)
+                else {
+                    require(withContext(Dispatchers.IO) { directory.isDirectory && directory.canRead() }) { "Aplankas nepasiekiamas" }
+                    navigate(panel, directory.path)
+                }
+            }.onFailure { message(it.message ?: "Aplanko atidaryti nepavyko", true) }
+        }
+    }
+
+    fun openSafAddress(requested: String) {
+        viewModelScope.launch {
+            graph.safFiles.resolveAddress(requested).fold(onSuccess = { entry ->
+                val uri = Uri.parse(requested)
+                val root = _safLocations.value.firstOrNull { location ->
+                    val saved = Uri.parse(location.uri)
+                    runCatching {
+                        android.provider.DocumentsContract.isTreeUri(saved) && saved.authority == uri.authority &&
+                            android.provider.DocumentsContract.getTreeDocumentId(saved) == android.provider.DocumentsContract.getTreeDocumentId(uri)
+                    }.getOrDefault(false)
+                }
+                if (root == null) message("Pasirinkti aplanką", true)
+                else {
+                    openSafLocation(root)
+                    if (android.provider.DocumentsContract.isDocumentUri(getApplication(), uri) &&
+                        android.provider.DocumentsContract.getDocumentId(uri) != android.provider.DocumentsContract.getTreeDocumentId(uri)) openSafEntry(entry)
+                }
+            }, onFailure = { message(it.message ?: "Aplanko atidaryti nepavyko", true) })
+        }
+    }
+
     fun refreshPanel(panel: PanelId, scrollToTop: Boolean = false) {
         val flow = panelFlow(panel)
         val snapshot = flow.value
@@ -1778,7 +1854,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     flow.update { current ->
                         if (current.matchesListingRequest(snapshot)) {
                             current.copy(
-                                entries = update.entries,
+                                // A refresh must not temporarily replace a full directory
+                                // with its first partial batch: lazy item-key anchoring
+                                // would clamp the viewport and then jump when it grows.
+                                entries = if (snapshot.entries.isEmpty() || update.complete) update.entries else current.entries,
                                 loading = !update.complete,
                                 listingScannedEntries = update.scannedEntries,
                                 listingMetadataEntries = update.metadataEntries,
@@ -2246,6 +2325,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             iconScalePercent = display.iconScalePercent,
             spacingScalePercent = display.spacingScalePercent,
             gridColumns = display.gridColumns,
+            gridColumnsLandscape = display.gridColumnsLandscape,
             gridStyle = display.gridStyle,
             showThumbnails = display.showThumbnails,
             sortMode = sort.mode,
@@ -2947,7 +3027,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.onFailure { message(it.message ?: "Atšaukimo pradėti nepavyko", true) }
     }
 
-    fun open(entry: FileEntry) {
+    fun open(entry: FileEntry) = open(entry, null)
+    fun openWidgetMedia(entry: FileEntry, playback: InitialMediaPlayback) = open(entry, playback)
+    private fun open(entry: FileEntry, playback: InitialMediaPlayback?) {
         cancelArchiveUnlock()
         if (entry.kind != EntryKind.ARCHIVE) archivePasswords.clear()
         if (entry.isDirectory) {
@@ -2986,9 +3068,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 com.affilemanager.app.model.EntryKind.ARCHIVE -> openArchivePreview(PreviewTarget.Archive(entry, emptyList()))
                 else -> {
                     val directlyExposed = withContext(Dispatchers.IO) { canExposeLocalPreview(entry.file) }
-                    if (directlyExposed) _preview.value = PreviewTarget.LocalFile(entry)
+                    if (directlyExposed) _preview.value = PreviewTarget.LocalFile(entry, playback)
                     else graph.privilegedFiles.stageForPreview(entry).fold(
-                        onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached, localOrigin = true) },
+                        onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached, localOrigin = true, playbackStart = playback) },
                         onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
                     )
                 }
@@ -5089,6 +5171,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return try { block(borrowed) } finally { borrowed?.fill('\u0000') }
     }
 
+    fun updateArchiveBrowser(id: String, update: (ArchiveBrowserUiState) -> ArchiveBrowserUiState) {
+        _preview.update { target ->
+            when (target) {
+                is PreviewTarget.Archive -> if (target.browser.id == id) target.copy(browser = update(target.browser)) else target
+                is PreviewTarget.RemoteArchive -> if (target.browser.id == id) target.copy(browser = update(target.browser)) else target
+                else -> target // A disposed browser cannot mutate the child or a newer archive.
+            }
+        }
+    }
+
     private suspend fun openArchivePreview(target: PreviewTarget, password: CharArray? = null) {
         val file = requireNotNull(target.archiveFile())
         val job = kotlinx.coroutines.currentCoroutineContext()[Job]
@@ -6927,6 +7019,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridColumnsLandscape = gridColumnsLandscape,
         gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
@@ -6936,6 +7029,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridColumnsLandscape = gridColumnsLandscape,
         gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
@@ -6947,6 +7041,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridColumnsLandscape = settings.gridColumnsLandscape,
         gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
@@ -6956,6 +7051,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridColumnsLandscape = gridColumnsLandscape,
         gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
@@ -6965,6 +7061,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridColumnsLandscape = settings.gridColumnsLandscape,
         gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
@@ -6979,6 +7076,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridColumnsLandscape = gridColumnsLandscape,
         gridStyle = gridStyle,
         showThumbnails = showThumbnails,
     )
@@ -6988,6 +7086,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridColumnsLandscape = settings.gridColumnsLandscape,
         gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
@@ -6997,6 +7096,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridColumnsLandscape = settings.gridColumnsLandscape,
         gridStyle = settings.gridStyle,
         showThumbnails = settings.showThumbnails,
     )
@@ -7011,6 +7111,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridColumnsLandscape = gridColumnsLandscape,
         gridStyle = gridStyle,
         showThumbnails = false,
     )
@@ -7020,6 +7121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         iconScalePercent = settings.iconScalePercent,
         spacingScalePercent = settings.spacingScalePercent,
         gridColumns = settings.gridColumns,
+        gridColumnsLandscape = settings.gridColumnsLandscape,
         gridStyle = settings.gridStyle,
     )
 

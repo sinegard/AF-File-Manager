@@ -10,6 +10,9 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material3.CircularProgressIndicator
 import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -25,6 +28,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
 
 /** One header menu for every preview source, including temporary remote working copies. */
 @Composable
@@ -39,6 +44,9 @@ internal fun PreviewActionsMenu(
     onCalculateHash: () -> Unit,
     onDetails: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
+    onTrim: (() -> Unit)? = null,
+    onExtractAudio: (() -> Unit)? = null,
+    onCompress: (() -> Unit)? = null,
 ) {
     var expanded by remember(sourceKey) { mutableStateOf(false) }
     fun invoke(action: () -> Unit) { expanded = false; action() }
@@ -48,7 +56,7 @@ internal fun PreviewActionsMenu(
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             onDetails?.let { action ->
-                DropdownMenuItem(text = { LText("Informacija") },
+                BrowserActionMenuItem(BrowserAction.INFO, text = { LText("Informacija") },
                     leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
                     onClick = { invoke(action) }, modifier = Modifier.testTag("preview_details_action"))
             }
@@ -71,7 +79,18 @@ internal fun PreviewActionsMenu(
                     enabled = editEnabled, onClick = { invoke(action) }, modifier = Modifier.testTag("edit-with-action"),
                 )
             }
-            DropdownMenuItem(
+            listOf(
+                Triple(onTrim, "Kirpti", "open_media_trim") to Icons.Rounded.ContentCut,
+                Triple(onExtractAudio, "Išgauti garsą", "open_media_audio") to Icons.Rounded.MusicNote,
+                Triple(onCompress, "Suspausti", "open_media_compress") to Icons.Rounded.Compress,
+            ).forEach { (item, icon) ->
+                item.first?.let { action ->
+                    DropdownMenuItem(text = { LText(item.second) },
+                        leadingIcon = { Icon(icon, contentDescription = null) },
+                        enabled = editEnabled, onClick = { invoke(action) }, modifier = Modifier.testTag(item.third))
+                }
+            }
+            BrowserActionMenuItem(BrowserAction.SHARE,
                 text = { LText("Dalintis") },
                 leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
                 onClick = { invoke(onShare) }, modifier = Modifier.testTag("preview_share_action"),
@@ -85,7 +104,7 @@ internal fun PreviewActionsMenu(
                 enabled = !hashRunning, onClick = { invoke(onCalculateHash) }, modifier = Modifier.testTag("preview_hash_action"),
             )
             onDelete?.let { action ->
-                DropdownMenuItem(
+                BrowserActionMenuItem(BrowserAction.DELETE,
                     text = { LText("Ištrinti") },
                     leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
                     enabled = editEnabled,

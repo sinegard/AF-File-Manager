@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
@@ -210,7 +214,7 @@ fun TrashBrowserDialog(
                                     onClick = { menu = false; showRetention = true },
                                 )
                             }
-                            DropdownMenuItem(
+                            BrowserActionMenuItem(BrowserAction.DELETE,
                                 text = { LText("Išvalyti visą šiukšliadėžę") },
                                 leadingIcon = { Icon(Icons.Rounded.DeleteForever, contentDescription = null) },
                                 enabled = cleanupAvailable && !state.emptying,
@@ -249,7 +253,7 @@ fun TrashBrowserDialog(
                         )
                         displayedEntries.isEmpty() -> TrashEmptyState("Atitikmenų nerasta", "Pabandykite kitą pavadinimą")
                         state.grid -> LazyVerticalGrid(
-                            columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                            columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape)),
                             state = gridState,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
@@ -328,6 +332,7 @@ fun TrashBrowserDialog(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridColumnsLandscape = state.gridColumnsLandscape,
                 gridStyle = state.gridStyle,
                 showThumbnails = state.showThumbnails,
             ),
@@ -447,7 +452,7 @@ private fun TrashBrowserRow(
             }
             if (entry.topLevel) {
                 IconButton(onClick = onRestore) { Icon(Icons.Rounded.Restore, contentDescription = uiText("Atkurti ${entry.name}")) }
-                IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti ${entry.name} visam laikui")) }
+                BrowserActionIconButton(BrowserAction.DELETE, onClick = onDelete) { Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti ${entry.name} visam laikui")) }
             }
         }
     }
@@ -498,7 +503,7 @@ private fun TrashBrowserGridItem(
                     IconButton(onClick = onRestore) {
                         Icon(Icons.Rounded.Restore, contentDescription = uiText("Atkurti ${entry.name}"))
                     }
-                    IconButton(onClick = onDelete) {
+                    BrowserActionIconButton(BrowserAction.DELETE, onClick = onDelete) {
                         Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti ${entry.name} visam laikui"))
                     }
                 }

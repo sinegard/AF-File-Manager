@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class AppLockRepository(context: Context) {
+class AppLockRepository(private val context: Context) {
     companion object {
         private const val PREFS = "security_settings_v1"
         private const val KEY_ENABLED = "app_lock_enabled"
@@ -18,5 +18,7 @@ class AppLockRepository(context: Context) {
     fun setEnabled(enabled: Boolean) {
         check(preferences.edit().putBoolean(KEY_ENABLED, enabled).commit()) { "Užrakto nustatymo įrašyti nepavyko" }
         _enabled.value = enabled
+        if (enabled) com.affilemanager.app.widgets.AfWidgetProvider.hideLockedContent(context)
+        else com.affilemanager.app.widgets.AfWidgetProvider.refresh(context)
     }
 }

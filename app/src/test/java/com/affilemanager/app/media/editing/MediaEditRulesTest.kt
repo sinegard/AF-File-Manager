@@ -14,6 +14,18 @@ class MediaEditRulesTest {
     @get:Rule val folder = TemporaryFolder()
     private val video = MediaEditInfo(10_000, 1920, 1080, true, 1024)
     private val audio = video.copy(width = 0, height = 0)
+    @Test fun audioEffectsHaveExplicitBoundsAndEveryAudioFormatCanReverse() {
+        MediaEditOptions(MediaExportFormat.WAV, 0, 10_000, fadeInMs = 5000, fadeOutMs = 5000, echoDelayMs = 500, reverseAudio = true).validate(audio)
+        MediaExportFormat.entries.filterNot { it.video }.forEach {
+            MediaEditOptions(it, 0, 1000, reverseAudio = true).validate(audio)
+        }
+        listOf(MediaEditOptions(MediaExportFormat.WAV, 0, 1000, fadeInMs = -1),
+            MediaEditOptions(MediaExportFormat.WAV, 0, 1000, fadeInMs = 750, fadeOutMs = 750),
+            MediaEditOptions(MediaExportFormat.WAV, 0, 1000, echoDelayMs = 501),
+            MediaEditOptions(MediaExportFormat.WAV, 0, 1000, sampleRate = 12345),
+            MediaEditOptions(MediaExportFormat.WAV, 0, 1000, channels = 3))
+            .forEach { assertThrows(IllegalArgumentException::class.java) { it.validate(audio) } }
+    }
     @Test fun trimSpeedCropAndExplicitResolutionAreBounded() {
         val options = MediaEditOptions(MediaExportFormat.MP4, 2000, 6000, speed = 2f, crop = MediaCrop(.25f, .25f, .5f, .5f), height = 720)
         options.validate(video)

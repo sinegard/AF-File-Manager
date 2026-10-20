@@ -1,5 +1,6 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.CanonicalPathText
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -573,7 +574,7 @@ private fun CleanupCandidateRow(
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(candidate.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                Text(candidate.path, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                CanonicalPathText(candidate.path, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                 candidate.groupLabel?.let { LText(it, style = MaterialTheme.typography.labelSmall) }
                 if (candidate.sizeBytes > 0L) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

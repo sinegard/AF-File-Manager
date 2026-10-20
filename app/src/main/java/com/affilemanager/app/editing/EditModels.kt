@@ -154,18 +154,10 @@ object EditDestinationRules {
 }
 
 object EditabilityRules {
-    private val internalTextExtensions = setOf(
-        "txt", "md", "markdown", "csv", "tsv", "json", "jsonl", "xml", "yaml", "yml",
-        "log", "html", "htm", "kt", "kts", "java", "py", "js", "jsx", "ts", "tsx",
-        "css", "scss", "sh", "bash", "zsh", "ini", "conf", "cfg", "toml", "properties",
-        "gradle", "sql", "c", "h", "cpp", "hpp", "cs", "go", "rs", "php", "rb", "swift",
-    )
-
     fun supportsInternalText(name: String, mimeType: String, kind: EntryKind): Boolean {
-        val extension = name.substringAfterLast('.', "").lowercase()
-        return extension in internalTextExtensions ||
-            mimeType.substringBefore(';').trim().lowercase().startsWith("text/") ||
-            (kind == EntryKind.DOCUMENT && mimeType.lowercase() in setOf(
+        return com.affilemanager.app.core.TextFileRules.supportsName(name) ||
+            mimeType.substringBefore(';').trim().lowercase(java.util.Locale.ROOT).startsWith("text/") ||
+            (kind == EntryKind.DOCUMENT && mimeType.lowercase(java.util.Locale.ROOT) in setOf(
                 "application/json",
                 "application/ld+json",
                 "application/xml",

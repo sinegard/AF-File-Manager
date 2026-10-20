@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -143,6 +147,7 @@ fun AdvancedStorageBrowserDialog(
                     searchActive = searchVisible,
                     grid = state.grid,
                     testTagPrefix = "advanced",
+                    onOpenPath = viewModel::navigateAdvanced,
                     onBack = { viewModel.navigateAdvancedBack() },
                     onForward = {},
                     onUp = { viewModel.navigateAdvancedUp() },
@@ -244,23 +249,24 @@ fun AdvancedStorageBrowserDialog(
                         },
                         modifier = Modifier.testTag("advanced_selection_bar"),
                     ) {
-                        IconButton(onClick = { viewModel.copyAdvancedSelection(move = false) }) {
+                        com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map { it.absolutePath })
+                        BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyAdvancedSelection(move = false) }) {
                             Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                         }
                         if (clipboard?.source == ClipboardSource.PRIVILEGED && clipboard.mode == ClipboardMode.COPY) {
-                            IconButton(onClick = { viewModel.copyAdvancedSelection(move = false, append = true) }) {
+                            BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyAdvancedSelection(move = false, append = true) }) {
                                 Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                             }
                         }
-                        IconButton(onClick = { viewModel.copyAdvancedSelection(move = true) }) {
+                        BrowserActionIconButton(BrowserAction.MOVE, onClick = { viewModel.copyAdvancedSelection(move = true) }) {
                             Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
                         }
                         if (state.selectedPaths.size == 1) {
-                            IconButton(onClick = { renameTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } }) {
+                            BrowserActionIconButton(BrowserAction.RENAME, onClick = { renameTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } }) {
                                 Icon(Icons.Rounded.DriveFileRenameOutline, contentDescription = uiText("Pervadinti"))
                             }
                         }
-                        IconButton(onClick = { confirmDelete = true }) {
+                        BrowserActionIconButton(BrowserAction.DELETE, onClick = { confirmDelete = true }) {
                             Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti visam laikui"), tint = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -336,6 +342,7 @@ fun AdvancedStorageBrowserDialog(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridColumnsLandscape = state.gridColumnsLandscape,
                 gridStyle = state.gridStyle,
                 showThumbnails = false,
             ),
@@ -444,7 +451,7 @@ private fun AdvancedGrid(
     }
     Box(Modifier.fillMaxSize()) {
     LazyVerticalGrid(
-        columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+        columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape)),
         state = gridState,
         modifier = Modifier.fillMaxSize().testTag("advanced_grid"),
         contentPadding = PaddingValues(10.dp, 8.dp, 10.dp, 24.dp),

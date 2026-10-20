@@ -37,6 +37,13 @@ class TerminalFlowTest {
         }
     }
 
+    private fun clipboardOnMainThread(): ClipboardManager {
+        lateinit var clipboard: ClipboardManager
+        // Android 8 constructs ClipboardManager's Handler on the caller's Looper.
+        compose.runOnUiThread { clipboard = compose.activity.getSystemService(ClipboardManager::class.java) }
+        return clipboard
+    }
+
     @Test
     fun currentFolderTerminalOpensAndBackRequiresExplicitClose() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
@@ -70,9 +77,17 @@ class TerminalFlowTest {
 
     @Test
     fun terminalSurvivesBackgroundingAndViewModelDisposal() {
-        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
-        val application = compose.activity.application as AFFileManagerApplication
-        val directory = File(compose.activity.getExternalFilesDir(null), "terminal-background-${System.nanoTime()}").apply { mkdirs() }
+        val activity = compose.activity
+        // Keep the launch action/categories: ActivityScenario stops tracking the
+        // same singleTask activity if a test replaces them with a different intent.
+        val resumeIntent = Intent(activity.intent).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        val application = activity.application as AFFileManagerApplication
+        // Dispose a real owning ViewModel without invalidating ActivityScenario's live
+        // activity/store underneath its composition. The visible screen observes the
+        // same application-owned terminal session through its own ViewModel.
+        val store = androidx.lifecycle.ViewModelStore()
+        val viewModel = MainViewModel(application).also { store.put("background-terminal", it) }
+        val directory = File(activity.getExternalFilesDir(null), "terminal-background-${System.nanoTime()}").apply { mkdirs() }
         try {
             compose.runOnUiThread {
                 viewModel.navigate(PanelId.LEFT, directory.absolutePath)
@@ -82,28 +97,30 @@ class TerminalFlowTest {
             compose.onNodeWithTag("terminal-screen").fetchSemanticsNode()
 
             compose.runOnUiThread {
-                compose.activity.moveTaskToBack(true)
-                compose.activity.viewModelStore.clear()
+                store.clear()
             }
-            compose.waitUntil(timeoutMillis = 5_000) {
-                val state = application.graph.terminalSessions.state.value
-                state.visible && state.running && state.path.endsWith(directory.name)
+            val automation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+            assertTrue(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME))
+            val stoppedDeadline = SystemClock.uptimeMillis() + 10_000
+            while (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && SystemClock.uptimeMillis() < stoppedDeadline) {
+                SystemClock.sleep(20)
             }
+            assertFalse(activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+            val state = application.graph.terminalSessions.state.value
+            assertTrue(state.visible && state.running && state.path.endsWith(directory.name))
 
-            compose.runOnUiThread {
-                compose.activity.startActivity(
-                    Intent(compose.activity, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                )
-            }
-
+            application.startActivity(resumeIntent)
             compose.waitUntil(timeoutMillis = 10_000) {
-                compose.activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
             }
             compose.onNodeWithTag("terminal-screen").fetchSemanticsNode()
             assertTrue(application.graph.terminalSessions.state.value.running)
         } finally {
-            application.graph.terminalSessions.closeNow()
+            compose.runOnUiThread {
+                store.clear()
+                application.graph.terminalSessions.closeNow()
+            }
+            compose.waitForIdle()
             directory.deleteRecursively()
         }
     }
@@ -175,7 +192,7 @@ class TerminalFlowTest {
     @Test
     fun multilineClipboardOffersPasteModesAndSingleLineWaitsForEnter() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
-        val clipboard = compose.activity.getSystemService(ClipboardManager::class.java)
+        val clipboard = clipboardOnMainThread()
         val directory = File(compose.activity.getExternalFilesDir(null), "terminal-paste-mode-${System.nanoTime()}").apply { mkdirs() }
         val output = File(directory, "single-line.txt")
         val expected = "first second\n"
@@ -217,7 +234,7 @@ class TerminalFlowTest {
     fun terminalOffersTextSelectionAndCopiesTheLastOutput() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         val application = compose.activity.application as AFFileManagerApplication
-        val clipboard = compose.activity.getSystemService(ClipboardManager::class.java)
+        val clipboard = clipboardOnMainThread()
         val directory = File(compose.activity.getExternalFilesDir(null), "terminal-copy-${System.nanoTime()}").apply { mkdirs() }
         val marker = "AF_LAST_OUTPUT_${System.nanoTime()}"
         try {
@@ -231,7 +248,7 @@ class TerminalFlowTest {
             compose.onNodeWithTag("terminal-canvas").fetchSemanticsNode()
 
             compose.runOnUiThread {
-                clipboard.clearPrimaryClip()
+                clipboard.setPrimaryClip(ClipData.newPlainText("AF terminal fixture", ""))
                 viewModel.pasteIntoTerminal("printf '$marker\\n'\r")
             }
             // A prompt or a partial echo can be copyable before the command's answer arrives.

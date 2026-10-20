@@ -60,6 +60,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.debounce
 
 class AFFileManagerApplication : Application() {
     lateinit var graph: AppGraph
@@ -71,6 +73,11 @@ class AFFileManagerApplication : Application() {
         QuickTunnelController.initialize(this)
         PDFBoxResourceLoader.init(this)
         graph = AppGraph(this)
+        graph.applicationScope.launch {
+            graph.appearance.settings.drop(1).debounce(300).collect {
+                com.affilemanager.app.widgets.AfWidgetProvider.refresh(this@AFFileManagerApplication)
+            }
+        }
         FileVisualLoader.startMaintenance(this, graph.applicationScope)
         graph.applicationScope.launch {
             runCatching { com.affilemanager.app.media.editing.MediaExportStorage.cleanAbandoned(this@AFFileManagerApplication) }

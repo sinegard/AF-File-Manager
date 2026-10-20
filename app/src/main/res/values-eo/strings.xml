@@ -10,7 +10,7 @@
     <string name="share_file_chooser_title">Dividi dosieron</string>
     <string name="open_with_chooser_short">Malfermu kun</string>
     <string name="lan_transfer_channel_name">Loka reto dosiertransdono</string>
-    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_channel_description">Montras nur dum vi kuras LAN dosiero transdono</string>
     <string name="lan_transfer_starting_title">translokigo de AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">Komenciĝanta servilo...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN translokigo estas funkcianta</string>

@@ -56,6 +56,14 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.3.13750724" >/dev/null
           bash scripts/build-cloudflared-android.sh
 
+      - name: Build and verify the pinned offline media component
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/27.3.13750724"
+          bash scripts/media-export/build.sh
+          python3 scripts/media-export/stage-payload.py app/build/native-media/dist --source-commit "$GITHUB_SHA"
+
       - name: Test, lint, and build the signed release
         env:
           AF_KEYSTORE_PATH: ${{ runner.temp }}/af-file-manager-release.jks
@@ -91,6 +99,8 @@ jobs:
           universal="dist/AF-File-Manager-$AF_VERSION.apk"
           cp "app/build/outputs/apk/release/app-release.apk" "$universal"
           sha256sum "$universal" > "$universal.sha256"
+          cp app/build/generated/media-export/AF-media-export-sources.zip "dist/AF-media-export-sources-$AF_VERSION.zip"
+          sha256sum "dist/AF-media-export-sources-$AF_VERSION.zip" > "dist/AF-media-export-sources-$AF_VERSION.zip.sha256"
 
       - name: Prepare draft GitHub Release
         env:
@@ -100,6 +110,7 @@ jobs:
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
             dist/*.apk \
+            dist/AF-media-export-sources-*.zip \
             dist/*.sha256 \
             --verify-tag \
             --title "AF File Manager $AF_VERSION" \

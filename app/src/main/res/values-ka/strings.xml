@@ -13,9 +13,9 @@
     <string name="lan_transfer_channel_description">მხოლოდ მაშინ, როდესაც თქვენ აწარმოებთ ფაილების გადაცემას LAN</string>
     <string name="lan_transfer_starting_title">გადაცემა AF File Manager LAN</string>
     <string name="lan_transfer_starting_text">ჟრყპ ჟა ჟსვ...</string>
-    <string name="lan_transfer_running_title">AF File Manager LAN transfer is running</string>
+    <string name="lan_transfer_running_title">AF File Manager LAN გადაცემა მიმდინარეობს</string>
     <string name="nearby_transfer_channel_name">ტელეფონის გადაცემა ახლოს</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager ტელეფონის გადაცემა</string>
     <string name="nearby_transfer_starting_text">ვწამწამწამ ოპვრთნწ...</string>
     <string name="terminal_channel_name">აქტიური ტერმინალი</string>
     <string name="terminal_channel_description">ფონზე მუშაობს ღია ტელეფონი ან სერვერის ტერმინალი</string>

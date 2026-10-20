@@ -67,6 +67,7 @@ object LanTransferController {
         groupOrganizer: Boolean = true,
         receiveConfiguration: NearbyReceiveConfiguration = NearbyReceiveConfiguration(),
         groupBanner: ByteArray? = null,
+        groupBannerHigh: ByteArray? = null,
     ) {
         if (bindAddress == null) WifiDirectController.stop(context)
         if (!groupMode) NearbyGroupController.sessionStopped()
@@ -89,7 +90,8 @@ object LanTransferController {
             .putExtra("concurrent_uploads", receiveConfiguration.concurrentUploads)
             .putExtra("type_destinations", receiveConfiguration.pathsJson())
             .putStringArrayListExtra("receive_allowed_roots", ArrayList(receiveConfiguration.approvedRootPaths))
-            .putExtra("group_banner_bytes", groupBanner?.also(NearbyGroupBanner::validate))
+            .putExtra("group_banner_bytes", groupBanner?.also { NearbyGroupBanner.validate(it) })
+            .putExtra("group_banner_high_bytes", groupBannerHigh?.also { NearbyGroupBanner.validate(it, true) })
         ContextCompat.startForegroundService(context, intent)
     }
 
@@ -98,10 +100,11 @@ object LanTransferController {
         WifiDirectController.stop(context)
     }
 
-    internal fun updateGroupBanner(context: Context, bytes: ByteArray?) {
-        bytes?.let(NearbyGroupBanner::validate)
+    internal fun updateGroupBanner(context: Context, bytes: ByteArray?, highQuality: ByteArray? = null) {
+        bytes?.let { NearbyGroupBanner.validate(it) }
+        highQuality?.let { NearbyGroupBanner.validate(it, true) }
         context.startService(Intent(context, LanTransferService::class.java).setAction("com.affilemanager.app.action.GROUP_BANNER")
-            .putExtra("group_banner_bytes", bytes))
+            .putExtra("group_banner_bytes", bytes).putExtra("group_banner_high_bytes", highQuality))
     }
 
     fun cancelIncomingFile(context: Context, batchId: String, fileIndex: Int) {
@@ -199,7 +202,7 @@ class LanTransferService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "com.affilemanager.app.action.GROUP_BANNER") {
-            runCatching { server?.setGroupBanner(intent.getByteArrayExtra("group_banner_bytes")) }
+            runCatching { server?.setGroupBanner(intent.getByteArrayExtra("group_banner_bytes"), intent.getByteArrayExtra("group_banner_high_bytes")) }
                 .onFailure { LanTransferController.publish(LanTransferController.state.value.copy(message = "Grupės paveikslėlio pakeisti nepavyko")) }
             return START_NOT_STICKY
         }
@@ -335,6 +338,7 @@ class LanTransferService : Service() {
                     concurrentUploads = receiveConfiguration.concurrentUploads,
                     receiveDestinations = typeDestinations,
                     groupBanner = intent.getByteArrayExtra("group_banner_bytes"),
+                    groupBannerHigh = intent.getByteArrayExtra("group_banner_high_bytes"),
                     language = appLanguageContext().resources.configuration.locales[0].language,
                     onNearbyPeer = { peer, expiry ->
                         NearbyChatController.beginSession(peer)

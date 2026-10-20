@@ -32,6 +32,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,11 +46,19 @@ import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.data.OptionalFeature
 
+@Composable
+internal fun directoryGridColumns(portrait: Int, landscape: Int? = null): Int {
+    val orientation = androidx.compose.ui.platform.LocalConfiguration.current.orientation
+    return (if (orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) landscape ?: portrait else portrait)
+        .coerceIn(1, com.affilemanager.app.data.DirectoryDisplayRules.MAX_GRID_COLUMNS)
+}
+
 /**
  * Shared navigation chrome for every place that behaves like a file browser.
  * Unsupported navigation directions stay visible but disabled so the controls
  * do not jump around when the backing storage changes.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DirectoryBrowserToolbar(
     title: String,
@@ -66,8 +76,22 @@ fun DirectoryBrowserToolbar(
     onToggleLayout: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenPath: ((String) -> Unit)? = null,
+    addressPath: String = path,
+    onChooseProvider: (() -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
+    var editingAddress by androidx.compose.runtime.remember(testTagPrefix, addressPath) { androidx.compose.runtime.mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val pathError = uiText("Aplanko atidaryti nepavyko")
+    if (editingAddress && onOpenPath != null) {
+        DirectoryAddressDialog(addressPath, { editingAddress = false }, { entered ->
+            editingAddress = false
+            runCatching { onOpenPath(entered) }.onFailure {
+                android.widget.Toast.makeText(context, pathError, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }, onChooseProvider?.let { choose -> { editingAddress = false; choose() } })
+    }
     com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
     Row(
         modifier = modifier
@@ -87,7 +111,9 @@ fun DirectoryBrowserToolbar(
         if (featureVisible(OptionalFeature.TOOLBAR_UP)) IconButton(onClick = onUp, enabled = upEnabled) {
             Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
         }
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f).then(if (onOpenPath != null) Modifier
+            .testTag("directory_address_$testTagPrefix")
+            .combinedClickable(onClickLabel = uiText("Atidaryti aplanką"), onClick = { editingAddress = true }) else Modifier)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,

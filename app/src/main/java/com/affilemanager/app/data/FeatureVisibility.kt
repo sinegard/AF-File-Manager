@@ -9,6 +9,9 @@ enum class OptionalFeature(val label: String) {
     WEB_SHARE("Web"), FTP_SHARE("FTP"), WEBDAV_SHARE("WebDAV"), NEARBY_SHARE("Telefonas ↔ telefonas"),
     TOOLBAR_BACK("Atgal"), TOOLBAR_FORWARD("Pirmyn"), TOOLBAR_UP("Aukštyn"),
     TOOLBAR_SEARCH("Paieška"), TOOLBAR_LAYOUT("Rodinio nustatymai"),
+    FILE_COPY("Kopijuoti"), FILE_MOVE("Perkelti"), FILE_RENAME("Pervadinti"),
+    FILE_ARCHIVE("Archyvuoti"), FILE_INFO("Informacija"), FILE_DELETE("Ištrinti"),
+    FILE_BOOKMARK("Pridėti žymelę"), FILE_COPY_PATH("Kopijuoti kelią"),
 }
 
 data class FeatureVisibility(val hidden: Set<OptionalFeature> = emptySet()) {

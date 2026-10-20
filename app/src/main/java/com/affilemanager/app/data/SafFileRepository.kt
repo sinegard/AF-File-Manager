@@ -145,6 +145,23 @@ class SafFileRepository(
         }
     }
 
+    suspend fun resolveAddress(address: String): Result<SafEntry> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(address.length <= 4096 && address.none(Char::isISOControl)) { "Netinkamas kelias" }
+            val uri = Uri.parse(address)
+            require(uri.scheme == "content" && DocumentsContract.isTreeUri(uri)) { "Pasirinkti aplanką" }
+            val treeId = DocumentsContract.getTreeDocumentId(uri)
+            require(resolver.persistedUriPermissions.any { permission ->
+                permission.isReadPermission && permission.uri.authority == uri.authority &&
+                    DocumentsContract.isTreeUri(permission.uri) &&
+                    DocumentsContract.getTreeDocumentId(permission.uri) == treeId
+            }) { "Pasirinkti aplanką" }
+            val directory = document(uri)
+            require(directory.isDirectory && directory.canRead()) { "Aplankas nepasiekiamas" }
+            toEntry(directory)
+        }
+    }
+
     suspend fun createDirectory(parentUri: String, name: String): Result<SafEntry> = withContext(Dispatchers.IO) {
         runCatching {
             val parent = document(parentUri)

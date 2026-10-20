@@ -60,7 +60,7 @@ internal interface TemporaryLanServer : AutoCloseable {
     fun cancelNearbyFile(batchId: String, fileIndex: Int): Boolean = false
     fun removeGroupMember(pairing: NearbyPairing): Boolean = false
     fun setGroupMessagesBlocked(pairing: NearbyPairing, blocked: Boolean): Boolean = false
-    fun setGroupBanner(bytes: ByteArray?): Boolean = false
+    fun setGroupBanner(bytes: ByteArray?, highQuality: ByteArray? = null): Boolean = false
 }
 
 class LanHttpServer(
@@ -91,13 +91,19 @@ class LanHttpServer(
     private val concurrentUploads: Int = 1,
     receiveDestinations: Map<com.affilemanager.app.model.EntryKind, File> = emptyMap(),
     groupBanner: ByteArray? = null,
+    groupBannerHigh: ByteArray? = null,
 ) : TemporaryLanServer {
-    @Volatile private var banner = groupBanner?.also(NearbyGroupBanner::validate)?.copyOf()
-    private fun bannerRevision() = banner?.let { bytes -> java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+    private data class Banners(val legacy: ByteArray?, val high: ByteArray?)
+    init { require(groupBannerHigh == null || groupBanner != null) }
+    @Volatile private var banners = Banners(groupBanner?.also { NearbyGroupBanner.validate(it) }?.copyOf(),
+        groupBannerHigh?.also { NearbyGroupBanner.validate(it, true) }?.copyOf())
+    private fun bannerRevision() = (banners.high ?: banners.legacy)?.let { bytes -> java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
         .joinToString("") { "%02x".format(it) } } ?: "none"
-    override fun setGroupBanner(bytes: ByteArray?): Boolean {
+    override fun setGroupBanner(bytes: ByteArray?, highQuality: ByteArray?): Boolean {
         if (!groupMode || !running.get()) return false
-        banner = bytes?.also(NearbyGroupBanner::validate)?.copyOf()
+        require(highQuality == null || bytes != null)
+        banners = Banners(bytes?.also { NearbyGroupBanner.validate(it) }?.copyOf(),
+            highQuality?.also { NearbyGroupBanner.validate(it, true) }?.copyOf())
         return true
     }
     private val receiveTargets = NearbyReceiveDestinations(rootDirectory, receiveDestinations)
@@ -429,12 +435,12 @@ class LanHttpServer(
                     200,
                     NearbyGroupCodec.encode(members).toString(StandardCharsets.UTF_8),
                     "application/json; charset=utf-8",
-                    listOf("X-AF-Banner-Revision: ${bannerRevision()}"),
+                    listOf("X-AF-Banner-Revision: ${bannerRevision()}", "X-AF-Banner-Format: ${if (banners.high != null) 2 else 1}"),
                 )
             }
-            request.method == "GET" && request.path == "/nearby/group/banner" -> {
+            request.method == "GET" && request.path in setOf("/nearby/group/banner", "/nearby/group/banner-v2") -> {
                 require(groupMode && !readOnly) { "Užklausa atmesta" }
-                val image = banner
+                val image = if (request.path.endsWith("banner-v2")) banners.high else banners.legacy
                 if (image == null) writeText(output, 404, t("Nerasta"), "text/plain; charset=utf-8")
                 else { writeHeaders(output, 200, "image/jpeg", image.size.toLong(), emptyList()); output.write(image); output.flush() }
             }
@@ -480,12 +486,19 @@ class LanHttpServer(
                     writeText(output, 429, t("Gavėjas šiuo metu užimtas"), "text/plain; charset=utf-8")
                     return
                 }
+                var ownsPayloadSlot = true
+                fun releasePayloadSlot() {
+                    if (ownsPayloadSlot) {
+                        ownsPayloadSlot = false
+                        payloadAdmission.release()
+                    }
+                }
                 socket.soTimeout = UPLOAD_SOCKET_TIMEOUT_MILLIS
                 val fileIndex = request.query["fileIndex"]?.toIntOrNull() ?: 1
                 uploadClients[socket] = NearbyUploadKey(request.headers["x-af-batch-id"], fileIndex)
                 if (boundPeer != null) uploadPeers[socket] = boundPeer
-                try { upload(request, input, output, boundPeer) } finally {
-                    payloadAdmission.release()
+                try { upload(request, input, output, boundPeer, ::releasePayloadSlot) } finally {
+                    releasePayloadSlot()
                     uploadClients.remove(socket)
                     uploadPeers.remove(socket)
                 }
@@ -611,7 +624,9 @@ class LanHttpServer(
         output.flush()
     }
 
-    private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream, boundPeer: NearbyPairing?) {
+    private fun upload(request: Request, input: BufferedInputStream, output: BufferedOutputStream, boundPeer: NearbyPairing?,
+        onPayloadFinished: () -> Unit,
+    ) {
         val length = request.contentLength
         val batchId = request.headers["x-af-batch-id"]
         val totalFiles = request.query["fileCount"]?.toIntOrNull()
@@ -765,6 +780,10 @@ class LanHttpServer(
             phase = TransferPhase.NOTIFY
             publishProgress(completed = true)
             onMutation(listOf(target))
+            // The bytes and committed target are complete. A length-bounded client
+            // can start its next upload as soon as it reads201, before COMPLETE's
+            // observer returns. Release once now; finally still covers every error.
+            onPayloadFinished()
             phase = TransferPhase.RESPONSE
             writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
             phase = TransferPhase.COMPLETE

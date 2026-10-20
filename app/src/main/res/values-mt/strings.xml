@@ -19,7 +19,7 @@
     <string name="nearby_transfer_starting_text">Nistennew trasferiment...</string>
     <string name="terminal_channel_name">Terminal attiv</string>
     <string name="terminal_channel_description">Żomm telefon miftuħ jew terminali tas-server qed jaħdem fl-isfond</string>
-    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_notification_title">Terminal tal- AF File Manager</string>
     <string name="terminal_phone_active">It-terminal tat-telefon huwa attiv</string>
     <string name="terminal_server_active">Il-terminal tas-server huwa attiv</string>
     <string name="generated_extracted_name">estratti</string>

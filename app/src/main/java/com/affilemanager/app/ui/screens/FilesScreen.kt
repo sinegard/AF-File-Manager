@@ -1,5 +1,10 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
+import com.affilemanager.app.ui.components.CanonicalPathText
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
@@ -372,7 +377,8 @@ fun FilesScreen(
                 }
             },
     ) {
-        val dualPane = maxWidth >= 780.dp
+        val appearance by viewModel.appearanceSettings.collectAsStateWithLifecycle()
+        val dualPane = appearance.automaticDualPane && maxWidth >= 780.dp
         Column(modifier = Modifier.fillMaxSize()) {
             if (!hasAllFilesAccess) {
                 PermissionBanner(onRequestAllFilesAccess)
@@ -492,6 +498,7 @@ fun FilesScreen(
                         onPaste = { pastePanel = PanelId.LEFT },
                         onUndoBatchRename = viewModel::undoBatchRename,
                         onDisplaySettings = { displayPanel = PanelId.LEFT },
+                        onChooseProvider = onAddSafLocation,
                     )
                     VerticalDivider(modifier = Modifier.fillMaxHeight().width(1.dp))
                     FilePanel(
@@ -522,6 +529,7 @@ fun FilesScreen(
                         onPaste = { pastePanel = PanelId.RIGHT },
                         onUndoBatchRename = viewModel::undoBatchRename,
                         onDisplaySettings = { displayPanel = PanelId.RIGHT },
+                        onChooseProvider = onAddSafLocation,
                     )
                 }
             } else {
@@ -557,6 +565,7 @@ fun FilesScreen(
                     onPaste = { pastePanel = activePanel },
                     onUndoBatchRename = viewModel::undoBatchRename,
                     onDisplaySettings = { displayPanel = activePanel },
+                    onChooseProvider = onAddSafLocation,
                 )
             }
         }
@@ -863,6 +872,7 @@ private fun PanelUiState.toDirectoryDisplaySettings(): DirectoryDisplaySettings 
     iconScalePercent = iconScalePercent,
     spacingScalePercent = spacingScalePercent,
     gridColumns = gridColumns,
+    gridColumnsLandscape = gridColumnsLandscape,
     gridStyle = gridStyle,
     showThumbnails = showThumbnails,
 )
@@ -891,6 +901,7 @@ private fun FilePanel(
     onPaste: () -> Unit,
     onUndoBatchRename: () -> Unit,
     onDisplaySettings: () -> Unit,
+    onChooseProvider: (() -> Unit)? = null,
 ) {
     var compactMenu by remember { mutableStateOf(false) }
     var showViewingHistory by remember { mutableStateOf(false) }
@@ -942,6 +953,8 @@ private fun FilePanel(
                 searchActive = searchVisible,
                 grid = state.grid,
                 testTagPrefix = "local_$panelId",
+                onOpenPath = { viewModel.openLocalAddress(panelId, it) },
+                onChooseProvider = onChooseProvider,
                 onBack = { viewModel.navigateBack(panelId) },
                 onForward = { viewModel.navigateForward(panelId) },
                 onUp = { viewModel.navigateUp(panelId) },
@@ -1026,36 +1039,37 @@ private fun FilePanel(
             }
             if (state.selectedPaths.isNotEmpty()) {
                 SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
-                    IconButton(onClick = { viewModel.copySelection(panelId, move = false) }) {
+                    com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map(FileEntry::absolutePath))
+                    BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copySelection(panelId, move = false) }) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                     }
                     if (localClipboard?.mode == ClipboardMode.COPY) {
-                        IconButton(
+                        BrowserActionIconButton(BrowserAction.COPY,
                             onClick = { viewModel.addSelectionToClipboard(panelId) },
                             modifier = Modifier.testTag("copy-more-local"),
                         ) {
                             Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                         }
                     }
-                    if (featureVisible(OptionalFeature.FAVORITES)) IconButton(
+                    if (featureVisible(OptionalFeature.FAVORITES)) BrowserActionIconButton(BrowserAction.FAVORITE,
                         onClick = { viewModel.addSelectionToFavorites(panelId) },
                         modifier = Modifier.testTag("selection_favorite_local"),
                     ) {
                         Icon(Icons.Rounded.Star, contentDescription = uiText("Pridėti prie mėgstamų"))
                     }
-                    IconButton(
+                    BrowserActionIconButton(BrowserAction.BOOKMARK,
                         onClick = { viewModel.bookmarkSelection(panelId) },
                         modifier = Modifier.testTag("selection_bookmark_local"),
                     ) {
                         Icon(Icons.Rounded.BookmarkAdd, contentDescription = uiText("Pridėti žymelę"))
                     }
-                    IconButton(
+                    BrowserActionIconButton(BrowserAction.SHARE,
                         onClick = { viewModel.shareSelection(panelId) },
                         modifier = Modifier.testTag("selection_share_local"),
                     ) {
                         Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
                     }
-                    IconButton(
+                    BrowserActionIconButton(BrowserAction.INFO,
                         onClick = {
                             onInfo(state.entries.filter { it.absolutePath in state.selectedPaths })
                         },
@@ -1063,13 +1077,13 @@ private fun FilePanel(
                     ) {
                         Icon(Icons.Rounded.Info, contentDescription = uiText("Informacija"))
                     }
-                    IconButton(onClick = { viewModel.copySelection(panelId, move = true) }) {
+                    BrowserActionIconButton(BrowserAction.MOVE, onClick = { viewModel.copySelection(panelId, move = true) }) {
                         Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
                     }
-                    IconButton(onClick = onCopyToOther) {
+                    BrowserActionIconButton(BrowserAction.COPY, onClick = onCopyToOther) {
                         Icon(Icons.AutoMirrored.Rounded.CompareArrows, contentDescription = uiText("Kopijuoti į kitą skydelį"))
                     }
-                    if (state.selectedPaths.size == 1 || featureVisible(OptionalFeature.BATCH_RENAME)) IconButton(onClick = {
+                    if (state.selectedPaths.size == 1 || featureVisible(OptionalFeature.BATCH_RENAME)) BrowserActionIconButton(BrowserAction.RENAME, onClick = {
                         val selectedEntries = state.entries.filter { it.absolutePath in state.selectedPaths }
                         if (selectedEntries.size == 1) selectedEntries.firstOrNull()?.let(onRename)
                         else viewModel.beginBatchRename(selectedEntries.map(FileEntry::absolutePath))
@@ -1079,7 +1093,7 @@ private fun FilePanel(
                             contentDescription = uiText(if (state.selectedPaths.size == 1) "Pervadinti" else "Masinis pervadinimas"),
                         )
                     }
-                    IconButton(onClick = onArchive) { Icon(Icons.Rounded.Archive, contentDescription = uiText("Archyvuoti")) }
+                    BrowserActionIconButton(BrowserAction.ARCHIVE, onClick = onArchive) { Icon(Icons.Rounded.Archive, contentDescription = uiText("Archyvuoti")) }
                     val selectedEntries = state.entries.filter { it.absolutePath in state.selectedPaths }
                     if (featureVisible(OptionalFeature.ANALYSIS)) IconButton(
                         onClick = { viewModel.analyzeEntries(selectedEntries.map(FileEntry::absolutePath)) },
@@ -1089,10 +1103,10 @@ private fun FilePanel(
                         Icon(Icons.Rounded.Analytics, contentDescription = uiText("Analizuoti pasirinktus"))
                     }
                     if (featureVisible(OptionalFeature.TAGS)) IconButton(onClick = onTag) { Icon(Icons.AutoMirrored.Rounded.Label, contentDescription = uiText("Žymos ir įvertinimas")) }
-                    IconButton(onClick = onTrash) {
+                    BrowserActionIconButton(BrowserAction.DELETE, onClick = onTrash) {
                         Icon(Icons.Rounded.Delete, contentDescription = uiText("Į šiukšlinę"), tint = MaterialTheme.colorScheme.error)
                     }
-                    IconButton(onClick = onPermanentDelete, modifier = Modifier.testTag("delete_permanently_local")) {
+                    BrowserActionIconButton(BrowserAction.DELETE, onClick = onPermanentDelete, modifier = Modifier.testTag("delete_permanently_local")) {
                         Icon(
                             Icons.Rounded.DeleteForever,
                             contentDescription = uiText("Ištrinti visam laikui"),
@@ -1170,7 +1184,7 @@ private fun CompactPanelActions(
                     leadingIcon = { Icon(Icons.Rounded.ContentPaste, contentDescription = null) },
                     onClick = { onExpandedChange(false); onPaste() },
                 )
-                if (featureVisible(OptionalFeature.PLANS)) DropdownMenuItem(
+                if (featureVisible(OptionalFeature.PLANS)) BrowserActionMenuItem(BrowserAction.COPY,
                     text = { LText("Įklijuoti į kelias vietas") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
                     onClick = {
@@ -1187,14 +1201,14 @@ private fun CompactPanelActions(
                     onClick = { onExpandedChange(false); onUndoBatchRename() },
                 )
             }
-            if (featureVisible(OptionalFeature.FAVORITES)) DropdownMenuItem(
+            if (featureVisible(OptionalFeature.FAVORITES)) BrowserActionMenuItem(BrowserAction.FAVORITE,
                 text = { LText(if (state.path in favorites) "Pašalinti iš mėgstamų" else "Pridėti prie mėgstamų") },
                 leadingIcon = {
                     Icon(if (state.path in favorites) Icons.Rounded.Star else Icons.Rounded.StarBorder, contentDescription = null)
                 },
                 onClick = { viewModel.toggleFavorite(state.path); onExpandedChange(false) },
             )
-            if (featureVisible(OptionalFeature.FAVORITES)) DropdownMenuItem(
+            if (featureVisible(OptionalFeature.FAVORITES)) BrowserActionMenuItem(BrowserAction.FAVORITE,
                 text = {
                     Column {
                         LText("Mėgstami")
@@ -1289,7 +1303,7 @@ private fun ViewingHistoryDialog(
                         Icon(Icons.Rounded.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
                             Text(File(recent.path).name.ifBlank { recent.path }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(recent.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            CanonicalPathText(recent.path, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(dateFormat.format(Date(recent.openedAtMillis)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -1521,6 +1535,7 @@ internal fun FileList(
                     metadata = metadata,
                     tagText = tagText,
                     selected = entry.absolutePath in state.selectedPaths,
+                    selectionActive = state.selectedPaths.isNotEmpty(),
                     showThumbnails = state.showThumbnails,
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
@@ -1656,7 +1671,7 @@ internal fun FileGrid(
     }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+            columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape)),
             state = gridState,
             modifier = Modifier
                 .fillMaxSize()
@@ -1684,6 +1699,7 @@ internal fun FileGrid(
                     entry = entry,
                     tagText = tagText,
                     selected = entry.absolutePath in state.selectedPaths,
+                    selectionActive = state.selectedPaths.isNotEmpty(),
                     showThumbnails = state.showThumbnails,
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
@@ -1737,6 +1753,7 @@ private fun FileRow(
     metadata: String,
     tagText: String?,
     selected: Boolean,
+    selectionActive: Boolean,
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
@@ -1808,7 +1825,7 @@ private fun FileRow(
             }
         }
         if (!entry.isReadable) LText("Neprieinama", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-        EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
+        if (!selectionActive) EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
     }
     }
     HorizontalDivider(
@@ -1823,6 +1840,7 @@ private fun FileTile(
     entry: FileEntry,
     tagText: String?,
     selected: Boolean,
+    selectionActive: Boolean,
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
@@ -1891,7 +1909,7 @@ private fun FileTile(
                 )
             },
             actions = {
-                EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
+                if (!selectionActive) EntryActionsButton(entry, onPreview, onOpenWith, onSelect, onRename, onInfo, onTrash, onArchive, onAnalyze, onTag, favorite, onCopy, onMove, onToggleFavorite, onBookmark, onShare)
             },
             extraContent = {
                 if (largestSizeBytes != null && entry.metadataComplete) {
@@ -2054,6 +2072,7 @@ private fun EntryActionsButton(
             Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            com.affilemanager.app.ui.components.CopyPathAction(listOf(entry.absolutePath), menu = true, onCopied = { expanded = false })
             DropdownMenuItem(
                 text = {
                     LText(
@@ -2090,21 +2109,21 @@ private fun EntryActionsButton(
                 leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) },
                 onClick = { expanded = false; onSelect() },
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.COPY,
                 text = { LText("Kopijuoti") },
                 leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) },
                 onClick = { expanded = false; onCopy() },
                 enabled = entry.isReadable,
                 modifier = Modifier.testTag("copy_entry_action"),
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.MOVE,
                 text = { LText("Perkelti") },
                 leadingIcon = { Icon(Icons.Rounded.ContentCut, contentDescription = null) },
                 onClick = { expanded = false; onMove() },
                 enabled = entry.isReadable,
                 modifier = Modifier.testTag("move_entry_action"),
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.ARCHIVE,
                 text = { LText("Archyvuoti") },
                 leadingIcon = { Icon(Icons.Rounded.Archive, contentDescription = null) },
                 onClick = { expanded = false; onArchive() },
@@ -2121,12 +2140,12 @@ private fun EntryActionsButton(
                 )
             }
             HorizontalDivider()
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.RENAME,
                 text = { LText("Pervadinti") },
                 leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                 onClick = { expanded = false; onRename() },
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.INFO,
                 text = { LText("Informacija") },
                 leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
                 onClick = { expanded = false; onInfo() },
@@ -2137,7 +2156,7 @@ private fun EntryActionsButton(
                 onClick = { expanded = false; onTag() },
                 modifier = Modifier.testTag("tag_entry_action"),
             )
-            if (featureVisible(OptionalFeature.FAVORITES)) DropdownMenuItem(
+            if (featureVisible(OptionalFeature.FAVORITES)) BrowserActionMenuItem(BrowserAction.FAVORITE,
                 text = { LText(if (favorite) "Pašalinti iš mėgstamų" else "Pridėti prie mėgstamų") },
                 leadingIcon = {
                     Icon(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, contentDescription = null)
@@ -2145,20 +2164,20 @@ private fun EntryActionsButton(
                 onClick = { expanded = false; onToggleFavorite() },
                 modifier = Modifier.testTag("favorite_entry_action"),
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.BOOKMARK,
                 text = { LText("Pridėti žymelę") },
                 leadingIcon = { Icon(Icons.Rounded.BookmarkAdd, contentDescription = null) },
                 onClick = { expanded = false; onBookmark() },
                 modifier = Modifier.testTag("bookmark_entry_action"),
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.SHARE,
                 text = { LText("Bendrinti") },
                 leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) },
                 onClick = { expanded = false; onShare() },
                 enabled = entry.isReadable,
                 modifier = Modifier.testTag("share_entry_action"),
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.DELETE,
                 text = { LText("Į šiukšlinę") },
                 leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                 onClick = { expanded = false; onTrash() },

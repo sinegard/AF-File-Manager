@@ -19,7 +19,7 @@
     <string name="nearby_transfer_starting_text">Përgatitja e transferimit...</string>
     <string name="terminal_channel_name">Terminal aktiv</string>
     <string name="terminal_channel_description">Mbani një telefon të hapur ose terminal server duke funksionuar në sfond</string>
-    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_notification_title">Terminal i AF File Manager</string>
     <string name="terminal_phone_active">Terminal telefoni është aktiv.</string>
     <string name="terminal_server_active">Terminal i serverit është aktiv</string>
     <string name="generated_extracted_name">të nxjerrë</string>

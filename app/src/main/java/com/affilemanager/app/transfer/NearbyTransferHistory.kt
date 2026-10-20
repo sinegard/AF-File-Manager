@@ -18,6 +18,7 @@ data class NearbyTransferHistoryFile(
     val status: TransferFileStatus,
     val outgoing: Boolean,
     val localPath: String? = null,
+    val notAttempted: Boolean = false,
 )
 
 data class NearbyTransferHistorySession(
@@ -58,6 +59,7 @@ internal object NearbyTransferHistoryRules {
                     transferredBytes = file.transferredBytes.coerceIn(0L, file.sizeBytes.coerceAtLeast(0L)),
                     status = file.status,
                     outgoing = outgoing,
+                    notAttempted = file.notAttempted,
                     localPath = file.localPath?.takeIf {
                         file.status == TransferFileStatus.COMPLETED &&
                             it.length in 1..MAX_LOCAL_PATH_CHARS &&
@@ -170,7 +172,7 @@ private class NearbyTransferHistoryRepository(context: Context) {
             session.files.forEach { file ->
                 put(JSONObject().put("id", file.id).put("path", file.relativePath).put("size", file.sizeBytes)
                     .put("transferred", file.transferredBytes).put("status", file.status.name).put("outgoing", file.outgoing)
-                    .put("localPath", file.localPath ?: JSONObject.NULL))
+                    .put("localPath", file.localPath ?: JSONObject.NULL).apply { if (file.notAttempted) put("notAttempted", true) })
             }
         })
         .put("messages", JSONArray().apply {
@@ -204,6 +206,7 @@ private class NearbyTransferHistoryRepository(context: Context) {
                     transferredBytes = item.getLong("transferred").coerceAtLeast(0L),
                     status = runCatching { TransferFileStatus.valueOf(item.getString("status")) }.getOrDefault(TransferFileStatus.FAILED),
                     outgoing = item.optBoolean("outgoing"),
+                    notAttempted = item.optBoolean("notAttempted"),
                     localPath = if (version >= 2 && !item.isNull("localPath")) {
                         item.optString("localPath").takeIf {
                             it.length in 1..NearbyTransferHistoryRules.MAX_LOCAL_PATH_CHARS && it.none(Char::isISOControl)

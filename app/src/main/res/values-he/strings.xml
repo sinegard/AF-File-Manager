@@ -15,7 +15,7 @@
     <string name="lan_transfer_starting_text">שרת התחלה...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN העברה פועלת</string>
     <string name="nearby_transfer_channel_name">העברת טלפון בקרבת מקום</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_notification_title">ה- AF File Manager העברה בטלפון</string>
     <string name="nearby_transfer_starting_text">מתכוננים להעביר...</string>
     <string name="terminal_channel_name">טערמינל פעיל</string>
     <string name="terminal_channel_description">שומר טלפון פתוח או סרוויר סמל פועל בעקבות</string>

@@ -27,8 +27,8 @@ internal object MediaTestFixtures {
             out.write("data".toByteArray()); little(pcm.size); out.write(pcm)
         }
     }
-    fun video(file: File, audio: Boolean = true) {
-        val video = encodeVideo()
+    fun video(file: File, audio: Boolean = true, frameTimesUs: List<Long>? = null) {
+        val video = encodeVideo(frameTimesUs)
         val sound = if (audio) encodeAudio() else null
         val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         try {
@@ -76,10 +76,13 @@ internal object MediaTestFixtures {
         }
         fun result(): Track { while (!ended) poll(10_000); return Track(requireNotNull(format), samples) }
     }
-    private fun encodeAudio(): Track {
-        val codec = MediaCodec.createEncoderByType("audio/mp4a-latm")
+    private fun encodeAudio(mime: String = "audio/mp4a-latm"): Track {
+        val codec = MediaCodec.createEncoderByType(mime)
         try {
-            val format = MediaFormat.createAudioFormat("audio/mp4a-latm", 48000, 2).apply { setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC); setInteger(MediaFormat.KEY_BIT_RATE, 128000) }
+            val format = MediaFormat.createAudioFormat(mime, 48000, 2).apply {
+                if (mime == "audio/mp4a-latm") setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, 128000)
+            }
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); codec.start()
             val drain = Drain(codec); val samples = pcm(3000); var offset = 0
             while (offset < samples.size) {
@@ -99,7 +102,23 @@ internal object MediaTestFixtures {
             return drain.result()
         } finally { runCatching { codec.stop() }; codec.release() }
     }
-    private fun encodeVideo(): Track {
+    @androidx.annotation.RequiresApi(29)
+    fun opus(file: File) {
+        val audio = encodeAudio("audio/opus")
+        val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
+        try {
+            val track = muxer.addTrack(audio.format)
+            muxer.start()
+            val info = MediaCodec.BufferInfo()
+            audio.samples.forEach { sample ->
+                info.set(0, sample.bytes.size, sample.time, sample.flags)
+                muxer.writeSampleData(track, ByteBuffer.wrap(sample.bytes), info)
+            }
+            muxer.stop()
+        } finally { muxer.release() }
+        check(file.length() in 1000..2_000_000)
+    }
+    private fun encodeVideo(frameTimesUs: List<Long>? = null): Track {
         val codec = MediaCodec.createEncoderByType("video/avc")
         var display = EGL14.EGL_NO_DISPLAY; var eglContext = EGL14.EGL_NO_CONTEXT; var eglSurface = EGL14.EGL_NO_SURFACE
         var input: android.view.Surface? = null
@@ -124,13 +143,22 @@ internal object MediaTestFixtures {
             val reader = Thread({
                 try { encoded.set(drain.result()) } catch (error: Throwable) { failure.set(error) }
             }, "af-fixture-video-drain").apply { start() }
-            repeat(30) { frame ->
+            repeat(frameTimesUs?.size ?: 30) { frame ->
                 failure.get()?.let { throw it }
                 GLES20.glViewport(0, 0, 320, 240); GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
-                GLES20.glClearColor(1f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-                GLES20.glEnable(GLES20.GL_SCISSOR_TEST); GLES20.glScissor(160, 0, 160, 240)
-                GLES20.glClearColor(0f, 1f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
-                EGLExt.eglPresentationTimeANDROID(display, eglSurface, frame * 100_000_000L); check(EGL14.eglSwapBuffers(display, eglSurface))
+                if(frameTimesUs!=null) {
+                    GLES20.glClearColor(frame.toFloat()/(frameTimesUs.size-1),0.2f,1f-frame.toFloat()/(frameTimesUs.size-1),1f)
+                    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                    // Eight high-contrast bits identify every decoded frame across GOP/chunk boundaries.
+                    GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
+                    repeat(8){bit->GLES20.glScissor(bit*40,0,40,40);val value=if(frame and (1 shl bit)!=0)1f else 0f;GLES20.glClearColor(value,value,value,1f);GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)}
+                    GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
+                }else {
+                    GLES20.glClearColor(1f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+                    GLES20.glEnable(GLES20.GL_SCISSOR_TEST); GLES20.glScissor(160, 0, 160, 240)
+                    GLES20.glClearColor(0f, 1f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
+                }
+                EGLExt.eglPresentationTimeANDROID(display, eglSurface, frameTimesUs?.get(frame)?.times(1000) ?: (frame*100_000_000L));check(EGL14.eglSwapBuffers(display,eglSurface))
             }
             codec.signalEndOfInputStream()
             reader.join(35_000)

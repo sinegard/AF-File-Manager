@@ -1,4 +1,5 @@
 import java.util.zip.ZipFile
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -30,8 +31,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 73
-        versionName = "0.45.2"
+        versionCode = 74
+        versionName = "0.46.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -120,6 +121,7 @@ android {
     packaging {
         jniLibs.useLegacyPackaging = true
         jniLibs.keepDebugSymbols += "**/libcloudflared.so"
+        jniLibs.keepDebugSymbols += setOf("**/libffmpeg-cli.so", "**/libffprobe-cli.so", "**/libafmediaexec.so")
         resources.excludes += setOf(
             "META-INF/DEPENDENCIES",
             "META-INF/LICENSE*",
@@ -141,7 +143,43 @@ android {
         kotlin.directories.add("src/benchmark/java")
         manifest.srcFile("src/benchmark/AndroidManifest.xml")
     }
+    sourceSets.getByName("main").apply {
+        jniLibs.directories.add(layout.buildDirectory.dir("generated/media-export/jniLibs").get().asFile.path)
+        assets.directories.add(layout.buildDirectory.dir("generated/media-export/assets").get().asFile.path)
+    }
 }
+
+val launcherTriples=mapOf("arm64-v8a" to "aarch64-linux-android", "armeabi-v7a" to "armv7a-linux-androideabi", "x86_64" to "x86_64-linux-android", "x86" to "i686-linux-android")
+val mediaLaunchers=launcherTriples.map { (abi,triple) ->
+    tasks.register<Exec>("buildMediaLauncher${abi.replace("-", "").replace("_", "")}") {
+        val windows=System.getProperty("os.name").startsWith("Windows")
+        val ndk=androidComponents.sdkComponents.sdkDirectory.get().asFile.resolve("ndk/27.3.13750724")
+        val compiler=ndk.resolve("toolchains/llvm/prebuilt/${if(windows)"windows-x86_64" else "linux-x86_64"}/bin/${triple}26-clang${if(windows)".cmd" else ""}")
+        val output=layout.buildDirectory.file("generated/media-launcher/jniLibs/$abi/libafmediaexec.so").get().asFile
+        inputs.file("src/main/cpp/media_exec.c"); outputs.file(output)
+        doFirst { output.parentFile.mkdirs() }
+        commandLine(listOf(compiler.path,"-std=c11","-O2","-Wall","-Wextra","-Werror","-fPIE","-pie","-Wl,-z,max-page-size=16384",file("src/main/cpp/media_exec.c").path,"-o",output.path))
+    }
+}
+android.sourceSets.getByName("main").jniLibs.directories.add(layout.buildDirectory.dir("generated/media-launcher/jniLibs").get().asFile.path)
+tasks.register("verifyMediaExportPayload") {
+    dependsOn(mediaLaunchers)
+    group = "verification"
+    description = "Rejects missing or changed source-built media tools before packaging."
+    doLast {
+        val root=layout.buildDirectory.dir("generated/media-export").get().asFile
+        check(root.resolve("stage.json").isFile) { "Stage the verified media payload; see docs/MEDIA_EXPORT.md" }
+        val identity=root.resolve("stage.json").readText()
+        val files=Regex("\\\"path\\\"\\s*:\\s*\\\"(jniLibs/[^\\\"]+)\\\"\\s*,\\s*\\\"sha256\\\"\\s*:\\s*\\\"([a-f0-9]{64})\\\"").findAll(identity).toList()
+        check(files.size==32) { "Incomplete four-ABI media payload" }
+        files.forEach { item ->
+            val file=root.resolve(item.groupValues[1])
+            check(file.isFile && MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }==item.groupValues[2]) { "Media payload differs: ${item.groupValues[1]}" }
+        }
+    }
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("NativeLibs") }.configureEach { dependsOn("verifyMediaExportPayload") }
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach { dependsOn("verifyMediaExportPayload") }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")

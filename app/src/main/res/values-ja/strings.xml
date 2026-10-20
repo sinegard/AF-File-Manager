@@ -11,7 +11,7 @@
     <string name="open_with_chooser_short">アプリで開く</string>
     <string name="lan_transfer_channel_name">ローカルネットワークファイル転送</string>
     <string name="lan_transfer_channel_description">LAN ファイル転送を実行するときにのみ表示される</string>
-    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN 移転</string>
     <string name="lan_transfer_starting_text">サーバーを起動する</string>
     <string name="lan_transfer_running_title">AF File Manager LAN 転送が実行中</string>
     <string name="nearby_transfer_channel_name">近くにある電話転送</string>

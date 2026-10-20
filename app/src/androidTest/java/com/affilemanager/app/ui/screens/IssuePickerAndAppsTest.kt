@@ -67,13 +67,16 @@ class IssuePickerAndAppsTest {
             compose.onNodeWithTag("installed_apps_scope_USER").performScrollTo().performClick()
             compose.waitUntil(15000) { vm.fileCategory.value.appScope == InstalledAppScope.USER && !vm.fileCategory.value.loading }
             val entry = vm.fileCategory.value.entries.first()
-            compose.onNodeWithText(entry.name).performScrollTo().performClick()
+            // Different installed packages can have the same human-facing label
+            // (including release/debug AF). Select the exact displayed APK owner.
+            val row = hasText(entry.name) and hasText(File(entry.absolutePath).parent.orEmpty(), substring = true)
+            compose.onNode(row).performScrollTo().performClick()
             compose.onNodeWithTag("installed_app_information").assertIsDisplayed()
             compose.onAllNodesWithTag("confirm_apk_install").assertCountEquals(0)
             pressBack()
-            compose.onNodeWithText(entry.name).performScrollTo().performTouchInput { longClick() }
+            compose.onNode(row).performScrollTo().performTouchInput { longClick() }
             compose.waitUntil(5000) { entry.absolutePath in vm.fileCategory.value.selectedPaths }
-            compose.onNodeWithTag("installed_apps_export").assertIsDisplayed()
+            compose.onNodeWithTag("installed_apps_export").performScrollTo().assertIsDisplayed()
             compose.onAllNodesWithTag("installed_app_information").assertCountEquals(0)
         } finally { compose.runOnUiThread { store.clear() } }
     }

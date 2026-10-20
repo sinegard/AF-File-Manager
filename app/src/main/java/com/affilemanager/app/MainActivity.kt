@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private val pendingShareRequest = mutableStateOf<IncomingShareRequest?>(null)
     private val pendingBenchmarkRequest = mutableStateOf<BenchmarkRequest?>(null)
     private val pendingStorageRefresh = mutableStateOf(false)
+    private val pendingWidgetRequest = mutableStateOf<com.affilemanager.app.widgets.AfWidgetRequest?>(null)
     private var storageReceiversRegistered = false
     private val usbStorageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         pendingViewRequest.value = intent.toIncomingViewRequest()
         pendingShareRequest.value = intent.toIncomingShareRequest()
         pendingBenchmarkRequest.value = intent.toBenchmarkRequest()
+        pendingWidgetRequest.value = com.affilemanager.app.widgets.AfWidgetProvider.request(this, intent)
         pendingStorageRefresh.value = intent.action in storageChangeActions
         enableEdgeToEdge()
         setContent {
@@ -114,6 +116,13 @@ class MainActivity : AppCompatActivity() {
                         onIncomingViewRequestConsumed = { pendingViewRequest.value = null },
                         incomingShareRequest = pendingShareRequest.value,
                         onIncomingShareRequestConsumed = { pendingShareRequest.value = null },
+                        widgetRequest = pendingWidgetRequest.value,
+                        onWidgetRequestConsumed = {
+                            pendingWidgetRequest.value = null
+                            if (intent.action == com.affilemanager.app.widgets.AfWidgetProvider.ACTION_OPEN) {
+                                intent = Intent(this@MainActivity, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
+                            }
+                        },
                     )
                 }
             }
@@ -122,9 +131,11 @@ class MainActivity : AppCompatActivity() {
 
     public override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         pendingViewRequest.value = intent.toIncomingViewRequest()
         pendingShareRequest.value = intent.toIncomingShareRequest()
         pendingBenchmarkRequest.value = intent.toBenchmarkRequest()
+        pendingWidgetRequest.value = com.affilemanager.app.widgets.AfWidgetProvider.request(this, intent)
         pendingStorageRefresh.value = intent.action in storageChangeActions
     }
 

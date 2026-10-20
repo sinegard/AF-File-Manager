@@ -104,6 +104,13 @@ class NearbyTransferDetailsTest {
         val store = androidx.lifecycle.ViewModelStore()
         val peer = com.affilemanager.app.transfer.NearbyPairing("192.168.1.10", 8080, "12345678", "Other phone")
         val controller = com.affilemanager.app.transfer.NearbyTransferController
+        fun showFile(index: Int, name: String) {
+            val row = hasTestTag("nearby_transfer_file_$index") and hasAnyDescendant(hasText(name))
+            // The receiving and sending groups need not fit simultaneously on a
+            // small phone. Reach each real row before asserting its visibility.
+            compose.onNodeWithTag("nearby_transfer_files", useUnmergedTree = true).performScrollToNode(row)
+            compose.onNode(row, useUnmergedTree = true).assertIsDisplayed()
+        }
         try {
             controller.connection.remember(peer)
             controller.publish(com.affilemanager.app.transfer.NearbyTransferState(
@@ -127,13 +134,11 @@ class NearbyTransferDetailsTest {
             compose.onNodeWithText("Receive").assertDoesNotExist()
             compose.onNodeWithText("Send").assertDoesNotExist()
             compose.onNodeWithTag("nearby_send_details").performClick()
-            compose.onNode(hasTestTag("nearby_transfer_file_0") and hasAnyDescendant(hasText("sending.txt"))).assertIsDisplayed()
-            compose.onNode(hasTestTag("nearby_transfer_file_1") and hasAnyDescendant(hasText("receiving.txt"))).assertIsDisplayed()
+            showFile(0, "sending.txt")
+            showFile(1, "receiving.txt")
             compose.onNodeWithTag("nearby_files_view_toggle").performClick()
-            compose.onNode(hasTestTag("nearby_transfer_file_0") and hasAnyDescendant(hasText("sending.txt")),
-                useUnmergedTree = true).assertIsDisplayed()
-            compose.onNode(hasTestTag("nearby_transfer_file_1") and hasAnyDescendant(hasText("receiving.txt")),
-                useUnmergedTree = true).assertIsDisplayed()
+            showFile(0, "sending.txt")
+            showFile(1, "receiving.txt")
             compose.onNodeWithTag("nearby_files_view_toggle").performClick()
             compose.onNodeWithContentDescription("Close").performClick()
             assertEquals(peer, controller.connectedPairing())
@@ -148,8 +153,8 @@ class NearbyTransferDetailsTest {
             compose.onNodeWithTag("nearby_transfer_details").assertDoesNotExist()
             // Session loss dismisses the modal, not the evidence of finished/pending files.
             compose.onNodeWithTag("nearby_send_details").performClick()
-            compose.onNode(hasTestTag("nearby_transfer_file_0") and hasAnyDescendant(hasText("sending.txt"))).assertIsDisplayed()
-            compose.onNode(hasTestTag("nearby_transfer_file_1") and hasAnyDescendant(hasText("receiving.txt"))).assertIsDisplayed()
+            showFile(0, "sending.txt")
+            showFile(1, "receiving.txt")
         } finally {
             compose.runOnUiThread { store.clear() }
             controller.connection.clear(); controller.publish(com.affilemanager.app.transfer.NearbyTransferState())

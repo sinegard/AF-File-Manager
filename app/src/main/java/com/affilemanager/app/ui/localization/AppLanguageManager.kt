@@ -1,7 +1,9 @@
 package com.affilemanager.app.ui.localization
 
 import android.content.Context
+import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.app.LocaleManagerCompat
 import androidx.core.os.LocaleListCompat
 import java.util.Locale
 
@@ -33,13 +35,13 @@ object AppLanguageManager {
         if (preferences.getBoolean(INITIALIZED, false)) {
             // Android's resource matcher uses Filipino's canonical BCP-47 tag.
             // Migrate the formerly saved Tagalog alias without changing the choice.
-            if (AppCompatDelegate.getApplicationLocales()[0]?.language == "tl") {
-                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("fil"))
+            if (applicationLocales(context)[0]?.language == "tl") {
+                applyLocales(context, LocaleListCompat.forLanguageTags("fil"))
             }
             return
         }
         preferences.edit().putBoolean(INITIALIZED, true).apply()
-        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(ENGLISH))
+        applyLocales(context, LocaleListCompat.forLanguageTags(ENGLISH))
     }
 
     fun setLanguage(context: Context, languageTag: String) {
@@ -49,7 +51,23 @@ object AppLanguageManager {
             .edit()
             .putBoolean(INITIALIZED, true)
             .apply()
-        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(platformLanguageTag(normalized)))
+        applyLocales(context, LocaleListCompat.forLanguageTags(platformLanguageTag(normalized)))
+        com.affilemanager.app.widgets.AfWidgetProvider.refresh(context)
+    }
+
+    internal fun applicationLocales(context: Context): LocaleListCompat =
+        if (Build.VERSION.SDK_INT >= 33) LocaleManagerCompat.getApplicationLocales(context)
+        else AppCompatDelegate.getApplicationLocales()
+
+    private fun applyLocales(context: Context, locales: LocaleListCompat) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            // A widget/service can run before any AppCompat Activity exists. Its static
+            // delegate cannot obtain LocaleManager in that state, so use our own context.
+            context.getSystemService(android.app.LocaleManager::class.java).applicationLocales =
+                android.os.LocaleList.forLanguageTags(locales.toLanguageTags())
+        } else {
+            AppCompatDelegate.setApplicationLocales(locales)
+        }
     }
 
     fun isSupported(languageTag: String): Boolean = normalizeLanguageTag(languageTag) in supportedLanguages

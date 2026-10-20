@@ -81,6 +81,25 @@ std::shared_ptr<PtySession> find_session(std::int64_t handle) {
     return found == sessions.end() ? nullptr : found->second;
 }
 
+// A read may wait for output, but must not hold the session's lifetime lock:
+// doing so makes every keystroke wait behind the 250 ms read poll. A duplicated
+// descriptor also prevents close/reuse races without holding that lock in poll.
+class ScopedPtyFd {
+public:
+    explicit ScopedPtyFd(const std::shared_ptr<PtySession>& session) {
+        std::lock_guard<std::mutex> lock(session->mutex);
+        if (!session->closed && session->master_fd >= 0) {
+            fd_ = fcntl(session->master_fd, F_DUPFD_CLOEXEC, 0);
+        }
+    }
+    ~ScopedPtyFd() { if (fd_ >= 0) ::close(fd_); }
+    ScopedPtyFd(const ScopedPtyFd&) = delete;
+    ScopedPtyFd& operator=(const ScopedPtyFd&) = delete;
+    int get() const { return fd_; }
+private:
+    int fd_ = -1;
+};
+
 bool valid_dimensions(int rows, int columns) {
     return rows >= kMinTerminalDimension && rows <= kMaxTerminalDimension &&
         columns >= kMinTerminalDimension && columns <= kMaxTerminalDimension;
@@ -255,16 +274,16 @@ Java_com_affilemanager_app_terminal_LocalPtyNative_read(
         return -1;
     }
     std::vector<jbyte> buffer(static_cast<std::size_t>(capacity));
-    std::lock_guard<std::mutex> lock(session->mutex);
-    if (session->closed || session->master_fd < 0) return -1;
-    pollfd descriptor{session->master_fd, POLLIN, 0};
+    ScopedPtyFd fd(session);
+    if (fd.get() < 0) return -1;
+    pollfd descriptor{fd.get(), POLLIN, 0};
     int poll_result = 0;
     do {
         poll_result = poll(&descriptor, 1, kReadPollMillis);
     } while (poll_result < 0 && errno == EINTR);
     if (poll_result == 0) return 0;
     if (poll_result < 0) return -1;
-    const ssize_t count = ::read(session->master_fd, buffer.data(), buffer.size());
+    const ssize_t count = ::read(fd.get(), buffer.data(), buffer.size());
     if (count > 0) {
         env->SetByteArrayRegion(destination, 0, static_cast<jsize>(count), buffer.data());
         return static_cast<jint>(count);
@@ -292,15 +311,15 @@ Java_com_affilemanager_app_terminal_LocalPtyNative_write(
     std::vector<jbyte> buffer(static_cast<std::size_t>(length));
     env->GetByteArrayRegion(source, offset, length, buffer.data());
     if (env->ExceptionCheck()) return -1;
-    std::lock_guard<std::mutex> lock(session->mutex);
-    if (session->closed || session->master_fd < 0) return -1;
-    pollfd descriptor{session->master_fd, POLLOUT, 0};
+    ScopedPtyFd fd(session);
+    if (fd.get() < 0) return -1;
+    pollfd descriptor{fd.get(), POLLOUT, 0};
     int poll_result = 0;
     do {
         poll_result = poll(&descriptor, 1, kWritePollMillis);
     } while (poll_result < 0 && errno == EINTR);
     if (poll_result <= 0) return poll_result;
-    const ssize_t count = ::write(session->master_fd, buffer.data(), buffer.size());
+    const ssize_t count = ::write(fd.get(), buffer.data(), buffer.size());
     if (count < 0 && (errno == EAGAIN || errno == EINTR)) return 0;
     return count < 0 ? -1 : static_cast<jint>(count);
 }

@@ -1,4 +1,8 @@
 package com.affilemanager.app.ui.screens
+
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
 import androidx.compose.material.icons.rounded.Folder
 
 import android.text.format.DateUtils
@@ -213,14 +217,15 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                         onClose = viewModel::clearFileCategorySelection,
                         onToggleSelectAll = { viewModel.toggleAllFileCategoryEntries(visiblePaths) },
                     ) {
+                        com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map { it.absolutePath })
                         if (state.category == FileCategory.INSTALLED_APPS) {
-                            IconButton(
+                            BrowserActionIconButton(BrowserAction.SHARE,
                                 onClick = viewModel::shareFileCategorySelection,
                                 modifier = Modifier.testTag("category_share"),
                             ) {
                                 Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
                             }
-                            IconButton(
+                            BrowserActionIconButton(BrowserAction.INFO,
                                 enabled = state.selectedPaths.size == 1,
                                 onClick = { infoTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } },
                                 modifier = Modifier.testTag("category_info"),
@@ -233,7 +238,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                             ) {
                                 Icon(Icons.Rounded.SaveAlt, contentDescription = uiText("Išsaugoti APK"))
                             }
-                            IconButton(
+                            BrowserActionIconButton(BrowserAction.DELETE,
                                 enabled = state.selectedPaths.size == 1,
                                 onClick = viewModel::uninstallSelectedInstalledApp,
                                 modifier = Modifier.testTag("installed_apps_uninstall"),
@@ -241,29 +246,29 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                                 Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Pašalinti programą"), tint = MaterialTheme.colorScheme.error)
                             }
                         } else {
-                            IconButton(
+                            BrowserActionIconButton(BrowserAction.SHARE,
                                 onClick = viewModel::shareFileCategorySelection,
                                 modifier = Modifier.testTag("category_share"),
                             ) {
                                 Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
                             }
-                            IconButton(onClick = { viewModel.copyFileCategorySelection(move = false) }) {
+                            BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyFileCategorySelection(move = false) }) {
                                 Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                             }
-                            IconButton(onClick = { viewModel.copyFileCategorySelection(move = false, append = true) }) {
+                            BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyFileCategorySelection(move = false, append = true) }) {
                                 Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                             }
-                            IconButton(
+                            BrowserActionIconButton(BrowserAction.INFO,
                                 enabled = state.selectedPaths.size == 1,
                                 onClick = { infoTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } },
                                 modifier = Modifier.testTag("category_info"),
                             ) {
                                 Icon(Icons.Rounded.Info, contentDescription = uiText("Informacija"))
                             }
-                            IconButton(onClick = { viewModel.copyFileCategorySelection(move = true) }) {
+                            BrowserActionIconButton(BrowserAction.MOVE, onClick = { viewModel.copyFileCategorySelection(move = true) }) {
                                 Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
                             }
-                            IconButton(
+                            BrowserActionIconButton(BrowserAction.DELETE,
                                 onClick = { confirmTrash = true },
                                 modifier = Modifier.testTag("category_delete"),
                             ) {
@@ -442,7 +447,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                     }
                     state.grid -> Box {
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                        columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape)),
                         state = gridState,
                         modifier = Modifier.fillMaxSize().testTag("category_grid"),
                         contentPadding = PaddingValues(10.dp, 6.dp, 10.dp, 24.dp),
@@ -515,6 +520,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridColumnsLandscape = state.gridColumnsLandscape,
                 gridStyle = state.gridStyle,
                 showThumbnails = state.showThumbnails,
             ),

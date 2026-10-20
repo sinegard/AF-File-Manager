@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.screens
 
+import org.junit.Assert.assertTrue
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
@@ -173,6 +177,41 @@ class AppearanceAndCleanupUiTest {
         assertNull(stopped)
         compose.onNodeWithTag("cleanup_force_stop_confirm").performClick()
         assertEquals(app.packageName, stopped)
+    }
+
+    @Test fun heavyAppsSupportSortingSelectionToggleAndOnlySelectedFilteringWithoutDeletingAnything() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val first = DeviceCleanupApp(app.packageName, "Zeta", null, 0, null, storageBytes = 100_000)
+        val second = DeviceCleanupApp("com.affilemanager.fixture.two", "Alpha", null, 0, null, storageBytes = 200_000)
+        val unknown = DeviceCleanupApp("com.affilemanager.fixture.unknown", "Unknown app size", null, 0, null)
+        var settings: String? = null
+        var uninstall: String? = null
+        compose.setContent { MaterialTheme {
+            DeviceCleanupDialog(DeviceCleanupUiState(open = true, snapshot = DeviceCleanupSnapshot(true,
+                emptyList(), emptyList(), 3, true, heavyApps = listOf(first, second, unknown))), {}, {}, {},
+                { settings = it }, { uninstall = it }, {})
+        } }
+        compose.onNodeWithTag("cleanup_heavy_tab").performClick()
+        compose.onNodeWithText("Size unavailable").assertExists()
+        compose.onNodeWithTag("cleanup_overflow").performClick()
+        compose.onNodeWithTag("cleanup_sort_size").performClick()
+        assertTrue(compose.onNodeWithText("Alpha").fetchSemanticsNode().boundsInRoot.top <
+            compose.onNodeWithText("Zeta").fetchSemanticsNode().boundsInRoot.top)
+        compose.onNodeWithTag("cleanup_overflow").performClick()
+        compose.onNodeWithTag("cleanup_select_all").performClick()
+        for (item in listOf(first, second, unknown)) compose.onNodeWithTag("cleanup_selected_${item.packageName}").assertIsOn()
+        compose.onNodeWithTag("cleanup_overflow").performClick()
+        compose.onNodeWithTag("cleanup_select_all").performClick()
+        for (item in listOf(first, second, unknown)) compose.onNodeWithTag("cleanup_selected_${item.packageName}").assertIsOff()
+        compose.onNodeWithTag("cleanup_selected_${second.packageName}").performClick()
+        compose.onNodeWithTag("cleanup_overflow").performClick()
+        compose.onNodeWithText("Show selected").performClick()
+        compose.onNodeWithText("Alpha").assertExists()
+        compose.onNodeWithText("Zeta").assertDoesNotExist()
+        compose.onNodeWithTag("cleanup_settings_${second.packageName}").performClick()
+        assertEquals(second.packageName, settings)
+        assertNull(uninstall)
+        capture("cleanup-heavy-apps-selected")
     }
 
     @Test fun failedCustomPaletteSaveStaysOpenAndShowsTheError() {

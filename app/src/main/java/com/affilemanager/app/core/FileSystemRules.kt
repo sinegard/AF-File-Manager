@@ -64,7 +64,7 @@ object FileSystemRules {
             "doc", "docx", "odt", "xls", "xlsx", "ods", "ppt", "pptx", "epub" -> EntryKind.DOCUMENT
             "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "jar" -> EntryKind.ARCHIVE
             "apk", "apks", "apkm", "xapk" -> EntryKind.APK
-            else -> EntryKind.OTHER
+            else -> if (TextFileRules.supportsName(name)) EntryKind.DOCUMENT else EntryKind.OTHER
         }
     }
 

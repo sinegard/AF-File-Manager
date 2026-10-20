@@ -7,6 +7,12 @@ import org.junit.Test
 import com.affilemanager.app.data.OptionalFeature
 
 class UiTranslatorTest {
+    @Test fun mediaRecordingDateHasAContextualLabelWithoutChangingTheEnglishDataWord() {
+        assertEquals("Date", UiTranslator.translate("Įrašo data", "en"))
+        assertEquals("Įrašo data", UiTranslator.translate("Įrašo data", "lt"))
+        assertEquals("Data", UiTranslator.translate("Data", "en"))
+    }
+
     @Test fun lanSessionStatusAliasesUseExistingLocalizedMessages() {
         assertEquals("LAN service stopped", UiTranslator.translate("Sustabdyta naudotojo", "en"))
         assertEquals("The LAN server is already running", UiTranslator.translate("LAN sesija jau veikia", "en"))

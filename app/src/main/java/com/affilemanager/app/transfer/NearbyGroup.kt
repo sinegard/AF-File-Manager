@@ -311,7 +311,7 @@ object NearbyGroupController {
                     if (bannerAttempts < 3 && (bannerAttempts == 0 || bannerError != null)) {
                         bannerAttempts++
                         try {
-                            banner = if (newRevision == "none") null else loadBanner(invite.organizer, activeCookie)
+                            banner = if (newRevision == "none") null else loadBanner(invite.organizer, activeCookie, snapshot.third)
                             bannerError = null
                         } catch (cancelled: CancellationException) { throw cancelled
                         } catch (_: Exception) { bannerError = "Grupės paveikslėlio gauti nepavyko" }
@@ -412,7 +412,7 @@ object NearbyGroupController {
         }
     }
 
-    private fun loadMembers(organizer: NearbyPairing, cookie: String): Pair<List<NearbyGroupMember>, String?> {
+    private fun loadMembers(organizer: NearbyPairing, cookie: String): Triple<List<NearbyGroupMember>, String?, Boolean> {
         val request = Request.Builder().url(url(organizer, "/nearby/group/members")).header("Cookie", cookie).get().build()
         return client.newCall(request).execute().use { response ->
             if (response.code == 403 && response.header("X-AF-Group-State") == "removed") throw GroupMemberRemovedException()
@@ -432,7 +432,8 @@ object NearbyGroupController {
                 output.toByteArray()
             }
             require(bytes.size <= NearbyGroupCodec.MAX_BYTES) { "Grupės sąrašas per didelis" }
-            NearbyGroupCodec.decode(bytes) to response.header("X-AF-Banner-Revision")?.takeIf { it == "none" || it.matches(Regex("[0-9a-f]{64}")) }
+            Triple(NearbyGroupCodec.decode(bytes), response.header("X-AF-Banner-Revision")?.takeIf { it == "none" || it.matches(Regex("[0-9a-f]{64}")) },
+                response.header("X-AF-Banner-Format") == "2")
         }
     }
 
@@ -440,23 +441,25 @@ object NearbyGroupController {
 
     private class GroupMemberRemovedException : IllegalStateException()
 
-    private fun loadBanner(pairing: NearbyPairing, activeCookie: String): ByteArray? {
-        val request = Request.Builder().url("http://${pairing.host}:${pairing.port}/nearby/group/banner").header("Cookie", activeCookie).build()
+    private fun loadBanner(pairing: NearbyPairing, activeCookie: String, highQuality: Boolean): ByteArray? {
+        val path = if (highQuality) "banner-v2" else "banner"
+        val limit = if (highQuality) NearbyGroupBanner.HIGH_MAX_BYTES else NearbyGroupBanner.MAX_BYTES
+        val request = Request.Builder().url("http://${pairing.host}:${pairing.port}/nearby/group/$path").header("Cookie", activeCookie).build()
         return client.newCall(request).execute().use { response ->
             if (response.code == 404) return@use null
             require(response.isSuccessful && response.header("Content-Type")?.substringBefore(';') == "image/jpeg") { "Grupės paveikslėlio gauti nepavyko" }
             val body = requireNotNull(response.body)
-            require(body.contentLength() <= NearbyGroupBanner.MAX_BYTES) { "Grupės paveikslėlis per didelis" }
+            require(body.contentLength() <= limit) { "Grupės paveikslėlis per didelis" }
             body.byteStream().use { stream ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(4096)
                 while (true) {
                     val count = stream.read(buffer)
                     if (count < 0) break
-                    require(output.size() + count <= NearbyGroupBanner.MAX_BYTES) { "Grupės paveikslėlis per didelis" }
+                    require(output.size() + count <= limit) { "Grupės paveikslėlis per didelis" }
                     output.write(buffer, 0, count)
                 }
-                output.toByteArray().also(NearbyGroupBanner::validate)
+                output.toByteArray().also { NearbyGroupBanner.validate(it, highQuality) }
             }
         }
     }

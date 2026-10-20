@@ -17,7 +17,7 @@
     <string name="nearby_transfer_channel_name">Paglipat ng telepono sa malapit</string>
     <string name="nearby_transfer_notification_title">AF File Manager paglilipat ng telepono</string>
     <string name="nearby_transfer_starting_text">Naghahanda ng paglipat...</string>
-    <string name="terminal_channel_name">Active terminal</string>
+    <string name="terminal_channel_name">Aktibong terminal</string>
     <string name="terminal_channel_description">Panatilihin ang isang bukas na telepono o terminal server na tumatakbo sa background</string>
     <string name="terminal_notification_title">terminal ng AF File Manager</string>
     <string name="terminal_phone_active">Ang terminal ng telepono ay aktibo</string>

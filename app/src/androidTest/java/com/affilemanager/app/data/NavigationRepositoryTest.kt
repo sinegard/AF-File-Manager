@@ -49,6 +49,7 @@ class NavigationRepositoryTest {
             iconScalePercent = 130,
             spacingScalePercent = 70,
             gridColumns = 5,
+            gridColumnsLandscape = 7,
             showThumbnails = true,
         )
         try {

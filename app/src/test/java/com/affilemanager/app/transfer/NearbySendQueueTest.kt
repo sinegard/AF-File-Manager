@@ -8,6 +8,72 @@ class NearbySendQueueTest {
     private val peer = NearbyPairing("192.168.1.10", 8080, "test-password")
     private fun source(name: String) = PreparedNearbyTransfer(listOf("/test/$name"), fileSizes = listOf(10))
 
+    @Test fun retryClaimsOnlyOneFailedRowAndCannotReplayCompletedOrActiveFiles() {
+        val queue = NearbySendQueue { }
+        val batch = queue.enqueue(peer, PreparedNearbyTransfer(listOf("/test/one", "/test/two", "/test/three"), fileSizes = listOf(10, 10, 10)), null)
+        queue.ready(batch.id, batch.state.files, true)
+        val files = batch.state.files.mapIndexed { index, file -> file.copy(status = when (index) {
+            0 -> TransferFileStatus.COMPLETED; 1 -> TransferFileStatus.FAILED; else -> TransferFileStatus.TRANSFERRING
+        }, failure = if (index == 1) TransferFailure.PERMISSION else null) }
+        queue.update(batch.id, batch.state.copy(files = files, status = NearbyTransferStatus.RUNNING))
+        assertThrows(IllegalArgumentException::class.java) { queue.claimRetry(batch.id, 1) }
+        assertThrows(IllegalArgumentException::class.java) { queue.claimRetry(batch.id, 3) }
+        queue.claimRetry(batch.id, 2)
+        assertTrue(queue.get(batch.id)!!.state.files[1].retrySubmitted)
+        assertThrows(IllegalArgumentException::class.java) { queue.claimRetry(batch.id, 2) }
+        queue.update(batch.id, batch.state.copy(files = files, status = NearbyTransferStatus.RUNNING))
+        assertTrue(queue.get(batch.id)!!.state.files[1].retrySubmitted)
+        queue.finishRetryClaim(batch.id, 2, "receiver unavailable")
+        queue.claimRetry(batch.id, 2)
+        queue.finishRetryClaim(batch.id, 2, received = true)
+        assertEquals(TransferFileStatus.COMPLETED, queue.get(batch.id)!!.state.files[1].status)
+        assertNull(queue.get(batch.id)!!.state.files[1].failure)
+        assertEquals(10L, queue.get(batch.id)!!.state.files[1].transferredBytes)
+    }
+
+    @Test fun stagedRetryRequiresNewSourceSelectionAndStopPreservesAnExistingFailure() {
+        val queue = NearbySendQueue { }
+        val batch = queue.enqueue(peer, PreparedNearbyTransfer(listOf("/private/old-stage/one"),
+            fileSizes = listOf(10), cleanupRootPath = "/private/old-stage"), null)
+        val failed = batch.state.files.single().copy(status = TransferFileStatus.FAILED, failure = TransferFailure.PERMISSION)
+        queue.update(batch.id, batch.state.copy(files = listOf(failed)))
+        assertThrows(IllegalArgumentException::class.java) { queue.claimRetry(batch.id, 1) }
+        queue.cancel()
+        val result = queue.get(batch.id)!!.state.files.single()
+        assertEquals(TransferFileStatus.FAILED, result.status)
+        assertEquals(TransferFailure.PERMISSION, result.failure)
+    }
+
+    @Test fun mixedBatchRetryKeepsOriginalPathsAndUrisButRejectsOnlyTheExpiredStage() {
+        val queue = NearbySendQueue { }
+        val sources = PreparedNearbyTransfer(listOf("/original/one.txt", "/private/stage/two.txt", ""),
+            relativePaths = listOf("one.txt", "two.txt", "three.txt"), fileSizes = listOf(10, 10, 10),
+            sourceUris = listOf(null, null, "content://fixture/three"), cleanupRootPath = "/private/stage")
+        val batch = queue.enqueue(peer, sources, null)
+        queue.update(batch.id, batch.state.copy(status = NearbyTransferStatus.ERROR,
+            files = batch.state.files.map { it.copy(status = TransferFileStatus.FAILED) }))
+        queue.claimRetry(batch.id, 1)
+        queue.claimRetry(batch.id, 3)
+        assertThrows(IllegalArgumentException::class.java) { queue.claimRetry(batch.id, 2) }
+        assertTrue(queue.get(batch.id)!!.state.files[0].retrySubmitted)
+        assertTrue(queue.get(batch.id)!!.state.files[2].retrySubmitted)
+        assertFalse(queue.get(batch.id)!!.state.files[1].retrySubmitted)
+    }
+
+    @Test fun anAlreadyReceivedReceiptRepairsTheBatchStatusWithoutAnotherUpload() {
+        val queue = NearbySendQueue { }
+        val batch = queue.enqueue(peer, source("one.txt"), null)
+        queue.update(batch.id, batch.state.copy(status = NearbyTransferStatus.ERROR,
+            files = batch.state.files.map { it.copy(status = TransferFileStatus.FAILED) }))
+        queue.claimRetry(batch.id, 1)
+        queue.finishRetryClaim(batch.id, 1, received = true)
+        val reconciled = queue.get(batch.id)!!.state
+        assertEquals(NearbyTransferStatus.COMPLETED, reconciled.status)
+        assertEquals(1, reconciled.completedFiles)
+        assertEquals("Baigta", reconciled.message)
+        assertFalse(queue.hasPending())
+    }
+
     @Test fun groupSharesStageUntilLastRecipientFinishesAndRetainsIndependentCancellation() {
         val queue = NearbySendQueue { }
         val staged = source("one.txt").copy(cleanupRootPath = "/private/stage")

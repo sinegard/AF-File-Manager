@@ -15,7 +15,7 @@
     <string name="lan_transfer_starting_text">Startserver...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN overdracht loopt</string>
     <string name="nearby_transfer_channel_name">Telefoonoverdracht in de buurt</string>
-    <string name="nearby_transfer_notification_title">AF File Manager phone transfer</string>
+    <string name="nearby_transfer_notification_title">AF File Manager telefoonoverdracht</string>
     <string name="nearby_transfer_starting_text">- Verplaatsing voorbereiden.</string>
     <string name="terminal_channel_name">Actief terminal</string>
     <string name="terminal_channel_description">Houdt een open telefoon of server terminal in de achtergrond</string>

@@ -79,7 +79,7 @@ fun FileInfoDialog(entry: FileEntry, onDismiss: () -> Unit) {
                 ).ifEmpty { listOf(uiText("Neprieinama")) }.joinToString(" · "),
             )
             LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-            Text(entry.absolutePath, style = MaterialTheme.typography.bodySmall)
+            CanonicalPathText(entry.absolutePath, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -175,7 +175,7 @@ fun FileInfoDialog(
                 }
                 if (single != null) {
                     LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                    Text(single.absolutePath, style = MaterialTheme.typography.bodySmall)
+                    CanonicalPathText(single.absolutePath, style = MaterialTheme.typography.bodySmall)
                 }
         }
     }

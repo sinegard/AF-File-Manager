@@ -11,7 +11,7 @@
     <string name="open_with_chooser_short">Agor â</string>
     <string name="lan_transfer_channel_name">Trosi ffeil rhwydwaith lleol</string>
     <string name="lan_transfer_channel_description">Yn dangos dim ond pan fyddwch yn rhedeg trosglwyddo ffeil LAN</string>
-    <string name="lan_transfer_starting_title">AF File Manager LAN transfer</string>
+    <string name="lan_transfer_starting_title">AF File Manager LAN trosglwyddo</string>
     <string name="lan_transfer_starting_text">Mae gweinydd cychwyn...</string>
     <string name="lan_transfer_running_title">Mae\'r trosglwyddo AF File Manager LAN yn rhedeg</string>
     <string name="nearby_transfer_channel_name">Trosi ffôn yn agos</string>

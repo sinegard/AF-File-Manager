@@ -11,6 +11,7 @@ The Android package is `com.affilemanager.app`. Every public APK must be signed 
 5. The `Publish signed APK` workflow validates that the tag matches Gradle, compiles the pinned `cloudflared` source for all four supported Android ABIs, runs JVM tests and lint, builds with the repository signing secrets, and prepares a draft release containing the ABI-specific APKs, a universal compatibility APK, and their SHA-256 files.
 6. Download the exact draft APK for the test device ABI, verify its package/version, checksum, packaged ABI and signing certificate, and exercise affected optimized runtime paths on the test device. In particular, JNI/Binder and network checks must use the downloadable artifact, not just a local rebuild. Keep failures visible and leave the release as a draft until they are resolved.
 7. Add concise release notes from `CHANGELOG.md`, then publish the draft. Only a published stable release is offered by the in-app updater.
+8. After verifying the published assets and update metadata, perform the local cleanup below. A failed or draft release is not a successful release.
 
 Required repository secrets:
 
@@ -51,3 +52,22 @@ The local release path also runs `scripts/build-cloudflared-android.ps1`. Set `A
 - The updater must select the first published asset matching `Build.SUPPORTED_ABIS`, falling back only to the universal APK.
 - A release is never replaced with a differently signed APK.
 - Android still requires user confirmation to install an update outside Google Play.
+
+## Local cleanup after a successful release
+
+Stop the release's owned test guests after collecting their evidence. Remove
+their disposable data/cache disks, regenerable compiler intermediates, obsolete
+helper environments and redundant candidate copies. Also dispose of a completed
+test stage's temporary disks rather than retaining one disk per retry.
+
+Keep the current and previous release bundles locally: APKs, checksums, source
+and signing identity, mappings and matching validation records. Before removing
+an older or duplicate binary, verify a retained canonical copy or the exact
+published asset by checksum and record that recovery location. Preserve unique
+unresolved failure evidence and inputs; never change historical results.
+
+Inventory exact contained paths and check for active processes and reparse
+points before deletion. Do not run a blanket cleanup of `app/build`, which may
+also contain required toolchains and evidence. Source, uncommitted work, signing
+keys, required SDK/JDK/AVD masters, user files and phone data are excluded. Record
+the removed paths and actual free-space gain in ignored local validation output.

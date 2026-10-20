@@ -1,4 +1,6 @@
 package com.affilemanager.app.ui.screens
+
+import com.affilemanager.app.ui.components.CanonicalPathText
 import com.affilemanager.app.ui.components.AfActionRow
 
 import android.content.ClipData
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -98,12 +101,19 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     val activePath = if (activePanel == PanelId.LEFT) left.path else right.path
     val visibility = LocalFeatureVisibility.current
+    val widgetTarget by viewModel.sharingWidgetTarget.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
     val visibleProtocols = LanTransferProtocol.entries.filter { protocol -> visibility.isVisible(when (protocol) {
         LanTransferProtocol.WEB -> OptionalFeature.WEB_SHARE
         LanTransferProtocol.FTP -> OptionalFeature.FTP_SHARE
         LanTransferProtocol.WEBDAV -> OptionalFeature.WEBDAV_SHARE
-    }) }
+    }) || widgetTarget?.phone == false && protocol == LanTransferProtocol.WEB }
     val serverActive = transfer.status in setOf(LanTransferStatus.RUNNING, LanTransferStatus.STARTING)
+    val phoneCardVisible = visibility.isVisible(OptionalFeature.NEARBY_SHARE) || nearbyPeer != null || transfer.groupMode || incomingShare != null ||
+        nearbyTransfer.status in setOf(com.affilemanager.app.transfer.NearbyTransferStatus.STARTING, com.affilemanager.app.transfer.NearbyTransferStatus.RUNNING) || widgetTarget?.phone == true
+    LaunchedEffect(widgetTarget) {
+        widgetTarget?.let { listState.scrollToItem(if (it.phone || !phoneCardVisible) 0 else 1) }
+    }
     val protocol = if (serverActive) transfer.protocol else preferences.protocol.takeIf { it in visibleProtocols }
         ?: visibleProtocols.firstOrNull() ?: preferences.protocol
     val sharedPath = preferences.pathFor(protocol)
@@ -170,12 +180,12 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
             )
         }
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxWidth().weight(1f).testTag("sharing_list"),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-        if (visibility.isVisible(OptionalFeature.NEARBY_SHARE) || nearbyPeer != null || transfer.groupMode || incomingShare != null ||
-            nearbyTransfer.status in setOf(com.affilemanager.app.transfer.NearbyTransferStatus.STARTING, com.affilemanager.app.transfer.NearbyTransferStatus.RUNNING)) {
+        if (phoneCardVisible) {
         item {
             NearbyPhoneTransferCard(
                 viewModel = viewModel,
@@ -230,7 +240,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         Icon(Icons.Rounded.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Column(modifier = Modifier.weight(1f)) {
                             LText("Bendrinamas aplankas", fontWeight = FontWeight.SemiBold)
-                            Text(sharedPath, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                            CanonicalPathText(sharedPath, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     AfActionRow {
@@ -485,6 +495,7 @@ internal fun SharedFolderPickerDialog(
     onSelect: (String) -> Unit,
     title: String = "Pasirinkti bendrinamą aplanką",
     onUseDefault: (() -> Unit)? = null,
+    confirmLabel: String = "Bendrinti šį aplanką",
 ) {
     var navigation by remember(initialPath) { mutableStateOf(LocalUploadNavigationState(initialPath)) }
     var directories by remember(initialPath) { mutableStateOf<List<FileEntry>>(emptyList()) }
@@ -535,7 +546,7 @@ internal fun SharedFolderPickerDialog(
                 enabled = !loading && error == null,
                 modifier = Modifier.testTag("share_folder_select"),
             ) {
-                LText("Bendrinti šį aplanką")
+                LText(confirmLabel)
             }
         },
     ) {
@@ -546,7 +557,7 @@ internal fun SharedFolderPickerDialog(
                     enabled = parent != null && !loading, modifier = Modifier.testTag("share_folder_up")) {
                     Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
                 }
-                Text(currentPath, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                CanonicalPathText(currentPath, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (searchVisible || featureVisible(OptionalFeature.TOOLBAR_SEARCH)) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) searchQuery = "" },
                     modifier = Modifier.testTag("share_folder_search_toggle")) {
                     Icon(Icons.Rounded.Search, contentDescription = uiText(if (searchVisible) "Slėpti paiešką" else "Ieškoti"))
@@ -634,7 +645,7 @@ private fun RunningShareCard(context: Context, state: com.affilemanager.app.tran
             if (state.expiresAtMillis == LanSessionDuration.MANUAL_EXPIRY) {
                 LText("Veiks iki rankinio sustabdymo", style = MaterialTheme.typography.bodySmall)
             }
-            Text(state.rootPath.orEmpty(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            CanonicalPathText(state.rootPath.orEmpty(), maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             AfActionRow {
                 OutlinedButton(onClick = {
                     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("AF File Manager", details))

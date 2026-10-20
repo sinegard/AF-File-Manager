@@ -95,6 +95,7 @@ class BackgroundPlaybackService : Service() {
             if (current.value?.phase != BackgroundPlaybackPhase.PLAYING) return
             runCatching { player?.let { ready -> current.value = current.value?.copy(
                 positionMillis = ready.currentPosition.toLong(), durationMillis = ready.duration.toLong()) } }
+            com.affilemanager.app.widgets.AfWidgetProvider.updatePlayback(this@BackgroundPlaybackService, current.value)
             handler.postDelayed(this, 1_000L)
         }
     }
@@ -227,6 +228,7 @@ class BackgroundPlaybackService : Service() {
         // see an ERROR/idle player paired with a stale, non-dismissible playback notification.
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         current.value = if (failed) current.value?.copy(phase = BackgroundPlaybackPhase.ERROR) else null
+        com.affilemanager.app.widgets.AfWidgetProvider.updatePlayback(this, current.value)
         stopSelf()
     }
 
@@ -267,6 +269,7 @@ class BackgroundPlaybackService : Service() {
 
     private fun updateControls() {
         val now = current.value ?: return
+        com.affilemanager.app.widgets.AfWidgetProvider.updatePlayback(this, now)
         val playing = now.phase == BackgroundPlaybackPhase.PLAYING
         val preparing = now.phase == BackgroundPlaybackPhase.PREPARING
         session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, now.title).build())

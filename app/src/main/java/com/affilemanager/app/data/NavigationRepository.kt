@@ -493,6 +493,7 @@ class NavigationRepository(context: Context) {
                 iconScalePercent = item.optInt("iconScale", 100),
                 spacingScalePercent = item.optInt("spacingScale", 100),
                 gridColumns = item.optInt("gridColumns", 3),
+                gridColumnsLandscape = if (item.has("gridColumnsLandscape") && !item.isNull("gridColumnsLandscape")) item.getInt("gridColumnsLandscape") else null,
                 gridStyle = runCatching {
                     DirectoryGridStyle.valueOf(item.optString("gridStyle", DirectoryGridStyle.CARDS.name))
                 }.getOrDefault(DirectoryGridStyle.CARDS),
@@ -513,6 +514,7 @@ class NavigationRepository(context: Context) {
             .put("iconScale", settings.iconScalePercent)
             .put("spacingScale", settings.spacingScalePercent)
             .put("gridColumns", settings.gridColumns)
+            .put("gridColumnsLandscape", settings.gridColumnsLandscape ?: JSONObject.NULL)
             .put("gridStyle", settings.gridStyle.name)
             .put("thumbnails", settings.showThumbnails)
 

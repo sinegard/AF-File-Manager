@@ -19,7 +19,7 @@
     <string name="nearby_transfer_starting_text">Pripremaju se za prebacivanje...</string>
     <string name="terminal_channel_name">Aktivni terminal</string>
     <string name="terminal_channel_description">Drži otvoreni telefon ili server terminal u pozadini</string>
-    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_notification_title">Terminal AF File Manager</string>
     <string name="terminal_phone_active">Telefon terminalu aktiviran.</string>
     <string name="terminal_server_active">Server terminal je aktiviran</string>
     <string name="generated_extracted_name">izvodljeni</string>

@@ -50,6 +50,30 @@ class MediaExportAndroidTest {
             assertEquals(original, digest(source))
         } finally { root.deleteRecursively() }
     }
+    @Test fun sampleRateAndChannelControlsChangeTheActualExportedTracks() = runBlocking<Unit> {
+        val root = File(context.cacheDir, "media-resample-${UUID.randomUUID()}").apply { check(mkdir()) }
+        val source = root.resolve("original.wav").also { MediaTestFixtures.wav(it) }
+        val original = digest(source)
+        try {
+            val uri = Uri.fromFile(source)
+            val info = MediaExportEngine.info(context, uri, source.length())
+            assertEquals(48000, info.audioSampleRate)
+            for ((format, rate, channels) in listOf(Triple(MediaExportFormat.WAV, 22050, 1),
+                Triple(MediaExportFormat.WAV, 44100, 2), Triple(MediaExportFormat.M4A, 32000, 1))) {
+                val result = MediaExportEngine(context).export(source, uri, info,
+                    MediaEditOptions(format, 0, 2000, sampleRate = rate, channels = channels), "resampled")
+                try {
+                    val actual = MediaExportEngine.info(context, Uri.fromFile(result.file), result.file.length())
+                    assertEquals(rate, actual.audioSampleRate)
+                    assertEquals(channels, actual.audioChannels)
+                    assertTrue(abs(actual.durationMs - 2000) <= 150)
+                    assertTrue(result.file.length() > 1000)
+                } finally { result.file.delete() }
+            }
+            assertEquals(original, digest(source))
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun allMetadataFieldsAndRealJpegCoverSurviveNativeAudioExports() = runBlocking<Unit> {
         val root = File(context.cacheDir, "media-tags-${UUID.randomUUID()}").apply { check(mkdir()) }
         val source = root.resolve("original.wav").also { MediaTestFixtures.wav(it) }

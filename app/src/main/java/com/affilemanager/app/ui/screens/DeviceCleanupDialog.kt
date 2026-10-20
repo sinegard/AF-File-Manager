@@ -18,6 +18,13 @@ import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.material.icons.rounded.CheckBox
+import androidx.compose.material.icons.rounded.Close
+import com.affilemanager.app.ui.theme.AfDropdownMenu as DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Checkbox
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
 import com.affilemanager.app.ui.theme.AfFilterChip as FilterChip
@@ -56,7 +63,8 @@ import com.affilemanager.app.ui.localization.uiText
 import java.text.DateFormat
 import java.util.Date
 
-private enum class DeviceCleanupPage { UNUSED_APPS, APP_CACHE, RUNNING_APPS }
+private enum class DeviceCleanupPage { UNUSED_APPS, APP_CACHE, RUNNING_APPS, HEAVY_APPS }
+private enum class CleanupSort { DEFAULT, NAME, SIZE }
 
 @Composable
 internal fun DeviceCleanupDialog(
@@ -72,6 +80,12 @@ internal fun DeviceCleanupDialog(
     var page by remember { mutableStateOf(DeviceCleanupPage.UNUSED_APPS) }
     var clearCacheApp by remember { mutableStateOf<DeviceCleanupApp?>(null) }
     var forceStopApp by remember { mutableStateOf<DeviceCleanupApp?>(null) }
+    var menu by remember { mutableStateOf(false) }
+    var sort by remember { mutableStateOf(CleanupSort.DEFAULT) }
+    var descending by remember { mutableStateOf(true) }
+    var selecting by remember(page) { mutableStateOf(false) }
+    var selected by remember(page) { mutableStateOf(emptySet<String>()) }
+    var selectedOnly by remember(page) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val refresh by rememberUpdatedState(onRefresh)
     DisposableEffect(lifecycleOwner) {
@@ -80,10 +94,34 @@ internal fun DeviceCleanupDialog(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val snapshot = state.snapshot
-    val apps = when (page) {
+    val pageApps = when (page) {
         DeviceCleanupPage.UNUSED_APPS -> snapshot?.unusedApps.orEmpty()
         DeviceCleanupPage.APP_CACHE -> snapshot?.cachedApps.orEmpty()
         DeviceCleanupPage.RUNNING_APPS -> snapshot?.runningApps.orEmpty()
+        DeviceCleanupPage.HEAVY_APPS -> snapshot?.heavyApps.orEmpty()
+    }
+    val apps = remember(pageApps, sort, descending, selectedOnly, selected, page) {
+        val filtered = pageApps.filter { !selectedOnly || it.packageName in selected }
+        when (sort) {
+            CleanupSort.DEFAULT -> filtered
+            CleanupSort.NAME -> filtered.sortedWith(compareBy<DeviceCleanupApp> { it.label.lowercase(java.util.Locale.ROOT) }
+                .thenBy { it.packageName }).let { if (descending) it.reversed() else it }
+            CleanupSort.SIZE -> filtered.sortedWith(compareBy<DeviceCleanupApp> {
+                val bytes = when (page) {
+                    DeviceCleanupPage.RUNNING_APPS -> it.ramBytes
+                    DeviceCleanupPage.APP_CACHE -> it.cacheBytes
+                    else -> it.storageBytes
+                }
+                bytes == null
+            }.thenComparator { a, b ->
+                fun size(app: DeviceCleanupApp) = when (page) {
+                    DeviceCleanupPage.RUNNING_APPS -> app.ramBytes
+                    DeviceCleanupPage.APP_CACHE -> app.cacheBytes
+                    else -> app.storageBytes
+                } ?: 0L
+                if (descending) size(b).compareTo(size(a)) else size(a).compareTo(size(b))
+            }.thenBy { it.packageName })
+        }
     }
     AfModalDialog(
         title = "Įrenginio valymas",
@@ -101,11 +139,47 @@ internal fun DeviceCleanupDialog(
         },
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (selecting) {
+                    Text("${selected.size} / ${pageApps.size}", Modifier.weight(1f))
+                    IconButton(onClick = { selecting = false; selected = emptySet(); selectedOnly = false }) {
+                        Icon(Icons.Rounded.Close, uiText("Atšaukti"))
+                    }
+                } else Box(Modifier.weight(1f))
+                Box {
+                    IconButton(onClick = { menu = true }, modifier = Modifier.testTag("cleanup_overflow")) {
+                        Icon(Icons.Rounded.MoreVert, uiText("Veiksmai"))
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { LText("Pasirinkti") }, leadingIcon = { Icon(Icons.Rounded.CheckBox, null) },
+                            onClick = { selecting = true; menu = false }, modifier = Modifier.testTag("cleanup_select"))
+                        DropdownMenuItem(text = { LText("Pasirinkti visus") }, enabled = pageApps.isNotEmpty(), onClick = {
+                            selecting = true
+                            selected = if (pageApps.all { it.packageName in selected }) emptySet() else pageApps.map { it.packageName }.toSet()
+                            menu = false
+                        }, modifier = Modifier.testTag("cleanup_select_all"))
+                        if (selecting) DropdownMenuItem(text = { LText(if (selectedOnly) "Rodyti visus" else "Rodyti pasirinktus") },
+                            enabled = selected.isNotEmpty() || selectedOnly, onClick = { selectedOnly = !selectedOnly; menu = false })
+                        DropdownMenuItem(text = { LText("Pavadinimas") }, leadingIcon = { Icon(Icons.Rounded.Sort, null) },
+                            onClick = { sort = CleanupSort.NAME; descending = false; menu = false }, modifier = Modifier.testTag("cleanup_sort_name"))
+                        DropdownMenuItem(text = { LText("Dydis") }, leadingIcon = { Icon(Icons.Rounded.Sort, null) },
+                            onClick = { sort = CleanupSort.SIZE; descending = true; menu = false }, modifier = Modifier.testTag("cleanup_sort_size"))
+                        DropdownMenuItem(text = { LText(if (descending) "Didėjančiai" else "Mažėjančiai") },
+                            onClick = { descending = !descending; if (sort == CleanupSort.DEFAULT) sort = CleanupSort.SIZE; menu = false })
+                    }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                FilterChip(
+                    selected = page == DeviceCleanupPage.HEAVY_APPS,
+                    onClick = { page = DeviceCleanupPage.HEAVY_APPS },
+                    label = { LText("Didelės programos") },
+                    modifier = Modifier.testTag("cleanup_heavy_tab"),
+                )
                 FilterChip(
                     selected = page == DeviceCleanupPage.UNUSED_APPS,
                     onClick = { page = DeviceCleanupPage.UNUSED_APPS },
@@ -190,6 +264,8 @@ internal fun DeviceCleanupDialog(
                                 if (snapshot.usageHistoryAvailable) "Nė viena programa neatitinka 90 dienų taisyklės" else "Naudojimo statistika nepasiekiama"
                             } else if (page == DeviceCleanupPage.APP_CACHE) {
                                 "Nėra pasiekiamų talpyklos dydžių"
+                            } else if (page == DeviceCleanupPage.HEAVY_APPS) {
+                                "Nėra pasiekiamų programų"
                             } else if (snapshot.privilegedAppAccessError != null) {
                                 "Veikiančių programų nuskaityti nepavyko"
                             } else {
@@ -203,6 +279,9 @@ internal fun DeviceCleanupDialog(
                                     app = app,
                                     showCache = page == DeviceCleanupPage.APP_CACHE,
                                     showRam = page == DeviceCleanupPage.RUNNING_APPS,
+                                    showStorage = page == DeviceCleanupPage.HEAVY_APPS,
+                                    selected = if (selecting) app.packageName in selected else null,
+                                    onSelect = { selected = if (app.packageName in selected) selected - app.packageName else selected + app.packageName },
                                     onOpenSettings = { onOpenAppSettings(app.packageName) },
                                     onUninstall = { onUninstall(app.packageName) },
                                     onClearCache = { clearCacheApp = app },
@@ -267,6 +346,9 @@ private fun DeviceCleanupAppRow(
     app: DeviceCleanupApp,
     showCache: Boolean,
     showRam: Boolean,
+    showStorage: Boolean,
+    selected: Boolean?,
+    onSelect: () -> Unit,
     onOpenSettings: () -> Unit,
     onUninstall: () -> Unit,
     onClearCache: () -> Unit,
@@ -275,6 +357,8 @@ private fun DeviceCleanupAppRow(
     val dateFormat = rememberLocalizedDateTimeFormat(DateFormat.MEDIUM, DateFormat.SHORT)
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selected != null) Checkbox(checked = selected, onCheckedChange = { onSelect() },
+                modifier = Modifier.testTag("cleanup_selected_${app.packageName}"))
             ProviderAppVisual(
                 packageName = app.packageName,
                 fallbackIcon = Icons.Rounded.Apps,
@@ -287,6 +371,8 @@ private fun DeviceCleanupAppRow(
                 LText(
                     if (showRam) {
                         app.ramBytes?.let(FileSystemRules::humanBytes) ?: "RAM dydis nepasiekiamas"
+                    } else if (showStorage) {
+                        app.storageBytes?.let(FileSystemRules::humanBytes) ?: "Dydis nepasiekiamas"
                     } else if (showCache) {
                         app.cacheBytes?.let(FileSystemRules::humanBytes) ?: "Talpyklos dydis nepasiekiamas"
                     } else {

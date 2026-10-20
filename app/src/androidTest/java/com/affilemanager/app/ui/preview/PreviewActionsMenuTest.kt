@@ -11,6 +11,47 @@ import org.junit.Test
 class PreviewActionsMenuTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun previewUsesTheSameShareInfoAndDeleteVisibilityAsBrowsing() {
+        val hidden = androidx.compose.runtime.mutableStateOf(com.affilemanager.app.data.FeatureVisibility())
+        var shared = 0
+        compose.setContent { MaterialTheme {
+            androidx.compose.runtime.CompositionLocalProvider(com.affilemanager.app.ui.components.LocalFeatureVisibility provides hidden.value) {
+                PreviewActionsMenu("all-sources", true, false, {}, null, null, { shared++ }, {}, onDetails = {}, onDelete = {})
+            }
+        } }
+        compose.onNodeWithTag("preview_actions_menu").performClick()
+        compose.runOnIdle { hidden.value = com.affilemanager.app.data.FeatureVisibility(setOf(
+            com.affilemanager.app.data.OptionalFeature.SHARING, com.affilemanager.app.data.OptionalFeature.FILE_INFO,
+            com.affilemanager.app.data.OptionalFeature.FILE_DELETE)) }
+        compose.onNodeWithTag("preview_share_action").assertDoesNotExist()
+        compose.onNodeWithTag("preview_details_action").assertDoesNotExist()
+        compose.onNodeWithTag("preview_delete_action").assertDoesNotExist()
+        compose.onNodeWithTag("open-with-action").assertIsDisplayed()
+        compose.runOnIdle { hidden.value = com.affilemanager.app.data.FeatureVisibility() }
+        compose.onNodeWithTag("preview_share_action").performClick()
+        compose.runOnIdle { assertEquals(1, shared) }
+    }
+
+    @Test fun mediaActionsUseTheSameOverflowAndKeepTheirCallbacksAndBusyState() {
+        val busy = mutableStateOf(false)
+        val called = mutableListOf<String>()
+        compose.setContent { MaterialTheme {
+            PreviewActionsMenu("remote-or-local-video", !busy.value, false, {}, null, null, {}, {},
+                onTrim = { called += "trim" }, onExtractAudio = { called += "audio" }, onCompress = { called += "compress" })
+        } }
+        val tags = listOf("open_media_trim", "open_media_audio", "open_media_compress")
+        tags.forEach { tag ->
+            compose.onNodeWithTag(tag).assertDoesNotExist()
+            compose.onNodeWithTag("preview_actions_menu").performClick()
+            compose.onNodeWithTag(tag).assertIsDisplayed().performClick()
+            compose.onNodeWithTag(tag).assertDoesNotExist()
+        }
+        compose.runOnIdle { assertEquals(listOf("trim", "audio", "compress"), called); busy.value = true }
+        compose.onNodeWithTag("preview_actions_menu").performClick()
+        tags.forEach { compose.onNodeWithTag(it).assertIsNotEnabled() }
+        compose.runOnIdle { assertEquals(3, called.size) }
+    }
+
     @Test fun actionsOnlyRunAfterChoosingAnItemAndMenuClosesEachTime() {
         val called = mutableListOf<String>()
         compose.setContent { MaterialTheme {

@@ -945,22 +945,28 @@ internal object FileVisualLoader {
 
     private fun embeddedAudioArt(file: File, widthPx: Int, heightPx: Int): Bitmap? {
         val retriever = MediaMetadataRetriever()
-        return try {
+        val platform = try {
             retriever.setDataSource(file.absolutePath)
             decodeBytes(retriever.embeddedPicture, widthPx, heightPx)
+        } catch (_: RuntimeException) {
+            null
         } finally {
             retriever.release()
         }
+        return platform ?: decodeBytes(com.affilemanager.app.media.EmbeddedAudioArtwork.read(file), widthPx, heightPx)
     }
 
     private fun embeddedAudioArt(context: Context, uri: Uri, widthPx: Int, heightPx: Int): Bitmap? {
         val retriever = MediaMetadataRetriever()
-        return try {
+        val platform = try {
             retriever.setDataSource(context, uri)
             decodeBytes(retriever.embeddedPicture, widthPx, heightPx)
+        } catch (_: RuntimeException) {
+            null
         } finally {
             retriever.release()
         }
+        return platform ?: decodeBytes(com.affilemanager.app.media.EmbeddedAudioArtwork.read(context, uri), widthPx, heightPx)
     }
 
     private fun decodeBytes(bytes: ByteArray?, widthPx: Int, heightPx: Int): Bitmap? {

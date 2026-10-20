@@ -61,6 +61,9 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.FilterAlt
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
@@ -410,6 +413,13 @@ internal fun NearbyPhoneTransferCard(
             }
         },
         cancelLabel = if (nearbyState.isActive()) "Sustabdyti siuntimą" else "Sustabdyti gavimą",
+        onRetryFile = { file, index ->
+            if (index < nearbyState.files.size) runCatching {
+                NearbyTransferController.retryFile(context, file.batchId, nearbyFileIndexInBatch(nearbyState.files, index))
+            }.onFailure { failure ->
+                android.widget.Toast.makeText(context, UiTranslator.translate(failure.message ?: "Could not retry the file", interfaceLanguage), android.widget.Toast.LENGTH_LONG).show()
+            }
+        },
         message = nearbyState.message, outgoingCount = nearbyState.files.size,
         onSendMore = if (peer != null) ({ showDetails = false; showSender = true }) else null,
         onDisconnect = if (peer != null) ::requestDisconnect else null,
@@ -566,18 +576,20 @@ private fun NearbyGroupDialog(
     var wifiReceiveName by remember { mutableStateOf<String?>(null) }
     val wifiState by WifiDirectController.state.collectAsStateWithLifecycle()
     val groupAvatar by produceState<android.graphics.Bitmap?>(null, groupAvatarUri) {
-        value = groupAvatarUri.takeIf(String::isNotBlank)?.let { withContext(Dispatchers.IO) { decodeReceiverAvatar(context, it) } }
+        value = groupAvatarUri.takeIf(String::isNotBlank)?.let { withContext(Dispatchers.IO) { decodeReceiverAvatar(context, it, 1024) } }
     }
     val groupState by NearbyGroupController.state.collectAsStateWithLifecycle()
     val sharingPreferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     LaunchedEffect(groupAvatar, groupState.status) {
         if (groupState.status == NearbyGroupStatus.HOSTING) {
-            val bytes = withContext(Dispatchers.Default) { com.affilemanager.app.transfer.NearbyGroupBanner.encode(groupAvatar) }
-            LanTransferController.updateGroupBanner(context, bytes)
+            val images = withContext(Dispatchers.Default) {
+                com.affilemanager.app.transfer.NearbyGroupBanner.encode(groupAvatar) to com.affilemanager.app.transfer.NearbyGroupBanner.encode(groupAvatar, true)
+            }
+            LanTransferController.updateGroupBanner(context, images.first, images.second)
         }
     }
     val remoteBannerResult by produceState<Result<android.graphics.Bitmap>?>(null, groupState.banner) {
-        value = groupState.banner?.let { bytes -> withContext(Dispatchers.IO) { runCatching { com.affilemanager.app.transfer.NearbyGroupBanner.decode(bytes) }
+        value = groupState.banner?.let { bytes -> withContext(Dispatchers.IO) { runCatching { com.affilemanager.app.transfer.NearbyGroupBanner.decode(bytes, true) }
         } }
     }
     val membersAtOpen = remember { groupState.members.size }
@@ -741,9 +753,11 @@ private fun NearbyGroupDialog(
                 style = MaterialTheme.typography.bodySmall,
             )
             if (!active) {
+                NearbyReceiveSettings(viewModel, lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(modifier = Modifier.size(72.dp).clip(CircleShape).combinedClickable(
                         onClick = { chooseAvatarCrop = false; avatarPicker.launch(arrayOf("image/*")) },
+                        onLongClickLabel = uiText("Apkirpti paveikslėlį"),
                         onLongClick = { chooseAvatarCrop = true; avatarPicker.launch(arrayOf("image/*")) }).testTag("nearby_group_avatar"), contentAlignment = Alignment.Center) {
                         if (groupAvatar != null) Image(requireNotNull(groupAvatar).asImageBitmap(), contentDescription = uiText("Pasirinkti"),
                             modifier = Modifier.size(64.dp).clip(CircleShape), contentScale = ContentScale.Crop)
@@ -757,12 +771,10 @@ private fun NearbyGroupDialog(
                     modifier = Modifier.weight(1f),
                 )
                 }
-                TextButton(onClick = { chooseAvatarCrop = true; avatarPicker.launch(arrayOf("image/*")) }) { LText("Apkirpti paveikslėlį") }
                 OutlinedTextField(value = password, onValueChange = { password = it.filterNot(Char::isISOControl).take(LanTransferOptions.MAX_PASSWORD_LENGTH) },
                     label = { LText("Laikinas slaptažodis (tuščias = sugeneruotas)") }, visualTransformation = PasswordVisualTransformation(),
                     singleLine = true, modifier = Modifier.fillMaxWidth().testTag("nearby_group_password"))
                 NearbyDurationControl(durationMinutes, onDurationMinutesChange, "nearby_group_duration")
-                NearbyReceiveSettings(viewModel, lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING))
                 NearbyReceiveModeButtons(
                     onNetwork = {
                         runCatching { startOwnGroupReceiver(groupName.trim().ifBlank { "AF group" }) }
@@ -840,7 +852,7 @@ private fun NearbyGroupDialog(
             } else {
                 remoteBannerResult?.exceptionOrNull()?.let { LText("Grupės paveikslėlio perskaityti nepavyko", color = MaterialTheme.colorScheme.error) }
                 (if (groupState.status == NearbyGroupStatus.HOSTING) groupAvatar else remoteBannerResult?.getOrNull())?.let { Image(it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).combinedClickable(
+                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MaterialTheme.shapes.large).combinedClickable(
                         onClick = { chooseAvatarCrop = false; avatarPicker.launch(arrayOf("image/*")) },
                         onLongClick = { chooseAvatarCrop = true; avatarPicker.launch(arrayOf("image/*")) })) }
                 LText(groupState.groupName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -1195,10 +1207,12 @@ private fun NearbyReceiveDialog(
                         )
                     }
                 }
+                NearbyReceiveSettings(viewModel, !activeWebReceiver)
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(modifier = Modifier.size(72.dp).clip(CircleShape).combinedClickable(
                         onClick = { chooseAvatarCrop = false; avatarPicker.launch(arrayOf("image/*")) },
+                        onLongClickLabel = uiText("Apkirpti paveikslėlį"),
                         onLongClick = { chooseAvatarCrop = true; avatarPicker.launch(arrayOf("image/*")) }).testTag("nearby_receiver_avatar"), contentAlignment = Alignment.Center) {
                         if (avatar != null) Image(
                             bitmap = requireNotNull(avatar).asImageBitmap(),
@@ -1219,7 +1233,6 @@ private fun NearbyReceiveDialog(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                TextButton(onClick = { chooseAvatarCrop = true; avatarPicker.launch(arrayOf("image/*")) }) { LText("Apkirpti paveikslėlį") }
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it.filterNot(Char::isISOControl).take(LanTransferOptions.MAX_PASSWORD_LENGTH) },
@@ -1251,7 +1264,6 @@ private fun NearbyReceiveDialog(
                     steps = (LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES) - 1,
                     modifier = Modifier.fillMaxWidth().testTag("nearby_receive_duration"),
                 )
-                NearbyReceiveSettings(viewModel, !activeWebReceiver)
                 NearbyReceiveModeButtons(
                         onNetwork = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !nearbyPermissionGranted) {
@@ -1751,11 +1763,11 @@ internal fun NearbySendDialog(
                                     if (!contactsMode) DropdownMenuItem(text = { LText("Rodyti paslėptus") },
                                         leadingIcon = { Checkbox(includeHidden, onCheckedChange = null) },
                                         onClick = { includeHidden = !includeHidden; pageOffset = 0; pickerMenu = false }, modifier = Modifier.testTag("nearby_hidden"))
-                                    DropdownMenuItem(text = { LText(if (filtersVisible) "Slėpti filtrus" else "Rodyti filtrus") }, onClick = {
+                                    DropdownMenuItem(text = { LText(if (filtersVisible) "Slėpti filtrus" else "Rodyti filtrus") }, leadingIcon = { Icon(Icons.Rounded.FilterAlt, null) }, onClick = {
                                         filtersVisible = !filtersVisible
                                         pickerMenu = false
                                     })
-                                    DropdownMenuItem(text = { LText("Rūšiuoti") }, onClick = {
+                                    DropdownMenuItem(text = { LText("Rūšiuoti") }, leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Sort, null) }, onClick = {
                                         pickerMenu = false
                                         sortMenu = true
                                     })
@@ -1950,14 +1962,14 @@ internal fun NearbySendDialog(
                                                 Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
                                             }
                                             DropdownMenu(expanded = entryMenu, onDismissRequest = { entryMenu = false }) {
-                                                DropdownMenuItem(text = { LText("Peržiūra") }, onClick = { entryMenu = false; pickerPreview = entry })
-                                                DropdownMenuItem(text = { LText("Atidaryti aplanką") }, onClick = {
+                                                DropdownMenuItem(text = { LText("Peržiūra") }, leadingIcon = { Icon(Icons.Rounded.Visibility, null) }, onClick = { entryMenu = false; pickerPreview = entry })
+                                                DropdownMenuItem(text = { LText("Atidaryti aplanką") }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, null) }, onClick = {
                                                     entryMenu = false
                                                     discardAndDismiss()
                                                     viewModel.revealLocalEntry(viewModel.activePanel.value, entry.absolutePath)
                                                 })
-                                                DropdownMenuItem(text = { LText("Informacija") }, onClick = { entryMenu = false; infoTarget = entry })
-                                                DropdownMenuItem(text = { LText("Bendrinti") }, onClick = { entryMenu = false; viewModel.shareEntry(entry.absolutePath) })
+                                                DropdownMenuItem(text = { LText("Informacija") }, leadingIcon = { Icon(Icons.Rounded.Info, null) }, onClick = { entryMenu = false; infoTarget = entry })
+                                                DropdownMenuItem(text = { LText("Bendrinti") }, leadingIcon = { Icon(Icons.Rounded.Share, null) }, onClick = { entryMenu = false; viewModel.shareEntry(entry.absolutePath) })
                                             }
                                         }
                                     }
@@ -2326,13 +2338,13 @@ private fun openHotspotSettings(context: Context) {
         }
 }
 
-private fun decodeReceiverAvatar(context: Context, storedUri: String): android.graphics.Bitmap? = runCatching {
+private fun decodeReceiverAvatar(context: Context, storedUri: String, maximumEdge: Int = 256): android.graphics.Bitmap? = runCatching {
     val uri = android.net.Uri.parse(storedUri)
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
     var sample = 1
-    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 256) sample *= 2
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maximumEdge) sample *= 2
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
 }.getOrNull()

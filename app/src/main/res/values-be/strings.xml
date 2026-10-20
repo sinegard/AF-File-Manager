@@ -19,7 +19,7 @@
     <string name="nearby_transfer_starting_text">Падрыхтоўка перадачы...</string>
     <string name="terminal_channel_name">Актыўны тэрмінал</string>
     <string name="terminal_channel_description">Падтрымлівае адкрыты тэлефон або сервер тэрмінал працуе ў фоне</string>
-    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_notification_title">AF File Manager тэрмінал</string>
     <string name="terminal_phone_active">Тэлефонны тэрмінал актыўна</string>
     <string name="terminal_server_active">Серверны тэрмінал актыўна</string>
     <string name="generated_extracted_name">выцягнуты</string>

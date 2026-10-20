@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class ReceivedFileCommitterAndroidTest {
     @Test fun sharedDownloadsCopyFallbackPreservesReportedSizesAndLargeFile() = withFixture { _, root, sourceRoot ->
+        check(minOf(root.usableSpace, sourceRoot.usableSpace) >= 768L * 1024 * 1024) { "Insufficient owned fixture disk reserve" }
         val diagnostics = CopyOnWriteArrayList<TransferDiagnosticEvent>()
         val progress = CopyOnWriteArrayList<LanUploadProgress>()
         LanHttpServer(root, InetAddress.getByName("127.0.0.1"), requestedCode = "12345678",
@@ -35,7 +36,8 @@ class ReceivedFileCommitterAndroidTest {
         ).use { server ->
             val port = server.start().port
             val cookie = login(port)
-            listOf(1_818_418L, 4_509_722L, 30L * 1024 * 1024, 0L).forEachIndexed { index, size ->
+            val sizes = listOf(1_818_418L, 4_509_722L, 30L * 1024 * 1024, 0L, 256L * 1024 * 1024)
+            sizes.forEachIndexed { index, size ->
                 val name = if (index == 0) "Received image with spaces.png" else "Received-$index.mp4"
                 val source = File(sourceRoot, name).apply { writePattern(this, size) }
                 val original = hash(source)
@@ -49,10 +51,91 @@ class ReceivedFileCommitterAndroidTest {
                 assertTrue(root.listFiles().orEmpty().none { it.name.endsWith(".partial") })
             }
             // COMPLETE follows the response flush; a length-bounded client can return first.
-            runBlocking { withTimeout(3000) { while (diagnostics.count { it.phase == TransferPhase.COMPLETE } < 4) delay(10) } }
-            assertEquals(4, diagnostics.count { it.phase == TransferPhase.COMMIT_COPY && it.failure == null })
-            assertEquals(4, diagnostics.count { it.phase == TransferPhase.COMPLETE })
+            runBlocking { withTimeout(3000) { while (diagnostics.count { it.phase == TransferPhase.COMPLETE } < sizes.size) delay(10) } }
+            assertEquals(sizes.size, diagnostics.count { it.phase == TransferPhase.COMMIT_COPY && it.failure == null })
+            assertEquals(sizes.size, diagnostics.count { it.phase == TransferPhase.COMPLETE })
             assertTrue(diagnostics.any { it.phase == TransferPhase.COMMIT && it.errno == 1 })
+        }
+    }
+
+    @Test fun tenRoundsOfFiveAndThirtyMiBCopiesInBothDirectionsKeepSourcesAndCleanPartials() = withFixture { _, root, _ ->
+        check(root.usableSpace >= 256L * 1024 * 1024) { "Insufficient owned repeat fixture reserve" }
+        val left = root.resolve("left").apply { check(mkdir()) }
+        val right = root.resolve("right").apply { check(mkdir()) }
+        fun sources(folder: File, prefix: String) = listOf(5, 30).map { mib ->
+            folder.resolve("$prefix-$mib MiB.bin").apply { writePattern(this, mib.toLong() * 1024 * 1024) }
+        }
+        val leftSources = sources(left, "kairė")
+        val rightSources = sources(right, "写真")
+        val originals = (leftSources + rightSources).associateWith(::hash)
+        val leftDiagnostics = CopyOnWriteArrayList<TransferDiagnosticEvent>()
+        val rightDiagnostics = CopyOnWriteArrayList<TransferDiagnosticEvent>()
+        val loopback = InetAddress.getByName("127.0.0.1")
+        LanHttpServer(left, loopback, requestedCode = "12345678", receivedFileCommitter = deniedRename(),
+            diagnosticsEnabled = { true }, onDiagnostic = leftDiagnostics::add).use { leftServer ->
+            LanHttpServer(right, loopback, requestedCode = "12345678", receivedFileCommitter = deniedRename(),
+                diagnosticsEnabled = { true }, onDiagnostic = rightDiagnostics::add).use { rightServer ->
+                val leftPort = leftServer.start().port
+                val rightPort = rightServer.start().port
+                val leftCookie = login(leftPort)
+                val rightCookie = login(rightPort)
+                fun copy(port: Int, cookie: String, target: File, source: File, round: Int) {
+                    val name = "received-$round-${source.name}"
+                    val destination = target.resolve(name)
+                    assertFalse(destination.exists())
+                    val response = request(port, "POST /upload?dir=&name=${URLEncoder.encode(name, "UTF-8")}", cookie, source)
+                    assertTrue(response, response.startsWith("HTTP/1.1 201"))
+                    assertEquals(source.length(), destination.length())
+                    assertArrayEquals(originals.getValue(source), hash(destination))
+                    assertArrayEquals(originals.getValue(source), hash(source))
+                    assertTrue(target.listFiles().orEmpty().none { it.name.endsWith(".partial") })
+                    assertTrue("Verified per-round output cleanup", destination.delete())
+                }
+                repeat(10) { round ->
+                    leftSources.forEach { copy(rightPort, rightCookie, right, it, round) }
+                    rightSources.forEach { copy(leftPort, leftCookie, left, it, round) }
+                }
+                runBlocking { withTimeout(3000) {
+                    while (listOf(leftDiagnostics, rightDiagnostics).any { events -> events.count { it.phase == TransferPhase.COMPLETE } < 20 }) delay(10)
+                } }
+                listOf(leftDiagnostics, rightDiagnostics).forEach { events ->
+                    assertEquals(20, events.count { it.phase == TransferPhase.COMMIT_COPY && it.failure == null })
+                    assertEquals(20, events.count { it.phase == TransferPhase.COMPLETE })
+                }
+                originals.forEach { (source, expected) -> assertArrayEquals(expected, hash(source)) }
+                assertEquals(leftSources.toSet(), left.listFiles().orEmpty().toSet())
+                assertEquals(rightSources.toSet(), right.listFiles().orEmpty().toSet())
+            }
+        }
+    }
+
+    @Test fun acknowledgedUploadReleasesItsPayloadSlotBeforeItsCompleteObserverFinishes() = withFixture { _, root, sources ->
+        val first = File(sources, "first.txt").apply { writeText("one") }
+        val second = File(sources, "second.txt").apply { writeText("two") }
+        val originals = listOf(first, second).associateWith(::hash)
+        val completeEntered = java.util.concurrent.CountDownLatch(1)
+        val completeRelease = java.util.concurrent.CountDownLatch(1)
+        val completed = java.util.concurrent.atomic.AtomicInteger()
+        LanHttpServer(root, InetAddress.getByName("127.0.0.1"), requestedCode = "12345678",
+            receivedFileCommitter = deniedRename(), diagnosticsEnabled = { true }, onDiagnostic = { event ->
+                if (event.phase == TransferPhase.COMPLETE && completed.incrementAndGet() == 1) {
+                    completeEntered.countDown()
+                    check(completeRelease.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                }
+            }).use { server ->
+            try {
+                val port = server.start().port
+                val cookie = login(port)
+                assertTrue(request(port, "POST /upload?name=first.txt", cookie, first).startsWith("HTTP/1.1 201"))
+                assertTrue("First response was read before its COMPLETE observer", completeEntered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                val response = request(port, "POST /upload?name=second.txt", cookie, second)
+                assertTrue("A fully acknowledged payload still occupied its slot: $response", response.startsWith("HTTP/1.1 201"))
+                originals.forEach { (source, expected) ->
+                    assertArrayEquals(expected, hash(source))
+                    assertArrayEquals(expected, hash(File(root, source.name)))
+                }
+                assertFalse(root.listFiles().orEmpty().any { it.name.endsWith(".partial") })
+            } finally { completeRelease.countDown() }
         }
     }
 
@@ -80,6 +163,48 @@ class ReceivedFileCommitterAndroidTest {
                 assertArrayEquals(original, hash(root.resolve(source.name)))
                 assertArrayEquals(original, hash(source))
                 assertEquals(1, root.listFiles().orEmpty().size)
+            }
+        }
+    }
+
+    @Test fun nativeManualRetryCopiesOnlyTheChosenFileAndRejectsDuplicateClicks() = runBlocking {
+        withFixture { app, root, sourceRoot ->
+            val sources = listOf("one.txt", "retry.txt", "three.txt").map { name -> File(sourceRoot, name).apply { writeText("original $name") } }
+            val originals = sources.map(::hash)
+            val reject = java.util.concurrent.atomic.AtomicBoolean(true)
+            val address = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
+                .first { it is Inet4Address && it.isSiteLocalAddress }
+            LanHttpServer(root, address, requestedCode = "12345678", receivedFileCommitter = ReceivedFileCommitter { source, target ->
+                if (target.name == "retry.txt" && reject.get()) throw java.nio.file.FileAlreadyExistsException(target.path)
+                Files.move(source.toPath(), target.toPath())
+                Unit
+            }).use { server ->
+                val session = server.start()
+                NearbyTransferController.clearFinished()
+                val prepared = app.graph.nearbySources.prepareLocalPaths(sources.map { it.path }).getOrThrow()
+                NearbyTransferController.start(app, NearbyPairing.create(session.address, session.port, session.code), prepared)
+                withTimeout(20_000) { while (NearbyTransferController.state.value.status in setOf(NearbyTransferStatus.STARTING, NearbyTransferStatus.RUNNING)) delay(25) }
+                val first = NearbyTransferController.state.value
+                assertEquals(first.message, NearbyTransferStatus.ERROR, first.status)
+                assertEquals(TransferFileStatus.COMPLETED, first.files[0].status)
+                assertEquals(TransferFileStatus.FAILED, first.files[1].status)
+                assertEquals(TransferFileStatus.CANCELLED, first.files[2].status)
+                assertTrue(first.files[2].notAttempted)
+                val batch = first.files[1].batchId
+                reject.set(false)
+                NearbyTransferController.retryFile(app, batch, 2)
+                assertTrue(runCatching { NearbyTransferController.retryFile(app, batch, 2) }.isFailure)
+                withTimeout(20_000) { while (NearbyTransferController.state.value.files.none {
+                    it.batchId != batch && it.relativePath == "retry.txt" && it.status == TransferFileStatus.COMPLETED
+                }) delay(25) }
+                assertEquals(setOf("one.txt", "retry.txt"), root.listFiles().orEmpty().map { it.name }.toSet())
+                assertArrayEquals(originals[1], hash(root.resolve("retry.txt")))
+                NearbyTransferController.retryFile(app, batch, 3)
+                withTimeout(20_000) { while (NearbyTransferController.state.value.files.none {
+                    it.batchId != batch && it.relativePath == "three.txt" && it.status == TransferFileStatus.COMPLETED
+                }) delay(25) }
+                assertEquals(sources.map { it.name }.toSet(), root.listFiles().orEmpty().map { it.name }.toSet())
+                sources.forEachIndexed { index, file -> assertArrayEquals(originals[index], hash(file)); assertArrayEquals(originals[index], hash(root.resolve(file.name))) }
             }
         }
     }

@@ -259,15 +259,9 @@ fun palettePreviewColors(palette: AppColorPalette, custom: CustomThemeColors = C
     AppColorPalette.CUSTOM -> listOf(Color(custom.primary), Color(custom.secondary), Color(custom.tertiary))
 }
 
-@Composable
-fun AFFileManagerTheme(
-    settings: AppearanceSettings = AppearanceSettings(),
-    content: @Composable () -> Unit,
-) {
-    val systemDark = isSystemInDarkTheme()
+internal fun resolveAfOpaqueColors(context: android.content.Context, settings: AppearanceSettings, systemDark: Boolean): ColorScheme {
     val darkTheme = AppearanceRules.useDarkTheme(settings.themeMode, systemDark)
-    val context = LocalContext.current
-    val baseColors = remember(settings, darkTheme, context) { when (settings.colorPalette) {
+    val baseColors = when (settings.colorPalette) {
         AppColorPalette.DYNAMIC -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         } else {
@@ -288,13 +282,23 @@ fun AFFileManagerTheme(
             settings.customColors.copy(background = 0xFF000000.toInt())
         } else settings.customColors)
         AppColorPalette.DEFAULT -> if (darkTheme) DefaultDarkColors else DefaultLightColors
-    } }
+    }
     val completeColors = if (settings.colorPalette in setOf(AppColorPalette.DYNAMIC, AppColorPalette.CUSTOM, AppColorPalette.RED)) {
         baseColors
     } else baseColors.withPaletteSurfaces()
-    val opaqueColors = if (settings.amoledBlack && darkTheme && settings.colorPalette != AppColorPalette.CUSTOM) {
+    return if (settings.amoledBlack && darkTheme && settings.colorPalette != AppColorPalette.CUSTOM) {
         completeColors.withAmoledBackground()
     } else completeColors
+}
+
+@Composable
+fun AFFileManagerTheme(
+    settings: AppearanceSettings = AppearanceSettings(),
+    content: @Composable () -> Unit,
+) {
+    val systemDark = isSystemInDarkTheme()
+    val context = LocalContext.current
+    val opaqueColors = remember(settings, systemDark, context) { resolveAfOpaqueColors(context, settings, systemDark) }
     val alpha = 1f - settings.cardTransparency.coerceIn(0, 100) / 100f
     val colors = opaqueColors.copy(
         surface = opaqueColors.surface.copy(alpha = alpha),

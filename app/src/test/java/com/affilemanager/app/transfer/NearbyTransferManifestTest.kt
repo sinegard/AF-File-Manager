@@ -7,6 +7,50 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class NearbyTransferManifestTest {
+    @Test fun stoppingRemainingBatchPreservesAnAlreadyFailedReceiveAndCompletedFile() {
+        val tracker = NearbyReceiveFiles()
+        val batch = java.util.UUID.randomUUID().toString()
+        val files = listOf(TransferFileProgress("failed.mp4", 5), TransferFileProgress("done.apk", 3),
+            TransferFileProgress("waiting.mp4", 7))
+        tracker.announce(files, batch)
+        tracker.update(1, files[0].copy(transferredBytes = 5, status = TransferFileStatus.FAILED,
+            failure = TransferFailure.PERMISSION), batch)
+        tracker.update(2, files[1].copy(transferredBytes = 3, status = TransferFileStatus.COMPLETED,
+            localPath = "/received/done.apk"), batch)
+
+        val stopped = tracker.cancel(batch)
+
+        assertEquals(listOf(TransferFileStatus.FAILED, TransferFileStatus.COMPLETED, TransferFileStatus.CANCELLED),
+            stopped.map { it.status })
+        assertEquals(TransferFailure.PERMISSION, stopped[0].failure)
+        assertEquals(5L, stopped[0].transferredBytes)
+        assertEquals("/received/done.apk", stopped[1].localPath)
+    }
+
+    @Test fun cancellingAnAlreadyFailedFileDoesNotEraseItsFailureState() {
+        val tracker = NearbyReceiveFiles()
+        val batch = java.util.UUID.randomUUID().toString()
+        val file = TransferFileProgress("failed.mp4", 5, transferredBytes = 5,
+            status = TransferFileStatus.FAILED, failure = TransferFailure.PERMISSION)
+        tracker.announce(listOf(file), batch)
+
+        assertEquals(file.copy(batchId = batch), tracker.cancelFile(batch, 1).single())
+    }
+
+    @Test fun senderAndReceiverKeepTheSameTerminalResultsWhenTheRestStops() {
+        listOf(TransferFileStatus.FAILED, TransferFileStatus.COMPLETED, TransferFileStatus.CANCELLED).forEach { status ->
+            val file = TransferFileProgress("same.mp4", 5, transferredBytes = 5,
+                status = status, failure = if (status == TransferFileStatus.FAILED) TransferFailure.PERMISSION else null)
+            assertEquals(file, file.stopPending(TransferFileStatus.CANCELLED))
+            assertEquals(file, file.stopPending(TransferFileStatus.FAILED))
+        }
+        assertEquals(TransferFileStatus.CANCELLED,
+            TransferFileProgress("waiting.mp4", 5).stopPending(TransferFileStatus.CANCELLED).status)
+        assertThrows(IllegalArgumentException::class.java) {
+            TransferFileProgress("waiting.mp4", 5).stopPending(TransferFileStatus.COMPLETED)
+        }
+    }
+
     @Test fun emptyManifestRoundTripSupportsPairingWithoutFiles() {
         assertEquals(emptyList<TransferFileProgress>(), NearbyTransferManifest.decode(NearbyTransferManifest.encode(emptyList())))
     }

@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
@@ -322,7 +326,7 @@ private fun FavoriteBrowserItems(
     if (files.isEmpty()) {
         EmptyHomeToolPage("Mėgstamų vietų dar nėra", Icons.Rounded.Star)
     } else if (settings.layoutMode == DirectoryLayoutMode.GRID) {
-        val columns = settings.gridColumns.coerceIn(1, 6)
+        val columns = com.affilemanager.app.ui.components.directoryGridColumns(settings.gridColumns, settings.gridColumnsLandscape)
         val spacing = (8f * settings.spacingScalePercent / 100f).dp
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -375,7 +379,7 @@ private fun TagBrowserItems(
         }
     }
     if (settings.layoutMode == DirectoryLayoutMode.GRID) {
-        val columns = settings.gridColumns.coerceIn(1, 6)
+        val columns = com.affilemanager.app.ui.components.directoryGridColumns(settings.gridColumns, settings.gridColumnsLandscape)
         val spacing = (8f * settings.spacingScalePercent / 100f).dp
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
@@ -1025,16 +1029,16 @@ internal fun RecentFilesDialog(
                         horizontalArrangement = Arrangement.End,
                     ) {
                         LText("Pažymėta: ${selectedEntries.size}", modifier = Modifier.weight(1f))
-                        IconButton(onClick = { onCopy(selectedEntries, false) }) {
+                        BrowserActionIconButton(BrowserAction.COPY, onClick = { onCopy(selectedEntries, false) }) {
                             Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                         }
-                        IconButton(onClick = { onCopy(selectedEntries, true); selectedPaths = emptySet() }) {
+                        BrowserActionIconButton(BrowserAction.MOVE, onClick = { onCopy(selectedEntries, true); selectedPaths = emptySet() }) {
                             Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
                         }
-                        IconButton(onClick = { onShare(selectedEntries) }) {
+                        BrowserActionIconButton(BrowserAction.SHARE, onClick = { onShare(selectedEntries) }) {
                             Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
                         }
-                        IconButton(onClick = { onTrash(selectedEntries) }) {
+                        BrowserActionIconButton(BrowserAction.DELETE, onClick = { onTrash(selectedEntries) }) {
                             Icon(Icons.Rounded.Delete, contentDescription = uiText("Perkelti į šiukšlinę"))
                         }
                         IconButton(onClick = { selectedPaths = emptySet() }) {
@@ -1209,7 +1213,7 @@ private fun StorageHomeSection(
         .mapNotNull(allLocations::get)
         .toList()
     if (displaySettings.layoutMode == DirectoryLayoutMode.GRID) {
-        val columns = displaySettings.gridColumns.coerceIn(1, 3)
+        val columns = com.affilemanager.app.ui.components.directoryGridColumns(displaySettings.gridColumns, displaySettings.gridColumnsLandscape).coerceAtMost(3)
         val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
         locations.chunked(columns).forEach { rowLocations ->
             Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(spacing)) {
@@ -1289,7 +1293,7 @@ private fun QuickLocationsHomeSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     } else if (displaySettings.layoutMode == DirectoryLayoutMode.GRID) {
-        val columns = displaySettings.gridColumns.coerceIn(1, 6)
+        val columns = com.affilemanager.app.ui.components.directoryGridColumns(displaySettings.gridColumns, displaySettings.gridColumnsLandscape)
         val spacing = (8f * displaySettings.spacingScalePercent / 100f).dp
         locations.chunked(columns).forEach { rowLocations ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
@@ -1736,12 +1740,12 @@ private fun RecentFileListItem(
                     Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { LText("Pervadinti") }, onClick = { menu = false; onRename() }, leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) }, modifier = Modifier.testTag("recent_action_rename"))
-                    DropdownMenuItem(text = { LText("Bendrinti") }, onClick = { menu = false; onShare() }, leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }, modifier = Modifier.testTag("recent_action_share"))
-                    DropdownMenuItem(text = { LText("Perkelti į šiukšlinę") }, onClick = { menu = false; onTrash() }, leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) }, modifier = Modifier.testTag("recent_action_trash"))
+                    BrowserActionMenuItem(BrowserAction.RENAME, text = { LText("Pervadinti") }, onClick = { menu = false; onRename() }, leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) }, modifier = Modifier.testTag("recent_action_rename"))
+                    BrowserActionMenuItem(BrowserAction.SHARE, text = { LText("Bendrinti") }, onClick = { menu = false; onShare() }, leadingIcon = { Icon(Icons.Rounded.Share, contentDescription = null) }, modifier = Modifier.testTag("recent_action_share"))
+                    BrowserActionMenuItem(BrowserAction.DELETE, text = { LText("Perkelti į šiukšlinę") }, onClick = { menu = false; onTrash() }, leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) }, modifier = Modifier.testTag("recent_action_trash"))
                     DropdownMenuItem(text = { LText("Atidaryti aplanką") }, onClick = { menu = false; onReveal() }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) }, modifier = Modifier.testTag("recent_action_reveal"))
-                    DropdownMenuItem(text = { LText("Kopijuoti") }, onClick = { menu = false; onCopy(false) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.testTag("recent_action_copy"))
-                    DropdownMenuItem(text = { LText("Perkelti") }, onClick = { menu = false; onCopy(true) }, leadingIcon = { Icon(Icons.Rounded.ContentCut, contentDescription = null) }, modifier = Modifier.testTag("recent_action_move"))
+                    BrowserActionMenuItem(BrowserAction.COPY, text = { LText("Kopijuoti") }, onClick = { menu = false; onCopy(false) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.testTag("recent_action_copy"))
+                    BrowserActionMenuItem(BrowserAction.MOVE, text = { LText("Perkelti") }, onClick = { menu = false; onCopy(true) }, leadingIcon = { Icon(Icons.Rounded.ContentCut, contentDescription = null) }, modifier = Modifier.testTag("recent_action_move"))
                     DropdownMenuItem(text = { LText(if (selected) "Atžymėti" else "Pasirinkti") }, onClick = { menu = false; onSelect() }, leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null) }, modifier = Modifier.testTag("recent_action_select"))
                 }
             }

@@ -132,6 +132,8 @@ fun AFFileManagerApp(
     onIncomingViewRequestConsumed: () -> Unit = {},
     incomingShareRequest: IncomingShareRequest? = null,
     onIncomingShareRequestConsumed: () -> Unit = {},
+    widgetRequest: com.affilemanager.app.widgets.AfWidgetRequest? = null,
+    onWidgetRequestConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val interfaceLanguage = LocalConfiguration.current.locales[0].language
@@ -284,6 +286,17 @@ fun AFFileManagerApp(
         incomingViewRequest?.let { request ->
             viewModel.openExternalUri(request.uri, request.mimeType)
             onIncomingViewRequestConsumed()
+        }
+    }
+    LaunchedEffect(widgetRequest, unlocked) {
+        if (unlocked && widgetRequest != null) {
+            try {
+                com.affilemanager.app.widgets.openAfWidget(context, viewModel, widgetRequest)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                snackbarHostState.showSnackbar(UiTranslator.translate("Widget content is unavailable. Open settings to choose the source again.", interfaceLanguage))
+            }
+            onWidgetRequestConsumed()
         }
     }
 
@@ -449,6 +462,9 @@ fun AFFileManagerApp(
             editState = fileEditState,
             signatureLibrary = signatureLibrary,
             archiveDisplayDefaults = archiveDisplayDefaults,
+            onUpdateArchiveBrowser = viewModel::updateArchiveBrowser,
+            loadArchiveScrollPosition = viewModel::fileScrollPosition,
+            onSaveArchiveScrollPosition = viewModel::saveFileScrollPosition,
             onApplyArchiveDisplayToAll = viewModel::applyDirectoryDisplaySettingsToAll,
             onClose = viewModel::closePreview,
             onDelete = (viewModel::deletePreviewTarget).takeIf { viewModel.canDeletePreview(target) },

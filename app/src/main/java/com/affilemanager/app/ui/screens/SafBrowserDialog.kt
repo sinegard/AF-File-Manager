@@ -1,5 +1,9 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
@@ -126,7 +130,6 @@ fun SafBrowserDialog(
         val entries = state.entries
         val query = searchQuery.trim()
         transforming = true
-        displayedEntries = emptyList()
         displayedEntries = withContext(Dispatchers.Default) {
             val ordered = orderSafEntries(entries, state.sortMode, state.sortDirection)
             ordered.filter { entry ->
@@ -150,6 +153,8 @@ fun SafBrowserDialog(
                     searchActive = searchVisible,
                     grid = state.grid,
                     testTagPrefix = "saf",
+                    addressPath = state.currentUri.orEmpty(),
+                    onOpenPath = viewModel::openSafAddress,
                     onBack = navigateBack,
                     onForward = {},
                     onUp = { viewModel.navigateSafBack() },
@@ -239,7 +244,7 @@ fun SafBrowserDialog(
                         }
                     } else if (state.grid) {
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(state.gridColumns.coerceIn(1, 6)),
+                            columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape)),
                             state = gridState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp, 8.dp, 10.dp, 92.dp),
@@ -324,6 +329,7 @@ fun SafBrowserDialog(
                 iconScalePercent = state.iconScalePercent,
                 spacingScalePercent = state.spacingScalePercent,
                 gridColumns = state.gridColumns,
+                gridColumnsLandscape = state.gridColumnsLandscape,
                 gridStyle = state.gridStyle,
                 showThumbnails = state.showThumbnails,
             ),
@@ -468,29 +474,30 @@ private fun SafEntryMenuItems(
     onDelete: () -> Unit,
     onDownload: () -> Unit,
 ) {
+    com.affilemanager.app.ui.components.CopyPathAction(listOf(entry.uri), menu = true, onCopied = dismiss)
     DropdownMenuItem(
         text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
         leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
         onClick = { dismiss(); onOpen() },
     )
-    DropdownMenuItem(
+    BrowserActionMenuItem(BrowserAction.COPY,
         text = { LText("Kopijuoti į aktyvų langą") },
         leadingIcon = { Icon(Icons.Rounded.FileDownload, contentDescription = null) },
         onClick = { dismiss(); onDownload() },
     )
     HorizontalDivider()
-    DropdownMenuItem(
+    BrowserActionMenuItem(BrowserAction.RENAME,
         text = { LText("Pervadinti") },
         leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
         enabled = entry.canWrite,
         onClick = { dismiss(); onRename() },
     )
-    DropdownMenuItem(
+    BrowserActionMenuItem(BrowserAction.INFO,
         text = { LText("Informacija") },
         leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
         onClick = { dismiss(); onInfo() },
     )
-    DropdownMenuItem(
+    BrowserActionMenuItem(BrowserAction.DELETE,
         text = { LText("Ištrinti") },
         leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
         enabled = entry.canWrite,

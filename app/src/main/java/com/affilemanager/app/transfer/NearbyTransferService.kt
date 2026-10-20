@@ -139,6 +139,21 @@ object NearbyTransferController {
     }
 
     @Synchronized
+    fun retryFile(context: Context, batchId: String, fileIndex: Int) {
+        val batch = requireNotNull(queue.get(batchId)) { "Select the source again" }
+        require(connection.cookieFor(batch.pairing) != null && connection.supportsQueue(batch.pairing)) { "Reconnect to the receiver before retrying" }
+        queue.claimRetry(batchId, fileIndex)
+        try {
+            ContextCompat.startForegroundService(context, Intent(context, NearbyTransferService::class.java)
+                .setAction(NearbyTransferService.ACTION_RETRY_FILE).putExtra(NearbyTransferService.EXTRA_BATCH_ID, batchId)
+                .putExtra(NearbyTransferService.EXTRA_FILE_INDEX, fileIndex))
+        } catch (failure: Exception) {
+            queue.finishRetryClaim(batchId, fileIndex, "Could not retry the file")
+            throw failure
+        }
+    }
+
+    @Synchronized
     fun startGroup(context: Context, peers: List<NearbyPairing>, prepared: PreparedNearbyTransfer, returnPairing: NearbyPairing?) {
         val group = NearbyGroupController.state.value
         require(group.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED) &&
@@ -194,6 +209,7 @@ class NearbyTransferService : Service() {
         const val ACTION_START = "com.affilemanager.app.action.START_NEARBY_TRANSFER"
         const val ACTION_CANCEL = "com.affilemanager.app.action.CANCEL_NEARBY_TRANSFER"
         const val ACTION_CANCEL_FILE = "com.affilemanager.app.action.CANCEL_NEARBY_FILE"
+        const val ACTION_RETRY_FILE = "com.affilemanager.app.action.RETRY_NEARBY_FILE"
         const val ACTION_DISCONNECT = "com.affilemanager.app.action.DISCONNECT_NEARBY_TRANSFER"
         const val ACTION_SEND_MESSAGE = "com.affilemanager.app.action.SEND_NEARBY_MESSAGE"
         const val EXTRA_MESSAGE = "message"
@@ -253,6 +269,10 @@ class NearbyTransferService : Service() {
                 intent.getStringExtra(EXTRA_BATCH_ID).orEmpty(),
                 intent.getIntExtra(EXTRA_FILE_INDEX, 0),
             )
+            ACTION_RETRY_FILE -> {
+                startAsForeground(progressNotification(NearbyTransferController.state.value))
+                retryFile(intent.getStringExtra(EXTRA_BATCH_ID).orEmpty(), intent.getIntExtra(EXTRA_FILE_INDEX, 0))
+            }
             ACTION_DISCONNECT -> disconnectPeer(intent.getBooleanExtra("notify_peer", true))
             ACTION_SEND_MESSAGE -> sendMessage(
                 intent.getStringExtra(EXTRA_MESSAGE).orEmpty(),
@@ -314,8 +334,8 @@ class NearbyTransferService : Service() {
                 }
                 NearbyTransferController.queue.update(batch.id, current.copy(status = status,
                     message = if (status == NearbyTransferStatus.CANCELLED) "Siuntimas atšauktas" else (failure.message ?: "Siuntimas nepavyko").take(240),
-                    files = current.files.map { it.copy(status = if (status == NearbyTransferStatus.CANCELLED) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED,
-                        localPath = if (batch.sources.cleanupRootPath != null) null else it.localPath) }))
+                    files = current.files.map { file -> file.stopPending(if (status == NearbyTransferStatus.CANCELLED) TransferFileStatus.CANCELLED else TransferFileStatus.FAILED)
+                        .let { stopped -> if (batch.sources.cleanupRootPath != null && stopped.status != TransferFileStatus.COMPLETED) stopped.copy(localPath = null) else stopped } }))
                 batch.sources.cleanupRootPath?.let { path ->
                     if (!NearbyTransferController.queue.stageInUse(path)) safeDeleteStage(path)
                 }
@@ -332,6 +352,48 @@ class NearbyTransferService : Service() {
         }
         preparationJobs[batch.id] = job
         job.start()
+    }
+
+    private fun retryFile(batchId: String, fileIndex: Int) {
+        synchronized(this) { controlJobs++ }
+        scope.launch {
+            try {
+                val batch = requireNotNull(NearbyTransferController.queue.get(batchId)) { "Select the source again" }
+                val index = fileIndex - 1
+                val file = requireNotNull(batch.state.files.getOrNull(index)) { "Select the source again" }
+                require(file.retrySubmitted && file.status in setOf(TransferFileStatus.FAILED, TransferFileStatus.CANCELLED)) { "File is not available for retry" }
+                require(batch.sources.retainsRetrySource(index)) { "The temporary source has been removed. Select it again." }
+                val cookie = requireNotNull(NearbyTransferController.connection.cookieFor(batch.pairing)) { "Reconnect to the receiver before retrying" }
+                // A previous lost HTTP reply must not turn an already committed file into a new upload.
+                val report = remoteFileReport(batch.pairing, cookie, batchId, fileIndex)
+                require(report?.status != null && report.status != TransferFileStatus.TRANSFERRING) { "The receiver has not confirmed the previous transfer. Try again after reconnecting." }
+                if (report.status == TransferFileStatus.COMPLETED) {
+                    NearbyTransferController.queue.finishRetryClaim(batchId, fileIndex, received = true)
+                    return@launch
+                }
+                val relative = batch.sources.relativePaths[index]
+                val subset = PreparedNearbyTransfer(paths = listOf(batch.sources.paths[index]), relativePaths = listOf(relative),
+                    sourceUris = listOf(batch.sources.sourceUris[index]), fileSizes = listOf(file.sizeBytes), totalBytes = file.sizeBytes,
+                    directories = batch.sources.directories.filter { relative.startsWith("$it/") })
+                val source = validateFiles(subset, allowEmpty = false).single()
+                require(source.length == file.sizeBytes && (file.modifiedAtMillis == 0L || source.modifiedAtMillis == file.modifiedAtMillis)) { "Failas pasikeitė po peržiūros" }
+                require(NearbyTransferController.connection.cookieFor(batch.pairing) != null) { "Reconnect to the receiver before retrying" }
+                NearbyTransferController.start(this@NearbyTransferService, batch.pairing, subset, batch.returnPairing)
+                NearbyTransferController.queue.finishRetryClaim(batchId, fileIndex)
+            } catch (cancelled: CancellationException) {
+                NearbyTransferController.queue.finishRetryClaim(batchId, fileIndex, "Siuntimas atšauktas")
+                throw cancelled
+            } catch (failure: Exception) {
+                val known = setOf("Select the source again", "File is not available for retry",
+                    "The temporary source has been removed. Select it again.", "Reconnect to the receiver before retrying",
+                    "The receiver has not confirmed the previous transfer. Try again after reconnecting.", "Failas pasikeitė po peržiūros")
+                NearbyTransferController.queue.finishRetryClaim(batchId, fileIndex,
+                    failure.message?.takeIf { it in known } ?: "Could not retry the file. Check the source and reconnect to the receiver.")
+            } finally {
+                synchronized(this@NearbyTransferService) { controlJobs-- }
+                finishIfIdle()
+            }
+        }
     }
 
     @Synchronized private fun startNext() {
@@ -566,9 +628,7 @@ class NearbyTransferService : Service() {
     }
 
     private fun stoppedFiles(status: TransferFileStatus, state: NearbyTransferState): List<TransferFileProgress> =
-        state.files.map {
-            if (it.status == TransferFileStatus.COMPLETED) it else it.copy(status = status)
-        }
+        state.files.map { it.stopPending(status) }
 
     private fun announceFiles(pairing: NearbyPairing, cookie: String, files: List<TransferFileProgress>, batchId: String) {
         val url = "http://${pairing.host}:${pairing.port}/nearby/manifest".toHttpUrl()

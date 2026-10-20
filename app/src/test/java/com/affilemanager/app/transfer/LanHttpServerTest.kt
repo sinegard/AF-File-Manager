@@ -5,6 +5,7 @@ import com.affilemanager.app.ui.localization.UiTranslator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -643,6 +644,28 @@ class LanHttpServerTest {
             assertTrue(server.setGroupBanner(null))
             assertStatus(404, get("/nearby/group/banner", cookie))
             assertTrue(root.listFiles().orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun highQualityGroupBannerIsOptionalAuthenticatedAndKeepsTheLegacyEndpoint() {
+        val root = temporary.newFolder("group-picture-v2")
+        val address = privateAddress()
+        val legacy = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xd9.toByte())
+        val high = legacy + ByteArray(70_000)
+        LanHttpServer(root, address, requestedCode = "12345678", groupMode = true, groupBanner = legacy, groupBannerHigh = high).use { server ->
+            val port = server.start().port
+            fun get(path: String, cookie: String? = null) = request(port,
+                "GET $path HTTP/1.1\r\nHost: localhost\r\n" + (cookie?.let { "Cookie: $it\r\n" } ?: "") + "\r\n", address)
+            assertStatus(401, get("/nearby/group/banner-v2"))
+            val cookie = login(port, address)
+            assertTrue(get("/nearby/group/banner", cookie).contains("Content-Length: 4\r\n"))
+            assertTrue(get("/nearby/group/banner-v2", cookie).contains("Content-Length: 70004\r\n"))
+            assertTrue(get("/nearby/group/members", cookie).contains("X-AF-Banner-Format: 2\r\n"))
+            assertTrue(server.setGroupBanner(legacy))
+            assertStatus(404, get("/nearby/group/banner-v2", cookie))
+            assertTrue(get("/nearby/group/members", cookie).contains("X-AF-Banner-Format: 1\r\n"))
+            assertTrue(root.listFiles().orEmpty().isEmpty())
+            assertThrows(IllegalArgumentException::class.java) { server.setGroupBanner(legacy, legacy + ByteArray(NearbyGroupBanner.HIGH_MAX_BYTES)) }
         }
     }
 

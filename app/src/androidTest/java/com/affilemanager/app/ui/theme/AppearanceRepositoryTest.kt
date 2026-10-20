@@ -9,6 +9,17 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AppearanceRepositoryTest {
+    @Test fun automaticDualPaneIsOptionalAndPersistsAcrossInstances() {
+        val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val repository = AppearanceRepository(application)
+        val before = repository.settings.value.automaticDualPane
+        try {
+            repository.setAutomaticDualPane(false)
+            assertEquals(false, AppearanceRepository(application).settings.value.automaticDualPane)
+            repository.setAutomaticDualPane(true)
+            assertEquals(true, AppearanceRepository(application).settings.value.automaticDualPane)
+        } finally { repository.setAutomaticDualPane(before) }
+    }
     @Test
     fun customPalettePersistsAndInvalidWritesLeavePreviousSettingsIntact() {
         val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()

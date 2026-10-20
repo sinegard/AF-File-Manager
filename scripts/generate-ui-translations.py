@@ -95,7 +95,7 @@ PROTECTED_TEXT = re.compile(
     r"(%\d+\$[a-zA-Z]|%%|\{\d+}|AF File Manager|AF Plan|Copy more|"
     r"(?<![A-Za-z0-9])(?:Android|Shizuku|WebDAV|FTPS|SFTP|SMB|FTP|HTTPS|HTTP|TLS|SHA-256|"
     r"Wi-Fi|Ethernet|USB OTG|Keystore|Catppuccin|Material|AMOLED|EXIF|"
-    r"UTF-8|APK|PDF|ZIP|RAR|7Z|TAR|GZ|LAN|NAS|SAF|UID|NUL|Root)(?![A-Za-z0-9]))",
+    r"UTF-8|APK|PDF|ZIP|RAR|7Z|TAR|GZ|LAN|NAS|SAF|UID|NUL|(?-i:Root))(?![A-Za-z0-9]))",
     re.IGNORECASE,
 )
 
@@ -299,6 +299,33 @@ def restore_protected_text(source: str, translated: str, replacements: list[tupl
     return restored
 
 
+def is_english_prose_fallback(source: str, translated: str) -> bool:
+    if source != translated or not re.search(r"[A-Za-z]", PROTECTED_TEXT.sub("", source)):
+        return False
+    # Single-word loans and protocol/name-only headings are not untranslated sentences.
+    return len(re.findall(r"[A-Za-z]{2,}", source)) >= 2 or bool(TEMPLATE_TOKEN.search(source) or FORMAT_TOKEN.search(source))
+
+
+def protected_text_intact(source: str, translated: str) -> bool:
+    return bool(translated.strip()) and not any(value in translated for value in ("<AFPH", "\ufffd", "\x00")) and (
+        sorted(match.group(0) for match in PROTECTED_TEXT.finditer(source)) ==
+        sorted(match.group(0) for match in PROTECTED_TEXT.finditer(translated))
+    )
+
+
+def protected_parts(source: str) -> list[tuple[bool, str]]:
+    parts: list[tuple[bool, str]] = []
+    position = 0
+    for match in PROTECTED_TEXT.finditer(source):
+        if position < match.start():
+            parts.append((False, source[position:match.start()]))
+        parts.append((True, match.group(0)))
+        position = match.end()
+    if position < len(source):
+        parts.append((False, source[position:]))
+    return parts
+
+
 def android_string_value(element: ET.Element) -> str:
     value = "".join(element.itertext())
     if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
@@ -351,7 +378,7 @@ def translate_catalog(
         raise ValueError(f"{language}: manual translations are missing: {missing}")
     translated_values = translator.translate_many(meaningful, target_code) if meaningful else {}
 
-    def translated(value: str) -> str:
+    def initial_translation(value: str) -> str:
         if value in manual:
             return manual[value]
         masked_value, replacements = masked[value]
@@ -359,10 +386,45 @@ def translate_catalog(
             return value
         return restore_protected_text(value, translated_values[masked_value], replacements)
 
-    exact = [translated(value) for value in source.exact]
+    results = {value: initial_translation(value) for value in all_values}
+    retry = [value for value in all_values if value not in manual and masked[value][1] and
+             is_english_prose_fallback(value, results[value])]
+    if retry and translator is not None:
+        # A marker can disappear even when the model understands the sentence. Try natural input
+        # first, but accept it only when every original protected literal/argument survives exactly.
+        natural = translator.translate_many(retry, target_code)
+        remaining = []
+        for value in retry:
+            candidate = natural.get(value, value)
+            if candidate != value and protected_text_intact(value, candidate):
+                results[value] = candidate
+            else:
+                remaining.append(value)
+        # Last resort for marker loss: translate only ordinary phrases around immutable literals.
+        # This is development-time output, never runtime substitution of a user's path or name.
+        parts = {value: protected_parts(value) for value in remaining}
+        phrases = [part.strip() for sections in parts.values() for protected, part in sections
+                   if not protected and re.search(r"[A-Za-z]", part)]
+        phrase_translations = translator.translate_many(phrases, target_code) if phrases else {}
+        for value, sections in parts.items():
+            output = []
+            for protected, part in sections:
+                if protected or not re.search(r"[A-Za-z]", part):
+                    output.append(part)
+                    continue
+                stripped = part.strip()
+                candidate = phrase_translations.get(stripped, stripped)
+                leading = part[:len(part) - len(part.lstrip())]
+                trailing = part[len(part.rstrip()):]
+                output.append(leading + candidate.strip() + trailing)
+            candidate = "".join(output)
+            if candidate != value and protected_text_intact(value, candidate):
+                results[value] = candidate
+
+    exact = [results[value] for value in source.exact]
     overrides = aosp_overrides(android_res, language, set(source.exact))
     exact = [overrides.get(value, translated_value) for value, translated_value in zip(source.exact, exact, strict=True)]
-    templates = [translated(value) for value in source.templates]
+    templates = [results[value] for value in source.templates]
     return exact, templates
 
 
@@ -432,6 +494,10 @@ def validate_pack(source: CatalogSource, language: str, exact: list[str], templa
         raise ValueError(f"{language}: blank translations are not allowed")
     if any("\ufffd" in value or "<AFPH" in value or "\x00" in value for value in exact + templates):
         raise ValueError(f"{language}: a generated translation contains a broken marker or character")
+    primary = {key: value.strip().casefold() for key, value in zip(source.exact, exact, strict=True)
+               if key in {"Cancel", "Save", "Copy", "Paste", "Move", "Delete"}}
+    if len(primary.values()) != len(set(primary.values())):
+        raise ValueError(f"{language}: ambiguous primary actions: {primary}")
     eligible = [
         (source_value, translated_value)
         for source_value, translated_value in zip(source.exact, exact, strict=True)
@@ -497,15 +563,19 @@ def update_catalog(
     target_code: str,
     translator: NllbTranslator | None,
     android_res: Path | None,
+    retry_english_fallbacks: bool = False,
 ) -> tuple[list[str], list[str]]:
     if len(previous_exact) != len(previous_source.exact) or len(previous_templates) != len(previous_source.templates):
         raise ValueError(f"{language}: existing pack does not match the previous catalog")
 
     exact_by_source = dict(zip(previous_source.exact, previous_exact, strict=True))
     template_by_source = dict(zip(previous_source.templates, previous_templates, strict=True))
+    manual = manual_overrides(language)
     missing_source = CatalogSource(
-        exact=[value for value in source.exact if value not in exact_by_source],
-        templates=[value for value in source.templates if value not in template_by_source],
+        exact=[value for value in source.exact if value not in exact_by_source or (
+            retry_english_fallbacks and value not in manual and is_english_prose_fallback(value, exact_by_source[value]))],
+        templates=[value for value in source.templates if value not in template_by_source or (
+            retry_english_fallbacks and value not in manual and is_english_prose_fallback(value, template_by_source[value]))],
         android_strings={},
     )
     translated_exact, translated_templates = translate_catalog(
@@ -517,8 +587,9 @@ def update_catalog(
     )
     exact_by_source.update(zip(missing_source.exact, translated_exact, strict=True))
     # Preserve every existing translation except explicit, keyed corrections.
-    exact_by_source.update({key: value for key, value in manual_overrides(language).items() if key in source.exact})
+    exact_by_source.update({key: value for key, value in manual.items() if key in source.exact})
     template_by_source.update(zip(missing_source.templates, translated_templates, strict=True))
+    template_by_source.update({key: value for key, value in manual.items() if key in source.templates})
     return (
         [exact_by_source[value] for value in source.exact],
         [template_by_source[value] for value in source.templates],
@@ -541,6 +612,8 @@ def main() -> None:
         help="Translate only catalog entries missing from existing language packs",
     )
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--retry-english-fallbacks", action="store_true",
+                        help="With --update-existing, retry unchanged English prose; keep good translations and explicit overrides")
     parser.add_argument(
         "--manual-only", action="store_true",
         help="With --update-existing, apply keyed translations without loading a model; missing copy is an error",
@@ -548,6 +621,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.manual_only and not args.update_existing:
         raise SystemExit("--manual-only requires --update-existing")
+    if args.retry_english_fallbacks and (not args.update_existing or args.manual_only):
+        raise SystemExit("--retry-english-fallbacks requires --update-existing and a development translator")
 
     selected = list(LANGUAGES)
     if args.languages:
@@ -607,6 +682,7 @@ def main() -> None:
                 LANGUAGES[language],
                 translator,
                 args.android_res,
+                retry_english_fallbacks=args.retry_english_fallbacks,
             )
         else:
             print(f"{language}: generating", flush=True)

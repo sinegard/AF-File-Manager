@@ -121,7 +121,11 @@ public final class NearbyRuntimeVerifier {
                         android.os.Bundle text = new android.os.Bundle();
                         text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pairing);
                         if (!field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) throw new AssertionError("Pairing field rejected input");
-                        awaitNode(test, "entered pairing value", node -> node.isEditable() && textEquals(node, pairing));
+                        // Parsing an entered address can change the pairing body's
+                        // height and move the field outside the old viewport. The
+                        // value must still match exactly, but reach that real field
+                        // again rather than requiring it to remain at old bounds.
+                        pairingInput(test, node -> node.isEditable() && textEquals(node, pairing));
                     } else if (batch == 1) throw new AssertionError("Initial pairing input unavailable");
                     if (batch == 1) {
                         pairingInput(test, node -> textEquals(node, "Find nearby AF devices"));
@@ -133,7 +137,7 @@ public final class NearbyRuntimeVerifier {
                             if (!snapshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) throw new AssertionError("Pairing evidence write failed");
                         } finally { snapshot.recycle(); }
                     }
-                    AccessibilityNodeInfo label = awaitNode(test, "Start button", node -> "Start transfer".contentEquals(node.getText() == null ? "" : node.getText()) &&
+                    AccessibilityNodeInfo label = pairingInput(test, node -> "Start transfer".contentEquals(node.getText() == null ? "" : node.getText()) &&
                         clickableAncestor(node) != null && clickableAncestor(node).isEnabled());
                     click(test, label);
                     long deadline = SystemClock.elapsedRealtime() + 20000;
@@ -414,10 +418,25 @@ public final class NearbyRuntimeVerifier {
         int count = 0;
         while (!nodes.isEmpty() && count++ < 2000) {
             AccessibilityNodeInfo node = nodes.removeFirst();
-            if (node.isVisibleToUser() && match.matches(node) && node.refresh() && node.isVisibleToUser() && match.matches(node)) return node;
+            if (node.isVisibleToUser() && match.matches(node) && node.refresh() &&
+                    visibleInScrollViewport(node) && match.matches(node)) return node;
             for (int i = 0; i < node.getChildCount(); i++) { AccessibilityNodeInfo child = node.getChild(i); if (child != null) nodes.add(child); }
         }
         return null;
+    }
+    private static boolean visibleInScrollViewport(AccessibilityNodeInfo node) {
+        if (!node.isVisibleToUser()) return false;
+        android.graphics.Rect bounds = new android.graphics.Rect();
+        node.getBoundsInScreen(bounds);
+        if (bounds.isEmpty()) return false;
+        AccessibilityNodeInfo parent = node.getParent();
+        for (int depth = 0; parent != null && depth < 32; depth++, parent = parent.getParent()) {
+            if (!parent.isScrollable()) continue;
+            android.graphics.Rect viewport = new android.graphics.Rect();
+            parent.getBoundsInScreen(viewport);
+            if (!bounds.intersect(viewport)) return false;
+        }
+        return !bounds.isEmpty();
     }
     private static AccessibilityNodeInfo activeRoot(Instrumentation test) {
         android.app.UiAutomation automation = test.getUiAutomation();

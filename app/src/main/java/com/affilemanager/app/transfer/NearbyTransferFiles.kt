@@ -16,6 +16,9 @@ data class TransferFileProgress(
     val modifiedAtMillis: Long = 0,
     val batchId: String = "",
     val failure: TransferFailure? = null,
+    /** Session-local guard. It is deliberately absent from the wire manifest. */
+    val retrySubmitted: Boolean = false,
+    val notAttempted: Boolean = false,
 ) {
     val name: String get() = relativePath.substringAfterLast('/')
 }
@@ -150,7 +153,12 @@ internal class NearbyReceiveFiles(private val maximumConcurrentUploads: Int = 1)
 
     @Synchronized fun cancel(id: String?): List<TransferFileProgress> {
         requireBatch(id)
-        batches[id]?.let { files -> batches[id] = files.map { if (it.status == TransferFileStatus.COMPLETED) it else it.copy(status = TransferFileStatus.CANCELLED) } }
+        // Stopping the remaining batch must not rewrite an established failure
+        // (or its diagnostic) as a cancellation by the user.
+        batches[id]?.let { files ->
+            val dueToFailure = files.any { it.status == TransferFileStatus.FAILED }
+            batches[id] = files.map { it.stopPending(TransferFileStatus.CANCELLED, dueToFailure) }
+        }
         return snapshot()
     }
 
@@ -158,7 +166,7 @@ internal class NearbyReceiveFiles(private val maximumConcurrentUploads: Int = 1)
         requireBatch(id)
         val files = batches[id] ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
         val current = files.getOrNull(index - 1) ?: throw IllegalArgumentException("Siuntimo rinkinio keliai nesutampa")
-        if (current.status != TransferFileStatus.COMPLETED) {
+        if (!current.status.isTerminal()) {
             batches[id] = files.toMutableList().apply {
                 this[index - 1] = current.copy(status = TransferFileStatus.CANCELLED, localPath = null)
             }
@@ -176,3 +184,13 @@ internal class NearbyReceiveFiles(private val maximumConcurrentUploads: Int = 1)
 }
 
 internal fun TransferFileStatus.isTerminal(): Boolean = this in setOf(TransferFileStatus.COMPLETED, TransferFileStatus.FAILED, TransferFileStatus.CANCELLED)
+
+/** Sender and receiver agree: a later stop cannot replace a terminal result. */
+internal fun TransferFileProgress.stopPending(stop: TransferFileStatus, dueToFailure: Boolean = stop == TransferFileStatus.FAILED): TransferFileProgress {
+    require(stop == TransferFileStatus.CANCELLED || stop == TransferFileStatus.FAILED)
+    return when {
+        status.isTerminal() -> this
+        status == TransferFileStatus.WAITING && dueToFailure -> copy(status = TransferFileStatus.CANCELLED, notAttempted = true)
+        else -> copy(status = stop)
+    }
+}

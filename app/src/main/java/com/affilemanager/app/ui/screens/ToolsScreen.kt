@@ -210,6 +210,15 @@ fun ToolsScreen(
             )
         }
         item {
+            Card(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LText("Du skydeliai", modifier = Modifier.weight(1f).padding(end = 8.dp))
+                    Switch(checked = appearanceSettings.automaticDualPane, onCheckedChange = viewModel::setAutomaticDualPane,
+                        modifier = Modifier.testTag("automatic_dual_pane"))
+                }
+            }
+        }
+        item {
             FeatureVisibilitySettings(featureVisibility, viewModel::setFeatureVisible, viewModel::resetFeatureVisibility)
         }
         }

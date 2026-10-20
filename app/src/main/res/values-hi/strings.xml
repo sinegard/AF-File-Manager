@@ -10,7 +10,7 @@
     <string name="share_file_chooser_title">फ़ाइल साझा करें</string>
     <string name="open_with_chooser_short">इसमें खोलें</string>
     <string name="lan_transfer_channel_name">स्थानीय नेटवर्क फ़ाइल स्थानांतरण</string>
-    <string name="lan_transfer_channel_description">Shown only while you run LAN file transfer</string>
+    <string name="lan_transfer_channel_description">केवल जब आप LAN फ़ाइल स्थानांतरण चलाते हैं प्रदर्शित किया</string>
     <string name="lan_transfer_starting_title">AF File Manager LAN स्थानांतरण</string>
     <string name="lan_transfer_starting_text">सर्वर शुरू...</string>
     <string name="lan_transfer_running_title">AF File Manager LAN स्थानांतरण चल रहा है</string>

@@ -38,6 +38,22 @@ import com.affilemanager.app.ui.localization.LText
 import kotlin.math.roundToInt
 
 @Composable
+private fun GridColumnChoices(label: String, selected: Int, range: IntRange, tag: String, onSelect: (Int) -> Unit) {
+    LText(label, style = MaterialTheme.typography.labelLarge)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        range.chunked(4).forEach { counts ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                counts.forEach { count ->
+                    FilterChip(selected = selected == count, onClick = { onSelect(count) },
+                        label = { Text(count.toString()) }, modifier = Modifier.weight(1f).testTag("${tag}_$count"))
+                }
+                repeat(4 - counts.size) { androidx.compose.foundation.layout.Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+@Composable
 fun DirectoryDisplaySettingsDialog(
     initialSettings: DirectoryDisplaySettings,
     thumbnailsAvailable: Boolean,
@@ -55,7 +71,8 @@ fun DirectoryDisplaySettingsDialog(
     var draft by remember(initialSettings, thumbnailsAvailable, gridColumnRange) {
         mutableStateOf(
             (if (thumbnailsAvailable) initialSettings else initialSettings.copy(showThumbnails = false))
-                .copy(gridColumns = initialSettings.gridColumns.coerceIn(gridColumnRange)),
+                .copy(gridColumns = initialSettings.gridColumns.coerceIn(gridColumnRange),
+                    gridColumnsLandscape = initialSettings.gridColumnsLandscape?.coerceIn(gridColumnRange)),
         )
     }
     var draftSortMode by remember(initialSortMode) { mutableStateOf(initialSortMode ?: SortMode.NAME) }
@@ -137,20 +154,11 @@ fun DirectoryDisplaySettingsDialog(
 
                 if (draft.layoutMode == DirectoryLayoutMode.GRID) {
                     LText("Tinklelio stulpeliai", fontWeight = FontWeight.SemiBold)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        gridColumnRange.chunked(3).forEach { counts ->
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                counts.forEach { count ->
-                                    FilterChip(
-                                        selected = draft.gridColumns == count,
-                                        onClick = { draft = draft.copy(gridColumns = count) },
-                                        label = { Text(count.toString()) },
-                                        modifier = Modifier.weight(1f).testTag("display_grid_columns_$count"),
-                                    )
-                                }
-                                repeat(3 - counts.size) { androidx.compose.foundation.layout.Spacer(Modifier.weight(1f)) }
-                            }
-                        }
+                    GridColumnChoices("Vertikaliai", draft.gridColumns, gridColumnRange, "display_grid_columns") {
+                        draft = draft.copy(gridColumns = it)
+                    }
+                    GridColumnChoices("Horizontaliai", draft.gridColumnsLandscape ?: draft.gridColumns, gridColumnRange, "display_landscape_columns") {
+                        draft = draft.copy(gridColumnsLandscape = it)
                     }
                     LText("Tinklelio stilius", fontWeight = FontWeight.SemiBold)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

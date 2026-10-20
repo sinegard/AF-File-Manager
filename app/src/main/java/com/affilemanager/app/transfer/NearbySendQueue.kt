@@ -49,6 +49,36 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
     }
 
     @Synchronized fun get(id: String): NearbySendBatch? = batches[id]
+
+    /** Claims the original row once; only that row's existing source may be retried. */
+    @Synchronized fun claimRetry(id: String, fileIndex: Int) {
+        val batch = requireNotNull(batches[id]) { "Select the source again" }
+        val index = fileIndex - 1
+        val file = requireNotNull(batch.state.files.getOrNull(index)) { "Select the source again" }
+        require(file.status in setOf(TransferFileStatus.FAILED, TransferFileStatus.CANCELLED) && !file.retrySubmitted) { "File is not available for retry" }
+        require(batch.sources.retainsRetrySource(index)) { "The temporary source has been removed. Select it again." }
+        batches[id] = batch.copy(state = batch.state.copy(files = batch.state.files.toMutableList().apply {
+            this[index] = file.copy(retrySubmitted = true)
+        }))
+        changed()
+    }
+
+    @Synchronized fun finishRetryClaim(id: String, fileIndex: Int, error: String? = null, received: Boolean = false) {
+        val batch = batches[id] ?: return
+        val index = fileIndex - 1
+        val file = batch.state.files.getOrNull(index) ?: return
+        val updated = when {
+            received -> file.copy(status = TransferFileStatus.COMPLETED, transferredBytes = file.sizeBytes, failure = null, notAttempted = false)
+            error != null -> file.copy(retrySubmitted = false)
+            else -> file
+        }
+        val files = batch.state.files.toMutableList().apply { this[index] = updated }
+        val reconciled = received && files.all { it.status == TransferFileStatus.COMPLETED }
+        batches[id] = batch.copy(state = batch.state.copy(files = files, message = error ?: if (reconciled) "Baigta" else batch.state.message,
+            status = if (reconciled) NearbyTransferStatus.COMPLETED else batch.state.status,
+            completedFiles = files.count { it.status == TransferFileStatus.COMPLETED }, sentBytes = files.sumOf { it.transferredBytes }))
+        changed()
+    }
     @Synchronized fun enqueueGroup(peers: List<NearbyPairing>, sources: PreparedNearbyTransfer, returnPairing: NearbyPairing?): List<NearbySendBatch> {
         require(peers.size in 1..9 && peers.distinct().size == peers.size) { "Pasirinkite grupės gavėjus" }
         require(!hasPending()) { "Pirmiausia užbaikite vykstantį siuntimą" }
@@ -79,7 +109,7 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
         val merged = files.mapIndexed { index, file ->
             if (prior.getOrNull(index)?.status == TransferFileStatus.CANCELLED) {
                 file.copy(status = TransferFileStatus.CANCELLED, batchId = id)
-            } else file.copy(batchId = id)
+            } else file.copy(batchId = id, retrySubmitted = file.retrySubmitted || prior.getOrNull(index)?.retrySubmitted == true)
         }
         batches[id] = batch.copy(ready = true, announced = announced, state = batch.state.copy(
             totalBytes = merged.sumOf { it.sizeBytes }, files = merged))
@@ -106,7 +136,7 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
                 )
             ) {
                 prior.copy(batchId = id)
-            } else file.copy(batchId = id)
+            } else file.copy(batchId = id, retrySubmitted = file.retrySubmitted || prior?.retrySubmitted == true)
         }
         batches[id] = batch.copy(state = state.copy(files = merged))
         if (state.status.finished() && activeId == id) activeId = null
@@ -135,8 +165,11 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
     @Synchronized fun cancel(ownedIds: Set<String>? = null): List<NearbySendBatch> {
         val cancelled = batches.values.filter { !it.state.status.finished() && (ownedIds == null || it.id in ownedIds) }
         cancelled.forEach { batch -> batches[batch.id] = batch.copy(state = batch.state.copy(status = NearbyTransferStatus.CANCELLED,
-            message = "Siuntimas atšauktas", files = batch.state.files.map { if (it.status == TransferFileStatus.COMPLETED) it
-                else it.copy(status = TransferFileStatus.CANCELLED, localPath = if (batch.sources.cleanupRootPath != null) null else it.localPath) })) }
+            message = "Siuntimas atšauktas", files = batch.state.files.map {
+                it.stopPending(TransferFileStatus.CANCELLED).let { stopped ->
+                    if (batch.sources.cleanupRootPath != null && stopped.status != TransferFileStatus.COMPLETED) stopped.copy(localPath = null) else stopped
+                }
+            })) }
         if (cancelled.any { it.id == activeId }) activeId = null
         changed()
         return cancelled
@@ -177,3 +210,14 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
 internal fun NearbyTransferStatus.finished() = this in setOf(NearbyTransferStatus.COMPLETED, NearbyTransferStatus.CANCELLED, NearbyTransferStatus.ERROR)
 private fun PreparedNearbyTransfer.payloadCharacters() = paths.sumOf { it.length } + sourceUris.filterNotNull().sumOf { it.length } +
     relativePaths.sumOf { it.length } + directories.sumOf { it.length }
+
+/** A mixed batch may contain original files/URIs alongside already-discarded staging copies. */
+internal fun PreparedNearbyTransfer.retainsRetrySource(index: Int): Boolean {
+    val path = paths.getOrNull(index) ?: return false
+    if (sourceUris.getOrNull(index) != null) return true
+    if (path.isBlank()) return false
+    val stage = cleanupRootPath ?: return true
+    return runCatching {
+        !java.io.File(path).canonicalFile.toPath().startsWith(java.io.File(stage).canonicalFile.toPath())
+    }.getOrDefault(false)
+}

@@ -27,8 +27,15 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
         char[] password = new char[0];
         try {
             boolean verified;
-            if ("media-editing".equals(suite)) {
+            if ("browser-issues".equals(suite)) {
+                verified = com.affilemanager.app.BrowserIssuesRuntimeVerifier.verify(this);
+            } else if ("media-editing".equals(suite)) {
                 verified = com.affilemanager.app.media.editing.MediaEditingRuntimeVerifier.verify(this);
+            } else if ("widgets".equals(suite)) {
+                verified = com.affilemanager.app.widgets.WidgetRuntimeVerifier.verify(this)
+                        && com.affilemanager.app.widgets.PinnedWidgetRuntimeVerifier.verify(this);
+            } else if ("archive-navigation".equals(suite)) {
+                verified = com.affilemanager.app.ArchiveRuntimeVerifier.verify(this);
             } else if ("share-index".equals(suite)) {
                 launchTargetActivity();
                 verified = com.affilemanager.app.transfer.ReleaseShareIndexVerifier.verify(this);

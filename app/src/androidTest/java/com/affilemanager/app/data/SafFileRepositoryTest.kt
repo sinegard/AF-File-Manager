@@ -6,8 +6,15 @@ import com.affilemanager.app.AFFileManagerApplication
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class SafFileRepositoryTest {
+    @Test fun typedAddressDoesNotGrantAccessToAnUnselectedProviderOrFileUri() = runBlocking {
+        listOf("file:///data/data/com.termux/files/home", "content://unselected.provider/tree/home",
+            "https://example.com/tree/home", "content://unselected.provider/document/home").forEach { address ->
+            assertTrue(address, repository.resolveAddress(address).isFailure)
+        }
+    }
     private val repository = SafFileRepository(
         ApplicationProvider.getApplicationContext<AFFileManagerApplication>(),
     )

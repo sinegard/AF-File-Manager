@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Crop
@@ -19,6 +20,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -28,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -68,7 +72,8 @@ internal fun MediaEditorDialog(
     val scope = rememberCoroutineScope()
     val uri = remember(source.key) { source.uri(context) }
     val input by produceState<Result<MediaEditInfo>?>(null, source.key) {
-        value = withContext(Dispatchers.IO) { runCatching { MediaExportEngine.info(context, uri, source.localFile.length()) } }
+        try {value=Result.success(MediaExportEngine.readInfo(context,uri,source.localFile))}
+        catch(error:Throwable){if(error is CancellationException)throw error;value=Result.failure(error)}
     }
     val info = input?.getOrNull()
     var format by remember(source.key, mode) { mutableStateOf(if (mode == MediaEditorMode.EXTRACT_AUDIO || source.kind == com.affilemanager.app.model.EntryKind.AUDIO) MediaExportFormat.M4A else MediaExportFormat.MP4) }
@@ -82,11 +87,24 @@ internal fun MediaEditorDialog(
     var gifFps by remember { mutableIntStateOf(10) }
     var bitrate by remember { mutableStateOf<Int?>(if (mode == MediaEditorMode.COMPRESS) 2_000_000 else null) }
     var audioBitrate by remember { mutableIntStateOf(192_000) }
+    var sampleRate by remember { mutableStateOf<Int?>(null) }
+    var channels by remember { mutableStateOf<Int?>(null) }
+    var fadeIn by remember { mutableIntStateOf(0) }
+    var fadeOut by remember { mutableIntStateOf(0) }
+    var echo by remember { mutableIntStateOf(0) }
+    var noiseGate by remember { mutableStateOf(false) }
+    var reverse by remember { mutableStateOf(false) }
+    var reverseVideo by remember { mutableStateOf(false) }
+    var denoise by remember { mutableStateOf(false) }
+    var copyTracks by remember { mutableStateOf(false) }
+    var showAudioEffects by remember { mutableStateOf(false) }
     var speed by remember { mutableFloatStateOf(1f) }
     var pitch by remember { mutableFloatStateOf(1f) }
     var volume by remember { mutableFloatStateOf(1f) }
     var tags by remember { mutableStateOf(MediaTags()) }
     var tagsEdited by remember { mutableStateOf(false) }
+    var tagsLoading by remember(source.key) { mutableStateOf(true) }
+    var tagsReady by remember(source.key) { mutableStateOf(false) }
     var showTags by remember { mutableStateOf(false) }
     var cover by remember { mutableStateOf<ByteArray?>(null) }
     var coverLoading by remember { mutableStateOf(false) }
@@ -99,14 +117,19 @@ internal fun MediaEditorDialog(
         if (failure != null || input?.isFailure == true) editorScroll.animateScrollTo(0)
     }
     LaunchedEffect(source.key) {
-        try { val original = withContext(Dispatchers.IO) { MediaExportEngine.tags(context, uri) }; if (!tagsEdited) tags = original }
+        try { val original = MediaExportEngine.readTags(context,source.localFile); if (!tagsEdited) tags = original;tagsReady=true }
         catch (error: Throwable) { if (error is CancellationException) throw error; failure = error }
+        finally {tagsLoading=false}
     }
     val options = MediaEditOptions(format, interval.start.toLong(), interval.endInclusive.toLong(), speed, pitch, volume,
         if (cropEnabled && format.video) crop else MediaCrop(),
         if (format == MediaExportFormat.GIF) gifHeight else if (format.video) height else null,
         if (format == MediaExportFormat.GIF) gifFps else if (format.video) fps else null,
-        if (format == MediaExportFormat.MP4) bitrate else null, audioBitrate, tags)
+        if (format.video && format != MediaExportFormat.GIF) bitrate else null, audioBitrate, tags, sampleRate, channels,
+        if (format == MediaExportFormat.GIF) 0 else fadeIn, if (format == MediaExportFormat.GIF) 0 else fadeOut,
+        if (format == MediaExportFormat.GIF) 0 else echo, format != MediaExportFormat.GIF && noiseGate, format != MediaExportFormat.GIF && reverse,
+        format != MediaExportFormat.GIF && denoise, format.video && reverseVideo, format.video && format != MediaExportFormat.GIF && copyTracks)
+    val changing = !exporting && !options.copyTracks
     val optionError = info?.let { runCatching { options.validate(it); MediaEditNames.outputName(name, format) }.exceptionOrNull() }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { selected ->
         if (selected != null) scope.launch {
@@ -130,12 +153,14 @@ internal fun MediaEditorDialog(
     }
     val dismiss: () -> Unit = { exportJob?.cancel(); onDismiss() }
     AfModalDialog(title = when (mode) { MediaEditorMode.TRIM -> "Kirpti mediją"; MediaEditorMode.EXTRACT_AUDIO -> "Išgauti garsą"; MediaEditorMode.COMPRESS -> "Suspausti vaizdo įrašą" },
-        icon = Icons.Rounded.Crop, onDismissRequest = dismiss, expandedContent = true,
+        icon = Icons.Rounded.Crop, onDismissRequest = dismiss, expandedContent = true, decorFitsSystemWindows = false,
         modifier = Modifier.testTag("media_editor"), actions = {
             val focus = LocalFocusManager.current
             val keyboard = LocalSoftwareKeyboardController.current
-            TextButton(onClick = dismiss, modifier = Modifier.testTag("media_edit_cancel")) { LText("Atšaukti") }
-            Button(enabled = info != null && optionError == null && !exporting && !coverLoading,
+            val initialFocus = com.affilemanager.app.ui.components.rememberDialogInitialFocusTarget()
+            TextButton(onClick = dismiss, modifier = Modifier.testTag("media_edit_cancel")
+                .focusProperties { canFocus = true }.focusRequester(initialFocus)) { LText("Atšaukti") }
+            Button(enabled = info != null && optionError == null && !exporting && !coverLoading && !tagsLoading && (format==MediaExportFormat.GIF || tagsReady || tagsEdited),
                 modifier = Modifier.testTag("media_edit_export"), onClick = {
                     val metadata = info ?: return@Button
                     focus.clearFocus(); keyboard?.hide()
@@ -165,7 +190,7 @@ internal fun MediaEditorDialog(
             if (input == null) CircularProgressIndicator()
             (failure ?: input?.exceptionOrNull())?.let { MediaEditError(it) }
             if (info != null) {
-                if (!exporting) MediaEditPreview(uri, info, options, cropEnabled && format.video, crop, { crop = it }, Modifier.fillMaxWidth())
+                if (!exporting) MediaEditorSourcePreview(source,uri,info,options,cropEnabled && format.video,crop,{crop=it})
                 else {
                     val displayedProgress = progress
                     if (displayedProgress == null) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -173,37 +198,45 @@ internal fun MediaEditorDialog(
                     LText("Ruošiama…")
                     progress?.let { Text("$it %") }
                 }
-                LText("Kirpimo intervalas")
+                LText("Kirpimo intervalas", modifier = Modifier.testTag("media_trim_range_label"))
                 Text("${mediaTime(interval.start.toLong())} – ${mediaTime(interval.endInclusive.toLong())}")
-                RangeSlider(interval, { interval = it }, enabled = !exporting, valueRange = 0f..info.durationMs.toFloat(), modifier = Modifier.testTag("media_trim_range"))
+                RangeSlider(interval, { interval = it }, enabled = changing, valueRange = 0f..info.durationMs.toFloat(), modifier = Modifier.testTag("media_trim_range"))
                 AfActionRow {
-                    val choices = if (info.hasVideo) MediaExportFormat.entries else listOf(MediaExportFormat.M4A, MediaExportFormat.WAV)
+                    val choices = if (info.hasVideo) MediaExportFormat.entries else MediaExportFormat.entries.filterNot { it.video }
                     choices.filter { it.video || info.hasAudio }.forEach { choice ->
                         FilterChip(selected = format == choice, enabled = !exporting, onClick = {
                             focus.clearFocus(); keyboard?.hide()
                             format = choice
+                            copyTracks = false
                         }, label = { Text(choice.name) }, modifier = Modifier.testTag("media_format_${choice.name}"))
                     }
                 }
-                OutlinedTextField(name, { name = it.take(220) }, enabled = !exporting, label = { LText("Failo pavadinimas") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("media_output_name"), suffix = { Text(".${format.extension}") })
+                OutlinedTextField(name, { name = it.take(220) }, enabled = !exporting, label = { LText("Failo pavadinimas") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("media_output_name").then(com.affilemanager.app.ui.components.rememberKeyboardAwareInput()), suffix = { Text(".${format.extension}") })
                 if (format.video) {
+                    if(format!=MediaExportFormat.GIF) MediaOptionToggle(copyTracks,{copyTracks=it
+                            if(it){interval=0f..info.durationMs.toFloat();cropEnabled=false;height=null;fps=null;bitrate=null
+                                speed=1f;pitch=1f;volume=1f;sampleRate=null;channels=null;fadeIn=0;fadeOut=0;echo=0;noiseGate=false;denoise=false;reverse=false;reverseVideo=false}
+                        },!exporting,"Kopijuoti takelius be perenkodavimo","media_copy_tracks")
+                    MediaOptionToggle(reverseVideo,{reverseVideo=it},changing,"Apversti vaizdą","media_reverse_video")
+                    if(reverseVideo)LText("Tik išvesties failui",style=MaterialTheme.typography.bodySmall)
                     AfActionRow {
-                        Checkbox(cropEnabled, { cropEnabled = it }, enabled = !exporting, modifier = Modifier.testTag("media_crop_enabled"))
+                        Checkbox(cropEnabled, { cropEnabled = it }, enabled = changing, modifier = Modifier.testTag("media_crop_enabled"))
                         LText("Apkirpti")
-                        TextButton(onClick = { crop = MediaCrop() }, enabled = !exporting) { LText("Atkurti") }
+                        TextButton(onClick = { crop = MediaCrop() }, enabled = changing) { LText("Atkurti") }
                     }
                     if (cropEnabled) LText("Vilkite rėmelį arba jo apatinį kampą.", style = MaterialTheme.typography.bodySmall)
                     LText("Išvesties raiška")
                     AfActionRow {
                         (listOf<Int?>(null, 240, 360, 480) + if (format != MediaExportFormat.GIF) listOf(720, 1080, 1440, 2160) else emptyList()).forEach { size ->
-                            FilterChip(options.height == size, { if (format == MediaExportFormat.GIF) gifHeight = size else height = size }, enabled = !exporting,
+                            FilterChip(options.height == size, { if (format == MediaExportFormat.GIF) gifHeight = size else height = size }, enabled = changing,
                                 modifier = Modifier.testTag("media_height_${size ?: "original"}"), label = { if (size == null) LText("Originali") else Text("${size}p") })
                         }
                     }
                     LText("Kadrų sparta")
                     AfActionRow {
                         (if (format == MediaExportFormat.GIF) listOf(5, 10, 15) else listOf<Int?>(null, 15, 24, 30, 60)).forEach { rate ->
-                            FilterChip(options.frameRate == rate, { if (format == MediaExportFormat.GIF) gifFps = requireNotNull(rate) else fps = rate }, enabled = !exporting,
+                            FilterChip(options.frameRate == rate, { if (format == MediaExportFormat.GIF) gifFps = requireNotNull(rate) else fps = rate }, enabled = changing,
                                 modifier = Modifier.testTag("media_fps_${rate ?: "original"}"), label = { if (rate == null) LText("Originali") else Text(if (format == MediaExportFormat.GIF) "$rate fps" else "≤ $rate fps") })
                         }
                     }
@@ -211,21 +244,54 @@ internal fun MediaEditorDialog(
                     else {
                         LText("Vaizdo bitų sparta")
                         AfActionRow { listOf<Int?>(null, 500_000, 1_000_000, 2_000_000, 4_000_000, 8_000_000, 16_000_000).forEach { rate ->
-                            FilterChip(bitrate == rate, { bitrate = rate }, enabled = !exporting, label = { if (rate == null) LText("Automatinė") else Text("${decimal(rate / 1_000_000f)} Mbps") })
+                            FilterChip(bitrate == rate, { bitrate = rate }, enabled = changing, label = { if (rate == null) LText("Automatinė") else Text("${decimal(rate / 1_000_000f)} Mbps") })
                         } }
                         LText("Mažesnis dydis gali sumažinti kokybę. Dydis yra apytikslis, ne garantuotas.", style = MaterialTheme.typography.bodySmall)
                     }
                     if (format == MediaExportFormat.GIF) AfActionRow { LText("Dydis"); Text("≤ ${decimal(GifSequenceWriter.MAX_BYTES / (1024f * 1024))} MiB") }
                 }
-                MediaValueSlider("Greitis", speed, .25f..4f, !exporting) { speed = it }
+                MediaValueSlider("Greitis", speed, .25f..4f, changing) { speed = it }
                 if (format != MediaExportFormat.GIF && info.hasAudio) {
-                    MediaValueSlider("Garso aukštis", pitch, .5f..2f, !exporting) { pitch = it }
-                    MediaValueSlider("Garsumas", volume, 0f..2f, !exporting) { volume = it }
+                    LText("Garso diskretizavimo dažnis")
+                    AfActionRow { listOf<Int?>(null, 8000, 16000, 22050, 32000, 44100, 48000).forEach { rate ->
+                        FilterChip(sampleRate == rate, { sampleRate = rate }, enabled = changing,
+                            modifier = Modifier.testTag("media_sample_rate_${rate ?: "original"}"),
+                            label = { if (rate == null) LText("Originali") else Text("$rate Hz") })
+                    } }
+                    LText("Garso kanalai")
+                    AfActionRow { listOf<Int?>(null, 1, 2).forEach { count ->
+                        FilterChip(channels == count, { channels = count }, enabled = changing,
+                            modifier = Modifier.testTag("media_channels_${count ?: "original"}"),
+                            label = { LText(when (count) { 1 -> "Monofoninis"; 2 -> "Stereofoninis"; else -> "Originali" }) })
+                    } }
+                    LText("Diskretizavimo dažnio ir kanalų pakeitimai taikomi išvesties failui.", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { showAudioEffects = !showAudioEffects }, enabled = !exporting, modifier = Modifier.testTag("media_audio_effects")) { LText("Garso efektai") }
+                    if (showAudioEffects) {
+                        LText("Palaipsniui sustiprinti")
+                        AfActionRow { listOf(0, 250, 500, 1000, 2000, 5000).forEach { ms ->
+                            FilterChip(fadeIn == ms, { fadeIn = ms }, enabled = changing, label = { if (ms == 0) LText("Išjungta") else Text("$ms ms") })
+                        } }
+                        LText("Palaipsniui nutildyti")
+                        AfActionRow { listOf(0, 250, 500, 1000, 2000, 5000).forEach { ms ->
+                            FilterChip(fadeOut == ms, { fadeOut = ms }, enabled = changing, label = { if (ms == 0) LText("Išjungta") else Text("$ms ms") })
+                        } }
+                        LText("Aidas")
+                        AfActionRow { listOf(0, 100, 250, 500).forEach { ms ->
+                            FilterChip(echo == ms, { echo = ms }, enabled = changing, label = { if (ms == 0) LText("Išjungta") else Text("$ms ms") })
+                        } }
+                        MediaOptionToggle(noiseGate,{noiseGate=it},changing,"Triukšmo slenkstis","media_noise_gate")
+                        LText("Triukšmo slenkstis sumažina tylų foninį garsą, bet nepašalina viso triukšmo.", style = MaterialTheme.typography.bodySmall)
+                        MediaOptionToggle(denoise,{denoise=it},changing,"Triukšmo mažinimas (FFT)","media_noise_reduction")
+                        MediaOptionToggle(reverse,{reverse=it},changing,"Apversti garsą","media_reverse_audio")
+                        LText("Garso efektai taikomi išvesties failui ir neilgina pasirinktos trukmės.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    MediaValueSlider("Garso aukštis", pitch, .5f..2f, changing) { pitch = it }
+                    MediaValueSlider("Garsumas", volume, 0f..2f, changing) { volume = it }
                     if (volume > 1f) LText("Garsinimas virš 100 % pritaikomas tik išvesties failui.", style = MaterialTheme.typography.bodySmall)
-                    if (format != MediaExportFormat.WAV) {
+                    if (!format.losslessAudio) {
                         LText("Garso bitų sparta")
                         AfActionRow { listOf(32, 64, 128, 192, 256, 320).forEach { kbps ->
-                            FilterChip(audioBitrate == kbps * 1000, { audioBitrate = kbps * 1000 }, enabled = !exporting, label = { Text("$kbps kbps") })
+                            FilterChip(audioBitrate == kbps * 1000, { audioBitrate = kbps * 1000 }, enabled = changing, label = { Text("$kbps kbps") })
                         } }
                     }
                 }
@@ -234,7 +300,8 @@ internal fun MediaEditorDialog(
                 if (format != MediaExportFormat.GIF) {
                     TextButton(onClick = { focus.clearFocus(); keyboard?.hide(); showTags = !showTags }, enabled = !exporting) { LText("Metaduomenys") }
                     if (showTags) {
-                        MediaTagFields(tags, !exporting) { tags = it; tagsEdited = true }
+                        if(tagsLoading)CircularProgressIndicator(Modifier.size(24.dp))
+                        MediaTagFields(tags, !exporting && !tagsLoading) { tags = it; tagsEdited = true }
                         AfActionRow {
                             TextButton(onClick = { coverPicker.launch("image/*") }, enabled = !exporting && !coverLoading) { LText("Pasirinkti viršelį") }
                             if (cover != null) TextButton(onClick = { cover = null }, enabled = !exporting) { LText("Pašalinti viršelį") }
@@ -252,6 +319,14 @@ internal fun MediaEditorDialog(
 }
 
 @Composable
+private fun MediaOptionToggle(value: Boolean, onValue: (Boolean)->Unit, enabled: Boolean, label: String, tag: String) {
+    Row(Modifier.fillMaxWidth().testTag(tag).toggleable(value=value,enabled=enabled,role=Role.Checkbox,onValueChange=onValue),verticalAlignment=Alignment.CenterVertically) {
+        Checkbox(value,null,enabled=enabled)
+        LText(label,modifier=Modifier.weight(1f))
+    }
+}
+
+@Composable
 private fun MediaValueSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onValue: (Float) -> Unit) {
     AfActionRow { LText(label); Text("${decimal(value)}×") }
     Slider(value, onValue, valueRange = range, enabled = enabled, modifier = Modifier.testTag("media_value_$label"))
@@ -263,11 +338,12 @@ private fun MediaTagFields(tags: MediaTags, enabled: Boolean, onChange: (MediaTa
         Triple("Pavadinimas", tags.title) { tags.copy(title = it) }, Triple("Atlikėjas", tags.artist) { tags.copy(artist = it) },
         Triple("Albumas", tags.album) { tags.copy(album = it) }, Triple("Albumo atlikėjas", tags.albumArtist) { tags.copy(albumArtist = it) },
         Triple("Kompozitorius", tags.composer) { tags.copy(composer = it) }, Triple("Leidėjas", tags.publisher) { tags.copy(publisher = it) },
-        Triple("Data", tags.date) { tags.copy(date = it) }, Triple("Žanras", tags.genre) { tags.copy(genre = it) },
+        Triple("Įrašo data", tags.date) { tags.copy(date = it) }, Triple("Žanras", tags.genre) { tags.copy(genre = it) },
         Triple("Dainos tekstas", tags.lyrics) { tags.copy(lyrics = it) }, Triple("Komentaras", tags.comment) { tags.copy(comment = it) })
     fields.forEach { (label, value, change) ->
         OutlinedTextField(value, { next -> if (next.toByteArray(Charsets.UTF_8).size <= if (label == "Dainos tekstas") 32768 else 4096) onChange(change(next)) },
-            enabled = enabled, label = { LText(label) }, singleLine = label != "Dainos tekstas", maxLines = if (label == "Dainos tekstas") 4 else 1, modifier = Modifier.fillMaxWidth().testTag("media_tag_$label"))
+            enabled = enabled, label = { LText(label) }, singleLine = label != "Dainos tekstas", maxLines = if (label == "Dainos tekstas") 4 else 1,
+            modifier = Modifier.fillMaxWidth().testTag("media_tag_$label").then(com.affilemanager.app.ui.components.rememberKeyboardAwareInput()))
     }
 }
 
@@ -367,7 +443,8 @@ private fun MediaEditError(error: Throwable) {
         // interface text. Keep known AF explanations and localize unknown failures.
         val knownMessage = error.message?.takeIf(UiTranslator::hasKnownUiEntry)
         LText(if (error is PlaybackException) "Failo peržiūros sukurti nepavyko" else knownMessage ?: "Medijos konvertuoti nepavyko", color = MaterialTheme.colorScheme.error)
-        if (knownMessage == null && error !is PlaybackException) Text("AF_MEDIA_${error.javaClass.simpleName.uppercase(Locale.ROOT)}", style = MaterialTheme.typography.bodySmall)
+        if (knownMessage == null && error !is PlaybackException) Text(if(error is NativeMediaFailure)error.code else "AF_MEDIA_EXPORT_FAILED", style = MaterialTheme.typography.bodySmall)
+        if(error is NativeMediaFailure)Text("${error.phase}${error.nativeExit?.let { " / $it" }.orEmpty()}",style=MaterialTheme.typography.bodySmall)
         com.affilemanager.app.media.editing.mediaLinkageDiagnostic(error)?.let {
             Text(it, style = MaterialTheme.typography.bodySmall)
         }

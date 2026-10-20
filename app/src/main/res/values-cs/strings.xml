@@ -19,7 +19,7 @@
     <string name="nearby_transfer_starting_text">Připravuji přepravu...</string>
     <string name="terminal_channel_name">Aktivní terminál</string>
     <string name="terminal_channel_description">Drží otevřený telefon nebo serverový terminál v pozadí</string>
-    <string name="terminal_notification_title">AF File Manager terminal</string>
+    <string name="terminal_notification_title">Terminál AF File Manager</string>
     <string name="terminal_phone_active">Telefonní terminál je aktivní</string>
     <string name="terminal_server_active">Serverový terminál je aktivní</string>
     <string name="generated_extracted_name">vyvraceno</string>

@@ -731,6 +731,18 @@ class FilePreviewLifecycleTest {
             compose.waitForIdle()
             captureRoot(File(validationRoot, "preview-archive-folder.png"))
 
+            compose.onNodeWithText("viduje.txt").performClick()
+            compose.waitUntil(10_000) { viewModel.preview.value is com.affilemanager.app.ui.PreviewTarget.ArchiveEntry }
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("directory_toolbar_archive").fetchSemanticsNodes().isEmpty()
+            }
+            compose.waitForIdle()
+            compose.runOnUiThread { viewModel.closePreview() }
+            compose.waitUntil(10_000) { viewModel.preview.value is com.affilemanager.app.ui.PreviewTarget.Archive }
+            compose.onNodeWithText("viduje.txt").assertIsDisplayed()
+            compose.onNodeWithText("Giliau").assertIsDisplayed()
+            assertTrue(compose.onAllNodesWithText("šaknis.txt").fetchSemanticsNodes().isEmpty())
+
             compose.onNodeWithText("Giliau").performClick()
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithText("gilus.txt").fetchSemanticsNodes().isNotEmpty()
@@ -743,6 +755,58 @@ class FilePreviewLifecycleTest {
         } finally {
             fixtureRoot.deleteRecursively()
         }
+    }
+
+    @Test fun archiveChildReturnRestoresBothLayoutsAndRecreationButNewArchiveStartsAtTop() {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val fixture = File(app.cacheDir, "archive-scroll-${System.nanoTime()}.zip")
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        try {
+            ZipOutputStream(fixture.outputStream()).use { zip ->
+                repeat(80) { index ->
+                    zip.putNextEntry(ZipEntry("Folder/entry-${index.toString().padStart(3, '0')}.txt"))
+                    zip.write("Private archive fixture $index".toByteArray())
+                    zip.closeEntry()
+                }
+            }
+            val original = MessageDigest.getInstance("SHA-256").digest(fixture.readBytes())
+            for (grid in listOf(false, true)) {
+                compose.runOnUiThread { vm.open(LocalFileRepository(app).toEntry(fixture)) }
+                compose.waitUntil(10_000) { vm.preview.value is com.affilemanager.app.ui.PreviewTarget.Archive }
+                val target = vm.preview.value as com.affilemanager.app.ui.PreviewTarget.Archive
+                compose.runOnUiThread { vm.updateArchiveBrowser(target.browser.id) {
+                    it.copy(display = com.affilemanager.app.data.DirectoryDisplayDefaults(
+                        com.affilemanager.app.data.DirectoryDisplaySettings(layoutMode = if (grid) com.affilemanager.app.data.DirectoryLayoutMode.GRID else com.affilemanager.app.data.DirectoryLayoutMode.LIST),
+                        com.affilemanager.app.model.SortMode.NAME, com.affilemanager.app.model.SortDirection.ASCENDING))
+                } }
+                compose.onNodeWithText("Folder").performClick()
+                val tag = if (grid) "archive_entries_grid" else "archive_entries_list"
+                compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithTag(tag).performScrollToIndex(20)
+                compose.onNodeWithText("entry-020.txt").assertIsDisplayed()
+                compose.waitForIdle()
+                val key = com.affilemanager.app.ui.FileScrollKey(target.browser.id, "Folder", grid)
+                val position = vm.fileScrollPosition(key)
+                assertTrue("Scroll was not recorded for $grid", position.firstVisibleItemIndex > 0)
+                compose.onNodeWithText("entry-020.txt").performClick()
+                compose.waitUntil(10_000) { vm.preview.value is com.affilemanager.app.ui.PreviewTarget.ArchiveEntry }
+                compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isEmpty() }
+                assertTrue(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+                compose.waitUntil(10_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("entry-020.txt").assertIsDisplayed()
+                assertEquals(position, vm.fileScrollPosition(key))
+                compose.activityRule.scenario.recreate()
+                compose.onNodeWithText("entry-020.txt").assertIsDisplayed()
+                assertEquals(position, vm.fileScrollPosition(key))
+                compose.runOnUiThread { vm.closePreview(); vm.open(LocalFileRepository(app).toEntry(fixture)) }
+                compose.waitUntil(10_000) { (vm.preview.value as? com.affilemanager.app.ui.PreviewTarget.Archive)?.let { it.browser.id != target.browser.id } == true }
+                compose.onNodeWithText("Folder").assertIsDisplayed().performClick()
+                compose.onNodeWithText("entry-000.txt").assertIsDisplayed()
+                compose.runOnUiThread { vm.closePreview() }
+                org.junit.Assert.assertArrayEquals(original, MessageDigest.getInstance("SHA-256").digest(fixture.readBytes()))
+            }
+        } finally { compose.runOnUiThread { vm.closePreview() }; fixture.delete() }
     }
 
     @Test

@@ -19,14 +19,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.apk.ApkInstallMetadata
 import com.affilemanager.app.core.FileSystemRules
+import com.affilemanager.app.cleanup.ApplicationActions
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
@@ -42,6 +47,8 @@ internal fun ApkInstallConfirmationDialog(
     onInstall: () -> Unit,
     installedApp: Boolean = false,
 ) {
+    val context = LocalContext.current
+    var settingsError by remember(cacheKey) { mutableStateOf(false) }
     val result by produceState<Result<ApkInstallMetadata>?>(null, cacheKey) {
         value = withContext(Dispatchers.IO) { runCatching { load() } }
     }
@@ -49,14 +56,24 @@ internal fun ApkInstallConfirmationDialog(
         title = if (installedApp) "Informacija" else "Patvirtinti programos diegimą",
         icon = if (installedApp) Icons.Rounded.OpenInNew else Icons.Rounded.InstallMobile,
         onDismissRequest = onDismiss, modifier = Modifier.testTag(if (installedApp) "installed_app_information" else "apk_install_confirmation"),
-        expandedContent = true,
+        expandedContent = false,
         actions = {
             TextButton(onClick = onDismiss) { LText("Atšaukti") }
+            if (installedApp) TextButton(
+                onClick = {
+                    settingsError = runCatching {
+                        context.startActivity(ApplicationActions.settingsIntent(requireNotNull(result?.getOrNull()).packageName))
+                    }.isFailure
+                },
+                enabled = result?.isSuccess == true,
+                modifier = Modifier.testTag("system_app_information"),
+            ) { LText("Android programos informacija") }
             Button(onClick = onInstall, enabled = result?.isSuccess == true,
                 modifier = Modifier.testTag(if (installedApp) "open_installed_app" else "confirm_apk_install")) { LText(if (installedApp) "Atidaryti" else "Diegti") }
         },
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (settingsError) LText("Nepavyko atidaryti Android programos informacijos", color = MaterialTheme.colorScheme.error)
             when {
                 result == null -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
                 result?.isFailure == true -> LText(result?.exceptionOrNull()?.message ?: "APK informacija nepasiekiama",

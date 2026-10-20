@@ -10,6 +10,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasText
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -35,6 +37,87 @@ import java.io.File
 class FileNavigationUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun renameKeepsListViewportStable() = renameKeepsViewport(false)
+    @Test fun renameKeepsGridViewportStable() = renameKeepsViewport(true)
+
+    @Test fun wideScreenDualPaneCanBeDisabledAndGridColumnsFollowOrientation() {
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true)) { "Owned emulator required" }
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val app = compose.activity.application as AFFileManagerApplication
+        val before = app.graph.appearance.settings.value
+        val root = File(compose.activity.getExternalFilesDir(null), "orientation-${System.nanoTime()}").apply { mkdirs() }
+        repeat(24) { File(root, "layout-$it.txt").writeText("$it") }
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun shell(command: String): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).bufferedReader().use { it.readText() }
+        val originalSize = Regex("Override size: (\\d+x\\d+)").find(shell("wm size"))?.groupValues?.get(1)
+        try {
+            navigateAndWait(vm, root)
+            compose.runOnUiThread {
+                vm.setInterfaceScalePercent(100)
+                vm.setAutomaticDualPane(true)
+                vm.setDirectoryDisplaySettings(PanelId.LEFT, DirectoryDisplaySettings(layoutMode = DirectoryLayoutMode.GRID,
+                    gridColumns = 3, gridColumnsLandscape = 7))
+                vm.navigate(PanelId.RIGHT, root.path)
+            }
+            shell("wm size 1920x1080")
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("file_grid_LEFT").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithTag("file_grid_RIGHT").fetchSemanticsNodes().isNotEmpty() }
+            compose.runOnUiThread { vm.setAutomaticDualPane(false) }
+            compose.onNodeWithTag("file_grid_RIGHT").assertDoesNotExist()
+            compose.onNodeWithTag("file_grid_LEFT").assertIsDisplayed()
+            fun renderedColumns(): Int {
+                val viewport = compose.onNodeWithTag("file_grid_LEFT").fetchSemanticsNode().boundsInRoot
+                val matcher = androidx.compose.ui.test.SemanticsMatcher("Owned fixture tiles") { node ->
+                    node.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { "" }.startsWith("local_entry_${root.canonicalPath}/")
+                }
+                return compose.onAllNodes(matcher).fetchSemanticsNodes().map { it.boundsInRoot }
+                    .filter { it.height > 0 && it.top >= viewport.top && it.top < viewport.bottom }
+                    .groupBy { it.top.toInt() }.values.maxOfOrNull { row -> row.map { it.left.toInt() }.distinct().size } ?: 0
+            }
+            compose.waitUntil(10_000) { renderedColumns() == 7 }
+            assertEquals(7, renderedColumns())
+            shell("wm size 640x1280")
+            compose.waitUntil(10_000) { runCatching { renderedColumns() == 3 }.getOrDefault(false) }
+            assertEquals(7, vm.leftPanel.value.gridColumnsLandscape)
+        } finally {
+            shell(if (originalSize == null) "wm size reset" else "wm size $originalSize")
+            compose.runOnUiThread {
+                vm.setAutomaticDualPane(before.automaticDualPane)
+                vm.setInterfaceScalePercent(before.interfaceScalePercent)
+                vm.navigate(PanelId.LEFT, requireNotNull(root.parentFile).path)
+                vm.navigate(PanelId.RIGHT, requireNotNull(root.parentFile).path)
+            }
+            root.deleteRecursively()
+        }
+    }
+
+    private fun renameKeepsViewport(grid: Boolean) {
+        val directory = File(compose.activity.getExternalFilesDir(null), "rename-scroll-${System.nanoTime()}").apply { mkdirs() }
+        repeat(1200) { File(directory, "item-${it.toString().padStart(4, '0')}.txt").writeText("$it") }
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val previous = vm.leftPanel.value.path
+        try {
+            navigateAndWait(vm, directory)
+            compose.runOnUiThread { vm.setDirectoryDisplaySettings(PanelId.LEFT,
+                DirectoryDisplaySettings(layoutMode = if (grid) DirectoryLayoutMode.GRID else DirectoryLayoutMode.LIST)) }
+            compose.waitForIdle()
+            compose.onNodeWithTag(if (grid) "file_grid_LEFT" else "file_list_LEFT").performScrollToIndex(600)
+            val anchor = compose.onNodeWithText("item-0600.txt")
+            anchor.assertIsDisplayed()
+            val before = anchor.fetchSemanticsNode().boundsInRoot
+            compose.runOnUiThread { vm.rename(PanelId.LEFT, File(directory, "item-1199.txt").path, "zzz-renamed.txt") }
+            compose.waitUntil(15_000) { !vm.leftPanel.value.loading && vm.leftPanel.value.entries.any { it.name == "zzz-renamed.txt" } }
+            compose.waitForIdle()
+            anchor.assertIsDisplayed()
+            val after = anchor.fetchSemanticsNode().boundsInRoot
+            assertTrue("Rename moved viewport: $before -> $after", kotlin.math.abs(before.top - after.top) <= 2f)
+        } finally {
+            compose.runOnUiThread { vm.navigate(PanelId.LEFT, previous) }
+            compose.waitForIdle()
+            directory.deleteRecursively()
+        }
+    }
 
     @Test
     fun newLocationStartsAtTopWhileHistoryRestoresEachPosition() {
@@ -234,8 +317,7 @@ class FileNavigationUiTest {
                 state.open && !state.loading && state.entries.isNotEmpty()
             }
 
-            compose.onNodeWithTag("category_more").performClick()
-            compose.onNodeWithTag("installed_apps_show_system").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("installed_apps_scope_ALL").performScrollTo().performClick()
             compose.waitUntil(timeoutMillis = 10_000) {
                 viewModel.fileCategory.value.showSystemApps && !viewModel.fileCategory.value.loading
             }
@@ -243,15 +325,15 @@ class FileNavigationUiTest {
             compose.runOnUiThread { viewModel.toggleFileCategorySelection(entry.absolutePath) }
 
             compose.onNodeWithTag("category_info").assertIsDisplayed().performClick()
-            compose.onNodeWithTag("file_info_dialog").assertIsDisplayed()
-            compose.onNodeWithTag("open_app_settings").assertIsDisplayed().assertHasClickAction()
+            compose.onNodeWithTag("installed_app_information").assertIsDisplayed()
+            compose.onNodeWithTag("system_app_information").assertIsDisplayed().assertHasClickAction()
             compose.runOnUiThread { viewModel.clearFileCategorySelection() }
-            compose.activity.onBackPressedDispatcher.onBackPressed()
+            pressSystemBack()
             compose.waitForIdle()
 
             compose.runOnUiThread { viewModel.toggleFileCategorySelection(entry.absolutePath) }
-            compose.onNodeWithTag("installed_apps_export").assertIsDisplayed()
-            compose.onNodeWithTag("installed_apps_uninstall").assertIsDisplayed()
+            compose.onNodeWithTag("installed_apps_export").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("installed_apps_uninstall").performScrollTo().assertIsDisplayed()
         } finally {
             compose.runOnUiThread { viewModel.closeFileCategory() }
         }
@@ -268,7 +350,7 @@ class FileNavigationUiTest {
             }
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.trashBrowser.value.open }
             compose.onNodeWithTag("trash-browser-dialog").assertIsDisplayed()
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            pressSystemBack()
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.trashBrowser.value.open }
             assertEquals(AppSection.FILES, viewModel.section.value)
             assertTrue(viewModel.filesHomeVisible.value)
@@ -276,14 +358,15 @@ class FileNavigationUiTest {
             compose.runOnUiThread { viewModel.openFileCategory(FileCategory.ARCHIVES) }
             compose.waitUntil(timeoutMillis = 5_000) { viewModel.fileCategory.value.open }
             compose.onNodeWithTag("directory_toolbar_category").assertIsDisplayed()
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            pressSystemBack()
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.fileCategory.value.open }
             assertEquals(AppSection.FILES, viewModel.section.value)
 
             compose.runOnUiThread { viewModel.setSection(AppSection.SHARE) }
+            compose.onNodeWithTag("sharing_list").performScrollToNode(hasText("Browse folders"))
             compose.onNodeWithText("Browse folders").performScrollTo().performClick()
             compose.onNodeWithTag("share_folder_picker").assertIsDisplayed()
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            pressSystemBack()
             compose.waitUntil(timeoutMillis = 5_000) {
                 compose.onAllNodesWithTag("share_folder_picker").fetchSemanticsNodes().isEmpty()
             }
@@ -296,6 +379,13 @@ class FileNavigationUiTest {
             }
             compose.waitForIdle()
         }
+    }
+
+    private fun pressSystemBack() {
+        assertTrue(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+        ))
+        compose.waitForIdle()
     }
 
     @Test

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="220dp" android:minHeight="200dp" android:minResizeWidth="220dp" android:minResizeHeight="200dp"
+    android:targetCellWidth="3" android:targetCellHeight="2" android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0" android:initialLayout="@layout/af_home_widget"
+    android:previewLayout="@layout/af_home_widget" android:configure="com.affilemanager.app.widgets.AfWidgetConfigureActivity"
+    android:widgetFeatures="reconfigurable" android:widgetCategory="home_screen" />

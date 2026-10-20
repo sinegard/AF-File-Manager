@@ -1,5 +1,10 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.BrowserAction
+import com.affilemanager.app.ui.components.BrowserActionIconButton
+import com.affilemanager.app.ui.components.BrowserActionMenuItem
+
+import com.affilemanager.app.ui.components.CanonicalPathText
 import android.content.Intent
 import android.net.Uri
 import android.view.View
@@ -621,6 +626,7 @@ internal fun RemoteBrowser(
         } else {
             RemoteFolderToolbar(
                 state = state,
+                onOpen = onOpen,
                 localDirectory = localDirectory,
                 localClipboardCount = localClipboardCount,
                 afClipboardCount = afClipboardCount,
@@ -688,7 +694,7 @@ internal fun RemoteBrowser(
                     openingPath = state.openingPath,
                     iconScalePercent = state.iconScalePercent,
                     spacingScalePercent = state.spacingScalePercent,
-                    gridColumns = state.gridColumns,
+                    gridColumns = com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape),
                     gridStyle = state.gridStyle,
                     onOpen = onOpen,
                     onDownload = onDownload,
@@ -717,11 +723,12 @@ internal fun RemoteBrowser(
                 }
                 if (state.selectedPaths.isNotEmpty()) {
                     SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
-                    IconButton(onClick = onCopySelected, enabled = !state.loading) {
+                    com.affilemanager.app.ui.components.CopyPathAction(selectedEntries.map(RemoteEntry::path))
+                    BrowserActionIconButton(BrowserAction.COPY, onClick = onCopySelected, enabled = !state.loading) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                     }
                     if (canAddToRemoteClipboard) {
-                        IconButton(
+                        BrowserActionIconButton(BrowserAction.COPY,
                             onClick = onAddToRemoteClipboard,
                             enabled = !state.loading,
                             modifier = Modifier.testTag("copy-more-remote"),
@@ -729,16 +736,16 @@ internal fun RemoteBrowser(
                             Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
                         }
                     }
-                    IconButton(onClick = onDownloadSelected, enabled = !state.loading) {
+                    BrowserActionIconButton(BrowserAction.COPY, onClick = onDownloadSelected, enabled = !state.loading) {
                         Icon(Icons.Rounded.CloudDownload, contentDescription = uiText("Kopijuoti į aktyvų vietinį aplanką"))
                     }
-                    IconButton(
+                    BrowserActionIconButton(BrowserAction.RENAME,
                         onClick = { selectedEntries.singleOrNull()?.let(onRename) },
                         enabled = !state.loading && selectedEntries.size == 1,
                     ) {
                         Icon(Icons.Rounded.Edit, contentDescription = uiText("Pervadinti"))
                     }
-                    IconButton(
+                    BrowserActionIconButton(BrowserAction.DELETE,
                         onClick = { onDelete(selectedEntries) },
                         enabled = !state.loading && selectedEntries.isNotEmpty(),
                     ) {
@@ -768,6 +775,7 @@ internal fun RemoteBrowser(
 @Composable
 private fun RemoteFolderToolbar(
     state: com.affilemanager.app.ui.NetworkUiState,
+    onOpen: (RemoteEntry) -> Unit,
     localDirectory: String,
     localClipboardCount: Int,
     afClipboardCount: Int,
@@ -800,6 +808,12 @@ private fun RemoteFolderToolbar(
         searchActive = searchActive,
         grid = state.grid,
         testTagPrefix = "remote",
+        onOpenPath = { entered ->
+            val absolute = entered.startsWith('/') || Regex("^[A-Za-z]:[/\\\\].*").matches(entered)
+            val resolved = if (absolute) entered else state.path.trimEnd('/') + "/" + entered
+            val path = com.affilemanager.app.network.RemotePath.normalize(resolved)
+            onOpen(RemoteEntry(path.substringAfterLast('/').ifBlank { "/" }, path, true, 0L, null))
+        },
         onBack = onBack,
         onForward = onForward,
         onUp = onUp,
@@ -867,7 +881,7 @@ private fun RemoteFolderActionsMenu(
                 )
             }
             if (afClipboardCount > 0 && featureVisible(OptionalFeature.PLANS)) {
-                DropdownMenuItem(
+                BrowserActionMenuItem(BrowserAction.COPY,
                     text = { LText("Įklijuoti į kelias vietas ($afClipboardCount)") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) },
                     enabled = !state.loading,
@@ -1044,7 +1058,7 @@ private fun RemoteEntryGrid(
     val gridState = rememberLazyGridState()
     Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(gridColumns.coerceIn(1, 6)),
+            columns = GridCells.Fixed(gridColumns.coerceIn(1, com.affilemanager.app.data.DirectoryDisplayRules.MAX_GRID_COLUMNS)),
             state = gridState,
             modifier = Modifier
                 .fillMaxSize()
@@ -1139,7 +1153,7 @@ private fun RemoteEntryRow(
             Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (entry.directory) FontWeight.SemiBold else FontWeight.Normal)
             LText(metadata, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
+        if (!selectionActive) RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
     }
     }
     HorizontalDivider(
@@ -1201,7 +1215,7 @@ private fun RemoteEntryTile(
                 }
             },
             actions = {
-                RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
+                if (!selectionActive) RemoteEntryActionsButton(entry, onOpen, onDownload, onToggleSelection, onRename, onInfo, onDelete)
             },
         )
     }
@@ -1223,13 +1237,14 @@ private fun RemoteEntryActionsButton(
             Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            com.affilemanager.app.ui.components.CopyPathAction(listOf(entry.path), menu = true, onCopied = { expanded = false })
             DropdownMenuItem(
                 text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
                 leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },
                 onClick = { expanded = false; onOpen() },
             )
             if (!entry.directory) {
-                DropdownMenuItem(
+                BrowserActionMenuItem(BrowserAction.COPY,
                     text = { LText("Kopijuoti į telefoną") },
                     leadingIcon = { Icon(Icons.Rounded.CloudDownload, contentDescription = null) },
                     onClick = { expanded = false; onDownload() },
@@ -1241,17 +1256,17 @@ private fun RemoteEntryActionsButton(
                 onClick = { expanded = false; onToggleSelection() },
             )
             HorizontalDivider()
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.RENAME,
                 text = { LText("Pervadinti") },
                 leadingIcon = { Icon(Icons.Rounded.Edit, contentDescription = null) },
                 onClick = { expanded = false; onRename() },
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.INFO,
                 text = { LText("Informacija") },
                 leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
                 onClick = { expanded = false; onInfo() },
             )
-            DropdownMenuItem(
+            BrowserActionMenuItem(BrowserAction.DELETE,
                 text = { LText("Ištrinti") },
                 leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                 onClick = { expanded = false; onDelete() },
@@ -1290,7 +1305,7 @@ private fun RemoteInfoDialog(entry: RemoteEntry, onDismiss: () -> Unit) {
                 if (!entry.directory) RemoteInfoLine("Dydis", FileSystemRules.humanBytes(entry.sizeBytes))
                 entry.modifiedAtMillis?.takeIf { it > 0L }?.let { RemoteInfoLine("Pakeista", dateFormat.format(Date(it))) }
                 LText("Kelias", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                Text(entry.path, style = MaterialTheme.typography.bodySmall)
+                CanonicalPathText(entry.path, style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { LText("Uždaryti") } },
@@ -1316,6 +1331,7 @@ private fun com.affilemanager.app.ui.NetworkUiState.toDirectoryDisplaySettings()
         iconScalePercent = iconScalePercent,
         spacingScalePercent = spacingScalePercent,
         gridColumns = gridColumns,
+        gridColumnsLandscape = gridColumnsLandscape,
         gridStyle = gridStyle,
         showThumbnails = false,
     )
@@ -1473,7 +1489,9 @@ internal fun LocalUploadDialog(
                     enabled = parentPath != null && !loading,
                     modifier = Modifier.testTag("local_upload_up"),
                 ) { Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn")) }
-                Text(currentPath.ifEmpty { uiText("Saugykla") }, modifier = Modifier.weight(1f),
+                if (currentPath.isEmpty()) LText("Saugykla", modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                else CanonicalPathText(currentPath, modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (searchVisible || featureVisible(OptionalFeature.TOOLBAR_SEARCH)) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) searchQuery = "" },
                     modifier = Modifier.testTag("local_upload_search_toggle")) {

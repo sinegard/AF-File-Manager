@@ -1,11 +1,13 @@
 package com.affilemanager.app.ui.screens
 
+import com.affilemanager.app.ui.components.CanonicalPathText
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.data.OptionalFeature
 import com.affilemanager.app.ui.components.featureVisible
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -68,6 +70,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -737,7 +741,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onViewAll = { cleanupCategory = CleanupCategory.EMPTY_FOLDERS; showCleanupReview = true },
                 ) {
                     analysis.emptyDirectories.take(2).forEach { pathValue ->
-                        Text(pathValue, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        CanonicalPathText(pathValue, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         HorizontalDivider()
                     }
                 }
@@ -753,7 +757,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     analysisState.duplicates.take(2).forEach { group ->
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             LText("${group.paths.size} vienodi failai · ${FileSystemRules.humanBytes(group.sizeBytes)} kiekvienas", fontWeight = FontWeight.SemiBold)
-                            Text(group.paths.firstOrNull().orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            CanonicalPathText(group.paths.firstOrNull().orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             OutlinedButton(onClick = { duplicateGroup = group }) { LText("Tvarkyti kopijas") }
                         }
                     }
@@ -926,7 +930,7 @@ fun AnalyzeScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                                     checked = path in selectedPaths,
                                     onCheckedChange = { checked -> selectedPaths = if (checked) selectedPaths + path else selectedPaths - path },
                                 )
-                                Text(path, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                CanonicalPathText(path, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -1023,6 +1027,7 @@ private fun AnalysisOverviewCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun StorageOverviewCard(
     root: StorageRoot,
@@ -1038,7 +1043,17 @@ internal fun StorageOverviewCard(
     onCancel: () -> Unit,
     onCleanup: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenSystemStorage: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    var storageSettingsError by remember { mutableStateOf(false) }
+    val openSystemStorage = onOpenSystemStorage ?: {
+        storageSettingsError = runCatching {
+            context.startActivity(android.content.Intent(android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
+        }.recoverCatching {
+            context.startActivity(android.content.Intent(android.os.storage.StorageManager.ACTION_MANAGE_STORAGE))
+        }.isFailure
+    }
     val mountedRoots = roots.ifEmpty { listOf(root) }.distinctBy(StorageRoot::path)
         .sortedBy { if (it.kind == StorageRootKind.INTERNAL) 0 else 1 }
     Card(
@@ -1084,11 +1099,20 @@ internal fun StorageOverviewCard(
             }
             val visibleStorageRoots = if (running) listOfNotNull(activeStorageRoot) else roots.distinctBy(StorageRoot::path)
             visibleStorageRoots.forEach { target ->
-                OutlinedButton(
-                    onClick = { onAnalyzeRoot(target.path) },
-                    enabled = !running,
-                    modifier = Modifier.fillMaxWidth().testTag("analyze_storage_${target.id}"),
+                Surface(
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    contentColor = if (running) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.primary,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth().testTag("analyze_storage_${target.id}").combinedClickable(
+                        enabled = !running,
+                        role = Role.Button,
+                        onClick = { onAnalyzeRoot(target.path) },
+                        onLongClickLabel = if (target.kind == StorageRootKind.INTERNAL) uiText("Android saugyklos nustatymai") else null,
+                        onLongClick = if (target.kind == StorageRootKind.INTERNAL) openSystemStorage else null,
+                    ),
                 ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(storageRootIcon(target.kind), contentDescription = null)
                     LText(
                         "Nuskaityti: ${storageRootLabel(target)}",
@@ -1097,8 +1121,10 @@ internal fun StorageOverviewCard(
                     if (running && !analysisAllStorage && analysisRootPaths.singleOrNull()?.let { sameAnalysisPath(it, target.path) } == true) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
+                    }
                 }
             }
+            if (storageSettingsError) LText("Nepavyko atidaryti Android saugyklos nustatymų", color = MaterialTheme.colorScheme.error)
             if (!running || (!analysisAllStorage && activeStorageRoot == null)) {
                 OutlinedButton(
                     onClick = onAnalyzeFolder,

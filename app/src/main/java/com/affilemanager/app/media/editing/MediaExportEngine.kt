@@ -47,20 +47,45 @@ class MediaExportEngine(private val context: Context) {
     companion object {
         const val TIMEOUT_CODE = "AF_MEDIA_EXPORT_TIMEOUT"
         fun ownedFile(context: Context, file: File) = MediaExportStorage.ownedFile(context, file)
-        fun info(context: Context, uri: Uri, size: Long): MediaEditInfo {
+        /** UI callers retain cancellation ownership even when platform parsing needs native fallback. */
+        suspend fun readInfo(context: Context, uri: Uri, source: File): MediaEditInfo = withContext(Dispatchers.IO) {
+            try {
+                if(!source.extension.equals("wma",true) && !NativeMediaProbe.isAsf(source)) return@withContext info(context,uri,source.length())
+            }catch(error:Exception){if(error is CancellationException)throw error}
+            MediaWorkspace.create(context,1024L*1024).use {NativeMediaProbe.read(context,source,it).mediaInfo(source.length())}
+        }
+        suspend fun readTags(context: Context, source: File): MediaTags = withContext(Dispatchers.IO) {
+            MediaWorkspace.create(context,1024L*1024).use {NativeMediaProbe.read(context,source,it).editableTags()}
+        }
+        fun info(context: Context, uri: Uri, size: Long, source: File? = null): MediaEditInfo {
             require(uri.scheme in setOf("content", "file")) { "Netinkamas kelias" }
+            if (source!=null && (source.extension.equals("wma", true) || NativeMediaProbe.isAsf(source))) return NativeMediaProbe.fallback(context, source).mediaInfo(size)
             val reader = MediaMetadataRetriever()
             try {
                 reader.setDataSource(context, uri)
                 val width = reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
                 val height = reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
                 val rotation = reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                val audioFormat = MediaExtractor().let { extractor ->
+                    try {
+                        extractor.setDataSource(context, uri, null)
+                        (0 until extractor.trackCount).map(extractor::getTrackFormat).firstOrNull {
+                            it.getString("mime")?.startsWith("audio/") == true
+                        }
+                    } finally { extractor.release() }
+                }
                 return MediaEditInfo(reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0,
                     if (rotation % 180 == 0) width else height, if (rotation % 180 == 0) height else width,
-                    reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes", size)
+                    reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes", size,
+                    audioFormat?.takeIf { it.containsKey("sample-rate") }?.getInteger("sample-rate"),
+                    audioFormat?.takeIf { it.containsKey("channel-count") }?.getInteger("channel-count"))
+            } catch (error: Exception) {
+                if(source == null)throw error
+                return NativeMediaProbe.fallback(context,source).mediaInfo(size)
             } finally { reader.release() }
         }
-        fun tags(context: Context, uri: Uri): MediaTags {
+        fun tags(context: Context, uri: Uri, source: File? = null): MediaTags {
+            if(source != null)return NativeMediaProbe.fallback(context,source).editableTags()
             val reader = MediaMetadataRetriever()
             try {
                 reader.setDataSource(context, uri)
@@ -82,9 +107,10 @@ class MediaExportEngine(private val context: Context) {
         require(cover == null || cover.size <= 2 * 1024 * 1024)
         require(MediaExportStorage.admission.tryAcquire()) { "Jau vyksta kita medijos operacija" }
         var output: File? = null
+        var workspace: MediaWorkspace? = null
         var succeeded = false
         try {
-            return withTimeout(30 * 60_000L) {
+            val exported = withTimeout(30 * 60_000L) {
                 val root = withContext(Dispatchers.IO) {
                     MediaExportStorage.cleanOnce(context)
                     File(context.cacheDir, "media-exports").apply {
@@ -97,25 +123,40 @@ class MediaExportEngine(private val context: Context) {
                 output = resultFile
                 val jobContext = currentCoroutineContext()
                 val before = withContext(Dispatchers.IO) { sha(source) { jobContext.ensureActive() } }
-                if (options.format == MediaExportFormat.GIF) withContext(Dispatchers.IO) {
+                val useNative = options.format != MediaExportFormat.GIF && withContext(Dispatchers.IO) { NativeMediaExport.needed(source,options) }
+                if(useNative) {
+                    val work=withContext(Dispatchers.IO){MediaWorkspace.create(context)}
+                    workspace=work
+                    withContext(Dispatchers.IO) { NativeMediaExport.export(context,source,uri,info,options,resultFile,cover,work,::transform,onProgress) }
+                } else if (options.format == MediaExportFormat.GIF) withContext(Dispatchers.IO) {
                     gif(uri, info, options, resultFile) { progress -> withContext(Dispatchers.Main.immediate) { onProgress(progress) } }
                 } else transform(uri, info, options, resultFile, onProgress)
+                if (options.reverseAudio && !useNative) withContext(Dispatchers.IO) {
+                    val job = currentCoroutineContext()
+                    ReversePcmWave.apply(resultFile, { job.ensureActive() }, options)
+                }
                 withContext(Dispatchers.IO) {
                     ensureActive()
                     require(sha(source) { jobContext.ensureActive() } == before) { "Šaltinis pasikeitė" }
-                    if (options.format == MediaExportFormat.MP4 || options.format == MediaExportFormat.M4A) Mp4AudioTags.write(resultFile, options.tags, cover)
+                    if (options.format in setOf(MediaExportFormat.MP4,MediaExportFormat.M4A,MediaExportFormat.MOV)) Mp4AudioTags.write(resultFile, options.tags, cover)
                     else if (options.format == MediaExportFormat.WAV) WavAudioTags.write(resultFile, options.tags, cover)
+                    if(useNative) NativeMediaExport.tags(context,resultFile,options,cover,requireNotNull(workspace))
                     require(resultFile.length() in 1..EditLimits.MAX_FILE_BYTES) { "Išvesties failas per didelis" }
                     RandomAccessFile(resultFile, "rw").use { it.fd.sync() }
                 }
                 val duration = if (options.format == MediaExportFormat.GIF) options.durationMs else withContext(Dispatchers.IO) {
-                    validateOutput(resultFile, info, options)
+                    if(useNative)NativeMediaExport.validate(context,resultFile,info,options,requireNotNull(workspace)) else validateOutput(resultFile, info, options)
                 }
+                withContext(Dispatchers.IO) { workspace?.close();workspace=null }
                 onProgress(100)
-                MediaExportFile(resultFile, MediaEditNames.outputName(name, options.format), options.format, duration, source, before).also { succeeded = true }
+                ensureActive() // Cancellation at the final callback must not orphan a completed private file.
+                MediaExportFile(resultFile, MediaEditNames.outputName(name, options.format), options.format, duration, source, before)
             }
+            currentCoroutineContext().ensureActive()
+            succeeded=true
+            return exported
         } finally {
-            try { if (!succeeded) withContext(NonCancellable + Dispatchers.IO) { output?.delete() } }
+            try { withContext(NonCancellable + Dispatchers.IO) { workspace?.close(); if (!succeeded) output?.delete() } }
             finally { MediaExportStorage.admission.release() }
         }
     }
@@ -136,13 +177,26 @@ class MediaExportEngine(private val context: Context) {
             require(supported) { "Įrenginys nepalaiko šios raiškos" }
         }
         val gain = ChannelMixingAudioProcessor().apply {
-            for (channels in 1..8) putChannelMixingMatrix(ChannelMixingMatrix.createForConstantGain(channels, channels).scaleBy(options.volume))
+            val inputs = if (options.channels == null) 1..8 else {
+                val actual = requireNotNull(info.audioChannels) { "Audio channel information is unavailable" }
+                actual..actual
+            }
+            for (channels in inputs) {
+                val outputs = options.channels ?: channels
+                val matrix = if (outputs == channels || channels <= 2) ChannelMixingMatrix.createForConstantGain(channels, outputs)
+                    else ChannelMixingMatrix.createForConstantPower(channels, outputs)
+                putChannelMixingMatrix(matrix.scaleBy(options.volume))
+            }
         }
-        val pitch = SonicAudioProcessor().apply { setPitch(options.pitch) }
-        val processors = buildList { if (options.pitch != 1f) add(pitch); if (options.volume != 1f) add(gain) }
+        val pitch = SonicAudioProcessor().apply { setPitch(options.pitch); options.sampleRate?.let(::setOutputSampleRateHz) }
+        val processors = buildList {
+            if (options.pitch != 1f || options.sampleRate != null) add(pitch)
+            if (options.volume != 1f || options.channels != null) add(gain)
+            if (!options.reverseAudio && (options.fadeInMs > 0 || options.fadeOutMs > 0 || options.echoDelayMs > 0 || options.noiseGate)) add(MediaAudioEnvelopeProcessor(options))
+        }
         val item = MediaItem.Builder().setUri(uri).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder()
             .setStartPositionMs(options.startMs).setEndPositionMs(options.endMs).build()).build()
-        val edited = EditedMediaItem.Builder(item).setRemoveVideo(!options.format.video)
+        val edited = EditedMediaItem.Builder(item).setRemoveVideo(!options.format.video).setRemoveAudio(!info.hasAudio)
             .setEffects(Effects(processors, effects(info, options)))
             .setSpeed(SpeedParameters(constantSpeed(options.speed), true))
             .apply { options.frameRate?.let(::setFrameRate) }.build()
@@ -270,7 +324,8 @@ class MediaExportEngine(private val context: Context) {
                     currentCoroutineContext().ensureActive()
                     // Preserve the selected duration even when audio ends after video.
                     // Reuse the real last frame only for that explicit audio tail.
-                    val timeUs = (options.startMs * 1000 + index * 1_000_000.0 / fps * options.speed).toLong().coerceAtMost(lastFrameUs)
+                    val sourceIndex = if(options.reverseVideo) frames-1-index else index
+                    val timeUs = (options.startMs * 1000 + sourceIndex * 1_000_000.0 / fps * options.speed).toLong().coerceAtMost(lastFrameUs)
                     val timeMs = timeUs / 1000
                     if (previousTimeMs != timeMs) {
                         val decoded = gifFrame(extractor, timeMs)
@@ -354,7 +409,7 @@ internal fun effects(info: MediaEditInfo, options: MediaEditOptions): List<Effec
 }
 
 /** Bounds every muxer write, including seeks, rather than inspecting the file only after export. */
-private class BoundedMuxerOutput(file: File) : SeekableMuxerOutput {
+internal class BoundedMuxerOutput(file: File) : SeekableMuxerOutput {
     private val owner = RandomAccessFile(file, "rw")
     private val channel = owner.channel
     override fun write(source: ByteBuffer): Int {

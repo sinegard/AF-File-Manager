@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.window.DialogProperties
 import com.affilemanager.app.ui.theme.AfDialog
 import com.affilemanager.app.ui.localization.LText
@@ -52,6 +53,7 @@ fun AfModalDialog(
     showFooter: Boolean = true,
     expandedContent: Boolean = false,
     decorFitsSystemWindows: Boolean = true,
+    compactHeightThreshold: Dp = 300.dp,
     actions: @Composable () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -66,7 +68,7 @@ fun AfModalDialog(
             contentAlignment = Alignment.Center,
         ) {
             val maximumDialogHeight = maxHeight * 0.92f
-            val compactHeight = maximumDialogHeight < 300.dp
+            val compactHeight = maximumDialogHeight < compactHeightThreshold
             Surface(
                 modifier = Modifier
                     .widthIn(max = 760.dp)
@@ -133,7 +135,7 @@ fun AfModalDialog(
                         HorizontalDivider()
                         FlowRow(
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.End,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                             itemVerticalAlignment = Alignment.CenterVertically,
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) { actions() }
