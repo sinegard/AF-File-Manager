@@ -35,18 +35,24 @@ stage = Path('language-shard')
 stage.mkdir()
 shutil.copyfile('language-generation-dependencies.txt', stage / 'language-generation-dependencies.txt')
 completed, outputs = [], [module.INDEX_PATH]
-module.write_json(module.INDEX_PATH, {'version': 1, 'exact': source.exact, 'templates': source.templates})
 def checkpoint():
+    output_hashes = {}
     for path in outputs:
         relative = path.relative_to(module.ROOT)
         target = stage / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, target)
+        if path == module.INDEX_PATH:
+            # manual_overrides still reads the original positional packs/index.
+            # Do not replace that index until every pack has been expanded.
+            module.write_json(target, {'version': 1, 'exact': source.exact, 'templates': source.templates})
+        else:
+            shutil.copyfile(path, target)
+        output_hashes[str(relative)] = hashlib.sha256(target.read_bytes()).hexdigest()
     manifest = {'source_commit': os.environ['GITHUB_SHA'], 'model_revision': revision,
         'inputs': fingerprints, 'exact_count': len(source.exact), 'template_count': len(source.templates),
         'shard': shard, 'shards': 8, 'languages': selected, 'completed_languages': completed,
         'status': 'complete' if completed == selected else 'partial',
-        'outputs': {str(p.relative_to(module.ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in outputs}}
+        'outputs': output_hashes}
     (stage / 'language-generation-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 checkpoint()
 translator = module.NllbTranslator(16)
