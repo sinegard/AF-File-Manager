@@ -30,6 +30,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.util.Date
 import java.util.UUID
@@ -407,13 +408,12 @@ class ArchiveEngine(
             } else {
                 ArchiveCompressionRules.MAX_LEVEL
             }
-            require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
+            require(!Files.exists(outputFile.toPath(), LinkOption.NOFOLLOW_LINKS)) { "Toks archyvas jau egzistuoja" }
             val parent = outputFile.parentFile
             require(parent != null && (parent.isDirectory || parent.mkdirs())) { "Archyvo aplankas nepasiekiamas" }
             validateCreateSources(sources, outputFile, operation)
-            val partialFile = File(parent, ".${outputFile.name}.partial")
+            val partialFile = File.createTempFile(".af-archive-", ".partial", parent)
             partial = partialFile
-            require(!partialFile.exists()) { "Laikinas archyvo failas jau egzistuoja" }
             when (format) {
                 ArchiveFormat.ZIP -> if (sources.isEmpty()) createEmptyZip(partialFile) else createZip(
                     partialFile,
@@ -431,8 +431,8 @@ class ArchiveEngine(
             require(validatedTarget == null || partialFile.length() <= validatedTarget) {
                 "Archyvo nepavyko suspausti iki pasirinkto dydžio"
             }
-            require(!outputFile.exists()) { "Toks archyvas jau egzistuoja" }
-            require(partialFile.renameTo(outputFile)) { "Archyvo užbaigti nepavyko" }
+            require(!Files.exists(outputFile.toPath(), LinkOption.NOFOLLOW_LINKS)) { "Toks archyvas jau egzistuoja" }
+            Files.move(partialFile.toPath(), outputFile.toPath())
             onMutation(listOf(outputFile))
         } finally {
             password?.fill('\u0000')
@@ -949,9 +949,15 @@ class ArchiveEngine(
 
     private suspend fun writeExtractedTarget(target: File, block: suspend (OutputStream) -> Unit) {
         target.parentFile?.let { require(it.isDirectory || it.mkdirs()) { "Nepavyko sukurti paskirties aplanko" } }
-        val partial = File(target.parentFile, ".${target.name}.af-partial")
+        val partial = File.createTempFile(".af-extract-", ".partial", target.parentFile)
         try {
-            BufferedOutputStream(FileOutputStream(partial)).use { output -> block(output) }
+            FileOutputStream(partial).use { raw ->
+                BufferedOutputStream(raw).use { output ->
+                    block(output)
+                    output.flush()
+                    raw.fd.sync()
+                }
+            }
             runCatching {
                 Files.move(
                     partial.toPath(),

@@ -90,7 +90,8 @@ class SmbRemoteClient private constructor(
         val smbPath = toSmbPath(RemotePath.normalize(remotePath))
         val expected = share.getFileInformation(smbPath).standardInformation.endOfFile
         val limit = RemoteDownloadLimit(maxBytes).apply { checkExpected(expected) }
-        val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
+        val stage = RemoteDownloadStage(localDestination)
+        val partial = stage.file
         try {
             share.openFile(
                 smbPath,
@@ -101,7 +102,7 @@ class SmbRemoteClient private constructor(
                 EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE, SMB2CreateOptions.FILE_SEQUENTIAL_ONLY),
             ).use { remote ->
                 remote.inputStream.use { input ->
-                    partial.outputStream().buffered().use { output ->
+                    stage.outputStream().use { output ->
                         val buffer = ByteArray(BUFFER_SIZE)
                         while (true) {
                             operation?.checkpoint()
@@ -115,11 +116,10 @@ class SmbRemoteClient private constructor(
                 }
             }
             require(partial.length() == expected) { "Atsisiųsto SMB failo dydis nesutampa" }
-            if (localDestination.exists()) require(localDestination.delete()) { "Esamo failo pakeisti nepavyko" }
-            require(partial.renameTo(localDestination)) { "Atsisiuntimo užbaigti nepavyko" }
+            stage.publish()
             operation?.progress(itemDelta = 1, currentName = localDestination.name)
         } finally {
-            if (partial.exists()) partial.delete()
+            stage.close()
         }
         Unit
     }
@@ -155,7 +155,8 @@ class SmbRemoteClient private constructor(
             require(share.getFileInformation(partialSmb).standardInformation.endOfFile == localSource.length()) {
                 "Įkelto SMB failo dydis nesutampa"
             }
-            if (share.fileExists(toSmbPath(normalized))) share.rm(toSmbPath(normalized))
+            // SMB's FileRenameInformation already has an atomic replace flag.
+            // Pre-deleting the previous file would lose it if SET_INFO failed.
             renameInternal(partial, normalized, replace = true)
             operation?.progress(itemDelta = 1, currentName = localSource.name)
         } finally {

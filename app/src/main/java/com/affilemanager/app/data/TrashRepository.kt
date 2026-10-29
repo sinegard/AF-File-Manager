@@ -192,7 +192,7 @@ class TrashRepository(
             val failures = mutableListOf<String>()
             val canonicalSources = requested.mapNotNull { path ->
                 try {
-                    File(path).canonicalFile
+                    FileSystemRules.nonSymbolicSource(File(path))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Throwable) {
@@ -541,6 +541,7 @@ class TrashRepository(
     private suspend fun copyTree(source: File, target: File, operation: OperationContext, depth: Int) {
         require(depth <= 64) { "Per gilus aplankų medis" }
         operation.checkpoint()
+        require(!Files.isSymbolicLink(source.toPath())) { "Simbolinė nuoroda nepalaikoma" }
         if (source.isDirectory) {
             require(target.mkdir()) { "Nepavyko sukurti laikino aplanko" }
             source.listFiles()?.forEach { copyTree(it, File(target, it.name), operation, depth + 1) }

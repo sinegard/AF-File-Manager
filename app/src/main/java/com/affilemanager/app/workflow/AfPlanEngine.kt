@@ -238,8 +238,8 @@ class AfPlanEngine(private val stagingDirectory: File) {
                     verifyRequiredCopies(preflight, storage, operation, journal)
                 }
                 deleteSources(preflight, storage, operation, journal, state, writer)
-                sourcesDeleted = true
-                state = state.copy(sourcesDeleted = true, updatedAtMillis = System.currentTimeMillis())
+                sourcesDeleted = deletableSourceRoots(preflight).size == preflight.plan.sources.size
+                state = state.copy(sourcesDeleted = sourcesDeleted, updatedAtMillis = System.currentTimeMillis())
                 checkpoint(writer, state, journal)
             }
 
@@ -346,7 +346,9 @@ class AfPlanEngine(private val stagingDirectory: File) {
             if (existing != null) {
                 require(!existing.directory) { "A folder appeared where a file is required" }
                 val effectiveVerification = if (rootBackup == null) preflight.plan.verification else TransferVerification.SHA256
-                if (sameContent(staging, sourceSha, existing, effectiveVerification, storage)) {
+                if ((!preflight.plan.fileManagerTransfer || preflight.plan.conflictPolicy == ConflictPolicy.MERGE) &&
+                    sameContent(staging, sourceSha, existing,
+                        if (preflight.plan.fileManagerTransfer) TransferVerification.SHA256 else effectiveVerification, storage)) {
                     return AfReceiptItem(
                         source = planned.source.location,
                         destination = target,
@@ -385,7 +387,13 @@ class AfPlanEngine(private val stagingDirectory: File) {
             try {
                 verifyInstalled(staging, sourceSha, target, preflight.plan.verification, storage)
             } catch (error: Throwable) {
-                runCatching { storage.delete(target, recursive = false) }.exceptionOrNull()?.let(error::addSuppressed)
+                // A failed verification is not proof that the current target is
+                // still our copy. Retain changed data rather than delete it.
+                runCatching {
+                    val current = storage.stat(target)
+                    if (current != null && !current.directory && current.sizeBytes == staging.length() &&
+                        storage.sha256(target) == sourceSha) storage.delete(target, recursive = false)
+                }.exceptionOrNull()?.let(error::addSuppressed)
                 throw error
             }
             return AfReceiptItem(
@@ -457,7 +465,8 @@ class AfPlanEngine(private val stagingDirectory: File) {
             .filter { it.value.required }
             .map { it.index }
             .toSet()
-        preflight.projections.filter { it.destinationIndex in requiredDestinationKeys }.forEach { projection ->
+        val eligible = deletableSourceRoots(preflight)
+        preflight.projections.filter { it.destinationIndex in requiredDestinationKeys && it.sourceRootIndex in eligible }.forEach { projection ->
             require(projection.disposition !in setOf(AfPreflightDisposition.SKIP, AfPreflightDisposition.BLOCKED)) {
                 "A required destination did not receive a copy"
             }
@@ -502,7 +511,8 @@ class AfPlanEngine(private val stagingDirectory: File) {
             .associate { it.source.identityKey() to requireNotNull(it.sha256) }
         val entriesBySource = preflight.entries.groupBy(AfPlannedEntry::sourceRootIndex)
         var sinceCheckpoint = 0
-        preflight.plan.sources.indices.reversed().forEach { sourceIndex ->
+        val eligible = deletableSourceRoots(preflight)
+        preflight.plan.sources.indices.reversed().filter { it in eligible }.forEach { sourceIndex ->
             entriesBySource[sourceIndex].orEmpty()
                 .sortedWith(compareByDescending<AfPlannedEntry> { it.depth }.thenByDescending { it.relativePath })
                 .forEach entryLoop@{ entry ->
@@ -555,7 +565,7 @@ class AfPlanEngine(private val stagingDirectory: File) {
         items = journal,
         sourceDeletionRequested = preflight.plan.deleteSourcesAfterVerifiedCopies,
         sourcesDeleted = state.sourcesDeleted,
-        undoAvailable = !state.sourcesDeleted && state.failedItems == 0 && journal.any {
+        undoAvailable = !preflight.plan.deleteSourcesAfterVerifiedCopies && !state.sourcesDeleted && state.failedItems == 0 && journal.any {
             it.status in setOf(AfReceiptItemStatus.COPIED, AfReceiptItemStatus.REPLACED)
         } && state.status == AfExecutionStatus.COMPLETED,
         errorCount = state.failedItems.coerceAtMost(AfWorkflowLimits.MAX_RECORDED_ERRORS),
@@ -565,6 +575,15 @@ class AfPlanEngine(private val stagingDirectory: File) {
     private fun checkpoint(writer: AfExecutionWriter, state: AfExecutionState, journal: List<AfReceiptItem>) {
         writer.saveJournal(state.executionId, journal)
         writer.saveState(state)
+    }
+
+    private fun deletableSourceRoots(preflight: AfPreflightSummary): Set<Int> {
+        if (!preflight.plan.fileManagerTransfer) return preflight.plan.sources.indices.toSet()
+        val excluded = preflight.projections.asSequence().filter { projection ->
+            preflight.plan.destinations[projection.destinationIndex].required &&
+                projection.disposition in setOf(AfPreflightDisposition.SKIP, AfPreflightDisposition.BLOCKED)
+        }.map(AfDestinationProjection::sourceRootIndex).toSet()
+        return preflight.plan.sources.indices.filterNot { it in excluded }.toSet()
     }
 
     private suspend fun rollbackActiveReplacement(
@@ -633,14 +652,15 @@ class AfPlanEngine(private val stagingDirectory: File) {
         val name = when (target.kind) {
             AfLocationKind.LOCAL -> File(target.path).name
             AfLocationKind.REMOTE -> target.path.substringAfterLast('/')
+            AfLocationKind.DOCUMENT -> target.documentPath.substringAfterLast('/')
         }.ifBlank { "root" }
         val backupName = ".${name.take(120)}.af-backup-${executionId.take(12)}"
         return child(parent(target), backupName)
     }
 
     private fun safeErrorCode(error: Throwable): String {
-        val name = error::class.java.simpleName.uppercase().replace(Regex("[^A-Z0-9]+"), "_").trim('_')
-        return name.ifBlank { "TRANSFER_FAILED" }.take(80)
+        if (error is AfDocumentRecoveryException) return "RECOVERY_REQUIRED:${error.recoveryUri.take(400)}"
+        return com.affilemanager.app.transfer.TransferFailure.classify(error, com.affilemanager.app.transfer.TransferPhase.COMMIT).code
     }
 
     private companion object {

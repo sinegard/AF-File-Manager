@@ -98,7 +98,21 @@ class CodeEditorController {
 class CodeEditorView(context: Context) : LinearLayout(context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val history = EditorHistory(maximumStoredBytes = 16 * 1_024 * 1_024)
-    private val editor = AppCompatEditText(context)
+    private val editor = object : AppCompatEditText(context) {
+        override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+            if (event.action == KeyEvent.ACTION_DOWN && event.isCtrlPressed && handleEditorKey(keyCode, event)) return true
+            return super.onKeyPreIme(keyCode, event)
+        }
+
+        override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean =
+            handleEditorKey(keyCode, event) || super.onKeyShortcut(keyCode, event)
+
+        override fun onTextContextMenuItem(id: Int): Boolean = when (id) {
+            android.R.id.undo -> { undo(); true }
+            android.R.id.redo -> { redo(); true }
+            else -> super.onTextContextMenuItem(id)
+        }
+    }
     private val gutter = LineNumberView(context, editor)
     private var colors = defaultColors()
     private var language = EditorLanguage.PLAIN_TEXT
@@ -330,10 +344,12 @@ class CodeEditorView(context: Context) : LinearLayout(context) {
     }
 
     fun undo() {
+        if (readOnlyEnabled) return
         history.undo(editor.text?.toString().orEmpty())?.let(::applyHistoryResult)
     }
 
     fun redo() {
+        if (readOnlyEnabled) return
         history.redo(editor.text?.toString().orEmpty())?.let(::applyHistoryResult)
     }
 

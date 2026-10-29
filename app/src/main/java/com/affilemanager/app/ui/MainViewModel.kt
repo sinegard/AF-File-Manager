@@ -1,6 +1,7 @@
 package com.affilemanager.app.ui
 
 import com.affilemanager.app.ui.localization.appString
+import com.affilemanager.app.ui.localization.appLanguageContext
 import com.affilemanager.app.media.editing.MediaExportEngine
 import com.affilemanager.app.media.editing.MediaExportFile
 
@@ -29,6 +30,7 @@ import com.affilemanager.app.archive.ArchiveCompressionRules
 import com.affilemanager.app.archive.ArchiveMutationRules
 import com.affilemanager.app.core.FileSystemRules
 import com.affilemanager.app.data.SafLocation
+import com.affilemanager.app.data.RemovableStorageAccess
 import com.affilemanager.app.data.SafEntry
 import com.affilemanager.app.data.RecentItem
 import com.affilemanager.app.data.RecentFileItem
@@ -142,6 +144,7 @@ import com.affilemanager.app.workflow.AfSourceRef
 import com.affilemanager.app.workflow.AfSourceKind
 import com.affilemanager.app.workflow.AfUndoPreview
 import com.affilemanager.app.workflow.AfWorkflowLimits
+import com.affilemanager.app.workflow.AfWorkflowPaths
 import com.affilemanager.app.workflow.AfWorkflowSnapshot
 import com.affilemanager.app.workflow.identityKey
 import com.affilemanager.app.ui.preview.RemotePreviewCache
@@ -412,6 +415,7 @@ data class AfWorkflowUiState(
     val verification: TransferVerification = TransferVerification.SIZE,
     val failurePolicy: TransferFailurePolicy = TransferFailurePolicy.STOP,
     val deleteSourcesAfterVerifiedCopies: Boolean = false,
+    val fileManagerTransfer: Boolean = false,
     val preview: AfPreflightSummary? = null,
     val automationPreview: AfPreflightSummary? = null,
     val undoPreview: AfUndoPreview? = null,
@@ -426,6 +430,7 @@ data class SafBrowserUiState(
     val currentUri: String? = null,
     val title: String = "",
     val entries: List<SafEntry> = emptyList(),
+    val selectedUris: Set<String> = emptySet(),
     val backStack: List<Pair<String, String>> = emptyList(),
     val grid: Boolean = false,
     val iconScalePercent: Int = 100,
@@ -508,7 +513,11 @@ data class InitialMediaPlayback(val speed: Float, val loop: Boolean, val autoPla
 }
 
 sealed interface PreviewTarget {
-    data class LocalFile(val entry: FileEntry, val playbackStart: InitialMediaPlayback? = null) : PreviewTarget
+    data class LocalFile(
+        val entry: FileEntry,
+        val playbackStart: InitialMediaPlayback? = null,
+        val advancedOrigin: Boolean = false,
+    ) : PreviewTarget
     data class TrashFile(val itemId: String, val entry: FileEntry) : PreviewTarget
     data class ContentFile(val entry: ContentFileEntry) : PreviewTarget
     data class RemoteFile(
@@ -728,6 +737,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _afClipboard = MutableStateFlow<AfClipboardState?>(null)
     val afClipboard: StateFlow<AfClipboardState?> = _afClipboard.asStateFlow()
 
+    private val _transferPreferences = MutableStateFlow(graph.uiPreferences.loadTransferPreferences())
+    val transferPreferences = _transferPreferences.asStateFlow()
+
+    fun saveTransferOptions(moving: Boolean, options: com.affilemanager.app.data.TransferOptions): Boolean {
+        val next = _transferPreferences.value.withOptions(moving, options)
+        return runCatching { graph.uiPreferences.saveTransferPreferences(next) }
+            .onSuccess { _transferPreferences.value = next }
+            .onFailure { message("Nustatymų įrašyti nepavyko", true) }
+            .isSuccess
+    }
+
+    fun pasteUsingSavedOptions(panel: PanelId): Boolean {
+        val shared = _afClipboard.value
+        if (shared?.sources?.any { it.location.kind == AfLocationKind.DOCUMENT } == true) {
+            val options = _transferPreferences.value.optionsFor(shared.moveAfterVerifiedCopies)
+            if (options.askBeforeTransfer) return false
+            pasteDocumentClipboardToLocal(panel, options)
+            return true
+        }
+        val clipboard = _clipboard.value ?: return false
+        if (clipboard.source != ClipboardSource.LOCAL || _remoteClipboard.value != null) return false
+        val options = _transferPreferences.value.optionsFor(clipboard.mode == ClipboardMode.MOVE)
+        if (options.askBeforeTransfer) return false
+        paste(panel, options.conflictPolicy, options.verification, options.failurePolicy)
+        return true
+    }
+
     val afWorkflowSnapshot: StateFlow<AfWorkflowSnapshot> = graph.workflows.snapshot
     private val _afWorkflowUi = MutableStateFlow(AfWorkflowUiState())
     val afWorkflowUi: StateFlow<AfWorkflowUiState> = _afWorkflowUi.asStateFlow()
@@ -900,7 +936,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             operations.collectLatest { snapshots ->
                 snapshots.filter {
-                    it.status in setOf(OperationStatus.SUCCEEDED, OperationStatus.COMPLETED_WITH_ERRORS) && it.id !in handledOperations
+                    it.status in setOf(OperationStatus.SUCCEEDED, OperationStatus.COMPLETED_WITH_ERRORS, OperationStatus.FAILED, OperationStatus.CANCELLED) && it.id !in handledOperations
                 }.forEach { snapshot ->
                     handledOperations.add(snapshot.id)
                     while (handledOperations.size > 128) handledOperations.removeFirst()
@@ -1094,13 +1130,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
-    fun refreshAdvancedBrowser() {
+    fun refreshAdvancedBrowser() = refreshAdvancedBrowser(null)
+
+    private fun refreshAdvancedBrowser(localWritePath: String?) {
         val state = _advancedBrowser.value
         if (!state.open || state.path.isBlank()) return
         advancedBrowserJob?.cancel()
         advancedBrowserJob = viewModelScope.launch {
             _advancedBrowser.update { it.copy(loading = true, error = null) }
-            graph.privilegedFiles.list(state.path, state.includeHidden, state.sortMode, state.sortDirection).fold(
+            graph.privilegedFiles.list(state.path, state.includeHidden, state.sortMode, state.sortDirection,
+                localWritePath = localWritePath?.takeIf { File(it).parent == state.path }).fold(
                 onSuccess = { entries -> _advancedBrowser.update { it.copy(entries = entries, selectedPaths = it.selectedPaths.intersect(entries.map(FileEntry::absolutePath).toSet()), loading = false) } },
                 onFailure = { error -> _advancedBrowser.update { it.copy(loading = false, error = error.message ?: "Aplanko atnaujinti nepavyko") } },
             )
@@ -1295,7 +1334,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     AdvancedPreviewRouting.directlyReadableFile(entry, ::canExposeLocalPreview)
                 }
                 if (readableLocalFile != null) {
-                    open(graph.localFiles.toEntry(readableLocalFile))
+                    open(graph.localFiles.toEntry(readableLocalFile), null, advancedOrigin = true)
                 } else {
                     graph.privilegedFiles.stageForPreview(entry).fold(
                         onSuccess = { cached ->
@@ -2254,9 +2293,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun setLocalClipboard(paths: List<String>, move: Boolean, append: Boolean): Boolean {
-        val normalized = paths.mapNotNull { path ->
-            runCatching { File(path).canonicalPath }.getOrNull()
-        }
+        val normalized = runCatching { paths.map { path -> FileSystemRules.nonSymbolicSource(File(path)).path } }
+            .getOrElse { message(it.message ?: "Simbolinė nuoroda nepalaikoma", true); return false }
         if (normalized.isEmpty()) return false
         val mode = if (move) ClipboardMode.MOVE else ClipboardMode.COPY
         val additional = normalized.map { path ->
@@ -2334,7 +2372,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadFileCategoryPage(reset = true, forceRefresh = forceRefresh)
     }
 
-    private fun loadFileCategoryPage(reset: Boolean, forceRefresh: Boolean = false) {
+    private fun loadFileCategoryPage(reset: Boolean, forceRefresh: Boolean = false, preserveLoadedCount: Boolean = false) {
         val snapshot = _fileCategory.value
         val category = snapshot.category ?: return
         val offset = if (reset) 0 else snapshot.nextOffset ?: return
@@ -2346,11 +2384,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val storageScope = snapshot.storageScope
         val viewMode = snapshot.viewMode
         val parentFolderPath = snapshot.parentFolderPath
+        val retainedCount = if (reset && preserveLoadedCount) snapshot.entries.size else 0
         fileCategoryJob?.cancel()
         _fileCategory.update { current ->
             if (current.category != category) current else if (reset) {
                 current.copy(
-                    entries = emptyList(),
+                    entries = if (preserveLoadedCount) current.entries else emptyList(),
                     selectedPaths = emptySet(),
                     scannedRows = 0,
                     nextOffset = null,
@@ -2367,7 +2406,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 var currentOffset = offset
                 var refresh = forceRefresh
-                var pageEntries: List<FileEntry>
+                val pageEntries = ArrayList<FileEntry>()
                 var pageScanned = 0
                 var nextOffset: Int?
                 var pageTruncated = false
@@ -2385,12 +2424,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         parentFolderPath = parentFolderPath,
                     )
                     refresh = false
-                    pageEntries = page.entries
+                    pageEntries.addAll(page.entries)
                     pageScanned = Math.addExact(pageScanned, page.scannedRows)
                     nextOffset = page.nextOffset
                     pageTruncated = pageTruncated || page.truncated
-                    if (pageEntries.isEmpty() && nextOffset != null) currentOffset = nextOffset
-                } while (pageEntries.isEmpty() && nextOffset != null)
+                    if (nextOffset != null) currentOffset = nextOffset
+                } while (nextOffset != null && pageEntries.size < maxOf(1, retainedCount) &&
+                    pageScanned < com.affilemanager.app.data.FileCategoryRepository.MAX_QUERY_ROWS &&
+                    pageEntries.size < com.affilemanager.app.data.FileCategoryRepository.MAX_RESULTS)
 
                 val current = _fileCategory.value
                 if (!current.open || current.category != category ||
@@ -2430,9 +2471,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshFileCategory() {
+        refreshFileCategory(scrollToTop = true)
+    }
+
+    fun refreshFileCategory(scrollToTop: Boolean) {
         if (_fileCategory.value.category != null) {
-            _fileCategory.update { it.copy(scrollToTopRequest = it.scrollToTopRequest + 1L) }
-            loadFileCategoryPage(reset = true, forceRefresh = true)
+            if (scrollToTop) _fileCategory.update { it.copy(scrollToTopRequest = it.scrollToTopRequest + 1L) }
+            loadFileCategoryPage(reset = true, forceRefresh = true, preserveLoadedCount = !scrollToTop)
         }
     }
 
@@ -2444,6 +2489,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         query: String = "",
         forceRefresh: Boolean = false,
         includeHidden: Boolean = false,
+        storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
+        viewMode: CategoryViewMode = CategoryViewMode.FILES,
     ): Result<com.affilemanager.app.data.FileCategoryPage> =
         withContext(Dispatchers.IO) {
             try {
@@ -2455,6 +2502,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     query = query,
                     forceRefresh = forceRefresh,
                     includeHidden = includeHidden,
+                    storageScope = storageScope,
+                    viewMode = viewMode,
                 )
                 Result.success(page.copy(entries = page.entries.filter { includeHidden || !it.absolutePath.replace('\\', '/').split('/').any { segment -> segment.startsWith('.') } }))
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -2476,12 +2525,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun loadNearbyContacts(): Result<com.affilemanager.app.transfer.NearbyContactPage> =
         graph.nearbySources.loadContacts()
 
+    suspend fun createNearbyReceiveTypeFolders(): Result<Unit> = withContext(Dispatchers.IO) {
+        val before = shareScreenPreferences.value
+        var creationAttempted = false
+        try {
+            val selected = File(before.nearbyReceivePath)
+            val base = FileSystemRules.containedNonSymbolicPath(selected, selected)
+            require(base.isDirectory && base.canWrite() && graph.localFiles.roots().any {
+                FileSystemRules.isContained(File(it.path), base)
+            }) { "Gavimo katalogas nepasiekiamas" }
+            val originalIdentity = requireNotNull(java.nio.file.Files.readAttributes(base.toPath(),
+                java.nio.file.attribute.BasicFileAttributes::class.java, java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey()) {
+                "Gavimo katalogas nepasiekiamas"
+            }
+            // Preflight every name before creating anything. Existing directories
+            // can be reused, but a file or link never becomes a routing target.
+            val targets = com.affilemanager.app.transfer.NearbyReceiveFolderRules.preflight(base)
+            targets.values.forEach { target ->
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                require(java.nio.file.Files.readAttributes(base.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey() == originalIdentity) { "Gavimo katalogas nepasiekiamas" }
+                FileSystemRules.containedNonSymbolicPath(base, target)
+                if (!target.exists()) {
+                    creationAttempted = true
+                    graph.localFiles.createDirectory(base.path, target.name).getOrThrow()
+                }
+                require(target.isDirectory && target.canWrite()) { "Gavimo katalogas neleidžia rašyti" }
+            }
+            require(java.nio.file.Files.readAttributes(base.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS).fileKey() == originalIdentity) { "Gavimo katalogas nepasiekiamas" }
+            withContext(Dispatchers.Main.immediate) {
+                require(shareScreenPreferences.value.nearbyReceivePath == before.nearbyReceivePath &&
+                    shareScreenPreferences.value.nearbyTypePaths == before.nearbyTypePaths) { "Gavimo nustatymai pasikeitė" }
+                updateShareScreenPreferences { it.copy(nearbyTypePaths = targets.mapValues { target -> target.value.path }) }
+            }
+            Result.success(Unit)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Result.failure(if (creationAttempted) IllegalStateException(
+                "Aplankų paruošimas nebaigtas, gavimo nustatymai nepakeisti. Patikrinkite pasirinktą aplanką.", failure) else failure)
+        }
+    }
+
     suspend fun prepareNearbyTransferContacts(
         contacts: Collection<com.affilemanager.app.transfer.NearbyContact>,
     ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareContacts(contacts)
 
-    suspend fun prepareNearbyTransferPaths(paths: Collection<String>): Result<PreparedNearbyTransfer> =
-        graph.nearbySources.prepareLocalPaths(paths)
+    suspend fun prepareNearbyTransferPaths(
+        paths: Collection<String>,
+        retainedEntries: Collection<FileEntry> = emptyList(),
+    ): Result<PreparedNearbyTransfer> {
+        if (retainedEntries.isEmpty()) return graph.nearbySources.prepareLocalPaths(paths)
+        return withContext(Dispatchers.IO) {
+            try {
+                val limit = com.affilemanager.app.transfer.NearbySourcePreparer.MAX_FILES
+                require(paths.size <= limit && retainedEntries.size <= limit) { "Vienu kartu galima siųsti iki $limit failų" }
+                val combined = LinkedHashMap<String, FileEntry>()
+                retainedEntries.forEach { entry -> combined[entry.absolutePath] = entry }
+                paths.forEach { path ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (path !in combined) {
+                        require(combined.size < limit) { "Vienu kartu galima siųsti iki $limit failų" }
+                        combined[path] = graph.localFiles.toEntry(File(path))
+                    }
+                }
+                graph.nearbySources.prepareEntries(combined.values)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Result.failure(failure)
+            }
+        }
+    }
 
     fun discardNearbyTransferSources(prepared: PreparedNearbyTransfer) {
         viewModelScope.launch { graph.nearbySources.discard(prepared) }
@@ -2908,9 +3024,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun moveLocalPathsToTrash(paths: Collection<String>) {
-        val selected = paths.asSequence().mapNotNull { path ->
-            runCatching { File(path).canonicalFile }.getOrNull()?.takeIf(File::exists)?.absolutePath
-        }.distinct().take(10_001).toList()
+        val selected = runCatching { paths.asSequence().map { path ->
+            FileSystemRules.nonSymbolicSource(File(path))
+        }.filter(File::exists).map(File::getAbsolutePath).distinct().take(10_001).toList() }
+            .getOrElse { message(it.message ?: "Simbolinė nuoroda nepalaikoma", true); return }
         if (selected.isEmpty()) return
         if (selected.size > 10_000) {
             message("Vienu metu galima tvarkyti iki 10 000 elementų", true)
@@ -3029,7 +3146,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun open(entry: FileEntry) = open(entry, null)
     fun openWidgetMedia(entry: FileEntry, playback: InitialMediaPlayback) = open(entry, playback)
-    private fun open(entry: FileEntry, playback: InitialMediaPlayback?) {
+    private fun open(entry: FileEntry, playback: InitialMediaPlayback?, advancedOrigin: Boolean = false) {
         cancelArchiveUnlock()
         if (entry.kind != EntryKind.ARCHIVE) archivePasswords.clear()
         if (entry.isDirectory) {
@@ -3068,7 +3185,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 com.affilemanager.app.model.EntryKind.ARCHIVE -> openArchivePreview(PreviewTarget.Archive(entry, emptyList()))
                 else -> {
                     val directlyExposed = withContext(Dispatchers.IO) { canExposeLocalPreview(entry.file) }
-                    if (directlyExposed) _preview.value = PreviewTarget.LocalFile(entry, playback)
+                    if (directlyExposed) _preview.value = PreviewTarget.LocalFile(entry, playback, advancedOrigin)
                     else graph.privilegedFiles.stageForPreview(entry).fold(
                         onSuccess = { cached -> _preview.value = PreviewTarget.PrivilegedFile(entry, cached, localOrigin = true, playbackStart = playback) },
                         onFailure = { message(it.message ?: "Failo atidaryti nepavyko", true) },
@@ -3112,7 +3229,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     delta,
                     FileEntry::absolutePath,
                 ) ?: return
-                open(next)
+                open(next, null, target.advancedOrigin)
             }
             is PreviewTarget.RemoteFile -> {
                 val next = MediaNavigationRules.next(
@@ -3176,7 +3293,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val mimeType = source.mimeType(context)
                 val internalTextEditor = EditabilityRules.supportsInternalText(source.name, mimeType, source.kind)
                 val origin = when (target) {
-                    is PreviewTarget.LocalFile -> EditOrigin.Local(target.entry.absolutePath, target.entry.isWritable)
+                    is PreviewTarget.LocalFile -> if (target.advancedOrigin) {
+                        advancedEditOrigin(target.entry, locallyReadable = true)
+                    } else EditOrigin.Local(target.entry.absolutePath, target.entry.isWritable)
                     is PreviewTarget.TrashFile -> EditOrigin.Local(target.entry.absolutePath, target.entry.isWritable)
                     is PreviewTarget.ContentFile -> EditOrigin.Content(target.entry.uri, target.entry.isWritable)
                     is PreviewTarget.RemoteFile -> EditOrigin.Remote(
@@ -3257,6 +3376,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (fileEditRequestId == requestId) fileEditJob = null
             }
         }
+    }
+
+    private suspend fun advancedEditOrigin(entry: FileEntry, locallyReadable: Boolean): EditOrigin {
+        // A directly readable advanced preview still needs the privileged writer
+        // when the original belongs to another UID. Keep preview/delete routing intact.
+        val appOwned = locallyReadable && withContext(Dispatchers.IO) {
+            try {
+                android.system.Os.stat(entry.absolutePath).st_uid == android.os.Process.myUid()
+            } catch (error: android.system.ErrnoException) {
+                throw IllegalStateException("Source file is not available", error)
+            }
+        }
+        return if (appOwned) EditOrigin.Local(entry.absolutePath, entry.isWritable)
+        else EditOrigin.Privileged(entry.absolutePath, entry.isWritable)
     }
 
     fun updateEditText(text: String) {
@@ -3384,6 +3517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             is EditOrigin.Local -> {
                                 refreshPanel(PanelId.LEFT)
                                 refreshPanel(PanelId.RIGHT)
+                                refreshAdvancedBrowser((session.origin as EditOrigin.Local).path)
                             }
                             is EditOrigin.Remote -> refreshRemote()
                             is EditOrigin.Privileged -> refreshAdvancedBrowser()
@@ -3918,7 +4052,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _afWorkflowUi.value = AfWorkflowUiState()
     }
 
-    fun startAfPlanFromClipboard(destinationPanel: PanelId? = null, remoteDestination: Boolean = false) {
+    fun startAfPlanFromClipboard(destinationPanel: PanelId? = null, remoteDestination: Boolean = false, documentDestination: Boolean = false) {
         val clipboard = _afClipboard.value
         if (clipboard == null || clipboard.sources.isEmpty()) {
             message("Pirmiausia nukopijuokite failus, tada atverkite „Įklijuoti į kelias vietas“", true)
@@ -3934,6 +4068,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     add(AfDestinationRef(AfLocationRef.remote(profile.id, profile.name, _networkState.value.path)))
                 }
             }
+            if (documentDestination) {
+                _safBrowser.value.currentUri?.let { add(AfDestinationRef(AfLocationRef.document(it))) }
+            }
         }
         _afWorkflowUi.value = AfWorkflowUiState(
             open = true,
@@ -3942,6 +4079,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sources = clipboard.sources,
             destinations = destinations,
             deleteSourcesAfterVerifiedCopies = clipboard.moveAfterVerifiedCopies,
+            verification = if (clipboard.moveAfterVerifiedCopies) TransferVerification.SHA256 else TransferVerification.SIZE,
         )
     }
 
@@ -3957,6 +4095,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             verification = plan.verification,
             failurePolicy = plan.failurePolicy,
             deleteSourcesAfterVerifiedCopies = plan.deleteSourcesAfterVerifiedCopies,
+            fileManagerTransfer = plan.fileManagerTransfer,
         )
     }
 
@@ -4086,7 +4225,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _afWorkflowUi.update { it.copy(working = true, error = null) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                val saved = graph.workflows.savePlan(preview.plan)
+                val saved = if (preview.plan.fileManagerTransfer && snapshot.editingPlanId == null) preview.plan
+                    else graph.workflows.savePlan(preview.plan)
                 val fresh = graph.workflows.preview(saved)
                 require(AfPreflightFingerprint.create(fresh) == AfPreflightFingerprint.create(preview)) {
                     "Po peržiūros failai pasikeitė; peržiūrėkite atnaujintą planą"
@@ -4279,6 +4419,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         verification = verification,
         failurePolicy = if (deleteSourcesAfterVerifiedCopies) TransferFailurePolicy.STOP else failurePolicy,
         deleteSourcesAfterVerifiedCopies = deleteSourcesAfterVerifiedCopies,
+        fileManagerTransfer = fileManagerTransfer,
     ).normalized()
 
     fun closePreview() {
@@ -4457,8 +4598,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun encryptFile(file: FileEntry, passphrase: CharArray) {
-        val destination = File(file.file.parentFile, "${file.name}.afvault")
         graph.operationManager.submit("Šifruojamas ${file.name}") {
+            val destination = FileSystemRules.keepBothTarget(File(file.file.parentFile, "${file.name}.afvault"))
             graph.fileVault.encrypt(file.file, destination, passphrase, this)
         }.onFailure { message(it.message ?: "Šifravimo pradėti nepavyko", true) }
     }
@@ -4848,7 +4989,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             require(requested.size <= 10_000) { "Vienu metu galima tvarkyti iki 10 000 elementų" }
             requested.asSequence()
                 .map(::File)
-                .map { it.canonicalFile }
+                .map(FileSystemRules::nonSymbolicSource)
                 .filter(File::exists)
                 .onEach { candidate ->
                     require(AnalysisSelectionRules.canModify(roots, candidate)) {
@@ -5492,7 +5633,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        openLocalDirectoryFromHome(panel, target)
+        val documentLocation = _safLocations.value.firstOrNull { location ->
+            knownRoot.requiresDocumentAccess && location.canWrite &&
+                RemovableStorageAccess.belongsToVolume(location.uri, knownRoot.id, rootOnly = true) &&
+                getApplication<Application>().contentResolver.persistedUriPermissions.any { permission ->
+                    permission.uri.toString() == location.uri && permission.isReadPermission && permission.isWritePermission
+                }
+        }
+        if (documentLocation != null) openSafLocation(documentLocation)
+        else openLocalDirectoryFromHome(panel, target)
+    }
+
+    fun addRemovableStorageAccess(volumeId: String, uri: Uri) {
+        val root = _roots.value.firstOrNull { it.id == volumeId && it.requiresDocumentAccess } ?: run {
+            message("Saugykla nebeprijungta", true)
+            return
+        }
+        if (!RemovableStorageAccess.belongsToVolume(uri.toString(), root.id, rootOnly = false)) {
+            message("Vietos pridėti nepavyko", true)
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                val writable = withContext(Dispatchers.IO) {
+                    androidx.documentfile.provider.DocumentFile.fromTreeUri(getApplication<Application>(), uri)?.canWrite() == true
+                }
+                require(writable) { "Vietos pridėti nepavyko" }
+                graph.safFiles.addLocation(uri, root.title, customTitle = root.title).getOrThrow()
+                val locations = graph.safFiles.locations()
+                val selected = requireNotNull(locations.firstOrNull { it.uri == uri.toString() && it.canWrite })
+                _safLocations.value = locations
+                _section.value = AppSection.FILES
+                openSafLocation(selected)
+            }.onFailure { message(it.message ?: "Vietos pridėti nepavyko", true) }
+        }
     }
 
     private fun openLocalDirectoryFromHome(panel: PanelId, targetPath: String) {
@@ -5684,6 +5858,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     title = entry.name,
                     backStack = (it.backStack + (current to it.title)).takeLast(64),
                     entries = emptyList(),
+                    selectedUris = emptySet(),
                     sortMode = sort.mode,
                     sortDirection = sort.direction,
                 ).withSafDisplaySettings(display)
@@ -5717,6 +5892,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 title = previous.second,
                 backStack = it.backStack.dropLast(1),
                 entries = emptyList(),
+                selectedUris = emptySet(),
                 sortMode = sort.mode,
                 sortDirection = sort.direction,
             ).withSafDisplaySettings(display)
@@ -5735,7 +5911,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             graph.safFiles.list(uri).fold(
                 onSuccess = { entries ->
                     _safBrowser.update { current ->
-                        if (current.currentUri == uri) current.copy(entries = entries, loading = false) else current
+                        if (current.currentUri == uri) current.copy(entries = entries, loading = false,
+                            selectedUris = current.selectedUris.intersect(entries.mapTo(hashSetOf(), SafEntry::uri))) else current
                     }
                 },
                 onFailure = { error ->
@@ -5814,17 +5991,112 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         graph.safFiles.selectionInfo(uris)
 
     fun copyLocalToSaf(localPath: String) {
-        val destinationUri = _safBrowser.value.currentUri ?: return
-        val source = File(localPath)
-        graph.operationManager.submit("Kopijuojama į Android vietą") {
-            graph.safFiles.copyFromLocal(source, destinationUri, this).getOrThrow()
-        }.onFailure { message(it.message ?: "Kopijavimo pradėti nepavyko", true) }
+        if (setLocalClipboard(listOf(localPath), move = false, append = false))
+            startAfPlanFromClipboard(documentDestination = true)
     }
 
     fun copySafToLocal(entry: SafEntry, destinationPanel: PanelId = _activePanel.value) {
-        val destination = File(panelFlow(destinationPanel).value.path)
-        graph.operationManager.submit("Kopijuojama iš Android vietos") {
-            graph.safFiles.copyToLocal(entry.uri, destination, this).getOrThrow()
+        copySafEntries(listOf(entry))
+        startAfPlanFromClipboard(destinationPanel = destinationPanel)
+    }
+
+    fun pasteIntoSafUsingSavedOptions(): Boolean {
+        val clipboard = _afClipboard.value ?: return false
+        val options = _transferPreferences.value.optionsFor(clipboard.moveAfterVerifiedCopies)
+        if (options.askBeforeTransfer) return false
+        pasteIntoSaf(options)
+        return true
+    }
+
+    fun pasteIntoSaf(options: com.affilemanager.app.data.TransferOptions) {
+        val uri = _safBrowser.value.currentUri ?: return
+        pasteSharedDocumentClipboard(AfLocationRef.document(uri), options)
+    }
+
+    fun pasteDocumentClipboardToLocal(panel: PanelId, options: com.affilemanager.app.data.TransferOptions) =
+        pasteSharedDocumentClipboard(AfLocationRef.local(panelFlow(panel).value.path), options)
+
+    fun pasteDocumentClipboardToRemote(options: com.affilemanager.app.data.TransferOptions) {
+        val profile = _networkState.value.connectedProfile ?: return
+        pasteSharedDocumentClipboard(AfLocationRef.remote(profile.id, profile.name, _networkState.value.path), options)
+    }
+
+    private fun pasteSharedDocumentClipboard(destination: AfLocationRef, requestedOptions: com.affilemanager.app.data.TransferOptions) {
+        val clipboard = _afClipboard.value ?: return
+        if (clipboard.sources.isEmpty()) return
+        val moving = clipboard.moveAfterVerifiedCopies
+        val options = requestedOptions.normalized(moving)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val plan = AfPlanDefinition(
+                    name = com.affilemanager.app.ui.localization.UiTranslator.translate(if (moving) "Perkelti" else "Kopijuoti",
+                        getApplication<Application>().appLanguageContext().resources.configuration.locales[0].language),
+                    sources = clipboard.sources,
+                    destinations = listOf(AfDestinationRef(destination)),
+                    conflictPolicy = options.conflictPolicy,
+                    verification = if (moving) TransferVerification.SHA256 else options.verification,
+                    failurePolicy = options.failurePolicy,
+                    deleteSourcesAfterVerifiedCopies = moving,
+                    fileManagerTransfer = true,
+                )
+                val preview = graph.workflows.preview(plan)
+                if (!preview.canRun) {
+                    _afWorkflowUi.value = AfWorkflowUiState(open = true, name = plan.name, sources = plan.sources,
+                        destinations = plan.destinations, conflictPolicy = plan.conflictPolicy, verification = plan.verification,
+                        failurePolicy = plan.failurePolicy, deleteSourcesAfterVerifiedCopies = moving, fileManagerTransfer = true, preview = preview)
+                    return@runCatching
+                }
+                // The durable execution owns its plan; ordinary paste must not fill the saved-plan library.
+                graph.workflows.submit(preview)
+                if (moving && _afClipboard.value === clipboard) clearAfClipboard()
+                message("Patvarus planas išsaugotas ir įtrauktas į operacijų eilę")
+            }.onFailure { message(it.message ?: "Operacijos plano sukurti nepavyko", true) }
+        }
+    }
+
+    fun toggleSafSelection(uri: String) = _safBrowser.update { state ->
+        if (state.entries.none { it.uri == uri }) state
+        else state.copy(selectedUris = if (uri in state.selectedUris) state.selectedUris - uri else state.selectedUris + uri)
+    }
+
+    fun clearSafSelection() = _safBrowser.update { it.copy(selectedUris = emptySet()) }
+
+    fun setSafSelection(uris: Collection<String>, selected: Boolean) = _safBrowser.update { state ->
+        val valid = uris.toSet().intersect(state.entries.mapTo(hashSetOf(), SafEntry::uri))
+        state.copy(selectedUris = if (selected) state.selectedUris + valid else state.selectedUris - valid)
+    }
+
+    fun toggleAllSafSelection(uris: Collection<String>) = _safBrowser.update { state ->
+        val visible = uris.toSet().intersect(state.entries.mapTo(hashSetOf(), SafEntry::uri))
+        state.copy(selectedUris = if (visible.isNotEmpty() && state.selectedUris.containsAll(visible)) state.selectedUris - visible
+            else state.selectedUris + visible)
+    }
+
+    fun copySafSelection(move: Boolean = false, append: Boolean = false) {
+        val state = _safBrowser.value
+        copySafEntries(state.entries.filter { it.uri in state.selectedUris }, move, append)
+    }
+
+    fun copySafEntries(entries: List<SafEntry>, move: Boolean = false, append: Boolean = false) {
+        val state = _safBrowser.value
+        val current = state.currentUri ?: return
+        val visibleNames = state.entries.associate { it.uri to it.name }
+        if (entries.isEmpty() || entries.any { visibleNames[it.uri] != it.name }) return
+        val previous = if (append) _afClipboard.value else null
+        if (append && previous == null) { message("Nėra kopijavimo rinkinio, kurį būtų galima papildyti", true); return }
+        if (append && (move || previous?.moveAfterVerifiedCopies == true)) {
+            message("Iškirptų elementų negalima maišyti su „Kopijuoti daugiau“. Pradėkite naują rinkinį.", true)
+            return
+        }
+        runCatching {
+            val additional = entries.map { AfSourceRef(AfWorkflowPaths.child(AfLocationRef.document(current), it.name), it.name).normalized() }
+            val merged = ClipboardMergeRules.merge(previous?.sources.orEmpty(), additional, AfWorkflowLimits.MAX_SOURCE_ROOTS,
+                key = { "${it.kind}:${it.location.identityKey()}:${it.archiveEntryPath.orEmpty()}" })
+            _afClipboard.value = AfClipboardState(merged.items, moveAfterVerifiedCopies = move)
+            _clipboard.value = null
+            _remoteClipboard.value = null
+            clearSafSelection()
+            message(if (move) "Paruošta perkelti: ${merged.items.size}" else "Nukopijuota į iškarpinę: ${merged.items.size}")
         }.onFailure { message(it.message ?: "Kopijavimo pradėti nepavyko", true) }
     }
 

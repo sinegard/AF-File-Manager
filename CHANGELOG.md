@@ -2,6 +2,39 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
+## [0.47.0] - 2026-10-29
+
+- New vault files use streaming encryption instead of holding a whole file in memory. Older vaults remain readable with a safe memory check and are never rewritten automatically.
+- File operations no longer borrow unrelated temporary files or follow a selected symbolic link into other data. Keep both also respects broken-link name reservations.
+- FTPS checks the system certificate trust chain before sending login details.
+- FTP creation and recursive deletion also work with servers that do not support MLST. Missing paths are no longer listed as empty files by AF sharing.
+- Temporary web, FTP and WebDAV sharing reject symbolic-link paths before resolving them, protecting unselected files.
+- Failed FTP/SFTP replacements keep the previous server version, and rename conflicts no longer replace a different file. SMB replacement uses the server's atomic rename instead of deleting first.
+- Privileged moves verify the published copy before removing source files. Newly added or changed source data is kept; copy and move also honor pause and cancellation while streaming.
+- A failed privileged document save keeps its original recovery copy if another file or folder appears at the destination.
+- Root and Shizuku saves preserve the existing file's owner, permissions and security label. New copies use restricted permissions rather than becoming world-writable.
+- Privileged reads wait for the complete file on older Android versions. Local editor saves also preserve existing permissions, and fast typing no longer competes with stale editor updates.
+- SD cards on Android 8–10 can use Android's folder permission when direct access is read-only. Their browser shares selection, Copy more, copy, move, conflict choices and verified recovery with local and server locations. Revoked access asks for permission again instead of using stale access.
+- Narrow folder toolbars, trash cards and long headings keep their controls readable. Entering selection mode no longer shifts file rows under a held finger.
+- The storage-permission message uses the full available width, leaving room to browse on narrow screens without that permission.
+- Dialog actions adapt to the keyboard and larger text. Failed connections show their error instead of leaving it below the saved profiles.
+- Navigation uses two rows only when larger text cannot fit in one. System bars in dialogs follow the selected theme too.
+- Passphrase forms on Android 8–10 keep their fields and actions reachable while the keyboard is open.
+- Password fields use the keyboard's password mode with autocorrect disabled. ZIP creation also masks the password.
+- Local copy and move remember their options separately. Confirmation can be switched off for non-overwriting choices and restored in More → Operations; each transfer still creates a fresh recovery plan.
+- Refreshing from a folder menu keeps the current list or grid position, including loaded pages in Quick locations.
+- Media thumbnails use the actual displayed size and retain more detail when cropped, without increasing the cache limits.
+- Tiny source images are not inflated into large cached bitmaps. The same cache budget now also accounts for bitmap keys and source metadata.
+- Swiping between pictures has a short transition; zoomed images still pan without switching files.
+- Audio and video keep their playback position and settings when the screen rotates. Paused media stays paused.
+- Player controls sit at the bottom. Audio artwork fits landscape screens instead of pushing controls out of view.
+- Opening a preview that does not accept text dismisses a keyboard left over from the editor.
+- Phone-sharing windows survive screen recreation without changing the session duration or connection limits.
+- The sending picker shares storage and folder filters with Quick locations. A long press on Open storage opens Android's file picker, and browsing another folder keeps the existing selection.
+- Receiving can prepare separate folders by file type after showing a preview. Sharing actions are aligned, and the group QR code has an explicit show/hide control.
+- Wi-Fi, hotspot and Wi-Fi Direct controls open the phone's system settings, with fallbacks for unsupported settings pages.
+- Exported transfer diagnostics include the app's actual storage permissions, the precise failed copy stage and available Android process-exit codes. The remaining device-specific transfer reports are still under investigation.
+
 ## [0.46.0] - 2026-10-20
 
 - Removed the local terminal's read/write lock contention, which could delay each keystroke while waiting for output.

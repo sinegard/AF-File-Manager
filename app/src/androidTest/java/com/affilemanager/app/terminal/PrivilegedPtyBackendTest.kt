@@ -33,6 +33,16 @@ class PrivilegedPtyBackendTest {
             override fun closeTerminal(handle: Long) = Unit
             override fun listRunningAppMemory(): Array<String> = emptyArray()
             override fun forceStopPackage(packageName: String): Boolean = false
+            override fun getFileMetadataVersion(): Int = 1
+            override fun readFileMetadata(path: String): Array<String> = error("Not used by PTY")
+            override fun applyFileMetadata(path: String, metadata: Array<String>) = error("Not used by PTY")
+            override fun createPrivateEntry(path: String, directory: Boolean) = error("Not used by PTY")
+            override fun openPrivateWrite(path: String): Long = error("Not used by PTY")
+            override fun writePrivateFile(handle: Long, source: ByteArray, length: Int): Int = error("Not used by PTY")
+            override fun finishPrivateWrite(handle: Long) = error("Not used by PTY")
+            override fun abortPrivateWrite(handle: Long) = error("Not used by PTY")
+            override fun getFileReadVersion(): Int = 0
+            override fun openReadOnlyFile(path: String): android.os.ParcelFileDescriptor = error("Not used by PTY")
             override fun destroy() = Unit
             override fun writeTerminal(handle: Long, source: ByteArray, offset: Int, length: Int): Int {
                 assertTrue(source.size <= TerminalLimits.TRANSPORT_WRITE_CHUNK_BYTES)

@@ -13,6 +13,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import com.affilemanager.app.ui.localization.UiTranslator
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -70,6 +72,15 @@ class TrashBrowserVisualTest {
                 .fetchSemanticsNode().boundsInRoot
             assertTrue(kotlin.math.abs(shortBounds.height - longBounds.height) <= 1f)
             assertTrue(kotlin.math.abs(shortBounds.top - longBounds.top) <= 1f)
+            val density = compose.activity.resources.displayMetrics.density
+            for (entry in listOf(short, long)) {
+                for (label in listOf("Atkurti ${entry.name}", "Ištrinti ${entry.name} visam laikui")) {
+                    val button = compose.onNodeWithContentDescription(UiTranslator.translate(label, "en")).assertIsDisplayed()
+                    val bounds = button.fetchSemanticsNode().boundsInRoot
+                    assertTrue("Trash action collapsed horizontally: $label / $bounds", bounds.width >= 47f * density)
+                    assertTrue("Trash action lost its touch height: $label / $bounds", bounds.height >= 47f * density)
+                }
+            }
             captureDialog(
                 File(requireNotNull(application.getExternalFilesDir("validation")), "trash-grid-long-names.png"),
             )
@@ -99,6 +110,7 @@ class TrashBrowserVisualTest {
                 viewModel.refreshTrash()
                 viewModel.setSection(AppSection.TOOLS)
             }
+            compose.onNodeWithTag("settings_section_actions").performScrollTo().performClick()
             compose.onNodeWithTag("tools_list").performScrollToNode(hasText("Open trash"))
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithText("Open trash").fetchSemanticsNodes().isNotEmpty()
@@ -118,6 +130,7 @@ class TrashBrowserVisualTest {
             compose.onNodeWithText("Show thumbnails").assertIsDisplayed().performClick()
             compose.onNodeWithText("AFTrashVisual").performClick()
             compose.onNodeWithText("Vidinis katalogas").assertIsDisplayed()
+            captureDialog(File(requireNotNull(application.getExternalFilesDir("validation")), "trash-before-root-file-check.png"))
             compose.onNodeWithText("tik-pirmame-lygyje.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("tik-viduje.txt").fetchSemanticsNodes().isEmpty())
             captureDialog(File(requireNotNull(application.getExternalFilesDir("validation")), "trash-folder-0.4.0.png"))
@@ -125,17 +138,17 @@ class TrashBrowserVisualTest {
             compose.onNodeWithText("tik-pirmame-lygyje.txt").performClick()
             compose.onNodeWithTag("full-text-editor").assertIsDisplayed()
             compose.onNodeWithText("UTF-8").assertIsDisplayed()
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            pressSystemBack()
             compose.onNodeWithText("Vidinis katalogas").assertIsDisplayed()
 
             compose.onNodeWithText("Vidinis katalogas").performClick()
             compose.onNodeWithText("tik-viduje.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("tik-pirmame-lygyje.txt").fetchSemanticsNodes().isEmpty())
 
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            pressSystemBack()
             compose.onNodeWithText("tik-pirmame-lygyje.txt").assertIsDisplayed()
             assertTrue(compose.onAllNodesWithText("tik-viduje.txt").fetchSemanticsNodes().isEmpty())
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            pressSystemBack()
             compose.onNodeWithContentDescription("Restore AFTrashVisual").assertIsDisplayed()
 
             compose.onNodeWithContentDescription("Folder actions").performClick()
@@ -186,6 +199,13 @@ class TrashBrowserVisualTest {
             repository.emptyAll(OperationContext.background())
             compose.runOnUiThread { viewModel.closeTrashBrowser() }
         }
+    }
+
+    private fun pressSystemBack() {
+        assertTrue(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+        ))
+        compose.waitForIdle()
     }
 
     private fun captureDialog(target: File) {

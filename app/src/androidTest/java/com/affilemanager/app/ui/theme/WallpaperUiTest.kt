@@ -56,6 +56,9 @@ class WallpaperUiTest {
                 }
                 capture("wallpaper-$language-$palette")
                 compose.onNodeWithTag("nav_tools").performClick()
+                if (compose.onAllNodesWithTag("wallpaper_choose").fetchSemanticsNodes().isEmpty()) {
+                    compose.onNodeWithTag("settings_section_appearance").performScrollTo().performClick()
+                }
                 compose.onNodeWithTag("wallpaper_choose").performScrollTo().assertIsDisplayed()
                 compose.onNodeWithTag("card_transparency").performScrollTo().assertIsDisplayed()
                 capture("wallpaper-settings-$language-$palette")

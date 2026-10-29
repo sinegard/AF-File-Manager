@@ -4,6 +4,8 @@ import com.affilemanager.app.core.FileSystemRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.Locale
 import java.util.UUID
 
@@ -81,7 +83,7 @@ class BatchRenameEngine(
         require(spec.numberStart in 0..MAX_NUMBER) { "Numeravimo pradžia turi būti nuo 0 iki $MAX_NUMBER" }
         require(spec.numberPadding in 1..MAX_PADDING) { "Skaitmenų skaičius turi būti nuo 1 iki $MAX_PADDING" }
 
-        val sources = paths.map { File(it).canonicalFile }.distinctBy(File::getAbsolutePath)
+        val sources = paths.map { FileSystemRules.nonSymbolicSource(File(it)) }.distinctBy(File::getAbsolutePath)
         require(sources.size <= MAX_RENAME_ITEMS) { "Vienu metu galima pervadinti iki $MAX_RENAME_ITEMS elementų" }
         val regexResult = if (spec.useRegex && spec.findText.isNotEmpty()) runCatching {
             Regex(spec.findText)
@@ -119,7 +121,7 @@ class BatchRenameEngine(
         items = items.map { item ->
             val conflict = when {
                 item.targetPath in duplicateTargets -> "Keli elementai gautų tą patį pavadinimą"
-                item.changed && File(item.targetPath).exists() && item.targetPath !in changedSources -> "Toks pavadinimas jau naudojamas"
+                item.changed && entryExists(File(item.targetPath)) && item.targetPath !in changedSources -> "Toks pavadinimas jau naudojamas"
                 else -> null
             }
             item.copy(issue = item.issue ?: conflict)
@@ -173,6 +175,7 @@ class BatchRenameEngine(
             stages.forEach { stage ->
                 context.checkpoint()
                 val target = File(stage.item.targetPath)
+                require(!entryExists(target)) { "Tikslas jau egzistuoja: ${target.name}" }
                 check(renameFile(stage.temporary, target)) { "Nepavyko užbaigti ${stage.item.targetName}" }
                 stage.finalized = true
                 context.progress(itemDelta = 1, currentName = stage.item.targetName)
@@ -211,7 +214,8 @@ class BatchRenameEngine(
             "Pervadinimo plane kartojasi tikslai"
         }
         mappings.forEach { item ->
-            val source = File(item.originalPath)
+            val source = FileSystemRules.nonSymbolicSource(File(item.originalPath))
+            require(source.path == item.originalPath) { "Failas pasikeitė po peržiūros: ${item.originalName}" }
             require(source.exists()) { "Failas nebeegzistuoja: ${item.originalName}" }
             require(source.isDirectory == item.directory) { "Failo tipas pasikeitė: ${item.originalName}" }
             require((if (source.isFile) source.length() else 0) == item.expectedSizeBytes) {
@@ -225,7 +229,7 @@ class BatchRenameEngine(
             require(target.parentFile?.absolutePath == source.parentFile?.absolutePath) {
                 "Masinis pervadinimas negali perkelti failų į kitą aplanką"
             }
-            require(!target.exists() || item.targetPath in sourcePaths) { "Tikslas jau egzistuoja: ${target.name}" }
+            require(!entryExists(target) || item.targetPath in sourcePaths) { "Tikslas jau egzistuoja: ${target.name}" }
         }
     }
 
@@ -233,14 +237,14 @@ class BatchRenameEngine(
         val failures = mutableListOf<Throwable>()
         stages.asReversed().filter(RenameStage::finalized).forEach { stage ->
             val target = File(stage.item.targetPath)
-            if (target.exists() && !renameFile(target, stage.temporary)) {
+            if (entryExists(target) && !renameFile(target, stage.temporary)) {
                 failures += IllegalStateException("Nepavyko atkurti tarpinio vardo: ${target.name}")
             }
         }
         stages.asReversed().forEach { stage ->
-            if (stage.temporary.exists()) {
+            if (entryExists(stage.temporary)) {
                 val original = File(stage.item.originalPath)
-                if (original.exists() || !renameFile(stage.temporary, original)) {
+                if (entryExists(original) || !renameFile(stage.temporary, original)) {
                     failures += IllegalStateException("Nepavyko grąžinti: ${stage.item.originalName}")
                 }
             }
@@ -252,10 +256,12 @@ class BatchRenameEngine(
         val parent = requireNotNull(source.parentFile)
         repeat(MAX_TEMP_ATTEMPTS) {
             val candidate = File(parent, ".af-rename-${UUID.randomUUID()}.tmp")
-            if (!candidate.exists()) return candidate
+            if (!entryExists(candidate)) return candidate
         }
         throw IllegalStateException("Nepavyko parinkti saugaus laikino pavadinimo")
     }
+
+    private fun entryExists(file: File): Boolean = Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)
 
     private fun generatedName(source: File, spec: BatchRenameSpec, regex: Regex?, index: Int): String {
         val extensionIndex = if (source.isFile) source.name.lastIndexOf('.').takeIf { it > 0 } else null

@@ -2,6 +2,8 @@ package com.affilemanager.app.ui.components
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -25,9 +27,10 @@ internal fun ArchiveUnlockDialog(state: ArchiveUnlockUiState, onUnlock: (CharArr
         modifier = Modifier.testTag("archive_unlock_dialog"), onDismissRequest = cancel,
         title = { LText("Archyvo slaptažodis") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(value = password, onValueChange = { if (it.length <= 1024) password = it },
                     label = { LText("Slaptažodis") }, visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = passwordKeyboardOptions,
                     singleLine = true, enabled = !state.busy, modifier = Modifier.fillMaxWidth().testTag("archive_unlock_password"))
                 if (state.busy) LText("Ruošiama…")
                 state.error?.let { LText(it, color = MaterialTheme.colorScheme.error) }

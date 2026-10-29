@@ -16,6 +16,55 @@ import java.nio.charset.StandardCharsets
 class LanFtpServerTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun missingListTargetsAreRejectedInsteadOfInventingEmptyFiles() {
+        val root = temporary.newFolder("ftp-missing-list")
+        val loopback = InetAddress.getLoopbackAddress()
+        LanFtpServer(root, loopback, requestedCode = "12345678").use { server ->
+            val session = server.start()
+            Socket(loopback, session.port).use { control ->
+                control.soTimeout = 5_000
+                val reader = control.getInputStream().bufferedReader(StandardCharsets.UTF_8)
+                val writer = PrintWriter(control.getOutputStream(), true, StandardCharsets.UTF_8)
+                assertTrue(reader.readLine().startsWith("220"))
+                login(reader, writer)
+                for (verb in listOf("LIST", "NLST", "MLSD")) {
+                    command(writer, "PASV")
+                    val reply = reader.readLine()
+                    assertTrue(reply.startsWith("227"))
+                    val values = reply.substringAfter('(').substringBefore(')').split(',').map(String::toInt)
+                    Socket(loopback, values[4] * 256 + values[5]).use {
+                        command(writer, "$verb /does-not-exist.txt")
+                        assertTrue("$verb must reject a missing path before data transfer", reader.readLine().startsWith("550"))
+                    }
+                }
+                command(writer, "NOOP")
+                assertTrue(reader.readLine().startsWith("200"))
+                assertTrue(root.listFiles().orEmpty().isEmpty())
+            }
+        }
+    }
+
+    @Test fun theProductionClientCreatesAndDeletesTreesWhenTheServerHasNoMlst() = kotlinx.coroutines.runBlocking {
+        val root = temporary.newFolder("ftp-client-no-mlst")
+        LanFtpServer(root, InetAddress.getLoopbackAddress(), requestedCode = "12345678").use { server ->
+            val session = server.start()
+            val profile = com.affilemanager.app.network.NetworkProfile("local", "local",
+                com.affilemanager.app.network.NetworkProtocol.FTP, "127.0.0.1", session.port, "af", "/")
+            val client = com.affilemanager.app.network.FtpRemoteClient.connect(profile, "12345678".toCharArray())
+            try {
+                client.createDirectory("/work")
+                client.createFile("/work/file.txt")
+                assertEquals(listOf("file.txt"), client.list("/work").map { it.name })
+                assertTrue(runCatching { client.createFile("/work/file.txt") }.isFailure)
+                assertTrue(runCatching { client.createFile("/work") }.isFailure)
+                assertTrue(runCatching { client.delete("/", recursive = true) }.isFailure)
+                assertTrue(root.resolve("work/file.txt").isFile)
+                client.delete("/work", recursive = true)
+                assertTrue(root.listFiles().orEmpty().isEmpty())
+            } finally { client.close() }
+        }
+    }
+
     @Test fun closedControlSocketDoesNotEscapeItsWorker() {
         val root = temporary.newFolder("ftp-closed-control")
         LanFtpServer(root, InetAddress.getLoopbackAddress()).use { server ->

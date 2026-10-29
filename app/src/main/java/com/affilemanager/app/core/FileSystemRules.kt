@@ -2,6 +2,8 @@ package com.affilemanager.app.core
 
 import com.affilemanager.app.model.EntryKind
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.Locale
 
 object FileSystemRules {
@@ -24,8 +26,37 @@ object FileSystemRules {
         return candidate.canonicalFile.toPath().startsWith(rootPath)
     }
 
+    /** Shared servers must not erase a leaf/ancestor alias before their mutation checks. */
+    fun containedNonSymbolicPath(root: File, candidate: File): File {
+        val rootPath = root.canonicalFile.toPath()
+        val raw = candidate.absoluteFile.toPath()
+        // Android can expose the chosen cache/root through /data/user/0 while
+        // its canonical spelling is /data/data. Keep the selected root spelling
+        // as the lexical boundary; links below it must still be inspected raw.
+        val selectedRoot = root.absoluteFile.toPath()
+        val lexicalRoot = if (raw.startsWith(selectedRoot)) selectedRoot else rootPath
+        require(raw.normalize().startsWith(lexicalRoot)) { "Kelias išeina už pasirinkto katalogo" }
+        var component: java.nio.file.Path? = raw
+        // Inspect the lexical path too: normalizing link/../file first would
+        // remove the alias that Android/the filesystem can otherwise traverse.
+        while (component != null && component.startsWith(lexicalRoot)) {
+            require(!Files.isSymbolicLink(component)) { "Simbolinė nuoroda nepalaikoma" }
+            if (component == lexicalRoot) break
+            component = component.parent
+        }
+        return candidate.canonicalFile.also {
+            require(it.toPath().startsWith(rootPath)) { "Kelias išeina už pasirinkto katalogo" }
+        }
+    }
+
+    /** Inspect the selected node before canonicalization can erase its link identity. */
+    fun nonSymbolicSource(source: File): File {
+        require(!Files.isSymbolicLink(source.toPath())) { "Simbolinė nuoroda nepalaikoma" }
+        return source.canonicalFile
+    }
+
     fun keepBothTarget(original: File): File {
-        if (!original.exists()) return original
+        if (!Files.exists(original.toPath(), LinkOption.NOFOLLOW_LINKS)) return original
         val parent = original.parentFile ?: return original
         val fullName = original.name
         val extensionIndex = fullName.lastIndexOf('.').takeIf { it > 0 }
@@ -33,7 +64,7 @@ object FileSystemRules {
         val extension = extensionIndex?.let { fullName.substring(it) }.orEmpty()
         for (index in 1..10_000) {
             val candidate = File(parent, "$stem ($index)$extension")
-            if (!candidate.exists()) return candidate
+            if (!Files.exists(candidate.toPath(), LinkOption.NOFOLLOW_LINKS)) return candidate
         }
         throw IllegalStateException("Nepavyko parinkti laisvo pavadinimo")
     }

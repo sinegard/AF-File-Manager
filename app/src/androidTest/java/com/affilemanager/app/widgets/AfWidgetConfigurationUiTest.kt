@@ -134,13 +134,20 @@ class AfWidgetConfigurationUiTest {
         compose.runOnIdle { assertEquals("Save action must remain usable", 1, saves) }
     }
 
-    @Test fun allShippedLanguagesKeepEveryWidgetKindReadableAtThreeFontSizes() {
+    @Test fun allShippedLanguagesKeepEveryWidgetKindReadableAtThreeFontSizes() = checkLanguageBatch(0)
+    @Test fun widgetLanguagesBatchTwo() = checkLanguageBatch(1)
+    @Test fun widgetLanguagesBatchThree() = checkLanguageBatch(2)
+    @Test fun widgetLanguagesBatchFour() = checkLanguageBatch(3)
+
+    private fun checkLanguageBatch(batch: Int) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val language = mutableStateOf("en")
         val font = mutableFloatStateOf(1f)
         val state = mutableStateOf(AfWidgetConfig(folder = "/"))
-        val languages = InstrumentationRegistry.getArguments().getString("afAuditLanguages")?.split(',')
+        val requested = InstrumentationRegistry.getArguments().getString("afAuditLanguages")?.split(',')
             ?: com.affilemanager.app.ui.localization.AppLanguageManager.SUPPORTED_LANGUAGE_TAGS
+        val languages = requested.chunked(15).getOrNull(batch).orEmpty()
+        org.junit.Assume.assumeTrue("No languages in this explicitly selected batch", languages.isNotEmpty())
         var saved = 0
         compose.setContent {
             val configuration = Configuration(context.resources.configuration).apply {

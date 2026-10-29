@@ -11,7 +11,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -317,8 +317,6 @@ fun AFFileManagerTheme(
     MaterialTheme(
         colorScheme = colors,
     ) {
-        SystemBarsTheme(colors = opaqueColors.copy(surface = opaqueColors.background,
-            surfaceContainer = colors.surfaceContainer.compositeOver(opaqueColors.background)))
         CompositionLocalProvider(
             LocalDensity provides scaledDensity,
             LocalAppearanceSettings provides settings,
@@ -326,32 +324,44 @@ fun AFFileManagerTheme(
             androidx.compose.material3.LocalContentColor provides opaqueColors.onBackground,
             // An explicitly chosen RGB surface must not acquire Material's accent tint.
             androidx.compose.material3.LocalTonalElevationEnabled provides (settings.colorPalette != AppColorPalette.CUSTOM),
-        ) { ProvideAppearanceWallpaper { AppearanceContentOn(opaqueColors.background) { content() } } }
+        ) {
+            SystemBarsTheme()
+            ProvideAppearanceWallpaper { AppearanceContentOn(opaqueColors.background) { content() } }
+        }
     }
 }
 
 @Composable
-private fun SystemBarsTheme(colors: ColorScheme) {
+internal fun SystemBarsTheme() {
     val view = LocalView.current
     if (view.isInEditMode) return
-    SideEffect {
-        val activity = view.context as? Activity ?: return@SideEffect
-        val window = activity.window
-        val navigationColor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            colors.surface
-        } else {
-            colors.surfaceContainer
+    val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+        ?: (view.context as? Activity)?.window ?: return
+    val statusColor = LocalOpaqueColors.current.background
+    val navigationColor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) statusColor
+        else MaterialTheme.colorScheme.surfaceContainer.compositeOver(statusColor)
+    DisposableEffect(view, window, statusColor, navigationColor) {
+        fun applyTheme() {
+            window.statusBarColor = statusColor.toArgb()
+            window.navigationBarColor = navigationColor.toArgb()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isStatusBarContrastEnforced = false
+                window.isNavigationBarContrastEnforced = false
+            }
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = CustomThemeRules.foreground(statusColor) == Color.Black
+                isAppearanceLightNavigationBars = CustomThemeRules.foreground(navigationColor) == Color.Black
+            }
         }
-        window.statusBarColor = colors.surface.toArgb()
-        window.navigationBarColor = navigationColor.toArgb()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            window.isStatusBarContrastEnforced = false
-            window.isNavigationBarContrastEnforced = false
+        val listener = object : android.view.View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(attached: android.view.View) {
+                attached.removeOnAttachStateChangeListener(this)
+                applyTheme()
+            }
+            override fun onViewDetachedFromWindow(detached: android.view.View) = Unit
         }
-        WindowCompat.getInsetsController(window, view).apply {
-            isAppearanceLightStatusBars = CustomThemeRules.foreground(colors.surface) == Color.Black
-            isAppearanceLightNavigationBars = CustomThemeRules.foreground(navigationColor) == Color.Black
-        }
+        if (view.isAttachedToWindow) applyTheme() else view.addOnAttachStateChangeListener(listener)
+        onDispose { view.removeOnAttachStateChangeListener(listener) }
     }
 }
 

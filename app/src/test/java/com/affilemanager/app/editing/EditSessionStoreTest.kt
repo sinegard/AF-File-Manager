@@ -16,7 +16,7 @@ class EditSessionStoreTest {
 
     @Test
     fun saveAsPublicationNeverReplacesAFileCreatedDuringWriting() {
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-race"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-race"))
         val destination = temporaryFolder.newFolder("destination-race")
         val target = File(destination, "new.txt")
         // Exercise the publication boundary deterministically: another writer
@@ -37,7 +37,7 @@ class EditSessionStoreTest {
     fun editingUsesPrivateCopyAndDoesNotTouchOriginalBeforeSave() {
         val cache = temporaryFolder.newFolder("cache")
         val source = temporaryFolder.newFile("notes.txt").apply { writeText("original") }
-        val store = EditSessionStore(cache)
+        val store = hostEditSessionStore(cache)
 
         val session = store.prepareFromFile(
             sourceKey = "local|${source.absolutePath}",
@@ -59,7 +59,7 @@ class EditSessionStoreTest {
     @Test
     fun detectsOriginalContentConflictBeforeOverwrite() {
         val source = temporaryFolder.newFile("conflict.txt").apply { writeText("version one") }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-conflict"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-conflict"))
         val session = store.prepareFromFile(
             sourceKey = "source",
             displayName = source.name,
@@ -83,7 +83,7 @@ class EditSessionStoreTest {
     @Test
     fun explicitForceOverwriteIsVerifiedAndCanBeMarkedSaved() {
         val source = temporaryFolder.newFile("overwrite.txt").apply { writeText("version one") }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-overwrite"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-overwrite"))
         val session = store.prepareFromFile(
             sourceKey = "source",
             displayName = source.name,
@@ -108,7 +108,7 @@ class EditSessionStoreTest {
     fun hostileDisplayNameCannotEscapeEditCache() {
         val source = temporaryFolder.newFile("safe.txt").apply { writeText("content") }
         val cache = temporaryFolder.newFolder("cache-path")
-        val store = EditSessionStore(cache)
+        val store = hostEditSessionStore(cache)
 
         val session = store.prepareFromFile(
             sourceKey = "source",
@@ -129,7 +129,7 @@ class EditSessionStoreTest {
     fun refusesFilesAboveTheBoundBeforeCopying() {
         val source = temporaryFolder.newFile("large.bin")
         RandomAccessFile(source, "rw").use { it.setLength(EditLimits.MAX_FILE_BYTES + 1) }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-large"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-large"))
 
         store.prepareFromFile(
             sourceKey = "large",
@@ -157,7 +157,7 @@ class EditSessionStoreTest {
         val source = temporaryFolder.newFile("invalid.txt").apply {
             writeBytes(byteArrayOf(0xC3.toByte(), 0x28))
         }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-invalid-utf8"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-invalid-utf8"))
         val session = store.prepareFromFile(
             sourceKey = "invalid",
             displayName = source.name,
@@ -180,7 +180,7 @@ class EditSessionStoreTest {
         val directory = temporaryFolder.newFolder("save-as")
         val source = File(directory, "notes.txt").apply { writeText("original") }
         val occupied = File(directory, "copy.txt").apply { writeText("occupied") }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-save-as"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-save-as"))
         val session = store.prepareFromFile(
             sourceKey = "source",
             displayName = source.name,
@@ -214,7 +214,7 @@ class EditSessionStoreTest {
         assertTrue(requireNotNull(stale.parentFile).mkdirs())
         stale.writeText("private temporary copy")
 
-        EditSessionStore(cache)
+        hostEditSessionStore(cache)
 
         assertFalse(stale.exists())
         assertFalse(File(cache, "edit-sessions").exists())
@@ -224,7 +224,7 @@ class EditSessionStoreTest {
     fun discardRemovesThePrivateWorkingCopy() {
         val cache = temporaryFolder.newFolder("cache-discard-session")
         val source = temporaryFolder.newFile("discard-source.txt").apply { writeText("original") }
-        val store = EditSessionStore(cache)
+        val store = hostEditSessionStore(cache)
         val session = store.prepareFromFile(
             sourceKey = "source",
             displayName = source.name,
@@ -245,7 +245,7 @@ class EditSessionStoreTest {
     fun binaryTransformPublishesOnlyACompleteReplacement() {
         val cache = temporaryFolder.newFolder("cache-transform")
         val source = temporaryFolder.newFile("document.pdf").apply { writeBytes("original".toByteArray()) }
-        val store = EditSessionStore(cache)
+        val store = hostEditSessionStore(cache)
         val session = store.prepareFromFile(
             sourceKey = "source",
             displayName = source.name,

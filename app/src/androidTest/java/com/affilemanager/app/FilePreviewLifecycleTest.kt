@@ -11,6 +11,7 @@ import android.hardware.usb.UsbManager
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
@@ -472,48 +473,67 @@ class FilePreviewLifecycleTest {
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithTag("pdf-page-2", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            val pdfPage = compose.onNodeWithTag("pdf-page-2", useUnmergedTree = true)
-            val pdfPageSize = pdfPage.fetchSemanticsNode().size
-            pdfPage.performTouchInput {
-                longClick(
-                    position = Offset(
-                        pdfPageSize.width * (62f / 595f),
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                val pdfPage = compose.onNodeWithTag("pdf-page-2", useUnmergedTree = true)
+                val pdfPageSize = pdfPage.fetchSemanticsNode().size
+                pdfPage.performTouchInput {
+                    longClick(
+                        position = Offset(
+                            pdfPageSize.width * (62f / 595f),
+                            pdfPageSize.height * (108f / 842f),
+                        ),
+                    )
+                }
+                try {
+                    compose.waitUntil(timeoutMillis = 10_000) {
+                        runCatching {
+                            pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].text == "AF"
+                        }.getOrDefault(false)
+                    }
+                } catch (failure: Throwable) {
+                    runCatching {
+                        captureRoot(File(validationRoot, "preview-pdf-selection-failure.png"))
+                        File(validationRoot, "preview-pdf-selection-failure.json").writeText(org.json.JSONObject()
+                            .put("pageSize", pdfPageSize.toString())
+                            .put("pageBounds", pdfPage.fetchSemanticsNode().boundsInWindow.toString())
+                            .put("selection", runCatching { pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].toString() }.getOrDefault("absent"))
+                            .put("viewport", viewport.fetchSemanticsNode().config[PdfViewportSemanticsKey].toString().take(16000))
+                            .put("visibleUi", compose.onNodeWithTag("file-preview-dialog", useUnmergedTree = true).printToString().take(16000))
+                            .toString())
+                    }.exceptionOrNull()?.let(failure::addSuppressed)
+                    throw failure
+                }
+                val initialSelection = pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey]
+                assertEquals("AF", initialSelection.text)
+                pdfPage.performTouchInput {
+                    val destination = Offset(
+                        pdfPageSize.width * (285f / 595f),
                         pdfPageSize.height * (108f / 842f),
-                    ),
-                )
+                    )
+                    down(Offset(initialSelection.stopHandle.x, initialSelection.stopHandle.y))
+                    moveTo(destination, delayMillis = 450)
+                    up()
+                }
+                compose.waitUntil(timeoutMillis = 10_000) {
+                    runCatching {
+                        pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].text.length > initialSelection.text.length
+                    }.getOrDefault(false)
+                }
+                val extendedSelection = pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey]
+                assertTrue(extendedSelection.text.startsWith("AF File Manager"))
+                compose.onNodeWithTag("pdf-copy-selection").assertIsDisplayed().performClick()
+                lateinit var clipboard: ClipboardManager
+                compose.runOnUiThread { clipboard = application.getSystemService(ClipboardManager::class.java) }
+                compose.waitUntil(timeoutMillis = 5_000) {
+                    clipboard.primaryClip?.getItemAt(0)?.coerceToText(application)?.toString() == extendedSelection.text
+                }
+                captureRoot(File(validationRoot, "preview-pdf-direct-selection-full.png"))
+                captureTaggedNode("pdf-page-2", File(validationRoot, "preview-pdf-direct-selection.png"))
+                compose.onNodeWithTag("pdf-clear-selection").assertIsDisplayed().performClick()
+                assertTrue(compose.onAllNodesWithTag("pdf-selection-highlight-2").fetchSemanticsNodes().isEmpty())
+            } else {
+                verifyLegacyPdfTextCopy(application, validationRoot)
             }
-            compose.waitUntil(timeoutMillis = 10_000) {
-                runCatching {
-                    pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].text == "AF"
-                }.getOrDefault(false)
-            }
-            val initialSelection = pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey]
-            assertEquals("AF", initialSelection.text)
-            pdfPage.performTouchInput {
-                val destination = Offset(
-                    pdfPageSize.width * (285f / 595f),
-                    pdfPageSize.height * (108f / 842f),
-                )
-                down(Offset(initialSelection.stopHandle.x, initialSelection.stopHandle.y))
-                moveTo(destination, delayMillis = 450)
-                up()
-            }
-            compose.waitUntil(timeoutMillis = 10_000) {
-                runCatching {
-                    pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey].text.length > initialSelection.text.length
-                }.getOrDefault(false)
-            }
-            val extendedSelection = pdfPage.fetchSemanticsNode().config[PdfTextSelectionSemanticsKey]
-            assertTrue(extendedSelection.text.startsWith("AF File Manager"))
-            compose.onNodeWithTag("pdf-copy-selection").assertIsDisplayed().performClick()
-            val clipboard = application.getSystemService(ClipboardManager::class.java)
-            compose.waitUntil(timeoutMillis = 5_000) {
-                clipboard.primaryClip?.getItemAt(0)?.coerceToText(application)?.toString() == extendedSelection.text
-            }
-            captureRoot(File(validationRoot, "preview-pdf-direct-selection-full.png"))
-            captureTaggedNode("pdf-page-2", File(validationRoot, "preview-pdf-direct-selection.png"))
-            compose.onNodeWithTag("pdf-clear-selection").assertIsDisplayed().performClick()
-            assertTrue(compose.onAllNodesWithTag("pdf-selection-highlight-2").fetchSemanticsNodes().isEmpty())
             compose.runOnUiThread { viewModel.closePreview() }
         } finally {
             fixtureRoot.deleteRecursively()
@@ -812,6 +832,8 @@ class FilePreviewLifecycleTest {
     @Test
     fun actionViewContentUriOpensInternallyAndManifestAdvertisesFileTypes() {
         val application = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val activity = compose.activity
+        val launchIntent = Intent(activity.intent)
         val fixture = File(requireNotNull(application.getExternalFilesDir("incoming-view")), "incoming.png")
         try {
             fixture.parentFile?.mkdirs()
@@ -841,6 +863,9 @@ class FilePreviewLifecycleTest {
             compose.onNodeWithText("image/png", substring = true).fetchSemanticsNode()
             compose.runOnUiThread { ViewModelProvider(compose.activity)[MainViewModel::class.java].closePreview() }
         } finally {
+            // ACTION_VIEW deliberately changes the singleTask Activity's intent.
+            // Restore the test launch identity so ActivityScenario can track its destruction.
+            compose.runOnUiThread { activity.intent = launchIntent }
             fixture.delete()
         }
     }
@@ -1066,8 +1091,89 @@ class FilePreviewLifecycleTest {
         captureTaggedNode("file-preview-dialog", target)
     }
 
+    private fun verifyLegacyPdfTextCopy(application: AFFileManagerApplication, output: File) {
+        compose.onNodeWithTag("pdf-select-text").assertIsDisplayed().performClick()
+        val automation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun findText(): android.view.accessibility.AccessibilityNodeInfo? {
+            val root = automation.rootInActiveWindow ?: return null
+            val queue = java.util.ArrayDeque<android.view.accessibility.AccessibilityNodeInfo>().apply { add(root) }
+            var visited = 0
+            try {
+                while (queue.isNotEmpty()) {
+                    check(++visited <= 4096)
+                    val node = queue.removeFirst()
+                    if (node.className == "android.widget.TextView" && node.text?.toString()?.startsWith("AF File Manager") == true) return node
+                    for (index in 0 until node.childCount) node.getChild(index)?.let(queue::add)
+                    node.recycle()
+                }
+            } finally { queue.forEach { it.recycle() } }
+            return null
+        }
+        compose.waitUntil(10_000) { findText()?.also { it.recycle() } != null }
+        val text = requireNotNull(findText())
+        try {
+            val fullText = text.text.toString()
+            assertTrue(fullText.startsWith("AF File Manager"))
+            assertTrue(text.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS))
+            lateinit var clipboard: ClipboardManager
+            compose.runOnUiThread { clipboard = application.getSystemService(ClipboardManager::class.java) }
+            for (length in listOf(2, fullText.length)) {
+                val range = android.os.Bundle().apply {
+                    putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+                    putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, length)
+                }
+                assertTrue(text.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_SELECTION, range))
+                assertTrue(text.refresh())
+                assertEquals(0, text.textSelectionStart)
+                assertEquals(length, text.textSelectionEnd)
+                assertTrue(text.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_COPY))
+                compose.waitUntil(5000) {
+                    clipboard.primaryClip?.getItemAt(0)?.coerceToText(application)?.toString() == fullText.take(length)
+                }
+            }
+            captureTaggedNode("pdf-text-selection-dialog", File(output, "preview-pdf-legacy-text.png"))
+        } finally { text.recycle() }
+        compose.onNodeWithTag("pdf-text-close").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("pdf-select-text").assertIsDisplayed()
+    }
+
     private fun captureTaggedNode(tag: String, target: File) {
         target.parentFile?.mkdirs()
+        if (android.os.Build.VERSION.SDK_INT < 28) {
+            // Compose cannot capture Dialog windows on API26/27. Keep real
+            // rendered evidence through public window/node bounds and pixels.
+            compose.waitForIdle()
+            val automation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+            automation.waitForIdle(250, 3000)
+            val nodeBounds = compose.onNodeWithTag(tag, useUnmergedTree = true)
+                .assertIsDisplayed().fetchSemanticsNode().boundsInWindow
+            val nativeRoot = requireNotNull(automation.rootInActiveWindow)
+            val window = android.graphics.Rect().also(nativeRoot::getBoundsInScreen)
+            nativeRoot.recycle()
+            val requested = android.graphics.Rect(
+                window.left + kotlin.math.floor(nodeBounds.left).toInt(),
+                window.top + kotlin.math.floor(nodeBounds.top).toInt(),
+                window.left + kotlin.math.ceil(nodeBounds.right).toInt(),
+                window.top + kotlin.math.ceil(nodeBounds.bottom).toInt(),
+            )
+            val screen = requireNotNull(automation.takeScreenshot()) { "Native preview pixels unavailable" }
+            try {
+                val visible = android.graphics.Rect(requested)
+                check(visible.intersect(window) && visible.intersect(0, 0, screen.width, screen.height) && !visible.isEmpty)
+                val crop = Bitmap.createBitmap(screen, visible.left, visible.top, visible.width(), visible.height())
+                try { target.outputStream().use { assertTrue(crop.compress(Bitmap.CompressFormat.PNG, 100, it)) } }
+                finally { crop.recycle() }
+                File(target.path + ".capture.json").writeText(org.json.JSONObject()
+                    .put("source", "actual UiAutomation pixels on API26/27")
+                    .put("nodeBoundsInWindow", nodeBounds.toString()).put("nativeWindowBounds", window.flattenToString())
+                    .put("tag", tag).put("requestedBounds", requested.flattenToString())
+                    .put("visibleBounds", visible.flattenToString())
+                    .put("screenWidth", screen.width).put("screenHeight", screen.height)
+                    .put("clippedToScreen", requested != visible).toString())
+            } finally { screen.recycle() }
+            assertTrue(target.isFile && target.length() > 0)
+            return
+        }
         target.outputStream().use { output ->
             assertTrue(
                 compose.onNodeWithTag(tag, useUnmergedTree = true)

@@ -11,6 +11,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AfPlanPreflightTest {
+    @Test fun normalPasteKeepsBothInsteadOfSilentlySkippingEqualSizedFiles() = kotlinx.coroutines.test.runTest {
+        val storage = FakeAfStorage()
+        val source = storage.file("/source/file.txt", "aaa", "source")
+        val destination = storage.directory("/target", "target")
+        storage.file("/target/file.txt", "bbb", "target")
+        val plan = AfPlanDefinition(name = "Paste", sources = listOf(AfSourceRef(source, "file.txt")),
+            destinations = listOf(AfDestinationRef(destination)), fileManagerTransfer = true)
+        val preview = AfPlanPreflight().preview(plan, storage)
+        org.junit.Assert.assertTrue(preview.canRun)
+        org.junit.Assert.assertEquals(AfPreflightDisposition.KEEP_BOTH, preview.projections.single().disposition)
+    }
+
+    @Test fun normalPasteUsesTheFullFileNameAndCanDuplicateBesideTheOriginal() = kotlinx.coroutines.test.runTest {
+        val storage = FakeAfStorage()
+        val name = "long-" + "a".repeat(160) + ".txt"
+        val source = storage.file("/source/$name", "payload", "source")
+        val destination = storage.directory("/source", "source")
+        val plan = AfPlanDefinition(name = "Paste", sources = listOf(AfSourceRef(source, name)),
+            destinations = listOf(AfDestinationRef(destination)), fileManagerTransfer = true)
+        val preview = AfPlanPreflight().preview(plan, storage)
+        org.junit.Assert.assertTrue(preview.blockers.toString(), preview.canRun)
+        org.junit.Assert.assertEquals(name, preview.projections.single().requestedRootName)
+        org.junit.Assert.assertNotEquals(name, preview.projections.single().resolvedRootName)
+    }
     @Test
     fun keepBothReservesUniqueNamesForSourcesFromDifferentServers() = runTest {
         val storage = FakeAfStorage()

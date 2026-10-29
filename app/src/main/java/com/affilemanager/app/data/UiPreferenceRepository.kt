@@ -1,7 +1,10 @@
 package com.affilemanager.app.data
 
 import android.content.Context
+import com.affilemanager.app.model.ConflictPolicy
 import com.affilemanager.app.model.EntryKind
+import com.affilemanager.app.operations.TransferFailurePolicy
+import com.affilemanager.app.operations.TransferVerification
 import com.affilemanager.app.transfer.LanTransferProtocol
 import com.affilemanager.app.transfer.LanSessionDuration
 import com.affilemanager.app.transfer.NearbyGroupInvite
@@ -193,6 +196,37 @@ class UiPreferenceRepository(context: Context) {
         }
     }
 
+    fun loadTransferPreferences(): TransferPreferences = runCatching {
+        val raw = preferences.getString(KEY_TRANSFER, null) ?: return@runCatching TransferPreferences()
+        if (raw.length > 4_096) return@runCatching TransferPreferences()
+        val json = JSONObject(raw)
+        if (json.optInt("version") != 1) return@runCatching TransferPreferences()
+        fun readOptions(key: String, moving: Boolean): TransferOptions {
+            val defaults = TransferOptions.defaults(moving)
+            val options = json.optJSONObject(key) ?: return defaults
+            val policy = enumValueOrNull<ConflictPolicy>(options.optString("conflictPolicy")) ?: return defaults
+            val verification = enumValueOrNull<TransferVerification>(options.optString("verification")) ?: return defaults
+            val failure = enumValueOrNull<TransferFailurePolicy>(options.optString("failurePolicy")) ?: return defaults
+            val ask = options.opt("askBeforeTransfer") as? Boolean ?: return defaults
+            return TransferOptions(policy, verification, failure, ask).normalized(moving)
+        }
+        TransferPreferences(copy = readOptions("copy", false), move = readOptions("move", true))
+    }.getOrDefault(TransferPreferences())
+
+    fun saveTransferPreferences(value: TransferPreferences) {
+        fun writeOptions(options: TransferOptions) = JSONObject()
+            .put("conflictPolicy", options.conflictPolicy.name)
+            .put("verification", options.verification.name)
+            .put("failurePolicy", options.failurePolicy.name)
+            .put("askBeforeTransfer", options.askBeforeTransfer)
+        val json = JSONObject().put("version", 1)
+            .put("copy", writeOptions(value.optionsFor(false)))
+            .put("move", writeOptions(value.optionsFor(true)))
+        check(preferences.edit().putString(KEY_TRANSFER, json.toString()).commit()) {
+            "Nustatymų įrašyti nepavyko"
+        }
+    }
+
     fun loadFeatureVisibility(): FeatureVisibility = runCatching {
         val json = JSONObject(preferences.getString(KEY_FEATURES, null) ?: return@runCatching FeatureVisibility())
         if (json.optInt("version") != 1) return@runCatching FeatureVisibility()
@@ -240,6 +274,7 @@ class UiPreferenceRepository(context: Context) {
         const val KEY_SHARE = "share"
         const val KEY_SEARCH = "search"
         const val KEY_RECENT_VIEW = "recent_view"
+        const val KEY_TRANSFER = "transfer_options"
         const val KEY_FEATURES = "feature_visibility"
     }
 }

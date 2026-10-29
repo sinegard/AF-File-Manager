@@ -13,7 +13,10 @@ import java.security.MessageDigest
 import java.util.Locale
 import java.util.UUID
 
-class EditSessionStore(cacheDirectory: File) {
+class EditSessionStore internal constructor(
+    cacheDirectory: File,
+    private val localFiles: LocalEditFiles = AndroidLocalEditFiles,
+) {
     private val root = File(cacheDirectory, "edit-sessions")
     private class OriginChangedDuringSave(val revision: FileRevision?) : IllegalStateException()
 
@@ -190,7 +193,7 @@ class EditSessionStore(cacheDirectory: File) {
             "Original file is read-only; use Save as"
         }
         try {
-            atomicReplace(
+            atomicReplaceLocal(
                 target = target,
                 beforeReplace = {
                     if (!force) {
@@ -228,7 +231,7 @@ class EditSessionStore(cacheDirectory: File) {
         val target = when (policy) {
             EditExistingPolicy.KEEP_BOTH -> saveLocalWithUniqueName(session, directory, safeName)
             EditExistingPolicy.REPLACE -> {
-                atomicReplace(requestedTarget) { output -> copyWorking(session, output) }
+                atomicReplaceLocal(requestedTarget) { output -> copyWorking(session, output) }
                 requestedTarget
             }
             EditExistingPolicy.ASK -> {
@@ -428,6 +431,7 @@ class EditSessionStore(cacheDirectory: File) {
         beforeReplace: () -> Unit = {},
         write: (OutputStream) -> Unit,
     ) {
+        // App-private working/base copies retain their existing publication path.
         val parent = requireNotNull(target.parentFile) { "Target has no parent folder" }
         require(parent.isDirectory) { "Target folder is not available" }
         val temporary = File(parent, ".${target.name}.af-edit-${UUID.randomUUID()}.tmp")
@@ -440,17 +444,44 @@ class EditSessionStore(cacheDirectory: File) {
             }
             beforeReplace()
             runCatching {
+                Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
+            }.getOrElse {
+                Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            if(temporary.exists())temporary.delete()
+        }
+    }
+
+    private fun atomicReplaceLocal(
+        target: File,
+        beforeReplace: () -> Unit = {},
+        write: (OutputStream) -> Unit,
+    ) {
+        val parent = requireNotNull(target.parentFile) { "Target has no parent folder" }.canonicalFile
+        require(parent.isDirectory) { "Target folder is not available" }
+        val namedTarget = File(parent,target.name)
+        val original = localFiles.metadata(namedTarget)
+        val temporary = File(parent, ".${target.name}.af-edit-${UUID.randomUUID()}.tmp")
+        requireContained(parent, temporary)
+        localFiles.openStage(temporary).use { stage ->
+            write(stage.output)
+            val prepared=stage.prepare(original)
+            beforeReplace()
+            check(original == localFiles.metadata(namedTarget)) { LOCAL_EDIT_ACCESS_ERROR }
+            stage.requireNamed(prepared)
+            try {
                 Files.move(
                     temporary.toPath(),
-                    target.toPath(),
+                    namedTarget.toPath(),
                     StandardCopyOption.ATOMIC_MOVE,
                     StandardCopyOption.REPLACE_EXISTING,
                 )
-            }.getOrElse {
-                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), namedTarget.toPath(), StandardCopyOption.REPLACE_EXISTING)
             }
-        } finally {
-            if (temporary.exists()) temporary.delete()
+            val published=checkNotNull(localFiles.metadata(namedTarget)) { LOCAL_EDIT_ACCESS_ERROR }
+            check(prepared.sameEntry(published) && prepared.sameSecurity(published)) { LOCAL_EDIT_ACCESS_ERROR }
         }
     }
 

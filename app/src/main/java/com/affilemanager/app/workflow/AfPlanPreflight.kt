@@ -13,9 +13,19 @@ data class AfEnumeratedEntry(
     val relativePath: String,
     val snapshot: AfNodeSnapshot,
     val depth: Int,
+    val storageIdentity: String? = null,
 )
 
 interface AfStorageSession {
+    suspend fun validateDocumentDestinationSet(destinations: List<AfDestinationRef>) {
+        require(destinations.none { it.location.kind == AfLocationKind.DOCUMENT }) { "Document storage is unavailable" }
+    }
+    /** Providers must resolve opaque identities before admitting document copies. */
+    suspend fun validateDocumentDestinations(source: AfSourceRef, destinations: List<AfDestinationRef>, allowSiblingCopy: Boolean = false) {
+        require(source.location.kind != AfLocationKind.DOCUMENT && destinations.none { it.location.kind == AfLocationKind.DOCUMENT }) {
+            "Document storage is unavailable"
+        }
+    }
     suspend fun enumerate(source: AfSourceRef): List<AfEnumeratedEntry>
     suspend fun stat(location: AfLocationRef): AfNodeSnapshot?
     suspend fun listChildren(directory: AfLocationRef): List<AfNodeSnapshot>
@@ -52,13 +62,16 @@ class AfPlanPreflight {
         val warnings = linkedSetOf<String>()
         val entries = ArrayList<AfPlannedEntry>()
         val sourceBytes = LongArray(plan.sources.size)
+        val sourceIdentities = hashSetOf<String>()
+        val allowSiblingCopy = plan.fileManagerTransfer && !plan.deleteSourcesAfterVerifiedCopies && plan.conflictPolicy == ConflictPolicy.KEEP_BOTH
 
         validateOverlappingSources(plan.sources, blockers)
         validateOverlappingDestinations(plan.destinations, blockers)
+        try { storage.validateDocumentDestinationSet(plan.destinations) }
+        catch (error: Throwable) { blockers += "Destination unavailable: ${plan.destinations.first().location.displayLabel} (${safeReason(error)})" }
 
         plan.sources.forEachIndexed { sourceIndex, source ->
             currentCoroutineContext().ensureActive()
-            validateSourceDestinationRelationship(source, plan.destinations, blockers)
             val walked = try {
                 storage.enumerate(source)
             } catch (error: Throwable) {
@@ -69,12 +82,20 @@ class AfPlanPreflight {
                 blockers += "Source is empty or unavailable: ${source.displayName}"
                 return@forEachIndexed
             }
+            val validationSource = if (plan.fileManagerTransfer && source.kind == AfSourceKind.FILE_SYSTEM)
+                source.copy(displayName = walked.first { it.relativePath.isEmpty() }.snapshot.name) else source
+            validateSourceDestinationRelationship(validationSource, plan.destinations, blockers, allowSiblingCopy, plan.fileManagerTransfer)
+            try { storage.validateDocumentDestinations(validationSource, plan.destinations, allowSiblingCopy) }
+            catch (error: Throwable) { blockers += "Source unavailable: ${source.displayName} (${safeReason(error)})" }
             walked.forEach { item ->
                 if (entries.size % 64 == 0) currentCoroutineContext().ensureActive()
                 require(item.depth in 0..AfWorkflowLimits.MAX_TREE_DEPTH) { "Source tree is too deep" }
                 validateRelativePath(item.relativePath)
                 require(entries.size < AfWorkflowLimits.MAX_PLANNED_ENTRIES) { "AF Plan exceeds the item limit" }
                 val baseNode = item.snapshot.copy(location = item.snapshot.location.normalized())
+                if (source.kind == AfSourceKind.FILE_SYSTEM && !sourceIdentities.add(item.storageIdentity ?: baseNode.location.identityKey())) {
+                    blockers += "Source selections overlap: ${baseNode.location.displayLabel}"
+                }
                 val normalizedNode = if (
                     !baseNode.directory &&
                     (plan.verification == TransferVerification.SHA256 || source.kind == AfSourceKind.ARCHIVE_ENTRY)
@@ -121,7 +142,8 @@ class AfPlanPreflight {
         }
         val entriesBySource = entries.groupBy(AfPlannedEntry::sourceRootIndex)
         val estimatedPreviewBytes = entries.fold(4_096L) { total, entry ->
-            val characterCount = entry.relativePath.length.toLong() + entry.source.location.path.length + entry.source.name.length
+            val characterCount = entry.relativePath.length.toLong() + entry.source.location.path.length +
+                entry.source.location.documentPath.length + entry.source.name.length
             Math.addExact(total, 480L + characterCount * 4L)
         }
         if (estimatedPreviewBytes > AfWorkflowLimits.MAX_METADATA_BYTES * 3 / 4) {
@@ -161,9 +183,11 @@ class AfPlanPreflight {
             plan.sources.forEachIndexed { sourceIndex, source ->
                 val rootEntries = entriesBySource[sourceIndex].orEmpty()
                 if (rootEntries.isEmpty()) return@forEachIndexed
-                val requestedName = safeLeafName(source.displayName)
-                val requestedTarget = child(directory, requestedName)
                 val sourceRoot = rootEntries.first { it.relativePath.isEmpty() }.source
+                val requestedName = if (plan.fileManagerTransfer) exactLeafName(
+                    if (source.kind == AfSourceKind.ARCHIVE_ENTRY) requireNotNull(source.archiveEntryPath).substringAfterLast('/') else sourceRoot.name
+                ) else safeLeafName(source.displayName)
+                val requestedTarget = child(directory, requestedName)
                 val existing = try {
                     storage.stat(requestedTarget)
                 } catch (error: Throwable) {
@@ -189,7 +213,8 @@ class AfPlanPreflight {
                     plan.conflictPolicy == ConflictPolicy.MERGE &&
                     sourceRoot.directory && existing?.directory == true
                 ) {
-                    val mergeProblem = inspectMergedTree(rootEntries, requestedTarget, plan.verification, storage)
+                    val mergeProblem = inspectMergedTree(rootEntries, requestedTarget,
+                        if (plan.fileManagerTransfer) TransferVerification.SHA256 else plan.verification, storage, source)
                     if (mergeProblem != null) {
                         resolution = RootResolution(
                             requestedName,
@@ -265,11 +290,11 @@ class AfPlanPreflight {
                 plan.destinations[projection.destinationIndex].required &&
                     projection.disposition in setOf(AfPreflightDisposition.SKIP, AfPreflightDisposition.BLOCKED)
             }
-            if (unsafeRequired) blockers += "Sources cannot be deleted because a required destination will not receive a verified copy"
+            if (unsafeRequired && !plan.fileManagerTransfer) blockers += "Sources cannot be deleted because a required destination will not receive a verified copy"
             estimatedReceiptItems = Math.addExact(estimatedReceiptItems, entries.size.toLong())
             estimatedReceiptBytes = Math.addExact(
                 estimatedReceiptBytes,
-                entries.sumOf { entry -> 420L + entry.source.location.path.length * 4L },
+                entries.sumOf { entry -> 420L + (entry.source.location.path.length.toLong() + entry.source.location.documentPath.length) * 4L },
             )
         }
         if (estimatedReceiptItems > AfWorkflowLimits.MAX_RECEIPT_ITEMS) {
@@ -308,7 +333,7 @@ class AfPlanPreflight {
         storage: AfStorageSession,
     ): RootResolution {
         if (existing == null) return RootResolution(requestedName, AfPreflightDisposition.READY)
-        if (!source.directory && !existing.directory && source.sizeBytes == existing.sizeBytes) {
+        if (!plan.fileManagerTransfer && !source.directory && !existing.directory && source.sizeBytes == existing.sizeBytes) {
             if (plan.verification == TransferVerification.SHA256 && sourceRef.kind == AfSourceKind.FILE_SYSTEM) {
                 val sourceSha = source.sha256 ?: runCatching { storage.sha256(source.location) }.getOrNull()
                 val targetSha = existing.sha256 ?: runCatching { storage.sha256(existing.location) }.getOrNull()
@@ -379,6 +404,7 @@ class AfPlanPreflight {
         targetRoot: AfLocationRef,
         verification: TransferVerification,
         storage: AfStorageSession,
+        sourceRef: AfSourceRef,
     ): String? {
         entries.asSequence().filter { it.relativePath.isNotEmpty() }.forEach { entry ->
             val target = child(targetRoot, entry.relativePath)
@@ -395,8 +421,9 @@ class AfPlanPreflight {
                 return "Different file content already exists inside the merged tree: ${target.displayLabel}"
             }
             if (verification == TransferVerification.SHA256) {
-                val sourceSha = entry.source.sha256
-                    ?: return "A merged source file could not be content-verified: ${entry.source.name}"
+                val sourceSha = entry.source.sha256 ?: runCatching {
+                    storage.sourceSha256(sourceRef, AfEnumeratedEntry(entry.relativePath, entry.source, entry.depth))
+                }.getOrNull() ?: return "A merged source file could not be content-verified: ${entry.source.name}"
                 val destinationSha = runCatching { storage.sha256(target) }.getOrNull()
                     ?: return "A merged destination file could not be content-verified: ${target.displayLabel}"
                 if (sourceSha != destinationSha) {
@@ -436,7 +463,7 @@ class AfPlanPreflight {
     }
 
     private fun findOverlappingLocations(locations: List<AfLocationRef>): List<AfLocationRef> {
-        val byPath = locations.associateBy { normalizedComparablePath(it.path) }
+        val byPath = locations.filter { it.kind != AfLocationKind.DOCUMENT }.associateBy { normalizedComparablePath(it.path) }
         return findOverlappingPaths(byPath.keys).mapNotNull(byPath::get)
     }
 
@@ -475,7 +502,7 @@ class AfPlanPreflight {
         val selected = if (rootOnly) entries.take(1) else entries
         return selected.fold(0L) { total, entry ->
             val characterCount = source.location.path.length.toLong() + destination.path.length + rootName.length +
-                entry.relativePath.length + source.displayName.length
+                entry.relativePath.length + source.displayName.length + source.location.documentPath.length + destination.documentPath.length
             Math.addExact(total, 640L + characterCount * 4L)
         }
     }
@@ -484,6 +511,8 @@ class AfPlanPreflight {
         source: AfSourceRef,
         destinations: List<AfDestinationRef>,
         blockers: MutableSet<String>,
+        allowSiblingCopy: Boolean,
+        exactName: Boolean,
     ) {
         if (source.kind != AfSourceKind.FILE_SYSTEM) return
         destinations.forEach { destination ->
@@ -495,15 +524,15 @@ class AfPlanPreflight {
                 val destinationFile = File(destinationLocation.path)
                 val sourcePath = sourceFile.canonicalFile.toPath()
                 val destinationPath = destinationFile.canonicalFile.toPath()
-                val projectedTarget = File(destinationFile, safeLeafName(source.displayName)).canonicalFile.toPath()
-                if (destinationPath == sourcePath || destinationPath.startsWith(sourcePath) || projectedTarget == sourcePath) {
+                val projectedTarget = File(destinationFile, if (exactName) exactLeafName(source.displayName) else safeLeafName(source.displayName)).canonicalFile.toPath()
+                if (destinationPath == sourcePath || destinationPath.startsWith(sourcePath) || !allowSiblingCopy && projectedTarget == sourcePath) {
                     blockers += "A source cannot be copied into itself: ${source.displayName}"
                 }
-            } else {
+            } else if (sourceLocation.kind == AfLocationKind.REMOTE) {
                 val sourcePath = sourceLocation.path.trimEnd('/')
                 val destinationPath = destinationLocation.path.trimEnd('/')
-                val projectedTarget = com.affilemanager.app.network.RemotePath.join(destinationPath, safeLeafName(source.displayName))
-                if (destinationPath == sourcePath || destinationPath.startsWith("$sourcePath/") || projectedTarget == sourcePath) {
+                val projectedTarget = com.affilemanager.app.network.RemotePath.join(destinationPath, if (exactName) exactLeafName(source.displayName) else safeLeafName(source.displayName))
+                if (destinationPath == sourcePath || destinationPath.startsWith("$sourcePath/") || !allowSiblingCopy && projectedTarget == sourcePath) {
                     blockers += "A remote source cannot be copied into itself: ${source.displayName}"
                 }
             }
@@ -536,6 +565,8 @@ private fun joinLocation(parent: AfLocationRef, relativePath: String): AfLocatio
         AfLocationKind.REMOTE -> parent.copy(path = relativePath.split('/').fold(parent.path) { path, part ->
             com.affilemanager.app.network.RemotePath.join(path, part)
         }).normalized()
+        AfLocationKind.DOCUMENT -> parent.copy(documentPath = listOf(parent.documentPath, relativePath)
+            .filter(String::isNotEmpty).joinToString("/")).normalized()
     }
 }
 
@@ -544,6 +575,10 @@ internal fun parent(location: AfLocationRef): AfLocationRef = parentLocation(loc
 private fun parentLocation(location: AfLocationRef): AfLocationRef = when (location.kind) {
     AfLocationKind.LOCAL -> AfLocationRef.local(requireNotNull(File(location.path).canonicalFile.parentFile).path)
     AfLocationKind.REMOTE -> location.copy(path = com.affilemanager.app.network.RemotePath.normalize("${location.path}/.."))
+    AfLocationKind.DOCUMENT -> {
+        require(location.documentPath.isNotEmpty()) { "Cannot navigate above a granted document anchor" }
+        location.copy(documentPath = location.documentPath.substringBeforeLast('/', ""))
+    }
 }
 
 internal fun validateRelativePath(path: String) {
@@ -560,6 +595,12 @@ internal fun safeLeafName(raw: String): String {
     return name
 }
 
+internal fun exactLeafName(name: String): String {
+    require(name.length in 1..255 && name.isNotBlank() && name !in setOf(".", "..")) { "Invalid file name" }
+    require(name.none { it == '/' || it == '\\' || it.isISOControl() }) { "Invalid file name" }
+    return name
+}
+
 private fun keepBothName(name: String, attempt: Int): String {
     val dot = name.lastIndexOf('.')
     val hasExtension = dot > 0 && dot < name.lastIndex
@@ -571,7 +612,8 @@ private fun keepBothName(name: String, attempt: Int): String {
 
 private fun minimumFreeReserve(bytes: Long): Long = maxOf(32L * 1_024 * 1_024, bytes / 20)
 
-private fun safeReason(error: Throwable): String = error::class.java.simpleName.ifBlank { "unavailable" }
+private fun safeReason(error: Throwable): String =
+    com.affilemanager.app.transfer.TransferFailure.classify(error, com.affilemanager.app.transfer.TransferPhase.VALIDATE).code
 
 internal fun sha256(file: File, operation: OperationContext? = null): String {
     val digest = MessageDigest.getInstance("SHA-256")

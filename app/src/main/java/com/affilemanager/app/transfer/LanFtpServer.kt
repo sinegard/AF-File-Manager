@@ -294,6 +294,7 @@ class LanFtpServer(
                     }
                     "LIST", "NLST", "MLSD" -> if (requireAuth()) {
                         val target = resolvePath(cwd, argument.ifBlank { "." })
+                        require(target.exists() && target.canRead()) { "File or directory unavailable" }
                         val entries = if (target.isDirectory) target.listFiles()?.toList().orEmpty() else listOf(target)
                         require(entries.size <= 100_000) { "Aplanke per daug elementų" }
                         withData { data ->
@@ -439,9 +440,7 @@ class LanFtpServer(
     private fun resolvePath(cwd: File, raw: String): File {
         require(raw.length <= 4_096 && '\u0000' !in raw && '\\' !in raw) { "Netinkamas FTP kelias" }
         val candidate = if (raw.startsWith('/')) File(root, raw.trimStart('/')) else File(cwd, raw)
-        val canonical = candidate.canonicalFile
-        require(FileSystemRules.isContained(root, canonical)) { "Kelias išeina už pasirinkto katalogo" }
-        return canonical
+        return FileSystemRules.containedNonSymbolicPath(root, candidate)
     }
 
     private fun resolveWritablePath(cwd: File, raw: String): File {

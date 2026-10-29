@@ -28,7 +28,7 @@ object AfWorkflowLimits {
     const val MIN_STAGING_RESERVE_BYTES = 32L * 1_024 * 1_024
 }
 
-enum class AfLocationKind { LOCAL, REMOTE }
+enum class AfLocationKind { LOCAL, REMOTE, DOCUMENT }
 
 /** A location reference deliberately contains no credentials. */
 data class AfLocationRef(
@@ -36,11 +36,14 @@ data class AfLocationRef(
     val path: String,
     val profileId: String? = null,
     val profileName: String? = null,
+    /** Provider IDs are opaque; only this suffix is a relative display-name path. */
+    val documentPath: String = "",
 ) {
     val displayLabel: String
         get() = when (kind) {
             AfLocationKind.LOCAL -> path
             AfLocationKind.REMOTE -> "${profileName.orEmpty().ifBlank { profileId.orEmpty() }} · $path"
+            AfLocationKind.DOCUMENT -> if (documentPath.isEmpty()) path else "$path · $documentPath"
         }
 
     fun normalized(): AfLocationRef = when (kind) {
@@ -48,6 +51,7 @@ data class AfLocationRef(
             path = File(path).canonicalPath,
             profileId = null,
             profileName = null,
+            documentPath = "",
         )
         AfLocationKind.REMOTE -> copy(
             path = RemotePath.normalize(path),
@@ -55,7 +59,18 @@ data class AfLocationRef(
                 require(it.matches(SAFE_ID)) { "Invalid remote profile identifier" }
             },
             profileName = profileName.orEmpty().trim().take(AfWorkflowLimits.MAX_NAME_LENGTH),
+            documentPath = "",
         )
+        AfLocationKind.DOCUMENT -> {
+            require(path.length <= AfWorkflowLimits.MAX_PATH_LENGTH && path.none(Char::isISOControl)) { "Invalid document URI" }
+            val uri = java.net.URI(path)
+            require(uri.scheme == "content" && !uri.authority.isNullOrBlank() && uri.rawQuery == null && uri.rawFragment == null &&
+                uri.rawUserInfo == null && uri.rawPath.startsWith("/tree/")) { "A granted document tree is required" }
+            validateRelativePath(documentPath)
+            require('\\' !in documentPath) { "Invalid document child path" }
+            require(documentPath.none(Char::isISOControl) && documentPath.split('/').all { it.length <= 255 }) { "Invalid document child name" }
+            copy(profileId = null, profileName = null)
+        }
     }
 
     companion object {
@@ -69,6 +84,9 @@ data class AfLocationRef(
             profileId = profileId,
             profileName = profileName,
         ).normalized()
+
+        fun document(uri: String, relativePath: String = ""): AfLocationRef =
+            AfLocationRef(AfLocationKind.DOCUMENT, uri, documentPath = relativePath).normalized()
     }
 }
 
@@ -131,6 +149,8 @@ data class AfPlanDefinition(
     val verification: TransferVerification = TransferVerification.SIZE,
     val failurePolicy: TransferFailurePolicy = TransferFailurePolicy.STOP,
     val deleteSourcesAfterVerifiedCopies: Boolean = false,
+    /** Ordinary paste follows its conflict policy and uses actual names; smart saved plans keep their existing deduplication. */
+    val fileManagerTransfer: Boolean = false,
 ) {
     fun normalized(nowMillis: Long = System.currentTimeMillis()): AfPlanDefinition {
         require(schemaVersion == 1) { "Unsupported AF Plan version" }
@@ -177,6 +197,7 @@ data class AfPlanDefinition(
 fun AfLocationRef.identityKey(): String = when (kind) {
     AfLocationKind.LOCAL -> "local:${File(path).canonicalPath}"
     AfLocationKind.REMOTE -> "remote:${profileId.orEmpty()}:${RemotePath.normalize(path)}"
+    AfLocationKind.DOCUMENT -> "document:$path:$documentPath"
 }
 
 enum class AfPreflightDisposition {
@@ -236,6 +257,7 @@ data class AfPreflightSummary(
     val canRun: Boolean
         get() = blockers.isEmpty() && entries.isNotEmpty() && (
             readyCopies > 0 ||
+                plan.fileManagerTransfer && projections.any { it.disposition == AfPreflightDisposition.SKIP } ||
                 plan.deleteSourcesAfterVerifiedCopies && projections.any {
                     it.disposition in setOf(
                         AfPreflightDisposition.VERIFIED_IDENTICAL,

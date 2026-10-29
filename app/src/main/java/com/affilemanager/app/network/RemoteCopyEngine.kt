@@ -36,7 +36,10 @@ class RemoteCopyEngine(private val onMutation: suspend (List<File>) -> Unit = {}
     ): RemoteCopyResult {
         require(sources.size in 1..MAX_SELECTED_ROOTS) { "Pasirinkite nuo 1 iki $MAX_SELECTED_ROOTS failų ar aplankų" }
         val normalizedDirectory = RemotePath.normalize(remoteDirectory)
-        val canonicalSources = sources.map(File::getCanonicalFile).distinctBy(File::getAbsolutePath)
+        val canonicalSources = sources.map { source ->
+            // Keep a selected link intact until the per-root validation reports it.
+            if (Files.isSymbolicLink(source.toPath())) source.absoluteFile else source.canonicalFile
+        }.distinctBy(File::getAbsolutePath)
         require(canonicalSources.size == sources.size) { "Tas pats vietinis šaltinis pasirinktas daugiau nei kartą" }
         val reserved = remoteNames(remote.list(normalizedDirectory)).toMutableSet()
         val counter = EntryCounter()

@@ -6,6 +6,26 @@ import com.affilemanager.app.model.EntryKind
 import java.io.File
 import org.json.JSONObject
 
+/** Folder names are user data, not interface copy; they remain stable across languages. */
+internal object NearbyReceiveFolderRules {
+    val names: Map<EntryKind, String> = linkedMapOf(
+        EntryKind.IMAGE to "Images", EntryKind.VIDEO to "Videos", EntryKind.AUDIO to "Music",
+        EntryKind.DOCUMENT to "Documents", EntryKind.ARCHIVE to "Archives", EntryKind.APK to "Apps",
+    )
+
+    fun destinations(parentPath: String): Map<EntryKind, File> {
+        require(parentPath.length in 1..4096 && parentPath.none(Char::isISOControl)) { "Netinkamas gavimo kelias" }
+        return names.mapValues { (_, name) -> File(parentPath, name) }
+    }
+
+    fun preflight(base: File): Map<EntryKind, File> = destinations(base.path).also { targets ->
+        targets.values.forEach { target ->
+            FileSystemRules.containedNonSymbolicPath(base, target)
+            require(!target.exists() || target.isDirectory) { "Toks pavadinimas jau naudojamas" }
+        }
+    }
+}
+
 data class NearbyReceiveConfiguration(val concurrentUploads: Int = 1, val typePaths: Map<EntryKind, String> = emptyMap(),
     val approvedRootPaths: List<String> = emptyList()) {
     init {
@@ -46,8 +66,8 @@ internal class NearbyReceiveDestinations(base: File, destinations: Map<EntryKind
         val root = destinations[FileSystemRules.detectKind(fileName, null)] ?: base
         val segments = relativeDirectory.replace('\\', '/').split('/').filter(String::isNotEmpty)
         require(segments.size <= 64 && segments.none { it == "." || it == ".." }) { "Netinkamas gavimo kelias" }
-        val target = if (relativeDirectory.isBlank()) root else File(root, relativeDirectory).canonicalFile
-        require(FileSystemRules.isContained(root, target)) { "Tikslas išeina už pasirinkto katalogo" }
+        val target = FileSystemRules.containedNonSymbolicPath(root,
+            if (relativeDirectory.isBlank()) root else File(root, relativeDirectory))
         require(target.isDirectory || target.mkdirs()) { "Gavimo katalogas nepasiekiamas" }
         require(target.canWrite()) { "Gavimo katalogas neleidžia rašyti" }
         return root to target

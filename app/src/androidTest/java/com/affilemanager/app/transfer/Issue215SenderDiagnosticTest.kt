@@ -386,15 +386,15 @@ class Issue215SenderDiagnosticTest {
             if (route == "/nearby/cancel") {
                 cancellations.incrementAndGet()
                 cancelAfterLossMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lostAtNanos)
+                if (mode == Mode.CLEAR_DURING_CANCEL) {
+                    statusGateEntered.countDown()
+                    check(releaseStatus.await(8, TimeUnit.SECONDS))
+                }
             }
             if (route == "/nearby/file-status") {
                 statusChecks.incrementAndGet()
                 when (mode) {
-                    Mode.CLEAR_DURING_CANCEL -> {
-                        statusGateEntered.countDown()
-                        check(releaseStatus.await(8, TimeUnit.SECONDS))
-                        reply(socket, 200, "FAILED")
-                    }
+                    Mode.CLEAR_DURING_CANCEL -> reply(socket, 200, "FAILED")
                     Mode.STATUS_UNAVAILABLE -> reply(socket, 503, "unreachable status")
                     Mode.AUTH_REJECTED -> reply(socket, 401, "rejected session")
                     Mode.COMMITTED, Mode.HTTP500_COMMITTED -> reply(socket, 200, "COMPLETED")

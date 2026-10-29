@@ -18,6 +18,7 @@ object AfPreflightFingerprint {
         add(plan.verification.name)
         add(plan.failurePolicy.name)
         add(plan.deleteSourcesAfterVerifiedCopies.toString())
+        if (plan.fileManagerTransfer) { add("fileManagerTransfer"); add("true") }
         plan.sources.forEach { source ->
             add(source.kind.name)
             add(source.location.identityKey())

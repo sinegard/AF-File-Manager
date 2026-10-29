@@ -7,8 +7,11 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
+import java.nio.channels.Channels
+import java.nio.channels.FileChannel
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -467,29 +470,37 @@ class DurableTransferEngine {
             context.progress(itemDelta = 1, byteDelta = item.sizeBytes, currentName = source.name)
             return
         }
-        prepareTargetForReplacement(plan, item, target)
         val partial = partialFile(plan, item)
+        require(!Files.isSymbolicLink(partial.toPath())) { "Simbolinės nuorodos negali būti perrašomos" }
         if (partial.exists() && !partial.delete()) throw IllegalStateException("Nepavyko pašalinti nutrūkusios dalinės kopijos")
         partial.parentFile?.let { parent -> require(parent.isDirectory || parent.mkdirs()) { "Paskirties aplankas nepasiekiamas" } }
+        prepareTargetForReplacement(plan, item, target)
 
         val sourceDigest = if (plan.verification == TransferVerification.SHA256) MessageDigest.getInstance("SHA-256") else null
+        var ownsPartial = false
         try {
             FileInputStream(source).use { input ->
-                FileOutputStream(partial).use { output ->
+                FileChannel.open(partial.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW,
+                    LinkOption.NOFOLLOW_LINKS).use { channel ->
+                    ownsPartial = true
+                    val output = Channels.newOutputStream(channel)
                     val buffer = ByteArray(BUFFER_SIZE)
-                    while (true) {
-                        context.checkpoint()
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        sourceDigest?.update(buffer, 0, read)
-                        context.progress(byteDelta = read.toLong(), currentName = source.name)
-                    }
-                    output.fd.sync()
-                    buffer.fill(0)
+                    try {
+                        while (true) {
+                            context.checkpoint()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            sourceDigest?.update(buffer, 0, read)
+                            context.progress(byteDelta = read.toLong(), currentName = source.name)
+                        }
+                        output.flush()
+                        channel.force(true)
+                    } finally { buffer.fill(0) }
                 }
             }
             verifySource(item, source)
+            require(!Files.isSymbolicLink(partial.toPath())) { "Simbolinės nuorodos negali būti perrašomos" }
             require(partial.length() == item.sizeBytes) { "Kopijos dydis nesutampa" }
             if (sourceDigest != null) {
                 require(MessageDigest.isEqual(sourceDigest.digest(), sha256(partial))) { "SHA-256 patikra nepavyko" }
@@ -499,13 +510,14 @@ class DurableTransferEngine {
             // authorized. A target appearing during the copy belongs to someone
             // else. Do not use REPLACE_EXISTING or ATOMIC_MOVE here (the latter
             // may replace an existing target even without REPLACE_EXISTING).
-            require(!target.exists()) { "Tikslas pasikeitė po plano patvirtinimo: ${target.name}" }
+            require(!Files.exists(target.toPath(), LinkOption.NOFOLLOW_LINKS)) { "Tikslas pasikeitė po plano patvirtinimo: ${target.name}" }
+            require(!Files.isSymbolicLink(partial.toPath())) { "Simbolinės nuorodos negali būti perrašomos" }
             Files.move(partial.toPath(), target.toPath())
             target.setLastModified(item.modifiedAtMillis)
             require(filesEquivalent(source, target, plan.verification)) { "Galutinė kopijos patikra nepavyko" }
             context.progress(itemDelta = 1, currentName = source.name)
         } finally {
-            if (partial.exists()) partial.delete()
+            if (ownsPartial && Files.exists(partial.toPath(), LinkOption.NOFOLLOW_LINKS)) partial.delete()
         }
     }
 
@@ -537,7 +549,8 @@ class DurableTransferEngine {
     }
 
     private fun prepareTargetForReplacement(plan: DurableTransferPlan, item: PlannedTransferItem, target: File) {
-        if (!target.exists()) return
+        if (!Files.exists(target.toPath(), LinkOption.NOFOLLOW_LINKS)) return
+        require(!Files.isSymbolicLink(target.toPath())) { "Simbolinės nuorodos negali būti perrašomos" }
         require(item.replaceExisting) { "Tikslas pasikeitė po plano patvirtinimo: ${target.name}" }
         val backup = backupFile(plan, item)
         require(!backup.exists() && !Files.isSymbolicLink(backup.toPath())) { "Nepavyko saugiai atidėti keičiamo failo" }

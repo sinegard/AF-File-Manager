@@ -759,7 +759,7 @@ class LanHttpServer(
                 throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
             check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
             // A file created after keep-both planning must never be silently replaced.
-            receivedFileCommitter.commit(staging, target, length, checkpoint = {
+            receivedFileCommitter.commitWithCopyDiagnostics(staging, target, length, checkpoint = {
                 if (!running.get() || nearbyFiles.isCancelled(batchId, fileIndex))
                     throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
                 check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
@@ -767,7 +767,7 @@ class LanHttpServer(
                 diagnostic(TransferFailure.classify(failure, phase), systemErrorNumber(failure))
                 phase = TransferPhase.COMMIT_COPY
                 diagnostic()
-            })
+            }, onCopyPhase = { copyPhase -> phase = copyPhase })
             committed = true
             // The fallback leaves the owned staging file behind. Remove it before
             // publishing success or acknowledging the upload, not afterwards.
@@ -815,8 +815,7 @@ class LanHttpServer(
     private fun resolveRelative(value: String, requireDirectory: Boolean): File {
         require(value.length <= 4_096 && '\u0000' !in value) { "Netinkamas santykinis kelias" }
         require(!value.startsWith('/') && !value.startsWith('\\')) { "Leidžiamas tik santykinis kelias" }
-        val candidate = File(root, value).canonicalFile
-        require(FileSystemRules.isContained(root, candidate)) { "Kelias išeina už pasirinkto katalogo" }
+        val candidate = FileSystemRules.containedNonSymbolicPath(root, File(root, value))
         if (requireDirectory) require(candidate.isDirectory) { "Katalogas nepasiekiamas" }
         return candidate
     }
@@ -868,8 +867,7 @@ class LanHttpServer(
         var current = root
         parts.forEach { rawName ->
             val name = FileSystemRules.validateFileName(rawName).getOrThrow()
-            val child = File(current, name).canonicalFile
-            require(FileSystemRules.isContained(root, child)) { "Kelias išeina už pasirinkto katalogo" }
+            val child = FileSystemRules.containedNonSymbolicPath(root, File(current, name))
             if (child.exists()) require(child.isDirectory) { "Tokiu vardu jau yra failas" }
             else require(child.mkdir()) { "Aplanko sukurti nepavyko" }
             current = child

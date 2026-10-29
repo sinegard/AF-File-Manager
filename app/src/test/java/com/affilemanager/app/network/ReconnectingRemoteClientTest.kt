@@ -10,6 +10,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import java.net.SocketException
 
 class ReconnectingRemoteClientTest {
@@ -99,6 +100,35 @@ class ReconnectingRemoteClientTest {
 
         assertEquals("payload", state.files.getValue("/payload.txt").toString(Charsets.UTF_8))
         assertEquals(1, replacement.uploadCalls)
+    }
+
+    @Test
+    fun unresolvedRecoveryIsNotReplayedOrHiddenByReconnect() {
+        val state = RemoteState()
+        val source = temporary.newFile("recoverable.txt").apply { writeText("new version") }
+        val recovery = RemoteUploadRecoveryException("/.af-upload-backup-owned", SocketException("Broken pipe"))
+        val initial = FakeClient(state, failNextUpload = recovery)
+        val replacement = FakeClient(state)
+        var reconnects = 0
+        val client = ReconnectingRemoteClient(initial, reconnect = { reconnects += 1; replacement })
+
+        val thrown = assertThrows(RemoteUploadRecoveryException::class.java) {
+            runBlocking { client.upload(source, "/recoverable.txt", OperationContext.background()) }
+        }
+
+        assertEquals(recovery.recoveryPath, thrown.recoveryPath)
+        assertEquals(0, reconnects)
+        assertEquals(1, initial.uploadCalls)
+        assertEquals(0, replacement.uploadCalls)
+        assertFalse("/recoverable.txt" in state.files)
+        assertEquals("new version", source.readText())
+    }
+
+    @Test
+    fun wrappedRecoveryWithTransientCauseIsNotRetryable() {
+        val recovery = RemoteUploadRecoveryException("/.af-upload-backup-owned", SocketException("Broken pipe"))
+        assertFalse(RemoteFailureClassifier.isTransient(recovery))
+        assertFalse(RemoteFailureClassifier.isTransient(IOException("Upload interrupted", recovery)))
     }
 
     @Test

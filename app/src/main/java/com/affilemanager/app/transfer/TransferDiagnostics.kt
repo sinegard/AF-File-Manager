@@ -55,13 +55,37 @@ internal object TransferDiagnostics {
         val log = requireNotNull(journal)
         fun safeDeviceValue(value: String) = value.filter { it.isLetterOrDigit() || it in " ._-" }.take(80)
         val report = "AF transfer diagnostics v1\napp=${BuildConfig.VERSION_NAME}\napi=${Build.VERSION.SDK_INT}\n" +
-            "manufacturer=${safeDeviceValue(Build.MANUFACTURER)}\nmodel=${safeDeviceValue(Build.MODEL)}\n" + log.report()
+            "manufacturer=${safeDeviceValue(Build.MANUFACTURER)}\nmodel=${safeDeviceValue(Build.MODEL)}\n" +
+            storagePermissionReport(context) + recentProcessExitReport(context) + log.report()
         check(report.toByteArray(Charsets.UTF_8).size <= TransferDiagnosticLog.MAX_BYTES + 1024)
         val destination = File(context.cacheDir, "transfer-diagnostics/report.txt")
         check(destination.parentFile?.isDirectory == true || destination.parentFile?.mkdirs() == true)
         destination.writeText(report)
         mutableStorageFailed.value = log.storageFailed
         destination
+    }
+
+    private fun storagePermissionReport(context: Context): String {
+        fun permission(name: String) = context.checkSelfPermission(name) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val allFiles = if (Build.VERSION.SDK_INT >= 30) runCatching { Environment.isExternalStorageManager().toString() }
+            .getOrDefault("unavailable") else "not_applicable"
+        val legacyRead = if (Build.VERSION.SDK_INT <= 32) permission(android.Manifest.permission.READ_EXTERNAL_STORAGE).toString() else "not_applicable"
+        val legacyWrite = if (Build.VERSION.SDK_INT <= 29) permission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE).toString() else "not_applicable"
+        return "all_files_access=$allFiles\nlegacy_read_permission=$legacyRead\nlegacy_write_permission=$legacyWrite\n"
+    }
+
+    private fun recentProcessExitReport(context: Context): String {
+        if (Build.VERSION.SDK_INT < 30) return "android_process_exit=unsupported\n"
+        return try {
+            val history = context.getSystemService(android.app.ActivityManager::class.java)
+                .getHistoricalProcessExitReasons(context.packageName, 0, 3).take(3)
+            if (history.isEmpty()) "android_process_exit=none\n" else history.joinToString("") { exit ->
+                // Android's numeric reason and time, not a guessed session cause.
+                // Do not include descriptions, trace files, names or other apps.
+                "android_process_exit=time:${exit.timestamp},reason:${exit.reason},status:${exit.status},importance:${exit.importance}\n"
+            }
+        } catch (_: SecurityException) { "android_process_exit=unavailable\n" }
+        catch (_: RuntimeException) { "android_process_exit=unavailable\n" }
     }
 
     fun errno(error: Throwable): Int {

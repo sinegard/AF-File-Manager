@@ -62,10 +62,11 @@ class SftpRemoteClient private constructor(
         val attributes = channel.stat(normalized)
         require(!attributes.isDir) { "Aplanką atsisiųskite sinchronizavimo funkcija" }
         val limit = RemoteDownloadLimit(maxBytes).apply { checkExpected(attributes.size) }
-        val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
+        val stage = RemoteDownloadStage(localDestination)
+        val partial = stage.file
         try {
             channel.get(normalized).use { input ->
-                partial.outputStream().buffered().use { output ->
+                stage.outputStream().use { output ->
                     val buffer = ByteArray(IO_BUFFER)
                     while (true) {
                         operation?.checkpoint()
@@ -78,11 +79,10 @@ class SftpRemoteClient private constructor(
                 }
             }
             require(partial.length() == attributes.size) { "Atsisiųsto failo dydis nesutampa" }
-            if (localDestination.exists()) require(localDestination.delete()) { "Esamo failo pakeisti nepavyko" }
-            require(partial.renameTo(localDestination)) { "Atsisiuntimo užbaigti nepavyko" }
+            stage.publish()
             operation?.progress(itemDelta = 1, currentName = localDestination.name)
         } finally {
-            if (partial.exists()) partial.delete()
+            stage.close()
         }
         Unit
     }
@@ -105,8 +105,15 @@ class SftpRemoteClient private constructor(
                 }
             }
             require(channel.stat(partial).size == localSource.length()) { "Įkelto failo dydis nesutampa" }
-            runCatching { channel.rm(normalized) }
-            channel.rename(partial, normalized)
+            val previous = try { channel.lstat(normalized) } catch (error: SftpException) {
+                if (error.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) null else throw error
+            }
+            require(previous?.isDir != true) { "Esamo failo pakeisti nepavyko" }
+            require(previous?.isLink != true) { "Simbolinės nuorodos nekopijuojamos" }
+            RemoteUploadPublication.publish(partial, normalized, operation,
+                exists = { remotePathExists(it) },
+                rename = { from, to -> channel.rename(from, to) },
+                remove = { channel.rm(it) })
             operation?.progress(itemDelta = 1, currentName = localSource.name)
         } finally {
             runCatching { channel.rm(partial) }
@@ -135,7 +142,11 @@ class SftpRemoteClient private constructor(
     }
 
     override suspend fun rename(fromPath: String, toPath: String) = withContext(Dispatchers.IO) {
-        channel.rename(RemotePath.normalize(fromPath), RemotePath.normalize(toPath))
+        val from = RemotePath.normalize(fromPath)
+        val to = RemotePath.normalize(toPath)
+        if (from == to) return@withContext
+        check(!remotePathExists(to)) { "Toks pavadinimas jau naudojamas" }
+        channel.rename(from, to)
     }
 
     override suspend fun delete(path: String, recursive: Boolean) = withContext(Dispatchers.IO) {

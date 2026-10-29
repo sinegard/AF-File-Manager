@@ -168,12 +168,24 @@ public final class NearbyRuntimeVerifier {
         Context context = test.getTargetContext();
         if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
         File journal = new File(context.getFilesDir(), "transfer-diagnostics/events.log");
-        if (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false) || journal.exists())
-            throw new AssertionError("Diagnostics must remain off and unwritten before explicit opt-in");
+        if (context.getSharedPreferences("transfer_diagnostics", Context.MODE_PRIVATE).getBoolean("enabled", false))
+            throw new AssertionError("Diagnostics must remain off before explicit opt-in");
+        // A previous explicit Clear legitimately leaves a zero-byte journal.
+        // Keep that persistent state, then prove real transfers do not write
+        // while disabled. A first-install run must still create no journal.
+        boolean hadJournal = journal.exists();
+        if (hadJournal && (!journal.isFile() || journal.length() != 0))
+            throw new AssertionError("Unexpected uncleared diagnostic state in the owned fixture");
+        long initialModified = journal.lastModified();
+        verify(test);
+        if (journal.exists() != hadJournal || journal.length() != 0 || (hadJournal && journal.lastModified() != initialModified))
+            throw new AssertionError("Disabled diagnostics wrote or created their journal during real transfers");
         if (context.getSharedPreferences("ui_preferences_v1", Context.MODE_PRIVATE)
                 .getString("feature_visibility", "").contains("NEARBY_SHARE"))
             throw new AssertionError("Owned fixture unexpectedly hides nearby sharing");
-        clickTag(test, "nav_share");
+        // verify() already returns on Share. The selected navigation item has
+        // no click action; observe that real page rather than re-clicking it.
+        awaitNode(test, "sharing page after disabled transfer", node -> tag(node, "sharing_list"));
         click(test, scrolledNode(test, "sharing_list", "diagnostics launcher", node -> tag(node, "nearby_diagnostics")));
         awaitNode(test, "English diagnostics privacy label", node -> textEquals(node, "Data stays on this phone."));
         click(test, awaitNode(test, "diagnostics switch", node -> node.isCheckable() && node.isClickable()));
@@ -200,8 +212,16 @@ public final class NearbyRuntimeVerifier {
         if (!exported.isFile() || exported.length() > 129 * 1024) throw new AssertionError("Explicit export did not create bounded private report");
         android.net.Uri uri = cacheUri(context, exported);
         try (InputStream input = context.getContentResolver().openInputStream(uri)) {
-            if (input == null || !new String(readBounded(input, 129 * 1024), StandardCharsets.UTF_8).contains("AF transfer diagnostics v1"))
+            if (input == null) throw new AssertionError("Export FileProvider stream unavailable");
+            String exportedReport = new String(readBounded(input, 129 * 1024), StandardCharsets.UTF_8);
+            if (!exportedReport.contains("AF transfer diagnostics v1"))
                 throw new AssertionError("Export FileProvider read failed");
+            if (!exportedReport.contains("all_files_access=") || !exportedReport.contains("legacy_read_permission=") ||
+                !exportedReport.contains("legacy_write_permission=")) throw new AssertionError("Actual permission diagnostics missing");
+            long exitRecords = Arrays.stream(exportedReport.split("\n")).filter(line -> line.startsWith("android_process_exit=")).count();
+            if (exitRecords < 1 || exitRecords > 3) throw new AssertionError("Android exit diagnostics missing or unbounded");
+            if (android.os.Build.VERSION.SDK_INT < 30 && !exportedReport.contains("android_process_exit=unsupported"))
+                throw new AssertionError("Old Android exit diagnostics were fabricated");
         }
         back(test);
         awaitNode(test, "diagnostics after export chooser Back", node -> textEquals(node, "Data stays on this phone."));

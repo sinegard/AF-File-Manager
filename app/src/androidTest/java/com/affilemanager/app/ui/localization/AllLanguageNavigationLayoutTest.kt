@@ -24,12 +24,19 @@ import java.io.File
 class AllLanguageNavigationLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun everyShippedLanguageKeepsNavigationReadableAndClickable() {
+    @Test fun everyShippedLanguageKeepsNavigationReadableAndClickable() = checkLanguageBatch(0)
+    @Test fun navigationLanguagesBatchTwo() = checkLanguageBatch(1)
+    @Test fun navigationLanguagesBatchThree() = checkLanguageBatch(2)
+    @Test fun navigationLanguagesBatchFour() = checkLanguageBatch(3)
+
+    private fun checkLanguageBatch(batch: Int) {
         val sections = listOf("files", "analyze", "connections", "share", "tools")
         val captures = setOf("en", "lt", "de", "ar", "he", "hi", "zh")
         val failures = mutableListOf<String>()
-        val languages = InstrumentationRegistry.getArguments().getString("afAuditLanguages")?.split(',')
+        val requested = InstrumentationRegistry.getArguments().getString("afAuditLanguages")?.split(',')
             ?: AppLanguageManager.SUPPORTED_LANGUAGE_TAGS
+        val languages = requested.chunked(15).getOrNull(batch).orEmpty()
+        org.junit.Assume.assumeTrue("No languages in this explicitly selected batch", languages.isNotEmpty())
         val originalStorageSettings = ViewModelProvider(compose.activity)[MainViewModel::class.java].storageHomeDisplaySettings.value
         try {
             languages.forEach { language ->
@@ -53,6 +60,15 @@ class AllLanguageNavigationLayoutTest {
                 compose.waitForIdle()
                 try {
                     compose.onNodeWithTag("nav_files").performClick()
+                    val homeTitle = compose.onNodeWithTag("home_locations_heading").performScrollTo().assertIsDisplayed()
+                    val homeLayouts = mutableListOf<TextLayoutResult>()
+                    homeTitle.fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(homeLayouts)
+                    homeLayouts.forEach { layout ->
+                        assertFalse("$language home heading is clipped", layout.multiParagraph.didExceedMaxLines ||
+                            layout.multiParagraph.height > layout.size.height + 1f)
+                    }
+                    compose.onNodeWithTag("open_system_files").performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithTag("home_customize_direct").performScrollTo().assertIsDisplayed()
                     val heading = compose.onNodeWithTag("home_storage_heading").performScrollTo().assertIsDisplayed()
                     val headingLayouts = mutableListOf<TextLayoutResult>()
                     heading.fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(headingLayouts)
@@ -95,6 +111,15 @@ class AllLanguageNavigationLayoutTest {
                             }
                         }
                         button.performClick().assertIsSelected()
+                        if (section == "connections") {
+                            val headings = mutableListOf<TextLayoutResult>()
+                            compose.onNodeWithTag("network_profiles").performScrollToNode(hasTestTag("network_locations_heading"))
+                            compose.onNodeWithTag("network_locations_heading").assertIsDisplayed().fetchSemanticsNode()
+                                .config[SemanticsActions.GetTextLayoutResult].action!!.invoke(headings)
+                            headings.forEach {
+                                assertFalse("$language network heading is clipped", it.multiParagraph.didExceedMaxLines || it.multiParagraph.height > it.size.height + 1f)
+                            }
+                        }
                         if (section == "tools") {
                             if (compose.onAllNodesWithTag("change_language").fetchSemanticsNodes().isEmpty()) {
                                 compose.onNodeWithTag("settings_section_appearance").performScrollTo().performClick()

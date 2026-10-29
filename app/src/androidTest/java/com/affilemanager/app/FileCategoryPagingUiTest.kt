@@ -7,6 +7,8 @@ import android.util.Log
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -64,6 +66,15 @@ class FileCategoryPagingUiTest {
             }
             assertTrue(viewModel.fileCategory.value.entries.size <= firstPageSize + FileCategoryPagingRules.NEXT_PAGE_RESULTS)
             compose.onNodeWithTag("category_list").assertIsDisplayed()
+            val loadedCount = viewModel.fileCategory.value.entries.size
+            val topRequest = viewModel.fileCategory.value.scrollToTopRequest
+            val anchor = viewModel.fileCategory.value.entries[firstPageSize - 1].name
+            compose.onNodeWithTag("category_more").performClick()
+            compose.onNodeWithText("Refresh").performClick()
+            compose.waitUntil(10_000) { !viewModel.fileCategory.value.loading && !viewModel.fileCategory.value.loadingMore }
+            assertTrue("Menu refresh must retain the already loaded prefix", viewModel.fileCategory.value.entries.size >= loadedCount)
+            org.junit.Assert.assertEquals(topRequest, viewModel.fileCategory.value.scrollToTopRequest)
+            compose.onNodeWithText(anchor).assertIsDisplayed()
         } finally {
             compose.runOnUiThread { viewModel.closeFileCategory() }
             resolver.delete(

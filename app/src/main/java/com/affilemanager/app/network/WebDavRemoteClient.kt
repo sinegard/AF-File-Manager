@@ -100,13 +100,14 @@ class WebDavRemoteClient private constructor(
     ) = withContext(Dispatchers.IO) {
         val normalized = RemotePath.normalize(remotePath)
         val limit = RemoteDownloadLimit(maxBytes)
-        val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
+        val stage = RemoteDownloadStage(localDestination)
+        val partial = stage.file
         try {
             execute(Request.Builder().url(url(normalized)).get().build(), expected = setOf(200)).use { response ->
                 val expected = response.body?.contentLength()?.takeIf { it >= 0 }
                 limit.checkExpected(expected)
                 requireNotNull(response.body).byteStream().use { input ->
-                    partial.outputStream().buffered().use { output ->
+                    stage.outputStream().use { output ->
                         val buffer = ByteArray(BUFFER_SIZE)
                         while (true) {
                             operation?.checkpoint()
@@ -120,11 +121,10 @@ class WebDavRemoteClient private constructor(
                 }
                 if (expected != null) require(partial.length() == expected) { "Atsisiųsto failo dydis nesutampa" }
             }
-            if (localDestination.exists()) require(localDestination.delete()) { "Esamo failo pakeisti nepavyko" }
-            require(partial.renameTo(localDestination)) { "Atsisiuntimo užbaigti nepavyko" }
+            stage.publish()
             operation?.progress(itemDelta = 1, currentName = localDestination.name)
         } finally {
-            if (partial.exists()) partial.delete()
+            stage.close()
         }
         Unit
     }

@@ -4,9 +4,13 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -19,6 +23,7 @@ import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.PhotoLibrary
@@ -34,10 +39,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.affilemanager.app.model.SortDirection
@@ -51,6 +60,22 @@ internal fun directoryGridColumns(portrait: Int, landscape: Int? = null): Int {
     val orientation = androidx.compose.ui.platform.LocalConfiguration.current.orientation
     return (if (orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) landscape ?: portrait else portrait)
         .coerceIn(1, com.affilemanager.app.data.DirectoryDisplayRules.MAX_GRID_COLUMNS)
+}
+
+/** Selection must not move file rows beneath an active long-press drag. */
+@Composable
+fun StableDirectoryHeader(selectionActive: Boolean, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        var browserHeightPx by remember(maxWidth, density.density, density.fontScale) { mutableIntStateOf(0) }
+        val minimum = if (selectionActive) with(density) { browserHeightPx.toDp() } else 0.dp
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = minimum)
+                .then(if (selectionActive) Modifier.background(MaterialTheme.colorScheme.primaryContainer) else Modifier)
+                .onSizeChanged { if (!selectionActive) browserHeightPx = it.height },
+            contentAlignment = Alignment.CenterStart,
+        ) { content() }
+    }
 }
 
 /**
@@ -93,25 +118,34 @@ fun DirectoryBrowserToolbar(
         }, onChooseProvider?.let { choose -> { editingAddress = false; choose() } })
     }
     com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
-    Row(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 3.dp)
             .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(22.dp))
             .padding(horizontal = 2.dp)
             .testTag("directory_toolbar_$testTagPrefix"),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (featureVisible(OptionalFeature.TOOLBAR_BACK)) IconButton(onClick = onBack, enabled = backEnabled) {
+        val showBack = featureVisible(OptionalFeature.TOOLBAR_BACK)
+        val showForward = featureVisible(OptionalFeature.TOOLBAR_FORWARD)
+        val showUp = featureVisible(OptionalFeature.TOOLBAR_UP)
+        val showSearch = searchActive || featureVisible(OptionalFeature.TOOLBAR_SEARCH)
+        val showLayout = featureVisible(OptionalFeature.TOOLBAR_LAYOUT)
+        val controls = listOf(showBack, showForward, showUp, showSearch, showLayout).count { it } + 1
+        val separateAddress = maxWidth < 48.dp * controls + 120.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+        val navigation: @Composable () -> Unit = {
+        if (showBack) IconButton(onClick = onBack, enabled = backEnabled, modifier = Modifier.size(48.dp)) {
             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = uiText("Atgal"))
         }
-        if (featureVisible(OptionalFeature.TOOLBAR_FORWARD)) IconButton(onClick = onForward, enabled = forwardEnabled) {
+        if (showForward) IconButton(onClick = onForward, enabled = forwardEnabled, modifier = Modifier.size(48.dp)) {
             Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = uiText("Pirmyn"))
         }
-        if (featureVisible(OptionalFeature.TOOLBAR_UP)) IconButton(onClick = onUp, enabled = upEnabled) {
+        if (showUp) IconButton(onClick = onUp, enabled = upEnabled, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
         }
-        Column(modifier = Modifier.weight(1f).then(if (onOpenPath != null) Modifier
+        }
+        val address: @Composable (Modifier) -> Unit = { addressModifier ->
+        Column(modifier = addressModifier.then(if (onOpenPath != null) Modifier
             .testTag("directory_address_$testTagPrefix")
             .combinedClickable(onClickLabel = uiText("Atidaryti aplanką"), onClick = { editingAddress = true }) else Modifier)) {
             Text(
@@ -127,26 +161,72 @@ fun DirectoryBrowserToolbar(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        }
+        val search: @Composable () -> Unit = {
         DirectorySearchButton(
             active = searchActive,
             testTag = "directory_search_$testTagPrefix",
             onClick = onToggleSearch,
         )
+        }
+        val layout: @Composable () -> Unit = {
         DirectoryLayoutButton(
             grid = grid,
             testTag = "directory_layout_$testTagPrefix",
             onToggleLayout = onToggleLayout,
             onOpenSettings = onOpenSettings,
         )
+        }
+        val tools: @Composable () -> Unit = {
+        search()
+        layout()
         actions()
+        }
+        if (separateAddress) {
+            val sideControls = (if (showLayout) 1 else 0) + 1
+            val navigationControls = listOf(showBack, showForward, showUp, showSearch).count { it }
+            val titleMinimum = maxOf(120.dp, 80.dp * LocalDensity.current.fontScale.coerceAtLeast(1f))
+            val splitControls = maxWidth < 48.dp * controls &&
+                maxWidth >= 48.dp * navigationControls && maxWidth >= 48.dp * sideControls + titleMinimum
+            Column(Modifier.fillMaxWidth()) {
+                if (splitControls) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        navigation()
+                        search()
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        address(Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 6.dp))
+                        layout()
+                        actions()
+                    }
+                } else {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                    navigation()
+                    tools()
+                }
+                address(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                navigation()
+                address(Modifier.weight(1f))
+                tools()
+            }
+        }
     }
     }
 }
 
-/**
- * The same view-mode control is used for every local and remote directory.
- * A tap switches between list and grid; a long press opens the full settings.
- */
+/** One explicit menu touch target for local, remote, virtual and privileged folders. */
+@Composable
+fun DirectoryActionsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    IconButton(onClick = onClick, modifier = modifier.size(48.dp)) {
+        Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
+    }
+}
+
+/** A tap switches view mode; a long press opens the same full settings in every browser. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DirectoryLayoutButton(
@@ -186,7 +266,7 @@ fun DirectorySearchButton(
     modifier: Modifier = Modifier,
 ) {
     if (!active && !featureVisible(OptionalFeature.TOOLBAR_SEARCH)) return
-    IconButton(onClick = onClick, modifier = modifier.testTag(testTag)) {
+    IconButton(onClick = onClick, modifier = modifier.size(48.dp).testTag(testTag)) {
         Icon(
             Icons.Rounded.Search,
             contentDescription = uiText(if (active) "Uždaryti greitą paiešką" else "Greita paieška šiame aplanke"),

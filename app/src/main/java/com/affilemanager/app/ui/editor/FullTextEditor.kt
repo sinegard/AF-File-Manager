@@ -67,7 +67,7 @@ import com.affilemanager.app.ui.localization.uiText
 fun FullTextEditor(
     sourceKey: String,
     fileName: String,
-    text: String,
+    text: () -> String,
     readOnly: Boolean,
     encoding: TextEncoding,
     lineEnding: LineEnding,
@@ -117,8 +117,7 @@ fun FullTextEditor(
     }
     val editorContentDescription = uiText("Teksto redaktorius")
 
-    LaunchedEffect(controller, text, readOnly, wordWrap, fontSize, language, colors, query, matchCase, wholeWord, editorContentDescription) {
-        controller.setTextFromModel(text)
+    LaunchedEffect(controller, readOnly, wordWrap, fontSize, language, colors, query, matchCase, wholeWord, editorContentDescription) {
         controller.setReadOnly(readOnly)
         controller.setWordWrap(wordWrap)
         controller.setFontSizeSp(fontSize)
@@ -224,6 +223,9 @@ fun FullTextEditor(
                             EditorShortcut.GO_TO_LINE -> { goToLineText = cursor.line.toString(); showGoToLine = true }
                         }
                     }
+                    // Cursor/history changes can recompose before the collected
+                    // state catches up. Read the live model at this boundary.
+                    editor.setTextFromModel(text())
                 },
                 onRelease = { editor ->
                     controller.detach(editor)
@@ -280,7 +282,7 @@ fun FullTextEditor(
                     }
                 }
             }
-            if (text.length > EditorSyntaxHighlighter.MAX_HIGHLIGHT_CHARS) {
+            if (text().length > EditorSyntaxHighlighter.MAX_HIGHLIGHT_CHARS) {
                 LText("Dideliam failui sintaksės spalvinimas išjungtas", style = MaterialTheme.typography.labelSmall)
             }
         }

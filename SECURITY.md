@@ -16,16 +16,19 @@ Ordinary bugs that contain no sensitive information may be reported through GitH
 
 - Network passwords and private SSH keys are encrypted before storage with an AES-GCM key held by `AndroidKeyStore`.
 - Secret character and byte arrays are cleared after use where JVM and Android APIs permit it.
-- Thumbnails are generated locally and kept only in a process-memory LRU cache capped at 24 MiB. The app does not build a persistent thumbnail database or silently index the entire device.
+- New `.afvault` files use the versioned AFFMV2 envelope and Tink's AES256_GCM_HKDF_1MB streaming AEAD, with an in-memory PBKDF2-HMAC-SHA256 password key. The complete envelope is authenticated; the original name and size remain visible, as in AFFMV1. Keys are not stored or sent anywhere. Older AF versions cannot open V2 files.
+- AFFMV1 copies remain readable without conversion. Their older whole-file AEAD implementation is admitted only when its estimated working set fits with 25% heap headroom. A memory refusal, wrong passphrase, damaged stream or cancellation leaves the encrypted original unchanged and does not publish a partial plaintext file.
+- Thumbnails are generated locally. The process-memory LRU is capped at 24 MiB; reusable thumbnails also stay in the app-private `cacheDir/af-thumbnails-v1` cache, bounded to 128 MiB and 2,048 entries. AF invalidates affected entries after its own file changes and checks source revisions before reuse. These caches never leave the device, and Android may remove disposable cache data. Opening a location does not silently index the entire device.
 - The home screen reads at most 200 recent MediaStore rows at a time and keeps at most 200 paths for files explicitly touched by AF File Manager. Missing and unreadable files are filtered, and nothing from this list leaves the device.
 - Remote previews and editable working copies use bounded app-private staging. Redundant downloads are removed when editing starts, the remaining temporary copy is removed when the preview closes or a remote edit is saved, and stale staging is purged on the next app start.
 - SFTP host keys are verified by SHA-256 fingerprint. Trust on first use is available only after an explicit choice; the first key is stored and a later key change is blocked.
 - WebDAV requires HTTPS. FTPS validates the certificate chain and endpoint name. Plain FTP is intentionally an insecure legacy protocol and should never be used on an untrusted network.
+- Temporary web, FTP and WebDAV sharing reject symbolic links below the explicitly chosen sharing root before resolving paths. This includes broken links and linked parent directories; an unsupported alias is not treated as permission to change its referent.
 - The local terminal is a bounded PTY session running `/system/bin/sh` under the app's normal Android UID and SELinux policy. It never grants root, Shizuku, or ADB privileges.
 - The server terminal is offered only for SFTP/SSH profiles. It creates a separate SSH shell with the saved encrypted credential and the same pinned host-key policy; credentials and terminal output are not written to app logs.
 - Closing a terminal tears down its PTY or SSH channel and process group. Terminal input queues, paste size, dimensions, and renderer scrollback are bounded.
 - Protected-folder access is off by default. Shizuku permission or root access is requested only after an explicit user action, and the returned service is accepted only when it runs as Android shell (UID 2000) or root (UID 0).
-- The privileged browser accepts only canonical paths under `Android/data` and `Android/obb`, with bounded depth, item count, preview size, and transfer size. It does not turn the local terminal into a privileged shell.
+- The Shizuku shell browser is limited to its allowed `Android/data` and `Android/obb` roots. A genuinely granted UID-0 root or Shizuku-root backend can browse the device root. Both paths validate canonical locations and retain bounded depth, item count, preview size and transfer size. A privileged terminal is a separate explicit action backed by that authorized service; the ordinary local terminal remains under the app UID.
 
 ## File integrity
 

@@ -109,6 +109,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.affilemanager.app.ui.components.passwordKeyboardOptions
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -207,6 +209,7 @@ import com.affilemanager.app.ui.components.DeleteConfirmationDialog
 import com.affilemanager.app.ui.preview.PreviewSource
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
+import com.affilemanager.app.ui.components.StableDirectoryHeader
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.UiTranslator
 import com.affilemanager.app.ui.localization.uiText
@@ -214,6 +217,7 @@ import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 import com.affilemanager.app.ui.preview.openWith
 import com.affilemanager.app.operations.TransferFailurePolicy
 import com.affilemanager.app.operations.TransferVerification
+import com.affilemanager.app.data.TransferOptions
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -255,6 +259,7 @@ fun FilesScreen(
     onRequestAllFilesAccess: () -> Unit,
     onAddSafLocation: () -> Unit,
     onOpenSystemFiles: () -> Unit,
+    onGrantRemovableAccess: (StorageRoot) -> Unit = {},
 ) {
     val left by viewModel.leftPanel.collectAsStateWithLifecycle()
     val right by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -273,6 +278,7 @@ fun FilesScreen(
     val clipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val remoteClipboard by viewModel.remoteClipboard.collectAsStateWithLifecycle()
     val afClipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
+    val transferPreferences by viewModel.transferPreferences.collectAsStateWithLifecycle()
     val renameUndo by viewModel.renameUndo.collectAsStateWithLifecycle()
     val tagSnapshot by viewModel.tagSnapshot.collectAsStateWithLifecycle()
     val panelComparison by viewModel.panelComparison.collectAsStateWithLifecycle()
@@ -289,6 +295,9 @@ fun FilesScreen(
     var permanentDeletePanel by remember { mutableStateOf<PanelId?>(null) }
     var archiveRequest by remember { mutableStateOf<ArchiveRequest?>(null) }
     var pastePanel by remember { mutableStateOf<PanelId?>(null) }
+    fun requestPaste(panel: PanelId) {
+        if (!viewModel.pasteUsingSavedOptions(panel)) pastePanel = panel
+    }
     var tagPanel by remember { mutableStateOf<PanelId?>(null) }
     var displayPanel by remember { mutableStateOf<PanelId?>(null) }
     var homeDisplayArea by remember { mutableStateOf<HomeDisplayArea?>(null) }
@@ -351,7 +360,7 @@ fun FilesScreen(
                         viewModel.copySelection(activePanel, move = true); true
                     }
                     event.isCtrlPressed && event.key == Key.V && clipboardAvailable -> {
-                        pastePanel = activePanel; true
+                        requestPaste(activePanel); true
                     }
                     event.isCtrlPressed && event.key == Key.A -> {
                         viewModel.selectAll(activePanel); true
@@ -382,6 +391,16 @@ fun FilesScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             if (!hasAllFilesAccess) {
                 PermissionBanner(onRequestAllFilesAccess)
+            } else if (!filesHomeVisible && homeToolPage == null && !fileCategory.open) {
+                val currentPath = if (activePanel == PanelId.LEFT) left.path else right.path
+                val restricted = roots.firstOrNull { root -> root.requiresDocumentAccess &&
+                    (currentPath == root.path || currentPath.startsWith(root.path.trimEnd('/') + "/")) }
+                if (restricted != null) PermissionBanner(
+                    onRequest = { onGrantRemovableAccess(restricted) },
+                    modifier = Modifier.testTag("removable_write_access"),
+                    title = "Pasirinkti aplanką",
+                    storageTitle = restricted.title,
+                )
             }
             if (homeToolPage != null) {
                 val toolDisplayArea = if (homeToolPage == HomeToolPage.FAVORITES) {
@@ -494,8 +513,8 @@ fun FilesScreen(
                             viewModel.selectOnly(PanelId.LEFT, entry.absolutePath)
                             tagPanel = PanelId.LEFT
                         },
-                        onCopyToOther = { viewModel.copySelection(PanelId.LEFT, move = false); pastePanel = PanelId.RIGHT },
-                        onPaste = { pastePanel = PanelId.LEFT },
+                        onCopyToOther = { viewModel.copySelection(PanelId.LEFT, move = false); requestPaste(PanelId.RIGHT) },
+                        onPaste = { requestPaste(PanelId.LEFT) },
                         onUndoBatchRename = viewModel::undoBatchRename,
                         onDisplaySettings = { displayPanel = PanelId.LEFT },
                         onChooseProvider = onAddSafLocation,
@@ -525,8 +544,8 @@ fun FilesScreen(
                             viewModel.selectOnly(PanelId.RIGHT, entry.absolutePath)
                             tagPanel = PanelId.RIGHT
                         },
-                        onCopyToOther = { viewModel.copySelection(PanelId.RIGHT, move = false); pastePanel = PanelId.LEFT },
-                        onPaste = { pastePanel = PanelId.RIGHT },
+                        onCopyToOther = { viewModel.copySelection(PanelId.RIGHT, move = false); requestPaste(PanelId.LEFT) },
+                        onPaste = { requestPaste(PanelId.RIGHT) },
                         onUndoBatchRename = viewModel::undoBatchRename,
                         onDisplaySettings = { displayPanel = PanelId.RIGHT },
                         onChooseProvider = onAddSafLocation,
@@ -560,9 +579,9 @@ fun FilesScreen(
                     },
                     onCopyToOther = {
                         viewModel.copySelection(activePanel, move = false)
-                        pastePanel = if (activePanel == PanelId.LEFT) PanelId.RIGHT else PanelId.LEFT
+                        requestPaste(if (activePanel == PanelId.LEFT) PanelId.RIGHT else PanelId.LEFT)
                     },
-                    onPaste = { pastePanel = activePanel },
+                    onPaste = { requestPaste(activePanel) },
                     onUndoBatchRename = viewModel::undoBatchRename,
                     onDisplaySettings = { displayPanel = activePanel },
                     onChooseProvider = onAddSafLocation,
@@ -668,14 +687,29 @@ fun FilesScreen(
                 dismissButton = { TextButton(onClick = { pastePanel = null }) { LText("Atšaukti") } },
             )
         } else if (clipboard != null) {
+            val moving = clipboard?.mode == ClipboardMode.MOVE
             TransferOptionsDialog(
-                moving = clipboard?.mode == ClipboardMode.MOVE,
+                moving = moving,
+                initialOptions = transferPreferences.optionsFor(moving),
+                allowSkipConfirmation = clipboard?.source == com.affilemanager.app.model.ClipboardSource.LOCAL,
                 onDismiss = { pastePanel = null },
-                onConfirm = { policy, verification, failurePolicy ->
-                    viewModel.paste(panel, policy, verification, failurePolicy)
-                    pastePanel = null
+                onConfirm = { options ->
+                    val saved = viewModel.saveTransferOptions(moving, options)
+                    if (saved) {
+                        viewModel.paste(panel, options.conflictPolicy, options.verification, options.failurePolicy)
+                        pastePanel = null
+                    }
+                    saved
                 },
             )
+        } else if (afClipboard?.sources?.any { it.location.kind == com.affilemanager.app.workflow.AfLocationKind.DOCUMENT } == true) {
+            val moving = afClipboard?.moveAfterVerifiedCopies == true
+            TransferOptionsDialog(moving = moving, initialOptions = transferPreferences.optionsFor(moving),
+                onDismiss = { pastePanel = null }, onConfirm = { options ->
+                    val saved = viewModel.saveTransferOptions(moving, options)
+                    if (saved) { viewModel.pasteDocumentClipboardToLocal(panel, options); pastePanel = null }
+                    saved
+                })
         } else if (afClipboard != null) {
             AlertDialog(
                 onDismissRequest = { pastePanel = null },
@@ -841,26 +875,27 @@ fun FilesScreen(
 }
 
 @Composable
-private fun PermissionBanner(onRequest: () -> Unit) {
+private fun PermissionBanner(onRequest: () -> Unit, modifier: Modifier = Modifier,
+                             title: String = "Reikia prieigos prie bendrų failų", storageTitle: String? = null) {
     ElevatedCard(
         elevation = com.affilemanager.app.ui.theme.appearanceCardElevation(),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(Icons.Rounded.Storage, contentDescription = null)
-            Column(modifier = Modifier.weight(1f)) {
-                LText("Reikia prieigos prie bendrų failų", fontWeight = FontWeight.SemiBold)
-                LText(
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Rounded.Storage, contentDescription = null)
+                LText(title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            }
+            if (storageTitle != null) Text(storageTitle, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            else LText(
                     "Be jos programa matys tik sistemos leistas vietas. Android/data vis tiek lieka sistemos ribojamas.",
                     style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Button(onClick = onRequest) { LText("Suteikti") }
+            )
+            Button(onClick = onRequest, modifier = Modifier.align(Alignment.End)) { LText("Suteikti") }
         }
     }
 }
@@ -933,6 +968,7 @@ private fun FilePanel(
             .fillMaxHeight(),
     ) {
         PanelTabsBar(panelId, tabs, viewModel)
+        StableDirectoryHeader(state.selectedPaths.isNotEmpty()) {
         if (state.selectedPaths.isNotEmpty()) {
             SelectionHeader(
                 count = state.selectedPaths.size,
@@ -983,6 +1019,7 @@ private fun FilePanel(
                     onOpenFilter = { showEntryFilter = true },
                 )
             }
+        }
         }
 
         if (searchVisible) {
@@ -1174,9 +1211,7 @@ private fun CompactPanelActions(
     onOpenFilter: () -> Unit,
 ) {
     Box {
-        IconButton(onClick = { onExpandedChange(true) }) {
-            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-        }
+        com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { onExpandedChange(true) })
         DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
             if (clipboardAvailable) {
                 DropdownMenuItem(
@@ -1264,7 +1299,7 @@ private fun CompactPanelActions(
             DropdownMenuItem(
                 text = { LText("Atnaujinti") },
                 leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                onClick = { viewModel.refreshPanel(panelId, scrollToTop = true); onExpandedChange(false) },
+                onClick = { viewModel.refreshPanel(panelId, scrollToTop = false); onExpandedChange(false) },
             )
         }
     }
@@ -1990,7 +2025,7 @@ private fun TagDialog(
         },
     ) {
             Column(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).testTag("tag_dialog_content").padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 LText("Pasirinkta: ${paths.size}. Naujos žymos pridedamos prie esamų; viską pašalina atskiras mygtukas.", style = MaterialTheme.typography.bodySmall)
@@ -2019,11 +2054,12 @@ private fun TagDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 LText("Naujų žymų spalva", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.affilemanager.app.ui.components.AfActionRow {
                     colors.forEachIndexed { index, color ->
                         FilterChip(
                             selected = color == selectedColor,
                             onClick = { selectedColor = color },
+                            modifier = Modifier.testTag("tag_color_$index"),
                             label = { LText("●", color = Color(color)) },
                         )
                     }
@@ -2398,6 +2434,8 @@ private fun ArchiveDialog(
                         value = password,
                         onValueChange = { password = it },
                         label = { LText("Slaptažodis (nebūtinas, AES-256)") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = passwordKeyboardOptions,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -2449,14 +2487,25 @@ private fun ArchiveDialog(
 }
 
 @Composable
-private fun TransferOptionsDialog(
+internal fun TransferOptionsDialog(
     moving: Boolean,
+    initialOptions: TransferOptions,
+    settingsOnly: Boolean = false,
+    allowSkipConfirmation: Boolean = true,
     onDismiss: () -> Unit,
-    onConfirm: (ConflictPolicy, TransferVerification, TransferFailurePolicy) -> Unit,
+    onConfirm: (TransferOptions) -> Boolean,
 ) {
-    var policy by remember { mutableStateOf(ConflictPolicy.KEEP_BOTH) }
-    var verifySha256 by remember { mutableStateOf(moving) }
-    var skipErrors by remember { mutableStateOf(false) }
+    var policy by androidx.compose.runtime.saveable.rememberSaveable(moving) { mutableStateOf(initialOptions.conflictPolicy) }
+    var verifySha256 by androidx.compose.runtime.saveable.rememberSaveable(moving) { mutableStateOf(initialOptions.verification == TransferVerification.SHA256) }
+    var skipErrors by androidx.compose.runtime.saveable.rememberSaveable(moving) { mutableStateOf(initialOptions.failurePolicy == TransferFailurePolicy.SKIP_AND_CONTINUE) }
+    var askBeforeTransfer by androidx.compose.runtime.saveable.rememberSaveable(moving) { mutableStateOf(initialOptions.askBeforeTransfer) }
+    var saveFailed by androidx.compose.runtime.saveable.rememberSaveable(moving) { mutableStateOf(false) }
+    val draft = TransferOptions(
+        policy,
+        if (verifySha256) TransferVerification.SHA256 else TransferVerification.SIZE,
+        if (!moving && skipErrors) TransferFailurePolicy.SKIP_AND_CONTINUE else TransferFailurePolicy.STOP,
+        askBeforeTransfer,
+    ).normalized(moving)
     val choices = listOf(
         ConflictPolicy.KEEP_BOTH to "Palikti abu",
         ConflictPolicy.REPLACE to "Pakeisti esamą",
@@ -2469,16 +2518,17 @@ private fun TransferOptionsDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("transfer_options_dialog"),
         actions = {
+            if (saveFailed) {
+                LText("Nustatymų įrašyti nepavyko", color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().testTag("transfer_options_error"))
+            }
             TextButton(onClick = onDismiss) { LText("Atšaukti") }
             Button(
                 onClick = {
-                    onConfirm(
-                        policy,
-                        if (verifySha256) TransferVerification.SHA256 else TransferVerification.SIZE,
-                        if (!moving && skipErrors) TransferFailurePolicy.SKIP_AND_CONTINUE else TransferFailurePolicy.STOP,
-                    )
+                    saveFailed = !onConfirm(draft)
                 },
-            ) { LText("Išsaugoti planą ir pradėti") }
+                modifier = Modifier.testTag("transfer_options_confirm"),
+            ) { LText(if (settingsOnly) "Išsaugoti" else "Išsaugoti planą ir pradėti") }
         },
     ) {
             Column(
@@ -2504,7 +2554,7 @@ private fun TransferOptionsDialog(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    Switch(checked = verifySha256, onCheckedChange = { verifySha256 = it })
+                    Switch(checked = verifySha256, onCheckedChange = { verifySha256 = it }, modifier = Modifier.testTag("transfer_options_sha256"))
                 }
                 if (!moving) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2512,10 +2562,22 @@ private fun TransferOptionsDialog(
                             LText("Praleisti klaidingą failą ir tęsti", fontWeight = FontWeight.SemiBold)
                             LText("Iki 100 klaidų bus palikta galutinėje ataskaitoje", style = MaterialTheme.typography.bodySmall)
                         }
-                        Switch(checked = skipErrors, onCheckedChange = { skipErrors = it })
+                        Switch(checked = skipErrors, onCheckedChange = { skipErrors = it }, modifier = Modifier.testTag("transfer_options_skip_errors"))
                     }
                 } else {
                     LText("Perkėlimas klaidos atveju visada sustoja; nepatikrintas šaltinis nešalinamas.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (allowSkipConfirmation) {
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LText("Klausti", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Switch(
+                            checked = draft.askBeforeTransfer,
+                            onCheckedChange = { askBeforeTransfer = it },
+                            enabled = draft.canSkipConfirmation,
+                            modifier = Modifier.testTag("transfer_options_ask"),
+                        )
+                    }
                 }
             }
     }

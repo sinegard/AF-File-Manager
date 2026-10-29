@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -103,6 +102,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -112,11 +112,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.affilemanager.app.ui.components.passwordKeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -180,15 +182,41 @@ import kotlin.math.roundToInt
 private enum class NearbySendStep { PICK, PAIR }
 
 @Composable
-internal fun NearbyMainActionButtons(sendingEnabled: Boolean, onSend: () -> Unit, onReceive: () -> Unit) {
-    AfActionRow {
-        OutlinedButton(onClick = onSend, enabled = sendingEnabled, modifier = Modifier.testTag("nearby_main_send")) {
+internal fun NearbyMainActionButtons(
+    sendingEnabled: Boolean,
+    onSend: () -> Unit,
+    onReceive: () -> Unit,
+    onGroup: (() -> Unit)? = null,
+    groupLabel: String = "Grupė",
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = onSend, enabled = sendingEnabled, modifier = Modifier.fillMaxWidth().testTag("nearby_main_send")) {
             Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = null)
             LText("Siųsti", modifier = Modifier.padding(start = 6.dp))
         }
-        Button(onClick = onReceive, modifier = Modifier.testTag("nearby_main_receive")) {
-            Icon(Icons.Rounded.QrCode2, contentDescription = null)
-            LText("Gauti", modifier = Modifier.padding(start = 6.dp))
+        val receive: @Composable (Modifier) -> Unit = { modifier ->
+            OutlinedButton(onClick = onReceive, modifier = modifier.testTag("nearby_main_receive")) {
+                Icon(Icons.Rounded.QrCode2, contentDescription = null)
+                LText("Gauti", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        val group: @Composable (Modifier) -> Unit = { modifier ->
+            if (onGroup != null) OutlinedButton(onClick = onGroup, modifier = modifier.testTag("nearby_group_button")) {
+                Icon(Icons.Rounded.Contacts, contentDescription = null)
+                LText(groupLabel, modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        if (onGroup == null) receive(Modifier.fillMaxWidth())
+        else BoxWithConstraints(Modifier.fillMaxWidth()) {
+            if (maxWidth < 240.dp || LocalDensity.current.fontScale >= 1.4f) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    receive(Modifier.fillMaxWidth())
+                    group(Modifier.fillMaxWidth())
+                }
+            } else Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                receive(Modifier.weight(1f).fillMaxHeight())
+                group(Modifier.weight(1f).fillMaxHeight())
+            }
         }
     }
 }
@@ -230,6 +258,43 @@ private fun NearbyReceiveModeButtons(
                 LText("Paleisti gavimą per Wi-Fi Direct", textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
         }
+    }
+}
+
+@Composable
+private fun NearbySessionActionButtons(
+    copyLabel: String,
+    stopLabel: String,
+    copyEnabled: Boolean,
+    onCopy: () -> Unit,
+    onStop: () -> Unit,
+    copyTag: String,
+    stopTag: String,
+) {
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = onCopy, enabled = copyEnabled,
+            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 64.dp).testTag(copyTag)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = null)
+                LText(copyLabel, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+        OutlinedButton(onClick = onStop,
+            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 64.dp).testTag(stopTag)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.LinkOff, contentDescription = null)
+                LText(stopLabel, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NearbyQrCard(bitmap: android.graphics.Bitmap, description: String, tag: String) {
+    Box(Modifier.widthIn(max = 320.dp).fillMaxWidth().clip(RoundedCornerShape(24.dp))
+        .background(androidx.compose.ui.graphics.Color.White).padding(16.dp)) {
+        Image(bitmap.asImageBitmap(), contentDescription = uiText(description),
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f).testTag(tag))
     }
 }
 
@@ -277,12 +342,13 @@ internal fun NearbyPhoneTransferCard(
     val historySessions by NearbyTransferHistoryController.state.collectAsStateWithLifecycle()
     val historyError by NearbyTransferHistoryController.error.collectAsStateWithLifecycle()
     val chatSendError = uiText("Žinutės išsiųsti nepavyko")
-    var showSender by remember { mutableStateOf(false) }
-    var showReceiver by remember { mutableStateOf(false) }
-    var showDetails by remember { mutableStateOf(false) }
-    var showHistory by remember { mutableStateOf(false) }
-    var showDiagnostics by remember { mutableStateOf(false) }
-    var showGroup by remember { mutableStateOf(false) }
+    // Only window visibility is saved. Pairing codes/cookies stay process-local.
+    var showSender by rememberSaveable { mutableStateOf(false) }
+    var showReceiver by rememberSaveable { mutableStateOf(false) }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+    var showGroup by rememberSaveable { mutableStateOf(false) }
     var groupTarget by remember { mutableStateOf<NearbyPairing?>(null) }
     var groupRecipients by remember { mutableStateOf(emptyList<NearbyPairing>()) }
     var confirmDisconnect by remember { mutableStateOf(false) }
@@ -342,22 +408,24 @@ internal fun NearbyPhoneTransferCard(
             }
             LText("Perdavimas nėra šifruojamas. Naudokite tik savo telefono prieigos tašką arba patikimą privatų Wi-Fi tinklą.",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            AfActionRow {
-                if (peer == null) {
-                    NearbyMainActionButtons(!nearbyState.isActive(), { showSender = true }, { showReceiver = true })
-                } else {
+            val groupLabel = if (groupState.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED))
+                "Grupė (${groupState.members.size})" else "Grupė"
+            if (peer == null) {
+                NearbyMainActionButtons(!nearbyState.isActive(), { showSender = true }, { showReceiver = true },
+                    onGroup = { showGroup = true }, groupLabel = groupLabel)
+            } else {
+                AfActionRow {
                     OutlinedButton(onClick = { showSender = true }, modifier = Modifier.testTag("nearby_add_files")) {
                         Icon(Icons.Rounded.Add, contentDescription = null); LText("Siųsti daugiau", Modifier.padding(start = 6.dp)) }
                     TextButton(onClick = ::requestDisconnect, modifier = Modifier.testTag("nearby_disconnect")) {
                         Icon(Icons.Rounded.LinkOff, contentDescription = null); LText("Atsijungti", Modifier.padding(start = 6.dp)) }
                 }
+                OutlinedButton(onClick = { showGroup = true }, modifier = Modifier.fillMaxWidth().testTag("nearby_group_button")) {
+                    Icon(Icons.Rounded.Contacts, contentDescription = null)
+                    LText(groupLabel, modifier = Modifier.padding(start = 6.dp))
+                }
             }
-            OutlinedButton(onClick = { showGroup = true }, modifier = Modifier.fillMaxWidth().testTag("nearby_group_button")) {
-                Icon(Icons.Rounded.Contacts, contentDescription = null)
-                LText(if (groupState.status in setOf(NearbyGroupStatus.HOSTING, NearbyGroupStatus.JOINED))
-                    "Grupė (${groupState.members.size})" else "Grupė", modifier = Modifier.padding(start = 6.dp))
-            }
-                    TextButton(
+                    OutlinedButton(
                         onClick = {
                             if (peer == null && !hasCurrentSessionDetails) showHistory = true
                             else showDetails = true
@@ -374,8 +442,9 @@ internal fun NearbyPhoneTransferCard(
                             },
                         )
                     }
-            TextButton(onClick = { showDiagnostics = true }, modifier = Modifier.fillMaxWidth()
+            OutlinedButton(onClick = { showDiagnostics = true }, modifier = Modifier.fillMaxWidth()
                 .testTag("nearby_diagnostics")) { LText("Perdavimo diagnostika") }
+            NearbyNetworkSettingsButton()
             NearbyProgress(state = nearbyState, onCancel = { NearbyTransferController.cancel(context) },
                 onOpenDetails = { showDetails = true })
         }
@@ -773,6 +842,7 @@ private fun NearbyGroupDialog(
                 }
                 OutlinedTextField(value = password, onValueChange = { password = it.filterNot(Char::isISOControl).take(LanTransferOptions.MAX_PASSWORD_LENGTH) },
                     label = { LText("Laikinas slaptažodis (tuščias = sugeneruotas)") }, visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = passwordKeyboardOptions,
                     singleLine = true, modifier = Modifier.fillMaxWidth().testTag("nearby_group_password"))
                 NearbyDurationControl(durationMinutes, onDurationMinutesChange, "nearby_group_duration")
                 NearbyReceiveModeButtons(
@@ -792,6 +862,7 @@ private fun NearbyGroupDialog(
                     enabled = lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
                     networkTag = "nearby_group_host", wifiTag = "nearby_group_receive_wifi_direct",
                 )
+                NearbyNetworkSettingsButton()
                 HorizontalDivider()
                 LText("Prisijungti prie grupės", fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
@@ -875,22 +946,18 @@ private fun NearbyGroupDialog(
                         fontWeight = FontWeight.Medium,
                     )
                 }
-                if (showInvite || groupState.members.size <= 1) shareInvite?.let { invite ->
-                    qrBitmap?.let { bitmap ->
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = uiText("Grupės QR kodas"),
-                            modifier = Modifier.size(240.dp).testTag("nearby_group_qr"),
-                        )
-                    }
-                    OutlinedButton(onClick = {
-                        context.getSystemService(ClipboardManager::class.java)
-                            .setPrimaryClip(ClipData.newPlainText("AF File Manager group", invite.encoded()))
-                    }) {
-                        Icon(Icons.Rounded.ContentCopy, contentDescription = null)
-                        LText("Kopijuoti kvietimą", modifier = Modifier.padding(start = 7.dp))
-                    }
+                NearbySessionActionButtons("Kopijuoti kvietimą",
+                    if (groupState.status == NearbyGroupStatus.HOSTING) "Uždaryti grupę" else "Palikti grupę",
+                    copyEnabled = shareInvite != null,
+                    onCopy = { shareInvite?.let { invite -> context.getSystemService(ClipboardManager::class.java)
+                        .setPrimaryClip(ClipData.newPlainText("AF File Manager group", invite.encoded())) } },
+                    onStop = { NearbyGroupController.leave(); LanTransferController.stop(context) },
+                    copyTag = "nearby_group_copy", stopTag = "nearby_group_leave")
+                OutlinedButton(onClick = { showInvite = !showInvite }, modifier = Modifier.fillMaxWidth().testTag("nearby_group_add_phone")) {
+                    Icon(Icons.Rounded.QrCode2, contentDescription = null)
+                    LText(if (showInvite) "Slėpti" else "Grupės QR kodas", modifier = Modifier.padding(start = 7.dp))
                 }
+                if (showInvite) qrBitmap?.let { NearbyQrCard(it, "Grupės QR kodas", "nearby_group_qr") }
                 if (groupState.status == NearbyGroupStatus.HOSTING) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
@@ -900,12 +967,7 @@ private fun NearbyGroupDialog(
                         Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
                         LText("Tvarkyti įrenginius", modifier = Modifier.padding(start = 7.dp))
                     }
-                    IconButton(onClick = { showInvite = !showInvite }, modifier = Modifier.testTag("nearby_group_add_phone")) {
-                        Icon(Icons.Rounded.Add, contentDescription = uiText("Pridėti telefoną"))
                     }
-                    }
-                } else {
-                    OutlinedButton(onClick = { showInvite = !showInvite }) { LText("Kopijuoti kvietimą") }
                 }
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -949,14 +1011,6 @@ private fun NearbyGroupDialog(
                     LText("Siųsti pasirinktiems")
                     Text(" (${recipients.size})")
                 }
-                Button(
-                    onClick = {
-                        NearbyGroupController.leave()
-                        LanTransferController.stop(context)
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("nearby_group_leave"),
-                ) { Icon(Icons.Rounded.LinkOff, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                    LText(if (groupState.status == NearbyGroupStatus.HOSTING) "Uždaryti grupę" else "Palikti grupę") }
             }
             if (lanState.status == LanTransferStatus.STARTING || pendingJoin != null) CircularProgressIndicator()
             groupState.error?.let { LText(it, color = MaterialTheme.colorScheme.error) }
@@ -1239,6 +1293,7 @@ private fun NearbyReceiveDialog(
                     label = { LText("Laikinas kodas (tuščias = sugeneruotas)") },
                     supportingText = { LText("Jei įvedate patys, naudokite bent 8 ženklus.") },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = passwordKeyboardOptions,
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1277,13 +1332,7 @@ private fun NearbyReceiveDialog(
                         enabled = !wifiDirectPending && lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING),
                         networkTag = "nearby_receive_network", wifiTag = "nearby_receive_wifi_direct",
                 )
-                OutlinedButton(
-                    onClick = { openHotspotSettings(context) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Rounded.WifiTethering, contentDescription = null)
-                    LText("Atidaryti Wi-Fi ir prieigos taško nustatymus", modifier = Modifier.padding(start = 7.dp))
-                }
+                NearbyNetworkSettingsButton()
                 LText("5 GHz dažnį galima pasirinkti sistemos nustatymuose tik tada, kai jį palaiko abu telefonai.", style = MaterialTheme.typography.bodySmall)
                 LText("Wi-Fi Direct nereikia interneto ar prieigos taško, tačiau naudojamas telefono Wi-Fi ryšys.",
                     style = MaterialTheme.typography.bodySmall)
@@ -1296,13 +1345,18 @@ private fun NearbyReceiveDialog(
                 }
             } else {
                 lanState.discoveryError?.let { LText(it, color = MaterialTheme.colorScheme.error) }
+                NearbySessionActionButtons("Kopijuoti susiejimo kodą", "Sustabdyti gavimą", pairing != null,
+                    onCopy = {
+                        pairing?.encoded()?.let { payload ->
+                            context.getSystemService(ClipboardManager::class.java)
+                                .setPrimaryClip(ClipData.newPlainText("AF File Manager pairing", payload))
+                            Toast.makeText(context, pairingCopiedMessage, Toast.LENGTH_SHORT).show()
+                        }
+                    }, onStop = { LanTransferController.stop(context) },
+                    copyTag = "nearby_receive_copy", stopTag = "nearby_receive_stop")
                 LText("Kitame telefone pasirinkite „Siųsti“ ir nuskaitykite šį kodą.", fontWeight = FontWeight.SemiBold)
                 qrBitmap?.let { bitmap ->
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = uiText("Telefono perdavimo QR kodas"),
-                        modifier = Modifier.size(280.dp).testTag("nearby_receive_qr"),
-                    )
+                    NearbyQrCard(bitmap, "Telefono perdavimo QR kodas", "nearby_receive_qr")
                 } ?: CircularProgressIndicator()
                 Text(receiverName, fontWeight = FontWeight.SemiBold)
                 Text(lanState.url.orEmpty(), style = MaterialTheme.typography.bodySmall)
@@ -1327,21 +1381,6 @@ private fun NearbyReceiveDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                OutlinedButton(
-                    onClick = {
-                        pairing?.encoded()?.let { payload ->
-                            context.getSystemService(ClipboardManager::class.java)
-                                .setPrimaryClip(ClipData.newPlainText("AF File Manager pairing", payload))
-                            Toast.makeText(context, pairingCopiedMessage, Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    enabled = pairing != null,
-                ) {
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = null)
-                    LText("Kopijuoti susiejimo kodą", modifier = Modifier.padding(start = 7.dp))
-                }
-                Button(onClick = { LanTransferController.stop(context) }) {
-                    Icon(Icons.Rounded.Cancel, contentDescription = null, modifier = Modifier.padding(end = 6.dp)); LText("Sustabdyti gavimą") }
             }
         }
     }
@@ -1364,6 +1403,8 @@ internal fun NearbySendDialog(
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(if (incomingShare != null) NearbySendStep.PAIR else NearbySendStep.PICK) }
     var category by remember { mutableStateOf<FileCategory?>(null) }
+    var storageScope by remember { mutableStateOf(com.affilemanager.app.data.CategoryStorageScope.ALL) }
+    var categoryView by remember { mutableStateOf(com.affilemanager.app.data.CategoryViewMode.FILES) }
     var contactsMode by remember { mutableStateOf(false) }
     var contacts by remember { mutableStateOf<List<NearbyContact>>(emptyList()) }
     var contactsTruncated by remember { mutableStateOf(false) }
@@ -1385,11 +1426,11 @@ internal fun NearbySendDialog(
     var includeHidden by remember { mutableStateOf(false) }
     var pickerPreview by remember { mutableStateOf<FileEntry?>(null) }
     var infoTarget by remember { mutableStateOf<FileEntry?>(null) }
-    var pageOffset by remember(category, query, sortMode, sortDirection, refreshToken) { mutableStateOf(0) }
-    var nextOffset by remember(category, query, sortMode, sortDirection, refreshToken, pageOffset) { mutableStateOf<Int?>(null) }
+    var pageOffset by remember(category, query, sortMode, sortDirection, refreshToken, storageScope, categoryView) { mutableStateOf(0) }
+    var nextOffset by remember(category, query, sortMode, sortDirection, refreshToken, storageScope, categoryView, pageOffset) { mutableStateOf<Int?>(null) }
     // Refresh revalidates this page without blanking its already available rows.
     // A different category/query/order/page still starts with a distinct list.
-    var entries by remember(category, query, sortMode, sortDirection, pageOffset) { mutableStateOf<List<FileEntry>>(emptyList()) }
+    var entries by remember(category, query, sortMode, sortDirection, storageScope, categoryView, pageOffset) { mutableStateOf<List<FileEntry>>(emptyList()) }
     var pageLoading by remember { mutableStateOf(false) }
     var retryToken by remember { mutableStateOf(0) }
     // The transfer basket belongs to this dialog, not to its currently visible category or order.
@@ -1397,6 +1438,7 @@ internal fun NearbySendDialog(
     val selectedPaths = selectedEntries.keys
     val pageListState = rememberLazyListState()
     var openStorage by remember { mutableStateOf(false) }
+    var storageStartPath by remember { mutableStateOf<String?>(null) }
     var showNearbyDiscovery by remember { mutableStateOf(false) }
     var showWifiDirectDiscovery by remember { mutableStateOf(false) }
     var wifiDirectConnected by remember { mutableStateOf(false) }
@@ -1512,7 +1554,7 @@ internal fun NearbySendDialog(
         }
     }
 
-    LaunchedEffect(category, refreshToken, sortMode, sortDirection, query, pageOffset, retryToken, includeHidden) {
+    LaunchedEffect(category, refreshToken, sortMode, sortDirection, query, pageOffset, retryToken, includeHidden, storageScope, categoryView) {
         val selectedCategory = category
         if (selectedCategory == null) { pageLoading = false; return@LaunchedEffect }
         pageLoading = true
@@ -1522,7 +1564,9 @@ internal fun NearbySendDialog(
         pageListState.requestScrollToItem(0)
         if (query.isNotBlank()) kotlinx.coroutines.delay(180)
         viewModel.loadNearbyTransferCategoryPage(selectedCategory, pageOffset, sortMode, sortDirection, query,
-            forceRefresh = pageOffset == 0, includeHidden = includeHidden).fold(
+            forceRefresh = pageOffset == 0, includeHidden = includeHidden,
+            storageScope = if (selectedCategory == FileCategory.INSTALLED_APPS) com.affilemanager.app.data.CategoryStorageScope.ALL else storageScope,
+            viewMode = if (selectedCategory == FileCategory.INSTALLED_APPS) com.affilemanager.app.data.CategoryViewMode.FILES else categoryView).fold(
             onSuccess = { entries = it.entries; nextOffset = it.nextOffset },
             onFailure = { failure -> error = nearbyFriendlyError(failure, "Failų sąrašo įkelti nepavyko") },
         )
@@ -1627,13 +1671,6 @@ internal fun NearbySendDialog(
                 formFocus.clearFocus(force = true)
                 formKeyboard?.hide()
             }
-            if (step == NearbySendStep.PICK) {
-                TextButton(onClick = { finishFormInput(); openStorage = true }, enabled = !loading,
-                    modifier = Modifier.testTag("nearby_open_storage")) {
-                    Icon(Icons.Rounded.FolderOpen, contentDescription = null)
-                    LText("Atidaryti saugyklą", modifier = Modifier.padding(start = 6.dp))
-                }
-            }
             TextButton(onClick = {
                 finishFormInput()
                 if (step == NearbySendStep.PAIR && !loading) {
@@ -1716,6 +1753,7 @@ internal fun NearbySendDialog(
                             NearbyCategoryChip("Failai", Icons.Rounded.FolderOpen, selected = category == null && !contactsMode) {
                                 contactsMode = false
                                 category = null
+                                storageStartPath = null
                                 openStorage = true
                             }
                             NearbyCategoryChip("Nuotraukos", Icons.Rounded.Image, selected = category == FileCategory.IMAGES) { contactsMode = false; category = FileCategory.IMAGES }
@@ -1733,6 +1771,13 @@ internal fun NearbySendDialog(
                                 if (!contactsPermissionGranted) contactPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
                             }
                         }
+                        }
+                        NearbyOpenStorageButton(enabled = !loading,
+                            onClick = { storageStartPath = null; openStorage = true },
+                            onAndroidPicker = { documentsLauncher.launch(arrayOf("*/*")) })
+                        if (!contactsMode && category != null && category != FileCategory.INSTALLED_APPS) {
+                            CategoryViewScopeSelector(categoryView, storageScope,
+                                onSelect = { scope, mode -> storageScope = scope; categoryView = mode }, tagPrefix = "nearby")
                         }
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             LText(
@@ -1929,7 +1974,10 @@ internal fun NearbySendDialog(
                                             RoundedCornerShape(12.dp),
                                         ).testTag("nearby_entry_${entry.absolutePath}").combinedClickable(
                                             onClick = {
-                                                if (!selected && selectedPaths.size >= NearbySourcePreparer.MAX_FILES) {
+                                                if (entry.isDirectory) {
+                                                    storageStartPath = entry.absolutePath
+                                                    openStorage = true
+                                                } else if (!selected && selectedPaths.size >= NearbySourcePreparer.MAX_FILES) {
                                                     error = "Vienu kartu galima siųsti iki ${NearbySourcePreparer.MAX_FILES} failų"
                                                 } else {
                                                     selectedEntries = NearbyPickerSelection.toggle(selectedEntries, entry)
@@ -1955,14 +2003,19 @@ internal fun NearbySendDialog(
                                                     if (entryIndex == 0) Modifier.testTag("nearby_first_entry") else Modifier,
                                                 ),
                                             )
-                                            Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.bodySmall)
+                                            if (!entry.isDirectory) Text(FileSystemRules.humanBytes(entry.sizeBytes), style = MaterialTheme.typography.bodySmall)
                                         }
+                                        if (entry.isDirectory) Checkbox(checked = selected, onCheckedChange = {
+                                            if (!selected && selectedPaths.size >= NearbySourcePreparer.MAX_FILES) {
+                                                error = "Vienu kartu galima siųsti iki ${NearbySourcePreparer.MAX_FILES} failų"
+                                            } else selectedEntries = NearbyPickerSelection.toggle(selectedEntries, entry)
+                                        }, modifier = Modifier.testTag("nearby_folder_select_${entry.absolutePath}"))
                                         Box {
                                             IconButton(onClick = { entryMenu = true }) {
                                                 Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
                                             }
                                             DropdownMenu(expanded = entryMenu, onDismissRequest = { entryMenu = false }) {
-                                                DropdownMenuItem(text = { LText("Peržiūra") }, leadingIcon = { Icon(Icons.Rounded.Visibility, null) }, onClick = { entryMenu = false; pickerPreview = entry })
+                                                if (!entry.isDirectory) DropdownMenuItem(text = { LText("Peržiūra") }, leadingIcon = { Icon(Icons.Rounded.Visibility, null) }, onClick = { entryMenu = false; pickerPreview = entry })
                                                 DropdownMenuItem(text = { LText("Atidaryti aplanką") }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, null) }, onClick = {
                                                     entryMenu = false
                                                     discardAndDismiss()
@@ -2047,10 +2100,7 @@ internal fun NearbySendDialog(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                OutlinedButton(onClick = { openHotspotSettings(context) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.WifiTethering, contentDescription = null)
-                    LText("Atidaryti Wi-Fi nustatymus", modifier = Modifier.padding(start = 7.dp))
-                }
+                NearbyNetworkSettingsButton("Atidaryti Wi-Fi nustatymus")
                 parsedPairing?.exceptionOrNull()?.message?.let { LText(it, color = MaterialTheme.colorScheme.error) }
                 }
                 parsedPairing?.getOrNull()?.let { pairing ->
@@ -2067,7 +2117,7 @@ internal fun NearbySendDialog(
 
     if (openStorage) {
         LocalUploadDialog(
-            initialDirectoryPath = viewModel.activePanelState().path,
+            initialDirectoryPath = storageStartPath ?: viewModel.activePanelState().path,
             remotePath = "",
             initialEntries = emptyList(),
             initiallySelected = emptySet(),
@@ -2079,7 +2129,7 @@ internal fun NearbySendDialog(
                 scope.launch {
                     loading = true
                     error = null
-                    viewModel.prepareNearbyTransferPaths(paths).fold(
+                    viewModel.prepareNearbyTransferPaths(paths, selectedEntries.values).fold(
                         onSuccess = { result -> prepared = result; step = NearbySendStep.PAIR },
                         onFailure = { failure -> error = nearbyFriendlyError(failure, "Failų paruošti nepavyko") },
                     )
@@ -2328,14 +2378,6 @@ private fun nearbyFriendlyError(failure: Throwable, fallback: String): String = 
         ?.take(240)
         ?: fallback
     else -> fallback
-}
-
-private fun openHotspotSettings(context: Context) {
-    val intent = Intent("android.settings.TETHER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { context.startActivity(intent) }
-        .recoverCatching {
-            context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
 }
 
 private fun decodeReceiverAvatar(context: Context, storedUri: String, maximumEdge: Int = 256): android.graphics.Bitmap? = runCatching {

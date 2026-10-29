@@ -90,4 +90,25 @@ class MutationRegressionTest {
             ConflictPolicy.REPLACE, OperationContext.background()) }.isFailure)
         assertEquals("kept", source.readText())
     }
+
+    @Test fun aFallbackMoveDoesNotSweepAFileAddedAfterTheCopyWasPlanned() = runBlocking {
+        val source = temporary.newFolder("late-source")
+        val selected = source.resolve("original.txt").apply { writeText("selected bytes") }
+        val late = source.resolve("arrived-during-copy.txt")
+        val destination = temporary.newFolder("late-destination")
+        val target = File(destination, source.name).apply { check(mkdir()) }
+        var added = false
+        val observing = OperationContext("late-child", kotlinx.coroutines.flow.MutableStateFlow(false)) { transform ->
+            val snapshot = OperationSnapshot("late-child", "move", OperationStatus.RUNNING).transform()
+            if (!added && snapshot.completedBytes > 0) { late.writeText("not part of the copied tree"); added = true }
+        }
+        val failure = runCatching {
+            LocalFileOperator().copyOrMove(listOf(source.path), destination.path, true, ConflictPolicy.MERGE, observing)
+        }.exceptionOrNull()
+        assertTrue("The fallback move recursively deleted an unplanned source", late.isFile)
+        assertEquals("not part of the copied tree", late.readText())
+        assertEquals("selected bytes", target.resolve(selected.name).readText())
+        assertFalse(target.resolve(late.name).exists())
+        assertNotNull("An unremoved source folder must not be reported as a completed move", failure)
+    }
 }

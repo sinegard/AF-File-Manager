@@ -1,9 +1,11 @@
 package com.affilemanager.app
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -12,6 +14,10 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDisplayed
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -324,7 +330,7 @@ class FileNavigationUiTest {
             val entry = viewModel.fileCategory.value.entries.first()
             compose.runOnUiThread { viewModel.toggleFileCategorySelection(entry.absolutePath) }
 
-            compose.onNodeWithTag("category_info").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("category_info").performScrollTo().assertIsDisplayed().performClick()
             compose.onNodeWithTag("installed_app_information").assertIsDisplayed()
             compose.onNodeWithTag("system_app_information").assertIsDisplayed().assertHasClickAction()
             compose.runOnUiThread { viewModel.clearFileCategorySelection() }
@@ -336,6 +342,195 @@ class FileNavigationUiTest {
             compose.onNodeWithTag("installed_apps_uninstall").performScrollTo().assertIsDisplayed()
         } finally {
             compose.runOnUiThread { viewModel.closeFileCategory() }
+        }
+    }
+
+    @Test
+    fun categorySelectionKeepsItsVisibleRowInPlace() = categorySelectionKeepsRow(false)
+
+    @Test
+    fun categoryGridSelectionKeepsItsVisibleRowInPlace() = categorySelectionKeepsRow(true)
+
+    private fun categorySelectionKeepsRow(grid: Boolean) {
+        val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        var previousGrid: Boolean? = null
+        try {
+            compose.runOnUiThread { viewModel.openFileCategory(FileCategory.INSTALLED_APPS, forceRefresh = true) }
+            compose.waitUntil(10_000) {
+                val state = viewModel.fileCategory.value
+                state.open && !state.loading && state.entries.isNotEmpty()
+            }
+            previousGrid = viewModel.fileCategory.value.grid
+            compose.runOnUiThread { if (viewModel.fileCategory.value.grid != grid) viewModel.toggleFileCategoryLayout() }
+            compose.waitForIdle()
+            val entries = viewModel.fileCategory.value.entries
+            val visibleEntries = entries.filter { candidate ->
+                entries.count { it.name == candidate.name } == 1 &&
+                    compose.onAllNodesWithText(candidate.name).fetchSemanticsNodes().size == 1 &&
+                    compose.onNodeWithText(candidate.name).isDisplayed()
+            }
+            assertTrue("Owned installed-app fixture needs two visible unique rows", visibleEntries.size >= 2)
+            val entry = visibleEntries[1]
+            val row = compose.onNodeWithText(entry.name)
+            row.assertIsDisplayed()
+            val before = row.fetchSemanticsNode().boundsInRoot.top
+            val validation = uiAuditDirectory(compose.activity)
+            fun snapshot(name: String) {
+                compose.mainClock.advanceTimeByFrame()
+                compose.waitForIdle()
+                val bitmap = compose.onRoot(useUnmergedTree = true).captureToImage().asAndroidBitmap()
+                try {
+                    java.io.FileOutputStream(File(validation, name)).use {
+                        check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+                    }
+                } finally { bitmap.recycle() }
+            }
+            snapshot("category-$grid-selection-before.png")
+            compose.runOnUiThread { viewModel.toggleFileCategorySelection(entry.absolutePath) }
+            compose.waitForIdle()
+            snapshot("category-$grid-selection-after.png")
+            val during = row.fetchSemanticsNode().boundsInRoot.top
+            assertEquals("Category selection moved the file row under the held pointer", before, during, 1f)
+            compose.runOnUiThread { viewModel.clearFileCategorySelection() }
+            compose.waitForIdle()
+            assertEquals("Closing selection moved the category row", before, row.fetchSemanticsNode().boundsInRoot.top, 1f)
+        } finally { compose.runOnUiThread {
+            viewModel.clearFileCategorySelection()
+            if (previousGrid != null && viewModel.fileCategory.value.grid != previousGrid) viewModel.toggleFileCategoryLayout()
+            viewModel.closeFileCategory()
+        } }
+    }
+
+    @Test
+    fun privilegedListSelectionKeepsItsVisibleRowInPlace() = privilegedSelectionKeepsRow(false)
+
+    @Test
+    fun privilegedGridSelectionKeepsItsVisibleRowInPlace() = privilegedSelectionKeepsRow(true)
+
+    private fun privilegedSelectionKeepsRow(grid: Boolean) {
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val fixture = File(compose.activity.getExternalFilesDir(null), "selection-position-${System.nanoTime()}").apply { mkdirs() }
+        repeat(16) { File(fixture, "position-${it.toString().padStart(2, '0')}.txt").writeText("owned fixture $it") }
+        try {
+            connectRootBackend(vm)
+            compose.runOnUiThread { vm.openAdvancedBrowser(fixture.canonicalPath) }
+            compose.waitUntil(10_000) {
+                vm.advancedBrowser.value.let { it.open && !it.loading && it.entries.size == 16 && it.error == null }
+            }
+            compose.runOnUiThread { if (vm.advancedBrowser.value.grid != grid) vm.toggleAdvancedLayout() }
+            compose.waitForIdle()
+            val entry = vm.advancedBrowser.value.entries.first()
+            val row = compose.onNodeWithText(entry.name).assertIsDisplayed()
+            val before = row.fetchSemanticsNode().boundsInRoot.top
+            fun capture(phase: String) {
+                val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+                automation.waitForIdle(250, 5000)
+                val frame = requireNotNull(automation.takeScreenshot())
+                try { File(uiAuditDirectory(compose.activity), "privileged-$grid-$phase.png").outputStream().use {
+                    check(frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+                } } finally { frame.recycle() }
+            }
+            capture("before")
+            compose.runOnUiThread { vm.toggleAdvancedSelection(entry.absolutePath) }
+            compose.onNodeWithTag("advanced_selection_bar").assertIsDisplayed()
+            assertEquals("Privileged $grid selection moved the held row", before, row.fetchSemanticsNode().boundsInRoot.top, 1f)
+            capture("selected")
+            compose.runOnUiThread { vm.clearAdvancedSelection() }
+            compose.onNodeWithTag("directory_toolbar_advanced").assertIsDisplayed()
+            assertEquals("Privileged $grid selection close moved the row", before, row.fetchSemanticsNode().boundsInRoot.top, 1f)
+            capture("cleared")
+        } finally {
+            compose.runOnUiThread { vm.closeAdvancedBrowser(); vm.setAdvancedAccessMode(AdvancedAccessMode.OFF) }
+            fixture.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun englishNavigationWordsStayWholeAtNormalAndOwnedTextScale() {
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val app = compose.activity.application as AFFileManagerApplication
+        val previous = app.graph.appearance.settings.value.interfaceScalePercent
+        try {
+            compose.runOnUiThread {
+                com.affilemanager.app.ui.localization.AppLanguageManager.setLanguage(compose.activity, "en")
+                vm.setSection(AppSection.FILES)
+                vm.showFilesHome()
+            }
+            for (scale in listOf(100, 115)) {
+                compose.runOnUiThread { vm.setInterfaceScalePercent(scale) }
+                val targetDensity = compose.activity.resources.displayMetrics.density * scale / 100f
+                compose.waitUntil(5_000) {
+                    val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                    compose.onNodeWithText("Network", useUnmergedTree = true).fetchSemanticsNode().config[
+                        androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+                    kotlin.math.abs(layouts.single().layoutInput.density.density - targetDensity) < .01f
+                }
+                compose.waitForIdle()
+                val node = compose.onNodeWithText("Network", useUnmergedTree = true).fetchSemanticsNode()
+                val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                val action = node.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult]
+                assertTrue(requireNotNull(action.action).invoke(layouts))
+                val text = layouts.single()
+                val validation = uiAuditDirectory(compose.activity)
+                InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(250, 5000)
+                val frame = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+                try { java.io.FileOutputStream(File(validation, "navigation-scale-$scale.png")).use { check(frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
+                finally { frame.recycle() }
+                val cell = compose.onNodeWithTag("nav_connections").fetchSemanticsNode().boundsInRoot
+                assertEquals("Network became an orphaned fragment at $scale%; size=${text.size}; font=${text.layoutInput.style.fontSize}; density=${text.layoutInput.density.density}; fontScale=${text.layoutInput.density.fontScale}; cell=$cell; lines=${(0 until text.lineCount).map { text.getLineLeft(it) to text.getLineRight(it) }}; node=${node.boundsInRoot}", 1, text.lineCount)
+            }
+        } finally { compose.runOnUiThread { vm.setInterfaceScalePercent(previous) } }
+    }
+
+    @Test
+    fun largeSystemTextWithPersianKeepsEveryNavigationActionReachable() {
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
+        val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+        val app = compose.activity.application as AFFileManagerApplication
+        val previous = app.graph.appearance.settings.value.interfaceScalePercent
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun shell(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).bufferedReader().use { it.readText() }
+        val originalFont = shell("settings get system font_scale").trim()
+        require(originalFont.matches(Regex("[0-9]+(?:\\.[0-9]+)?")) && originalFont.toFloat() in .5f..3f)
+        try {
+            compose.runOnUiThread {
+                vm.setInterfaceScalePercent(100)
+                com.affilemanager.app.ui.localization.AppLanguageManager.setLanguage(compose.activity, "fa")
+                vm.setSection(AppSection.FILES)
+            }
+            shell("settings put system font_scale 2.0")
+            check(shell("settings get system font_scale").trim() == "2.0")
+            compose.waitUntil(10_000) { compose.activity.resources.configuration.fontScale >= 1.99f }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("navigation_rows_2").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("navigation_rows_2").assertIsDisplayed()
+            val targets = listOf("files" to AppSection.FILES, "analyze" to AppSection.ANALYZE,
+                "connections" to AppSection.CONNECTIONS, "share" to AppSection.SHARE, "tools" to AppSection.TOOLS)
+            val bounds = targets.map { compose.onNodeWithTag("nav_${it.first}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+            bounds.forEachIndexed { i, left -> bounds.drop(i + 1).forEach { right ->
+                assertTrue("Navigation targets overlap: $left / $right", minOf(left.right, right.right) - maxOf(left.left, right.left) <= 1f ||
+                    minOf(left.bottom, right.bottom) - maxOf(left.top, right.top) <= 1f)
+            } }
+            val iconYs = targets.map { compose.onNodeWithTag("nav_icon_${it.first}", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.center.y }
+            for (row in listOf(iconYs.take(3), iconYs.drop(3))) {
+                assertTrue("Two-row navigation did not keep its three/two grouping: $iconYs", row.max() - row.min() <= 1.1f)
+            }
+            assertTrue(iconYs[3] > iconYs[0] + 1.1f)
+            for ((tag, section) in targets) {
+                compose.onNodeWithTag("nav_$tag").assertIsDisplayed().performClick().assertIsSelected()
+                assertEquals(section, vm.section.value)
+            }
+            val bitmap = compose.onRoot(useUnmergedTree = true).captureToImage().asAndroidBitmap()
+            try { java.io.FileOutputStream(File(uiAuditDirectory(compose.activity), "navigation-fa-double-interface.png")).use {
+                check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+            } } finally { bitmap.recycle() }
+        } finally { compose.runOnUiThread {
+            vm.setInterfaceScalePercent(previous)
+            com.affilemanager.app.ui.localization.AppLanguageManager.setLanguage(compose.activity, "en")
+            vm.setSection(AppSection.FILES)
+        }
+            shell("settings put system font_scale $originalFont")
+            check(shell("settings get system font_scale").trim() == originalFont)
         }
     }
 
@@ -390,9 +585,13 @@ class FileNavigationUiTest {
 
     @Test
     fun rootStorageOpensAsAFileOverlayAndBackReturnsToFiles() {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Device-root browsing requires an actual UID-0 provider, not Shizuku shell",
+            arguments.getString("afRoot") == "true" || arguments.getString("afShizukuRoot") == "true")
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
 
         try {
+            compose.runOnUiThread { viewModel.showFilesHome() }
             connectRootBackend(viewModel)
             assertTrue(com.affilemanager.app.terminal.PrivilegedTerminalRuntimeVerifier.verifyAuthorizedBackend(compose.activity, 0))
             compose.runOnUiThread { viewModel.openAdvancedBrowser("/") }
@@ -402,7 +601,8 @@ class FileNavigationUiTest {
             }
             compose.onNodeWithTag("directory_toolbar_advanced").assertIsDisplayed()
 
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            assertTrue(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.advancedBrowser.value.open }
             assertEquals(AppSection.FILES, viewModel.section.value)
             assertTrue(viewModel.filesHomeVisible.value)
@@ -431,7 +631,8 @@ class FileNavigationUiTest {
                 state.open && !state.loading && state.path == child.absolutePath && state.error == null
             }
 
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            assertTrue(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             compose.waitUntil(timeoutMillis = 10_000) {
                 val state = viewModel.advancedBrowser.value
                 state.open && !state.loading && state.path == parent.absolutePath && state.error == null
@@ -556,7 +757,8 @@ class FileNavigationUiTest {
 
             // Shizuku running as UID 0 can navigate above Android/data; only the
             // shell backend stops at the protected-storage boundary.
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            assertTrue(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             compose.waitUntil(timeoutMillis = 10_000) {
                 val state = viewModel.advancedBrowser.value
                 state.open && !state.loading && state.path == "/storage/emulated/0/Android" && state.error == null
@@ -566,7 +768,8 @@ class FileNavigationUiTest {
                 val state = viewModel.advancedBrowser.value
                 state.open && !state.loading && state.path == "/" && state.error == null
             }
-            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            assertTrue(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             compose.waitUntil(timeoutMillis = 5_000) { !viewModel.advancedBrowser.value.open }
             assertEquals(AppSection.FILES, viewModel.section.value)
             assertTrue(viewModel.filesHomeVisible.value)

@@ -32,7 +32,7 @@ class FtpRemoteClient private constructor(
             val client: FTPClient = if (profile.protocol == NetworkProtocol.FTPS) {
                 FastFtpsClient().apply {
                     setEndpointCheckingEnabled(true)
-                    setTrustManager(TrustManagerUtils.getValidateServerCertificateTrustManager())
+                    setTrustManager(TrustManagerUtils.getDefaultTrustManager(null))
                 }
             } else FastFtpClient()
             try {
@@ -102,11 +102,12 @@ class FtpRemoteClient private constructor(
         val normalized = RemotePath.normalize(remotePath)
         val expectedSize = client.mlistFile(normalized)?.size?.takeIf { it >= 0 }
         val limit = RemoteDownloadLimit(maxBytes).apply { checkExpected(expectedSize) }
-        val partial = File(localDestination.parentFile, ".${localDestination.name}.partial")
+        val stage = RemoteDownloadStage(localDestination)
+        val partial = stage.file
         try {
             val input = client.retrieveFileStream(normalized) ?: throw IllegalStateException("FTP atsisiuntimas nepradėtas")
             input.use { stream ->
-                partial.outputStream().buffered().use { output ->
+                stage.outputStream().use { output ->
                     val buffer = ByteArray(BUFFER_SIZE)
                     while (true) {
                         operation?.checkpoint()
@@ -120,11 +121,10 @@ class FtpRemoteClient private constructor(
             }
             check(client.completePendingCommand()) { "FTP atsisiuntimas neužbaigtas" }
             if (expectedSize != null) require(partial.length() == expectedSize) { "Atsisiųsto failo dydis nesutampa" }
-            if (localDestination.exists()) require(localDestination.delete()) { "Esamo failo pakeisti nepavyko" }
-            require(partial.renameTo(localDestination)) { "Atsisiuntimo užbaigti nepavyko" }
+            stage.publish()
             operation?.progress(itemDelta = 1, currentName = localDestination.name)
         } finally {
-            if (partial.exists()) partial.delete()
+            stage.close()
         }
         Unit
     }
@@ -134,6 +134,7 @@ class FtpRemoteClient private constructor(
         require(localSource.isFile) { "Vietinis failas nepasiekiamas" }
         val normalized = RemotePath.normalize(remotePath)
         val partial = RemotePath.temporarySibling(normalized, "af-partial")
+        var primaryFailure: Throwable? = null
         try {
             val output = client.storeFileStream(partial) ?: throw IllegalStateException("FTP įkėlimas nepradėtas")
             output.use { stream ->
@@ -151,11 +152,23 @@ class FtpRemoteClient private constructor(
             check(client.completePendingCommand()) { "FTP įkėlimas neužbaigtas" }
             val uploadedSize = client.mlistFile(partial)?.size
             if (uploadedSize != null && uploadedSize >= 0) require(uploadedSize == localSource.length()) { "Įkelto failo dydis nesutampa" }
-            client.deleteFile(normalized)
-            check(client.rename(partial, normalized)) { "FTP failo pervadinti nepavyko" }
+            val previous = remoteMetadata(normalized)
+            require(previous?.isDirectory != true) { "Esamo failo pakeisti nepavyko" }
+            require(previous?.isSymbolicLink != true) { "Simbolinės nuorodos nekopijuojamos" }
+            RemoteUploadPublication.publish(partial, normalized, operation,
+                exists = { remotePathExists(it) },
+                rename = { from, to -> check(client.rename(from, to)) { "FTP failo pervadinti nepavyko" } },
+                remove = { check(client.deleteFile(it)) { "FTP failo ištrinti nepavyko" } })
             operation?.progress(itemDelta = 1, currentName = localSource.name)
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
         } finally {
-            client.deleteFile(partial)
+            try { client.deleteFile(partial) }
+            catch (cleanup: Throwable) {
+                val original = primaryFailure
+                if (original != null) original.addSuppressed(cleanup) else throw cleanup
+            }
         }
         Unit
     }
@@ -183,12 +196,18 @@ class FtpRemoteClient private constructor(
 
     override suspend fun rename(fromPath: String, toPath: String) = withContext(Dispatchers.IO) {
         ensureControlAlive()
-        check(client.rename(RemotePath.normalize(fromPath), RemotePath.normalize(toPath))) { "FTP pervadinti nepavyko" }
+        val from = RemotePath.normalize(fromPath)
+        val to = RemotePath.normalize(toPath)
+        if (from == to) return@withContext
+        check(!remotePathExists(to)) { "Toks pavadinimas jau naudojamas" }
+        check(client.rename(from, to)) { "FTP pervadinti nepavyko" }
     }
 
     override suspend fun delete(path: String, recursive: Boolean) = withContext(Dispatchers.IO) {
         ensureControlAlive()
-        deleteInternal(RemotePath.normalize(path), recursive, Counter(), 0)
+        val normalized = RemotePath.normalize(path)
+        require(normalized != "/") { "Šakninio bendrinimo katalogo keisti negalima" }
+        deleteInternal(normalized, recursive, Counter(), 0)
     }
 
     override suspend fun close() = withContext(Dispatchers.IO) {
@@ -197,7 +216,23 @@ class FtpRemoteClient private constructor(
     }
 
     private fun remotePathExists(path: String): Boolean =
-        client.mlistFile(path) != null || client.listFiles(path).isNotEmpty()
+        remoteMetadata(path) != null
+
+    private fun remoteMetadata(path: String): FTPFile? {
+        client.mlistFile(path)?.let { return it }
+        val normalized = RemotePath.normalize(path)
+        if (normalized == "/") return FTPFile().apply { name = "/"; type = FTPFile.DIRECTORY_TYPE }
+        // MLST is optional. LIST of a target can be interpreted as a pattern or
+        // a directory by different servers; inspect its successful parent list
+        // and match the exact name instead of treating any returned row as proof.
+        val parent = normalized.substringBeforeLast('/').ifEmpty { "/" }
+        val children = client.listFiles(parent)
+        if (!FTPReply.isPositiveCompletion(client.replyCode)) {
+            throw FtpCommandException(FtpFailureStage.LIST, client.replyCode.takeIf { it > 0 })
+        }
+        require(children.size <= MAX_LIST_ENTRIES) { "Nuotoliniame aplanke per daug elementų" }
+        return children.firstOrNull { it.name == normalized.substringAfterLast('/') }
+    }
 
     private fun ensureControlAlive() {
         check(client.sendNoOp()) { "FTP connection closed without indication" }
@@ -239,7 +274,7 @@ class FtpRemoteClient private constructor(
         require(depth <= 64) { "Nuotolinių aplankų gylio riba viršyta" }
         counter.value += 1
         require(counter.value <= MAX_DELETE_ENTRIES) { "Trynimo elementų riba viršyta" }
-        val metadata = client.mlistFile(path)
+        val metadata = remoteMetadata(path)
         if (metadata?.isDirectory == true) {
             require(recursive) { "Rekursinis aplanko trynimas nepatvirtintas" }
             client.listFiles(path)

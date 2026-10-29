@@ -20,6 +20,7 @@ import com.affilemanager.app.operations.OperationContext
 import com.topjohnwu.superuser.nio.ExtendedFile
 import com.topjohnwu.superuser.nio.FileSystemManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -82,10 +83,17 @@ class PrivilegedFileRepository(
         includeHidden: Boolean,
         sortMode: SortMode,
         sortDirection: SortDirection,
+        localWritePath: String? = null,
     ): Result<List<FileEntry>> = ioResult {
         val manager = access.fileSystemOrThrow()
         val directory = existingContained(manager, directoryPath, allowRoot = true)
         require(directory.isDirectory) { "Tai nėra aplankas" }
+        localWritePath?.let { path ->
+            val changed = existingContained(manager, path, allowRoot = false)
+            require(changed.parentFile?.canonicalPath == directory.canonicalPath)
+            // One actual read, not a guessed size or a timed retry, coheres legacy mounts.
+            privilegedInput(changed).close()
+        }
         val children = directory.listFiles() ?: throw SecurityException("Aplanko turinio perskaityti nepavyko")
         require(children.size <= PrivilegedPathRules.MAX_VISIBLE_ENTRIES) {
             "Aplanke daugiau nei ${PrivilegedPathRules.MAX_VISIBLE_ENTRIES} elementų"
@@ -104,8 +112,8 @@ class PrivilegedFileRepository(
         require(parent.isDirectory) { "Tėvinis aplankas nepasiekiamas" }
         val path = PrivilegedPathRules.child(parent.canonicalPath, requestedName, allowedRoots)
         val target = manager.getFile(path)
-        require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
-        check(target.mkdir()) { "Aplanko sukurti nepavyko" }
+        require(!target.exists() && !target.isSymlink) { "Toks pavadinimas jau naudojamas" }
+        access.fileMetadataServiceOrThrow().createPrivateEntry(target.path, true)
         toEntry(existingContained(manager, path, allowRoot = false))
     }
 
@@ -160,8 +168,8 @@ class PrivilegedFileRepository(
         require(parent.isDirectory) { "Tėvinis aplankas nepasiekiamas" }
         val path = PrivilegedPathRules.child(parent.canonicalPath, requestedName, allowedRoots)
         val target = manager.getFile(path)
-        require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
-        check(target.createNewFile()) { "Failo sukurti nepavyko" }
+        require(!target.exists() && !target.isSymlink) { "Toks pavadinimas jau naudojamas" }
+        access.fileMetadataServiceOrThrow().createPrivateEntry(target.path, false)
         toEntry(existingContained(manager, path, allowRoot = false))
     }
 
@@ -172,7 +180,7 @@ class PrivilegedFileRepository(
         canonicalContained(parent, allowRoot = true)
         val targetPath = PrivilegedPathRules.child(parent.canonicalPath, requestedName, allowedRoots)
         val target = manager.getFile(targetPath)
-        require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
+        require(!target.exists() && !target.isSymlink) { "Toks pavadinimas jau naudojamas" }
         check(source.renameTo(target)) { "Pervadinti nepavyko" }
         toEntry(existingContained(manager, targetPath, allowRoot = false))
     }
@@ -228,14 +236,17 @@ class PrivilegedFileRepository(
             val partial = uniqueRemoteChild(destination, ".${target.name}.af-partial")
             try {
                 copyRemoteTree(source, partial, operation, depth = 0, counter = Counter())
-                require(equalTree(source, partial, Counter())) { "Nukopijuotas turinys nepatikrintas" }
+                require(equalTree(source, partial, Counter())) { "Galutinė kopijos patikra nepavyko" }
+                operation.checkpoint()
                 if (target.exists()) deleteTree(target, target, operation, 0, Counter())
                 require(partial.renameTo(target)) { "Kopijos užbaigti nepavyko" }
-                if (move) deleteTree(source, source, operation, 0, Counter())
+                if (move) deleteVerifiedMoveSource(source, target, operation)
                 copied += 1
                 operation.progress(itemDelta = 1, currentName = source.name)
             } finally {
-                if (partial.exists()) runCatching { deleteTree(partial, partial, OperationContext.background(), 0, Counter()) }
+                withContext(NonCancellable) {
+                    if (partial.exists()) runCatching { deleteTree(partial, partial, OperationContext.background(), 0, Counter()) }
+                }
             }
         }
         PrivilegedTransferResult(copied, skipped)
@@ -251,7 +262,7 @@ class PrivilegedFileRepository(
         require(sourcePaths.isNotEmpty() && sourcePaths.size <= PrivilegedPathRules.MAX_SELECTED_ROOTS) { "Netinkamas pasirinktų elementų skaičius" }
         val manager = access.fileSystemOrThrow()
         val destination = existingContained(manager, destinationPath, allowRoot = true)
-        val sources = sourcePaths.distinct().map { File(it).canonicalFile }
+        val sources = sourcePaths.distinct().map { FileSystemRules.nonSymbolicSource(File(it)) }
         require(sources.all(File::exists)) { "Vietinis šaltinis nebeegzistuoja" }
         var copied = 0
         var skipped = 0
@@ -266,14 +277,17 @@ class PrivilegedFileRepository(
             val partial = uniqueRemoteChild(destination, ".${target.name}.af-partial")
             try {
                 copyLocalTree(source, partial, operation, 0, Counter())
-                require(equalLocalRemoteTree(source, partial, Counter())) { "Nukopijuotas turinys nepatikrintas" }
+                require(equalLocalRemoteTree(source, partial, Counter())) { "Galutinė kopijos patikra nepavyko" }
+                operation.checkpoint()
                 if (target.exists()) deleteTree(target, target, operation, 0, Counter())
                 require(partial.renameTo(target)) { "Kopijos užbaigti nepavyko" }
-                if (move) deleteLocalTree(source, source, operation, 0, Counter())
+                if (move) deleteVerifiedMoveSource(source, target, operation)
                 copied += 1
                 operation.progress(itemDelta = 1, currentName = source.name)
             } finally {
-                if (partial.exists()) runCatching { deleteTree(partial, partial, OperationContext.background(), 0, Counter()) }
+                withContext(NonCancellable) {
+                    if (partial.exists()) runCatching { deleteTree(partial, partial, OperationContext.background(), 0, Counter()) }
+                }
             }
         }
         PrivilegedTransferResult(copied, skipped)
@@ -305,10 +319,11 @@ class PrivilegedFileRepository(
             require(partial.canonicalFile.parentFile == destination) { "Laikinas kelias išeina už paskirties" }
             try {
                 copyRemoteToLocalTree(source, partial, operation, 0, Counter())
-                require(equalRemoteLocalTree(source, partial, Counter())) { "Nukopijuotas turinys nepatikrintas" }
-                if (target.exists()) deleteLocalTree(target, target, operation, 0, Counter())
+                require(equalRemoteLocalTree(source, partial, Counter())) { "Galutinė kopijos patikra nepavyko" }
+                operation.checkpoint()
+                if (target.exists()) deleteReplacedLocalTree(target, target, operation, 0, Counter())
                 require(partial.renameTo(target)) { "Kopijos užbaigti nepavyko" }
-                if (move) deleteTree(source, source, operation, 0, Counter())
+                if (move) deleteVerifiedMoveSource(source, target, operation)
                 copied += 1
                 operation.progress(itemDelta = 1, currentName = source.name)
             } finally {
@@ -329,8 +344,11 @@ class PrivilegedFileRepository(
         } else null
         val destination = previewCache.createDestination(entry)
         try {
-            (local?.inputStream() ?: requireNotNull(protected).newInputStream()).buffered().use { input ->
-                FileOutputStream(destination).buffered().use { output -> copyBounded(input, output, EditLimits.MAX_FILE_BYTES, null) }
+            (local?.inputStream() ?: privilegedInput(requireNotNull(protected))).buffered().use { input ->
+                FileOutputStream(destination).buffered().use { output ->
+                    copyBounded(input, output, EditLimits.MAX_FILE_BYTES,
+                        beforeRead = { kotlinx.coroutines.currentCoroutineContext().ensureActive() })
+                }
             }
             require(destination.length() == (local?.length() ?: requireNotNull(protected).length())) { "Peržiūros kopijos dydis neatitinka" }
             previewCache.validateCompleted(destination)
@@ -345,7 +363,14 @@ class PrivilegedFileRepository(
 
     fun openInput(path: String): InputStream {
         val manager = access.fileSystemOrThrow()
-        return existingContained(manager, path, allowRoot = false).newInputStream()
+        return privilegedInput(existingContained(manager, path, allowRoot = false))
+    }
+
+    private fun privilegedInput(file: ExtendedFile): InputStream {
+        val service = access.fileReadServiceOrThrow()
+        return PrivilegedReadInputStream(service,
+            PrivilegedPathRules.requireWithinAllowed(file.path, allowedRoots, allowRoot = false),
+            isAuthorized = { access.isCurrentReadService(service) })
     }
 
     fun saveOrigin(session: EditSession, force: Boolean): EditSaveResult {
@@ -359,9 +384,12 @@ class PrivilegedFileRepository(
         require(origin.canWrite) { "Pradinio failo negalima įrašyti; naudokite „Išsaugoti kaip“" }
         val parent = requireNotNull(target.parentFile)
         canonicalContained(parent, allowRoot = true)
+        val metadataService = access.fileMetadataServiceOrThrow()
+        val originalMetadata = if (target.exists()) PrivilegedFileMetadata.decode(metadataService.readFileMetadata(target.path)) else null
         val temporary = uniqueRemoteChild(parent, ".${target.name}.af-edit")
         val backup = uniqueRemoteChild(parent, ".${target.name}.af-backup")
         var backupMade = false
+        var publicationVerified = false
         try {
             writeRemoteFile(temporary, session.workingFile.inputStream(), EditLimits.MAX_FILE_BYTES)
             val temporaryRevision = requireNotNull(revisionOrNull(temporary)) { "Laikinos kopijos patikrinti nepavyko" }
@@ -372,13 +400,40 @@ class PrivilegedFileRepository(
                     return EditSaveResult.Conflict(EditConflict(origin.label, session.originRevision, latest))
                 }
             }
+            if (originalMetadata != null) {
+                val latestMetadata = PrivilegedFileMetadata.decode(metadataService.readFileMetadata(target.path))
+                require(originalMetadata.sameEntry(latestMetadata) && originalMetadata.sameSecurity(latestMetadata)) {
+                    "Failas pasikeitė"
+                }
+                metadataService.applyFileMetadata(temporary.path, originalMetadata.encode())
+            }
+            val stagedMetadata = PrivilegedFileMetadata.decode(metadataService.readFileMetadata(temporary.path))
             if (target.exists()) {
-                require(target.renameTo(backup)) { "Pradinio failo atsarginės kopijos sukurti nepavyko" }
+                // Keep the original name until replacement. On legacy emulated-storage
+                // mounts, moving it away can leave another view attached to its old inode.
+                writeRemoteFile(backup, privilegedInput(target), EditLimits.MAX_FILE_BYTES)
+                require(current?.hasSameContent(revisionOrNull(backup)) == true) { "Pradinio failo atsarginės kopijos sukurti nepavyko" }
+                if (originalMetadata != null) {
+                    metadataService.applyFileMetadata(backup.path, originalMetadata.encode())
+                    require(originalMetadata.sameSecurity(PrivilegedFileMetadata.decode(metadataService.readFileMetadata(backup.path)))) {
+                        "Pradinio failo atsarginės kopijos sukurti nepavyko"
+                    }
+                }
                 backupMade = true
+                require(current?.hasSameContent(revisionOrNull(target)) == true) { "Failas pasikeitė" }
+                if (originalMetadata != null) {
+                    val latestMetadata = PrivilegedFileMetadata.decode(metadataService.readFileMetadata(target.path))
+                    require(originalMetadata.sameEntry(latestMetadata) && originalMetadata.sameSecurity(latestMetadata)) { "Failas pasikeitė" }
+                }
             }
             require(temporary.renameTo(target)) { "Redaguoto failo įrašyti nepavyko" }
             val verified = requireNotNull(revisionOrNull(target)) { "Išsaugoto failo patikrinti nepavyko" }
             require(session.workingRevision.hasSameContent(verified)) { "Išsaugoto failo turinys neatitinka" }
+            val publishedMetadata = PrivilegedFileMetadata.decode(metadataService.readFileMetadata(target.path))
+            require(stagedMetadata.sameEntry(publishedMetadata) && stagedMetadata.sameSecurity(publishedMetadata)) {
+                "Išsaugoto failo patikrinti nepavyko"
+            }
+            publicationVerified = true
             if (backupMade) require(backup.delete()) { "Failas išsaugotas, bet laikinos atsarginės kopijos pašalinti nepavyko" }
             return EditSaveResult.Saved(verified)
         } catch (error: Throwable) {
@@ -386,7 +441,7 @@ class PrivilegedFileRepository(
             throw error
         } finally {
             if (temporary.exists()) runCatching { temporary.delete() }
-            if (backup.exists() && target.exists()) runCatching { backup.delete() }
+            if (publicationVerified && backup.exists() && target.exists()) runCatching { backup.delete() }
         }
     }
 
@@ -418,7 +473,7 @@ class PrivilegedFileRepository(
     private fun resolveRemoteTarget(parent: ExtendedFile, name: String, policy: ConflictPolicy): ExtendedFile? {
         val requested = parent.getChildFile(FileSystemRules.validateFileName(name).getOrThrow())
         PrivilegedPathRules.requireWithinAllowed(requested.absolutePath, allowedRoots, allowRoot = false)
-        require(!requested.exists() || !requested.isSymlink) { "Simbolinės nuorodos negali būti perrašomos" }
+        require(!requested.isSymlink) { "Simbolinės nuorodos negali būti perrašomos" }
         if (requested.exists()) canonicalContained(requested, allowRoot = false)
         if (!requested.exists()) return requested
         return when (policy) {
@@ -450,7 +505,7 @@ class PrivilegedFileRepository(
         val extension = dot?.let { name.substring(it) }.orEmpty()
         for (index in 1..MAX_KEEP_BOTH_ATTEMPTS) {
             val candidate = parent.getChildFile("$base ($index)$extension")
-            if (!candidate.exists()) return candidate
+            if (!candidate.exists() && !candidate.isSymlink) return candidate
         }
         error("Nepavyko rasti laisvo pavadinimo")
     }
@@ -460,7 +515,7 @@ class PrivilegedFileRepository(
             val safePrefix = prefix.take(120).replace('/', '_')
             val candidate = parent.getChildFile("$safePrefix-${UUID.randomUUID()}")
             PrivilegedPathRules.requireWithinAllowed(candidate.absolutePath, allowedRoots, allowRoot = false)
-            if (!candidate.exists()) return candidate
+            if (!candidate.exists() && !candidate.isSymlink) return candidate
         }
         error("Nepavyko sukurti unikalaus laikino kelio")
     }
@@ -469,12 +524,12 @@ class PrivilegedFileRepository(
         visit(source, depth, counter, operation)
         if (source.isSymlink) throw SecurityException("Simbolinės nuorodos nekopijuojamos")
         if (source.isDirectory) {
-            require(target.mkdir()) { "Aplanko kopijos sukurti nepavyko" }
+            access.fileMetadataServiceOrThrow().createPrivateEntry(target.path, true)
             source.listFiles()?.forEach { child -> copyRemoteTree(child, target.getChildFile(child.name), operation, depth + 1, counter) }
                 ?: throw SecurityException("Aplankas neperskaitomas")
         } else {
-            writeRemoteFile(target, source.newInputStream(), source.length().coerceAtLeast(0))
-            operation.progress(byteDelta = source.length().coerceAtLeast(0), currentName = source.name)
+            require(source.isFile) { "Source file is not available" }
+            writeRemoteOperationFile(target, privilegedInput(source), source.length().coerceAtLeast(0), operation, source.name)
         }
     }
 
@@ -484,12 +539,12 @@ class PrivilegedFileRepository(
         counter.add()
         require(!Files.isSymbolicLink(source.toPath())) { "Simbolinės nuorodos nekopijuojamos" }
         if (source.isDirectory) {
-            require(target.mkdir()) { "Aplanko kopijos sukurti nepavyko" }
+            access.fileMetadataServiceOrThrow().createPrivateEntry(target.path, true)
             source.listFiles()?.forEach { child -> copyLocalTree(child, target.getChildFile(child.name), operation, depth + 1, counter) }
                 ?: throw SecurityException("Vietinis aplankas neperskaitomas")
         } else {
-            writeRemoteFile(target, source.inputStream(), source.length().coerceAtLeast(0))
-            operation.progress(byteDelta = source.length().coerceAtLeast(0), currentName = source.name)
+            require(source.isFile) { "Source file is not available" }
+            writeRemoteOperationFile(target, source.inputStream(), source.length().coerceAtLeast(0), operation, source.name)
         }
     }
 
@@ -501,30 +556,50 @@ class PrivilegedFileRepository(
             source.listFiles()?.forEach { child -> copyRemoteToLocalTree(child, File(target, child.name), operation, depth + 1, counter) }
                 ?: throw SecurityException("Aplankas neperskaitomas")
         } else {
+            require(source.isFile) { "Source file is not available" }
             FileOutputStream(target).use { fileOutput ->
-                source.newInputStream().buffered().use { input -> copyBounded(input, fileOutput, source.length().coerceAtLeast(0), operation) }
+                privilegedInput(source).buffered().use { input ->
+                    copyBounded(input, fileOutput, source.length().coerceAtLeast(0),
+                        beforeRead = { operation.checkpoint() },
+                        onChunk = { operation.progress(byteDelta = it.toLong(), currentName = source.name) })
+                }
                 fileOutput.fd.sync()
             }
         }
     }
 
     private fun writeRemoteFile(target: ExtendedFile, source: InputStream, maximumBytes: Long) {
-        target.newOutputStream().buffered().use { output ->
-            source.buffered().use { input -> copyBounded(input, output, maximumBytes, null) }
-            output.flush()
+        source.buffered().use { input ->
+            PrivilegedWriteOutputStream(access.fileMetadataServiceOrThrow(), target.path).buffered().use { output ->
+                copyBounded(input, output, maximumBytes)
+                output.flush()
+            }
         }
     }
 
-    private fun copyBounded(input: InputStream, output: OutputStream, maximumBytes: Long, operation: OperationContext?): Long {
+    private suspend fun writeRemoteOperationFile(target: ExtendedFile, source: InputStream, maximumBytes: Long,
+        operation: OperationContext, name: String) {
+        source.buffered().use { input ->
+            PrivilegedWriteOutputStream(access.fileMetadataServiceOrThrow(), target.path).buffered().use { output ->
+                copyBounded(input, output, maximumBytes, beforeRead = { operation.checkpoint() },
+                    onChunk = { operation.progress(byteDelta = it.toLong(), currentName = name) })
+                output.flush()
+            }
+        }
+    }
+
+    private inline fun copyBounded(input: InputStream, output: OutputStream, maximumBytes: Long,
+        beforeRead: () -> Unit = {}, onChunk: (Int) -> Unit = {}): Long {
         var total = 0L
         val buffer = ByteArray(COPY_BUFFER)
         while (true) {
+            beforeRead()
             val read = input.read(buffer)
             if (read < 0) break
             total = Math.addExact(total, read.toLong())
             require(total <= maximumBytes) { "Failas pasikeitė arba viršijo leistiną dydį" }
             output.write(buffer, 0, read)
-            operation?.progress(byteDelta = read.toLong())
+            onChunk(read)
         }
         return total
     }
@@ -551,17 +626,71 @@ class PrivilegedFileRepository(
         operation.progress(itemDelta = 1, byteDelta = bytes, currentName = file.name)
     }
 
-    private suspend fun deleteLocalTree(root: File, file: File, operation: OperationContext, depth: Int, counter: Counter) {
+    /** Explicitly approved destination replacement, never copied-move source cleanup. */
+    private suspend fun deleteReplacedLocalTree(root: File, file: File, operation: OperationContext, depth: Int, counter: Counter) {
         require(depth <= PrivilegedPathRules.MAX_DEPTH) { "Per gilus aplankų medis" }
         operation.checkpoint()
         counter.add()
         require(!Files.isSymbolicLink(file.toPath())) { "Simbolinės nuorodos nešalinamos perkeliant" }
-        val rootPath = root.canonicalFile.toPath()
-        val path = file.canonicalFile.toPath()
-        require(path.startsWith(rootPath)) { "Trynimo kelias išeina už pasirinkto elemento" }
-        if (file.isDirectory) file.listFiles()?.forEach { child -> deleteLocalTree(root, child, operation, depth + 1, counter) }
+        require(file.canonicalFile.toPath().startsWith(root.canonicalFile.toPath())) { "Trynimo kelias išeina už pasirinkto elemento" }
+        if (file.isDirectory) file.listFiles()?.forEach { child -> deleteReplacedLocalTree(root, child, operation, depth + 1, counter) }
             ?: throw SecurityException("Vietinis aplankas neperskaitomas")
         require(file.delete()) { "Pašalinti nepavyko: ${file.name}" }
+    }
+
+    /** One cleanup owner for local→root, root→local and copied root→root moves. */
+    private suspend fun deleteVerifiedMoveSource(source: File, target: File, operation: OperationContext) {
+        operation.note("SHA-256")
+        val sourceRoot = source.canonicalPath
+        val targetRoot = target.canonicalPath
+        val counter = Counter()
+        fun isLink(file: File): Boolean = if (file is ExtendedFile) file.isSymlink else Files.isSymbolicLink(file.toPath())
+        fun child(parent: File, name: String): File = if (parent is ExtendedFile) parent.getChildFile(name) else File(parent, name)
+        fun input(file: File): InputStream = if (file is ExtendedFile) privilegedInput(file) else file.inputStream()
+        fun contained(file: File, root: String): Boolean = file.canonicalPath.let { it == root || it.startsWith("$root/") }
+        suspend fun digest(file: File): ByteArray {
+            val hash = MessageDigest.getInstance("SHA-256")
+            val expected = file.length()
+            var readBytes = 0L
+            input(file).buffered().use { stream ->
+                val buffer = ByteArray(COPY_BUFFER)
+                while (true) {
+                    operation.checkpoint()
+                    val count = stream.read(buffer)
+                    if (count < 0) break
+                    readBytes = Math.addExact(readBytes, count.toLong())
+                    require(readBytes <= expected) { "Galutinė kopijos patikra nepavyko" }
+                    hash.update(buffer, 0, count)
+                }
+            }
+            require(readBytes == expected) { "Galutinė kopijos patikra nepavyko" }
+            return hash.digest()
+        }
+        suspend fun removeVerified(file: File, copy: File, depth: Int) {
+            operation.checkpoint()
+            counter.add()
+            require(depth <= PrivilegedPathRules.MAX_DEPTH && !isLink(file) && !isLink(copy) &&
+                contained(file, sourceRoot) && contained(copy, targetRoot) && file.exists() && copy.exists() &&
+                file.isDirectory == copy.isDirectory && file.isFile == copy.isFile) { "Galutinė kopijos patikra nepavyko" }
+            if (file.isDirectory) {
+                val children = requireNotNull(file.listFiles()) { "Galutinė kopijos patikra nepavyko" }
+                // A child added after publication has no matching verified copy and is kept.
+                children.forEach { removeVerified(it, child(copy, it.name), depth + 1) }
+            } else {
+                require(file.isFile && file.length() == copy.length()) { "Galutinė kopijos patikra nepavyko" }
+                val sourceSize = file.length()
+                val sourceModified = file.lastModified()
+                val targetModified = copy.lastModified()
+                val sourceHash = digest(file)
+                val targetHash = digest(copy)
+                require(MessageDigest.isEqual(sourceHash, targetHash) && !isLink(file) && !isLink(copy) &&
+                    file.length() == sourceSize && copy.length() == sourceSize &&
+                    file.lastModified() == sourceModified && copy.lastModified() == targetModified) { "Galutinė kopijos patikra nepavyko" }
+            }
+            // A later extra child makes this leaf-only directory delete fail safely.
+            require(file.delete()) { "Galutinė kopijos patikra nepavyko" }
+        }
+        removeVerified(source, target, 0)
     }
 
     private fun equalTree(left: ExtendedFile, right: ExtendedFile, counter: Counter): Boolean {
@@ -596,7 +725,7 @@ class PrivilegedFileRepository(
         require(file.isFile) { "Pradinis kelias nėra failas" }
         val digest = MessageDigest.getInstance("SHA-256")
         var size = 0L
-        file.newInputStream().buffered().use { input ->
+        privilegedInput(file).buffered().use { input ->
             val buffer = ByteArray(COPY_BUFFER)
             while (true) {
                 val read = input.read(buffer)

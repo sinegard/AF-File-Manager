@@ -367,9 +367,7 @@ class LanWebDavServer(
         // URLDecoder follows HTML-form rules and would otherwise turn a literal '+' in a path into a space.
         val encodedPath = rawPath.substringBefore('?').replace("+", "%2B")
         val decoded = URLDecoder.decode(encodedPath, StandardCharsets.UTF_8.name()).trimStart('/')
-        val candidate = File(root, decoded).canonicalFile
-        require(FileSystemRules.isContained(root, candidate)) { "Kelias išeina už pasirinkto katalogo" }
-        return candidate
+        return FileSystemRules.containedNonSymbolicPath(root, File(root, decoded))
     }
 
     private fun copyBounded(source: File, target: File, counter: Counter, depth: Int = 0) {

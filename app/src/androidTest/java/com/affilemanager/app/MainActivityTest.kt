@@ -1,5 +1,7 @@
 package com.affilemanager.app
 
+import androidx.compose.ui.semantics.getOrNull
+
 import android.graphics.Bitmap
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.toArgb
@@ -70,6 +73,29 @@ class MainActivityTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
+    @get:Rule(order = 1)
+    val auditFailureEvidence = object : org.junit.rules.TestWatcher() {
+        override fun failed(error: Throwable, description: org.junit.runner.Description) {
+            runCatching {
+                val root = File(compose.activity.getExternalFilesDir("validation"), "main-activity-failures").apply { check(mkdirs() || isDirectory) }
+                InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { image ->
+                    try { File(root, "${description.methodName}.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+                    finally { image.recycle() }
+                }
+                val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
+                File(root, "${description.methodName}.json").writeText(org.json.JSONObject()
+                    .put("interfaceScalePercent", vm.appearanceSettings.value.interfaceScalePercent)
+                    .put("homeColumns", vm.filesHomeDisplaySettings.value.gridColumns)
+                    .put("storageColumns", vm.storageHomeDisplaySettings.value.gridColumns)
+                    .put("leftSort", vm.leftPanel.value.sortMode.name)
+                    .put("leftDirection", vm.leftPanel.value.sortDirection.name)
+                    .put("leftNames", org.json.JSONArray(vm.leftPanel.value.entries.map { it.name }))
+                    .put("screenWidth", compose.activity.resources.displayMetrics.widthPixels)
+                    .put("screenHeight", compose.activity.resources.displayMetrics.heightPixels).toString(2))
+            }.onFailure { android.util.Log.e("AFMainAudit", "Could not capture failure diagnostics: ${it.javaClass.simpleName}") }
+        }
+    }
+
     @Before
     fun useEnglishForEveryTest() {
         compose.runOnUiThread {
@@ -78,6 +104,29 @@ class MainActivityTest {
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Files").fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    private fun openAppearanceSettings() {
+        compose.onNodeWithTag("nav_tools").performClick()
+        if (compose.onAllNodesWithTag("change_language").fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag("settings_section_appearance").performScrollTo().performClick()
+        }
+        compose.onNodeWithTag("change_language").performScrollTo().assertIsDisplayed()
+    }
+
+    private fun clickVisibleTag(tag: String) {
+        val node = compose.onNodeWithTag(tag)
+        if (runCatching { node.assertIsDisplayed() }.isFailure) node.performScrollTo()
+        node.assertIsDisplayed().performClick()
+    }
+
+    private fun scrollDialogToText(dialogTag: String, text: String, scrollTag: String = dialogTag) {
+        repeat(6) {
+            if (runCatching { compose.onNodeWithText(text).assertIsDisplayed() }.isSuccess) return
+            compose.onNodeWithTag(scrollTag).performTouchInput { swipeUp() }
+            compose.waitForIdle()
+        }
+        compose.onNodeWithText(text).assertIsDisplayed()
     }
 
     @Test
@@ -164,16 +213,16 @@ class MainActivityTest {
     fun homeToolsUseDedicatedAfPagesAndSystemBackReturnsHome() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         compose.runOnUiThread { viewModel.showFilesHome() }
-        compose.onNodeWithText("Tools and security").assertIsDisplayed()
+        compose.onNodeWithText("Tools and security").performScrollTo().assertIsDisplayed()
 
-        compose.onNodeWithTag("home_tool_favorites").performClick()
+        compose.onNodeWithTag("home_tool_favorites").performScrollTo().assertIsDisplayed().performClick()
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == HomeToolPage.FAVORITES }
         compose.onNodeWithTag("home_tools_page_favorites").assertIsDisplayed()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == null }
         compose.onNodeWithText("File locations").assertIsDisplayed()
 
-        compose.onNodeWithTag("home_tool_tags").performClick()
+        compose.onNodeWithTag("home_tool_tags").performScrollTo().assertIsDisplayed().performClick()
         compose.waitUntil(timeoutMillis = 5_000) { viewModel.homeToolPage.value == HomeToolPage.TAGS }
         compose.onNodeWithTag("home_tools_page_tags").assertIsDisplayed()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
@@ -240,9 +289,15 @@ class MainActivityTest {
             val bounds = dialog.fetchSemanticsNode().boundsInRoot
             val metrics = compose.activity.resources.displayMetrics
             val maxWidth = minOf(metrics.widthPixels.toFloat(), 760f * metrics.density)
-            assertTrue(bounds.width in (maxWidth * 0.90f)..maxWidth)
-            assertTrue(bounds.height in (180f * metrics.density)..(metrics.heightPixels * 0.80f))
-            compose.onNodeWithText("Unchanged").assertIsDisplayed()
+            assertTrue("Tag dialog width=$bounds screen=${metrics.widthPixels}x${metrics.heightPixels}", bounds.width in (maxWidth * 0.90f)..maxWidth)
+            val visibleFrame = android.graphics.Rect().also(compose.activity.window.decorView::getWindowVisibleDisplayFrame)
+            assertTrue("Tag dialog must stay within the shared 92% usable-window policy: $bounds / $visibleFrame",
+                bounds.height in (180f * metrics.density)..(visibleFrame.height() * 0.92f + 2f))
+            for (index in 0..4) {
+                val color = compose.onNodeWithTag("tag_color_$index").performScrollTo().assertIsDisplayed()
+                assertTrue("A color choice collapsed into a sliver", color.fetchSemanticsNode().boundsInRoot.width >= 40f * metrics.density)
+            }
+            scrollDialogToText("tag_dialog", "Unchanged", "tag_dialog_content")
             compose.onNodeWithText("Cancel").assertIsDisplayed()
             compose.runOnIdle {
                 assertEquals(setOf(target.absolutePath), viewModel.leftPanel.value.selectedPaths)
@@ -397,9 +452,10 @@ class MainActivityTest {
     fun shareDestinationOffersWebFtpAndWebDav() {
         compose.onNodeWithText("Share").performClick()
         compose.onNodeWithText("Share with a computer").assertIsDisplayed()
-        compose.onNodeWithText("Web").assertIsDisplayed()
-        compose.onNodeWithText("FTP").assertIsDisplayed()
-        compose.onNodeWithText("WebDAV").assertIsDisplayed()
+        for (protocol in listOf("Web", "FTP", "WebDAV")) {
+            compose.onNodeWithTag("sharing_list").performScrollToNode(hasText(protocol))
+            compose.onNodeWithText(protocol).assertIsDisplayed()
+        }
         compose.onNodeWithTag("sharing_list").performScrollToNode(hasText("Start sharing"))
         compose.onNodeWithText("Start sharing").assertIsDisplayed()
     }
@@ -416,7 +472,7 @@ class MainActivityTest {
             compose.runOnUiThread {
                 viewModel.selectPaths(PanelId.LEFT, files.map(File::getAbsolutePath))
             }
-            compose.onNodeWithContentDescription("Move to trash").performClick()
+            compose.onNodeWithContentDescription("Move to trash").performScrollTo().assertIsDisplayed().performClick()
             compose.onNodeWithTag("delete_confirmation_dialog").assertIsDisplayed()
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onNodeWithTag("confirm_delete").fetchSemanticsNode().config
@@ -460,13 +516,13 @@ class MainActivityTest {
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithTag("nearby_join_wifi_direct").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("nearby_join_wifi_direct").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_join_wifi_direct").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("nearby_back_or_cancel").performClick()
         compose.onNodeWithTag("nearby_back_or_cancel").performClick()
 
         compose.onNodeWithText("Receive").performClick()
         compose.onNodeWithTag("nearby_receive_dialog").assertIsDisplayed()
-        compose.onNodeWithTag("nearby_receive_wifi_direct").assertIsDisplayed()
+        compose.onNodeWithTag("nearby_receive_wifi_direct").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("nearby_receive_close").performClick()
     }
 
@@ -641,22 +697,38 @@ class MainActivityTest {
     @Test
     fun languageCanSwitchToLithuanianAndBackToEnglish() {
         try {
-            compose.onNodeWithText("More").performClick()
+            openAppearanceSettings()
             compose.onNodeWithText("Language").fetchSemanticsNode()
             compose.onNodeWithTag("change_language").performClick()
-            compose.onNodeWithTag("language_search").performTextInput("Arabic")
+            compose.onNodeWithTag("language_search").performClick().performTextReplacement("Arabic")
+            compose.waitUntil(5_000) {
+                compose.onNodeWithTag("language_search").fetchSemanticsNode().config
+                    .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.EditableText)?.text == "Arabic"
+            }
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(250, 5000)
+            val frame = requireNotNull(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            try {
+                java.io.FileOutputStream(File(compose.activity.getExternalFilesDir("validation"), "language-picker-search.png")).use {
+                    check(frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+                }
+            } finally { frame.recycle() }
             compose.onNodeWithTag("language_option_ar").assertIsDisplayed()
             compose.onNodeWithTag("language_search").performTextReplacement("Lithuanian")
+            compose.waitUntil(5_000) { compose.onAllNodesWithTag("language_option_ar").fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithTag("language_option_lt").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 compose.onAllNodesWithText("Daugiau").fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithText("Daugiau").performClick()
+            openAppearanceSettings()
             compose.onNodeWithText("Kalba").fetchSemanticsNode()
             compose.onNodeWithText("Įrankiai ir saugumas").fetchSemanticsNode()
             compose.onNodeWithTag("change_language").performClick()
-            compose.onNodeWithTag("language_search").performTextInput("English")
+            compose.onNodeWithTag("language_search").performClick().performTextReplacement("English")
+            compose.waitUntil(5_000) {
+                compose.onNodeWithTag("language_search").fetchSemanticsNode().config
+                    .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.EditableText)?.text == "English"
+            }
             compose.onNodeWithTag("language_option_en").performClick()
 
             compose.waitUntil(timeoutMillis = 5_000) {
@@ -673,9 +745,9 @@ class MainActivityTest {
     fun appearanceControlsApplyThemePaletteAndAmoledSetting() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         try {
-            compose.onNodeWithText("More").performClick()
+            openAppearanceSettings()
             compose.onNodeWithTag("appearance_settings").performScrollTo()
-            compose.onNodeWithTag("theme_mode_dark").performClick()
+            clickVisibleTag("theme_mode_dark")
             compose.onNodeWithTag("palette_material_blue").performScrollTo().performClick()
             compose.onNodeWithTag("amoled_black").performScrollTo().performClick()
 
@@ -772,8 +844,8 @@ class MainActivityTest {
             compose.onNodeWithTag("display_grid_columns_3").fetchSemanticsNode()
             compose.onNodeWithTag("display_grid_columns_4").fetchSemanticsNode()
             compose.onNodeWithTag("display_grid_columns_5").fetchSemanticsNode()
-            compose.onNodeWithTag("display_grid_columns_6").performClick()
-            compose.onNodeWithTag("display_apply").performClick()
+            clickVisibleTag("display_grid_columns_6")
+            clickVisibleTag("display_apply")
 
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.filesHomeDisplaySettings.value.gridColumns == 6 &&
@@ -869,25 +941,25 @@ class MainActivityTest {
             }
 
             compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
-            compose.onNodeWithTag("display_sort_size").performClick()
-            compose.onNodeWithTag("display_sort_descending").performClick()
-            compose.onNodeWithTag("display_apply").performClick()
+            clickVisibleTag("display_sort_size")
+            clickVisibleTag("display_sort_descending")
+            clickVisibleTag("display_apply")
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.leftPanel.value.entries.map(FileEntry::name) == listOf(largePdf.name, mediumCsv.name, smallText.name)
             }
 
             compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
-            compose.onNodeWithTag("display_sort_modified").performClick()
-            compose.onNodeWithTag("display_sort_ascending").performClick()
-            compose.onNodeWithTag("display_apply").performClick()
+            clickVisibleTag("display_sort_modified")
+            clickVisibleTag("display_sort_ascending")
+            clickVisibleTag("display_apply")
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.leftPanel.value.entries.map(FileEntry::name) == listOf(mediumCsv.name, smallText.name, largePdf.name)
             }
 
             compose.onNodeWithTag("directory_layout_local_LEFT").performTouchInput { longClick() }
-            compose.onNodeWithTag("display_sort_type").performClick()
-            compose.onNodeWithTag("display_sort_ascending").performClick()
-            compose.onNodeWithTag("display_apply").performClick()
+            clickVisibleTag("display_sort_type")
+            clickVisibleTag("display_sort_ascending")
+            clickVisibleTag("display_apply")
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.leftPanel.value.entries.map(FileEntry::name) == listOf(mediumCsv.name, largePdf.name, smallText.name)
             }
@@ -922,8 +994,8 @@ class MainActivityTest {
             }
 
             assertEquals(listOf(64L, 4L, 128L), viewModel.leftPanel.value.entries.map(FileEntry::sizeBytes))
-            compose.onNodeWithTag("file_size_bar_${largeFolder.absolutePath.hashCode()}").assertIsDisplayed()
-            compose.onNodeWithTag("file_size_bar_${rootFile.absolutePath.hashCode()}").assertIsDisplayed()
+            compose.onNodeWithTag("file_size_bar_${largeFolder.absolutePath.hashCode()}").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("file_size_bar_${rootFile.absolutePath.hashCode()}").performScrollTo().assertIsDisplayed()
         } finally {
             directory.deleteRecursively()
         }
@@ -982,7 +1054,8 @@ class MainActivityTest {
             compose.onNodeWithTag("create_type_file").assertIsNotSelected()
             compose.onNodeWithTag("create_archive_format_ZIP").assertIsSelected()
             compose.onNodeWithTag("create_item_name").performTextInput(archiveBaseName)
-            compose.onNodeWithText("Create").performClick()
+            scrollDialogToText("create_item_dialog", "Create")
+            compose.onNodeWithText("Create").assertIsDisplayed().performClick()
 
             compose.waitUntil(timeoutMillis = 10_000) { archive.isFile }
             ZipFile(archive).use { zip -> assertFalse(zip.entries().hasMoreElements()) }
@@ -1079,13 +1152,13 @@ class MainActivityTest {
                 viewModel.selectPaths(PanelId.LEFT, listOf(folder.absolutePath, file.absolutePath))
             }
 
-            compose.onNodeWithTag("selection_info_local").performClick()
+            clickVisibleTag("selection_info_local")
             compose.waitUntil(timeoutMillis = 10_000) {
                 compose.onAllNodesWithTag("file_info_loading").fetchSemanticsNodes().isEmpty()
             }
-            compose.onNodeWithTag("file_info_files").assertIsDisplayed()
-            compose.onNodeWithTag("file_info_folders").assertIsDisplayed()
-            compose.onNodeWithTag("file_info_size").assertIsDisplayed()
+            compose.onNodeWithTag("file_info_files").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("file_info_folders").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("file_info_size").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("Selected").assertIsDisplayed()
         } finally {
             directory.deleteRecursively()
@@ -1157,7 +1230,7 @@ class MainActivityTest {
     fun addedPalettesAreSelectableRatherThanForced() {
         val viewModel = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         try {
-            compose.onNodeWithText("More").performClick()
+            openAppearanceSettings()
             listOf(
                 "palette_aura" to AppColorPalette.AURA,
                 "palette_tokyo" to AppColorPalette.TOKYO,
@@ -1181,11 +1254,8 @@ class MainActivityTest {
                 viewModel.setColorPalette(AppColorPalette.DYNAMIC)
             }
             val lightColors = dynamicLightColorScheme(compose.activity)
-            val expectedLight = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                lightColors.background.toArgb()
-            } else {
-                lightColors.surfaceContainer.toArgb()
-            }
+            // captureToImage is the Compose content, not the Android system gesture bar.
+            val expectedLight = lightColors.surfaceContainer.toArgb()
             compose.waitUntil(timeoutMillis = 5_000) {
                 val settings = viewModel.appearanceSettings.value
                 settings.themeMode == AppThemeMode.LIGHT && settings.colorPalette == AppColorPalette.DYNAMIC
@@ -1203,11 +1273,7 @@ class MainActivityTest {
 
             compose.runOnUiThread { viewModel.setThemeMode(AppThemeMode.DARK) }
             val darkColors = dynamicDarkColorScheme(compose.activity)
-            val expectedDark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                darkColors.background.toArgb()
-            } else {
-                darkColors.surfaceContainer.toArgb()
-            }
+            val expectedDark = darkColors.surfaceContainer.toArgb()
             compose.waitUntil(timeoutMillis = 5_000) {
                 viewModel.appearanceSettings.value.themeMode == AppThemeMode.DARK
             }

@@ -31,6 +31,26 @@ class FileSystemRulesTest {
         assertFalse(FileSystemRules.isContained(root, outside))
     }
 
+    @Test fun sharedPathResolverKeepsOrdinaryExistingAndNewPathsInsideTheChosenRoot() {
+        val root = temporaryFolder.newFolder("shared-safe")
+        val folder = File(root, "folder").apply { check(mkdir()) }
+        val file = File(folder, "file.txt").apply { writeText("kept") }
+        assertEquals(root.canonicalFile, FileSystemRules.containedNonSymbolicPath(root, root))
+        assertEquals(file.canonicalFile, FileSystemRules.containedNonSymbolicPath(root, file))
+        assertEquals(File(root, "new.txt").canonicalFile,
+            FileSystemRules.containedNonSymbolicPath(root, File(folder, "../new.txt")))
+        assertEquals("kept", file.readText())
+        assertFalse(File(root, "new.txt").exists())
+    }
+
+    @Test fun sharedPathResolverRejectsTraversalAndSamePrefixNeighborsWithoutCreatingAnything() {
+        val root = temporaryFolder.newFolder("shared")
+        for (candidate in listOf(File(root, "../outside.txt"), File(root.parentFile, "shared-other/file.txt"))) {
+            assertTrue(runCatching { FileSystemRules.containedNonSymbolicPath(root, candidate) }.isFailure)
+            assertFalse(candidate.exists())
+        }
+    }
+
     @Test
     fun keepBothPreservesExtension() {
         val root = temporaryFolder.root

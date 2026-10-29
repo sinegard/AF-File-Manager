@@ -616,33 +616,6 @@ internal fun FilesHome(
     var showBookmarks by remember { mutableStateOf(false) }
     val bookmarks = remember(customization.shortcuts) { customization.shortcuts.filter { !it.builtIn } }
     Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp).widthIn(max = 760.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    LText(
-                        "Failų vietos",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(onClick = onOpenSystemFiles, modifier = Modifier.testTag("open_system_files")) {
-                        Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Atidaryti Android sistemos failus"))
-                    }
-                    IconButton(onClick = onCustomizeHome, modifier = Modifier.testTag("home_customize_direct")) {
-                        Icon(Icons.Rounded.Edit, contentDescription = uiText("Tvarkyti pradžios ekraną"))
-                    }
-                }
-                LText(
-                    "Pasirinkite saugyklą, kategoriją arba dažną vietą.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
         AfPullToRefresh(
             isRefreshing = recentFilesLoading,
             onRefresh = onRefreshRecent,
@@ -657,6 +630,7 @@ internal fun FilesHome(
                     modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+            HomeLocationsHeader(onOpenSystemFiles, onCustomizeHome)
             customization.sectionOrder.filterNot(customization.hiddenSections::contains).forEach { section ->
                 when (section) {
                     HomeSection.RECENT_FILES -> if (visibility.isVisible(OptionalFeature.RECENT)) RecentFilesHomeSection(
@@ -1129,6 +1103,55 @@ private fun RecentFilesHomeSection(
             items(recentFiles.take(8), key = { it.entry.absolutePath }) { item ->
                 RecentFileCard(item = item, onOpen = { onOpen(item.entry) })
             }
+        }
+    }
+}
+
+@Composable
+private fun HomeLocationsHeader(onOpenSystemFiles: () -> Unit, onCustomizeHome: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val title = uiText("Failų vietos")
+                val style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold)
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+                val titleWidth = with(density) { (maxWidth - 96.dp).roundToPx().coerceAtLeast(1) }
+                val inlineTitle = measurer.measure(title, style, maxLines = 2,
+                    constraints = androidx.compose.ui.unit.Constraints(maxWidth = titleWidth))
+                val splitsWord = (0 until inlineTitle.lineCount - 1).any { line ->
+                    val end = inlineTitle.getLineEnd(line, visibleEnd = true)
+                    end > 0 && inlineTitle.getWordBoundary(end - 1).end > end
+                }
+                val separateActions = inlineTitle.hasVisualOverflow || splitsWord
+                val actions: @Composable () -> Unit = {
+                    Row(Modifier.testTag("home_header_actions")) {
+                        IconButton(onClick = onOpenSystemFiles, modifier = Modifier.size(48.dp).testTag("open_system_files")) {
+                            Icon(Icons.Rounded.FolderOpen, contentDescription = uiText("Atidaryti Android sistemos failus"))
+                        }
+                        IconButton(onClick = onCustomizeHome, modifier = Modifier.size(48.dp).testTag("home_customize_direct")) {
+                            Icon(Icons.Rounded.Edit, contentDescription = uiText("Tvarkyti pradžios ekraną"))
+                        }
+                    }
+                }
+                if (separateActions) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(title, style = style, modifier = Modifier.fillMaxWidth().testTag("home_locations_heading"))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { actions() }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(title, style = style, modifier = Modifier.weight(1f).testTag("home_locations_heading"))
+                        actions()
+                    }
+                }
+            }
+            LText("Pasirinkite saugyklą, kategoriją arba dažną vietą.", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

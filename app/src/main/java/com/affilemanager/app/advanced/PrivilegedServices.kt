@@ -11,6 +11,7 @@ import com.topjohnwu.superuser.nio.FileSystemManager
 @Keep
 class ShizukuFileService : IPrivilegedFileService.Stub {
     private val terminalHost = PrivilegedTerminalHost()
+    private val writeHost = PrivilegedWriteHost()
 
     constructor()
 
@@ -38,8 +39,20 @@ class ShizukuFileService : IPrivilegedFileService.Stub {
 
     override fun forceStopPackage(packageName: String): Boolean = PrivilegedAppProcessTools.forceStopPackage(packageName)
 
+    override fun getFileMetadataVersion(): Int = PrivilegedFileMetadata.VERSION
+    override fun readFileMetadata(path: String): Array<String> = PrivilegedMetadataOperations.read(path)
+    override fun applyFileMetadata(path: String, metadata: Array<String>) = PrivilegedMetadataOperations.apply(path, metadata)
+    override fun createPrivateEntry(path: String, directory: Boolean) = PrivilegedMetadataOperations.create(path, directory)
+    override fun openPrivateWrite(path: String): Long = writeHost.open(path)
+    override fun writePrivateFile(handle: Long, source: ByteArray, length: Int): Int = writeHost.write(handle, source, length)
+    override fun finishPrivateWrite(handle: Long) = writeHost.finish(handle)
+    override fun abortPrivateWrite(handle: Long) = writeHost.abort(handle)
+    override fun getFileReadVersion(): Int = PrivilegedFileServiceProtocol.READ_VERSION
+    override fun openReadOnlyFile(path: String): android.os.ParcelFileDescriptor = PrivilegedMetadataOperations.openReadOnly(path)
+
     override fun destroy() {
         terminalHost.closeAll()
+        writeHost.closeAll()
         System.exit(0)
     }
 }
@@ -47,6 +60,7 @@ class ShizukuFileService : IPrivilegedFileService.Stub {
 @Keep
 class RootFileService : RootService() {
     private val terminalHost = PrivilegedTerminalHost()
+    private val writeHost = PrivilegedWriteHost()
     private val binder = object : IPrivilegedFileService.Stub() {
         override fun getFileSystemService(): IBinder = FileSystemManager.getService()
 
@@ -69,13 +83,25 @@ class RootFileService : RootService() {
 
         override fun forceStopPackage(packageName: String): Boolean = PrivilegedAppProcessTools.forceStopPackage(packageName)
 
-        override fun destroy() = terminalHost.closeAll()
+        override fun getFileMetadataVersion(): Int = PrivilegedFileMetadata.VERSION
+        override fun readFileMetadata(path: String): Array<String> = PrivilegedMetadataOperations.read(path)
+        override fun applyFileMetadata(path: String, metadata: Array<String>) = PrivilegedMetadataOperations.apply(path, metadata)
+        override fun createPrivateEntry(path: String, directory: Boolean) = PrivilegedMetadataOperations.create(path, directory)
+        override fun openPrivateWrite(path: String): Long = writeHost.open(path)
+        override fun writePrivateFile(handle: Long, source: ByteArray, length: Int): Int = writeHost.write(handle, source, length)
+        override fun finishPrivateWrite(handle: Long) = writeHost.finish(handle)
+        override fun abortPrivateWrite(handle: Long) = writeHost.abort(handle)
+        override fun getFileReadVersion(): Int = PrivilegedFileServiceProtocol.READ_VERSION
+        override fun openReadOnlyFile(path: String): android.os.ParcelFileDescriptor = PrivilegedMetadataOperations.openReadOnly(path)
+
+        override fun destroy() { terminalHost.closeAll(); writeHost.closeAll() }
     }
 
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onDestroy() {
         terminalHost.closeAll()
+        writeHost.closeAll()
         super.onDestroy()
     }
 }

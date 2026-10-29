@@ -497,7 +497,7 @@ private fun ReceiptDetail(
             receipt.errors.forEach { ErrorText(it) }
             receipt.items.take(50).forEach { item ->
                 Column {
-                    Text("${uiText(receiptItemStatusLabel(item.status))} · ${item.source.path}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                      Text("${uiText(receiptItemStatusLabel(item.status))} · ${item.source.displayLabel}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     item.destination?.let { Text("→ ${it.displayLabel}", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
             }

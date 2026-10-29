@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -96,6 +97,85 @@ class NearbyPairingActionLayoutTest {
         }
         assertEquals(8, sends)
         assertEquals(8, receives)
+    }
+
+    @Test fun groupAndReceiveActionsStayAlignedAndWrapAsWholeButtonsAtLargeFonts() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val language = mutableStateOf("en")
+        val scale = mutableStateOf(1f)
+        var groups = 0
+        compose.setContent {
+            val configuration = Configuration(context.resources.configuration).apply {
+                setLocales(LocaleList(Locale.forLanguageTag(language.value)))
+            }
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalContext provides context.createConfigurationContext(configuration),
+                LocalConfiguration provides configuration, LocalDensity provides Density(density.density, scale.value),
+                LocalLayoutDirection provides if (language.value == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr) {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp)) {
+                        Box(Modifier.width(284.dp).testTag("group_actions_bounds")) {
+                            NearbyMainActionButtons(true, {}, {}, onGroup = { groups++ })
+                        }
+                    }
+                }
+            }
+        }
+        for (locale in listOf("en", "lt", "de", "ar")) for (font in listOf(1f, 2f)) {
+            compose.runOnIdle { language.value = locale; scale.value = font }
+            compose.waitForIdle()
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(250, 3000)
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                val component = compose.onNodeWithTag("group_actions_bounds").captureToImage().asAndroidBitmap()
+                java.io.File(com.affilemanager.app.uiAuditDirectory(context), "sharing-group-component-$locale-$font.png")
+                    .outputStream().use { check(component.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+            }
+            val frame = requireNotNull(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            try { java.io.File(com.affilemanager.app.uiAuditDirectory(context), "sharing-group-before-$locale-$font.png")
+                .outputStream().use { check(frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
+            finally { frame.recycle() }
+            val bounds = compose.onNodeWithTag("group_actions_bounds").fetchSemanticsNode().boundsInRoot
+            val actions = listOf("nearby_main_send", "nearby_main_receive", "nearby_group_button").map { tag ->
+                compose.onNodeWithTag(tag).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.also {
+                    assertTrue("$locale/$font $tag leaves the viewport", it.left >= bounds.left - 1 && it.right <= bounds.right + 1)
+                }
+            }
+            assertFalse(actions[0].overlaps(actions[1]))
+            assertFalse(actions[1].overlaps(actions[2]))
+            if (font == 1f) {
+                assertEquals(actions[1].top, actions[2].top, 1f)
+                assertEquals(actions[1].width, actions[2].width, 1f)
+                assertEquals(actions[1].height, actions[2].height, 1f)
+            } else assertTrue(actions[2].top >= actions[1].bottom)
+            for (source in listOf("Siųsti", "Gauti", "Grupė")) {
+                val node = compose.onNodeWithText(UiTranslator.translate(source, locale), useUnmergedTree = true)
+                    .assertIsDisplayed().fetchSemanticsNode()
+                val layouts = mutableListOf<TextLayoutResult>()
+                assertTrue(node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts) == true)
+                assertTrue(layouts.isNotEmpty())
+                for (layout in layouts) {
+                    // Compose may retain the wider available paragraph box even
+                    // when Text wraps to its intrinsic width. Assert every actual
+                    // glyph line and the complete text, not that unused box.
+                    assertFalse("$locale/$font/$source exceeded its line limit", layout.multiParagraph.didExceedMaxLines)
+                    assertTrue("$locale/$font/$source lost trailing text",
+                        layout.getLineEnd(layout.lineCount - 1) == layout.layoutInput.text.length)
+                    val drawOrigin = if (layout.layoutInput.layoutDirection == LayoutDirection.Rtl)
+                        layout.size.width - layout.multiParagraph.width else 0f
+                    for (line in 0 until layout.lineCount) {
+                        assertTrue("$locale/$font/$source clips on the left", layout.getLineLeft(line) + drawOrigin >= -.5f)
+                        assertTrue("$locale/$font/$source clips on the right", layout.getLineRight(line) + drawOrigin <= layout.size.width + .5f)
+                        assertTrue("$locale/$font/$source clips vertically", layout.getLineBottom(line) <= layout.size.height + .5f)
+                    }
+                }
+            }
+            compose.onNodeWithTag("nearby_group_button").performClick()
+            val image = requireNotNull(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            try { java.io.File(com.affilemanager.app.uiAuditDirectory(context), "sharing-group-actions-$locale-$font.png")
+                .outputStream().use { check(image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
+            finally { image.recycle() }
+        }
+        assertEquals(8, groups)
     }
 
     @Test fun translatedPairingActionsKeepWholeButtonsAndReadableTextAtLargeFonts() {

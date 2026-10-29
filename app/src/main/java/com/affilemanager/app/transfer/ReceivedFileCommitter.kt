@@ -23,6 +23,15 @@ class ReceivedFileCommitter internal constructor(private val moveFile: (File, Fi
         expectedBytes: Long,
         checkpoint: () -> Unit,
         onFallback: (IOException) -> Unit,
+    ) = commitWithCopyDiagnostics(staging, target, expectedBytes, checkpoint, onFallback, {})
+
+    internal fun commitWithCopyDiagnostics(
+        staging: File,
+        target: File,
+        expectedBytes: Long,
+        checkpoint: () -> Unit,
+        onFallback: (IOException) -> Unit,
+        onCopyPhase: (TransferPhase) -> Unit,
     ) {
         require(expectedBytes >= 0 && staging != target)
         require(staging.parentFile.canonicalFile == target.parentFile.canonicalFile)
@@ -46,7 +55,7 @@ class ReceivedFileCommitter internal constructor(private val moveFile: (File, Fi
             checkpoint()
             onFallback(renameFailure)
             try {
-                copyNewAndVerify(staging, target, expectedBytes, checkpoint)
+                copyNewAndVerify(staging, target, expectedBytes, checkpoint, onCopyPhase)
             } catch (copyFailure: Exception) {
                 copyFailure.addSuppressed(renameFailure)
                 throw copyFailure
@@ -61,24 +70,29 @@ class ReceivedFileCommitter internal constructor(private val moveFile: (File, Fi
         if (!attributes.isRegularFile || attributes.size() != expectedBytes) throw IOException(TransferFailure.STORAGE.code)
     }
 
-    private fun copyNewAndVerify(staging: File, target: File, expectedBytes: Long, checkpoint: () -> Unit) {
+    private fun copyNewAndVerify(staging: File, target: File, expectedBytes: Long, checkpoint: () -> Unit,
+        onCopyPhase: (TransferPhase) -> Unit) {
         val buffer = ByteArray(NearbyTransferTuning.IO_BUFFER_BYTES)
         var created = false
         var targetKey: Any? = null
         var verified = false
         try {
             val digest = MessageDigest.getInstance("SHA-256")
+            onCopyPhase(TransferPhase.COMMIT_COPY_OPEN)
             FileChannel.open(target.toPath(), CREATE_NEW, WRITE, NOFOLLOW_LINKS).use { output ->
                 created = true
                 targetKey = attributes(target).fileKey()
+                onCopyPhase(TransferPhase.COMMIT_COPY_READ)
                 Files.newInputStream(staging.toPath(), READ, NOFOLLOW_LINKS).use { input ->
                     var remaining = expectedBytes
                     while (remaining > 0) {
                         checkpoint()
+                        onCopyPhase(TransferPhase.COMMIT_COPY_READ)
                         val count = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
                         if (count <= 0) throw IOException(TransferFailure.STORAGE.code)
                         digest.update(buffer, 0, count)
                         val bytes = ByteBuffer.wrap(buffer, 0, count)
+                        onCopyPhase(TransferPhase.COMMIT_COPY_WRITE)
                         while (bytes.hasRemaining()) {
                             checkpoint()
                             if (output.write(bytes) <= 0) throw IOException(TransferFailure.STORAGE.code)
@@ -88,9 +102,11 @@ class ReceivedFileCommitter internal constructor(private val moveFile: (File, Fi
                     }
                     if (input.read() != -1) throw IOException(TransferFailure.STORAGE.code)
                 }
+                onCopyPhase(TransferPhase.COMMIT_COPY_SYNC)
                 output.force(true)
             }
             checkpoint()
+            onCopyPhase(TransferPhase.COMMIT_COPY_VERIFY)
             val writtenDigest = MessageDigest.getInstance("SHA-256")
             Files.newInputStream(target.toPath(), READ, NOFOLLOW_LINKS).use { input ->
                 var remaining = expectedBytes

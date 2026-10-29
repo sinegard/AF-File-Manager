@@ -54,6 +54,8 @@ enum class TransferFailure(val code: String, val retryable: Boolean = false) {
 enum class TransferPhase(val code: String) {
     VALIDATE("validate"), SOURCE("source"), OPEN("open"), READ("read"), WRITE("write"),
     SYNC("sync"), COMMIT("commit"), COMMIT_COPY("commit_copy"), NOTIFY("notify"), RESPONSE("response"),
+    COMMIT_COPY_OPEN("commit_copy_open"), COMMIT_COPY_READ("commit_copy_read"),
+    COMMIT_COPY_WRITE("commit_copy_write"), COMMIT_COPY_SYNC("commit_copy_sync"), COMMIT_COPY_VERIFY("commit_copy_verify"),
     RECOVER("recover"), COMPLETE("complete"), CANCEL("cancel");
 }
 

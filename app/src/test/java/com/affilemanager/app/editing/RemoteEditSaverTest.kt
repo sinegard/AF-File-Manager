@@ -21,7 +21,7 @@ class RemoteEditSaverTest {
         val original = "server version".toByteArray()
         val changedElsewhere = "changed elsewhere".toByteArray()
         val remote = FakeRemoteClient("/notes.txt", original)
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-conflict"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-conflict"))
         val session = remoteSession(store, original)
         val edited = store.stageText(session, "my edit")
         remote.replace(changedElsewhere)
@@ -37,7 +37,7 @@ class RemoteEditSaverTest {
     fun explicitOverwriteUploadsAndVerifiesWorkingCopy() = runBlocking {
         val original = "server version".toByteArray()
         val remote = FakeRemoteClient("/notes.txt", original)
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-overwrite"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-overwrite"))
         val session = remoteSession(store, original)
         val edited = store.stageText(session, "my edit")
         remote.replace("changed elsewhere".toByteArray())
@@ -56,7 +56,7 @@ class RemoteEditSaverTest {
         val remote = FakeRemoteClient("/notes.txt", original).apply {
             add("/copy.txt", "occupied".toByteArray())
         }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-save-as"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-save-as"))
         val edited = store.stageText(remoteSession(store, original), "my edit")
         val saver = RemoteEditSaver(store)
 
@@ -92,7 +92,7 @@ class RemoteEditSaverTest {
         val remote = FakeRemoteClient("/notes.txt", original).apply {
             replaceOriginalAfterNextUpload(changedDuringSave)
         }
-        val store = EditSessionStore(temporaryFolder.newFolder("cache-race"))
+        val store = hostEditSessionStore(temporaryFolder.newFolder("cache-race"))
         val edited = store.stageText(remoteSession(store, original), "my edit")
 
         val result = RemoteEditSaver(store).saveOrigin(edited, remote, forceOverwrite = false)

@@ -89,7 +89,7 @@ class SafFileRepository(
     private fun JSONObject.optionalString(key: String): String? =
         if (!has(key) || isNull(key)) null else optString(key).takeIf(String::isNotBlank)
 
-    suspend fun addLocation(uri: Uri, title: String = ""): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun addLocation(uri: Uri, title: String = "", customTitle: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val permissionBefore = resolver.persistedUriPermissions.firstOrNull { it.uri == uri }
             try {
@@ -98,7 +98,8 @@ class SafFileRepository(
                     ?: throw IllegalArgumentException("Pasirinkta dokumentų vieta nepasiekiama")
                 require(root.isDirectory) { "Pasirinkta vieta nėra aplankas" }
                 val current = locations().toMutableList().apply { removeAll { it.uri == uri.toString() } }
-                current += describeLocation(uri, storedTitle = title.takeIf(String::isNotBlank))
+                current += describeLocation(uri, storedTitle = title.takeIf(String::isNotBlank),
+                    storedCustomTitle = customTitle?.let(SafLocationRules::normalizeTitle))
                 require(current.size <= MAX_LOCATIONS) { "Per daug pasirinktų vietų" }
                 writeLocations(current)
             } catch (error: Throwable) {
@@ -137,11 +138,38 @@ class SafFileRepository(
     suspend fun list(treeOrDirectoryUri: String): Result<List<SafEntry>> = withContext(Dispatchers.IO) {
         runCatching {
             val uri = Uri.parse(treeOrDirectoryUri)
-            val directory = document(uri)
-            require(directory.isDirectory) { "Tai nėra aplankas" }
-            val files = directory.listFiles()
-            require(files.size <= MAX_DIRECTORY_ENTRIES) { "Aplanke per daug elementų" }
-            files.map(::toEntry).sortedWith(compareByDescending<SafEntry> { it.directory }.thenBy { it.name.lowercase() })
+            val documentId = if (isTreeRootUri(uri)) DocumentsContract.getTreeDocumentId(uri) else DocumentsContract.getDocumentId(uri)
+            val parent = DocumentsContract.buildDocumentUriUsingTree(uri, documentId)
+            resolver.query(parent, arrayOf(DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+                require(cursor.moveToFirst() && cursor.getString(0) == DocumentsContract.Document.MIME_TYPE_DIR) { "Tai nėra aplankas" }
+            } ?: error("Aplankas nepasiekiamas")
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(uri, documentId)
+            val writableGrant = context.checkCallingOrSelfUriPermission(parent, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val projection = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_FLAGS)
+            val entries = arrayListOf<SafEntry>()
+            var metadataBytes = 0L
+            resolver.query(children, projection, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    coroutineContext.ensureActive()
+                    require(entries.size < MAX_DIRECTORY_ENTRIES) { "Aplanke per daug elementų" }
+                    val child = DocumentsContract.buildDocumentUriUsingTree(uri, cursor.getString(0))
+                    val name = cursor.getString(1) ?: error("Netinkami failo metaduomenys")
+                    val mime = cursor.getString(2)
+                    val directory = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                    metadataBytes += 256L + (child.toString().length.toLong() + name.length + mime.orEmpty().length) * 4L
+                    require(metadataBytes <= 24L * 1_024 * 1_024) { "Operacijos metaduomenys viršija ribą" }
+                    val flags = cursor.getInt(5)
+                    val supportsWrite = flags and (DocumentsContract.Document.FLAG_SUPPORTS_WRITE or DocumentsContract.Document.FLAG_SUPPORTS_DELETE) != 0 ||
+                        directory && flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE != 0
+                    entries += SafEntry(child.toString(), name, directory,
+                        if (cursor.isNull(3)) 0 else cursor.getLong(3).coerceAtLeast(0),
+                        if (cursor.isNull(4)) 0 else cursor.getLong(4).coerceAtLeast(0), mime,
+                        if (directory) EntryKind.DIRECTORY else kindFromMime(mime, name), supportsWrite && writableGrant)
+                }
+            } ?: error("Aplankas nepasiekiamas")
+            entries.sortedWith(compareByDescending<SafEntry> { it.directory }.thenBy { it.name.lowercase() })
         }
     }
 

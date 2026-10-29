@@ -166,6 +166,10 @@ class LocalFileRepository(
                     usbMassStorageConnected = usbMassStorageConnected,
                     removableVolumeCount = removableVolumeCount,
                 ),
+                requiresDocumentAccess = RemovableStorageAccess.needsDocuments(
+                    Build.VERSION.SDK_INT, volume.isPrimary, volume.isRemovable,
+                    volume.state == Environment.MEDIA_MOUNTED, root.canWrite(),
+                ),
             )
         }.toMutableList()
 
@@ -473,12 +477,12 @@ class LocalFileRepository(
 
     suspend fun rename(path: String, requestedName: String): Result<FileEntry> = withContext(Dispatchers.IO) {
         runCatching {
-            val source = File(path).canonicalFile
+            val source = FileSystemRules.nonSymbolicSource(File(path))
             require(source.exists()) { "Failas nebeegzistuoja" }
             val name = FileSystemRules.validateFileName(requestedName).getOrThrow()
             val parent = source.parentFile ?: throw IllegalArgumentException("Šakninio aplanko pervadinti negalima")
             val target = File(parent, name)
-            require(!target.exists()) { "Toks pavadinimas jau naudojamas" }
+            require(!Files.exists(target.toPath(), LinkOption.NOFOLLOW_LINKS)) { "Toks pavadinimas jau naudojamas" }
             check(source.renameTo(target)) { "Pervadinti nepavyko" }
             onMutation(listOf(source, target))
             toEntry(target)
@@ -499,9 +503,9 @@ class LocalFileRepository(
             val bytes = content.toByteArray(Charsets.UTF_8)
             try {
                 require(bytes.size <= maxBytes) { "Turinys per didelis vidiniam redaktoriui" }
-                val file = File(path)
+                val file = FileSystemRules.nonSymbolicSource(File(path))
                 require(file.isFile && file.canWrite()) { "Failo negalima įrašyti" }
-                val temporary = File(file.parentFile, ".${file.name}.af.tmp")
+                val temporary = File.createTempFile(".af-text-", ".partial", file.parentFile)
                 try {
                     temporary.outputStream().use { output ->
                         output.write(bytes)

@@ -88,6 +88,7 @@ data class StorageRoot(
     val freeBytes: Long,
     val removable: Boolean,
     val kind: StorageRootKind,
+    val requiresDocumentAccess: Boolean = false,
 )
 
 enum class StorageRootKind {

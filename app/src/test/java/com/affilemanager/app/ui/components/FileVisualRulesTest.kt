@@ -10,6 +10,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FileVisualRulesTest {
+    @org.junit.Test fun croppedImagesKeepEnoughPixelsForTheShortEdgeWithoutUnboundedDecodes() {
+        org.junit.Assert.assertEquals(171 to 128, FileVisualRules.cropDecodeSize(4000, 3000, 128, 128))
+        org.junit.Assert.assertEquals(683 to 512, FileVisualRules.cropDecodeSize(4000, 3000, 512, 512))
+        org.junit.Assert.assertEquals(1024 to 10, FileVisualRules.cropDecodeSize(100000, 1000, 512, 512))
+        org.junit.Assert.assertTrue(100000 / FileVisualRules.cropSampleSize(100000, 1000, 512, 512) <= 1024)
+    }
+
     @Test
     fun unreadableEntriesUseAnAccessLockBadge() {
         assertTrue(FileVisualRules.showAccessLock(isReadable = false))
@@ -71,6 +78,16 @@ class FileVisualRulesTest {
     fun extensionBadgeIsShortAndStable() {
         assertEquals("JPEG", FileVisualRules.extensionBadge(".jpeg"))
         assertEquals("", FileVisualRules.extensionBadge(""))
+    }
+
+    @Test fun cropOutputNeverUpscalesSmallOrExtremelyThinSources() {
+        assertEquals(1 to 1, FileVisualRules.cropOutputSize(1, 1, 256, 256))
+        assertEquals(100 to 100, FileVisualRules.cropOutputSize(200, 100, 256, 256))
+        assertEquals(1 to 1, FileVisualRules.cropOutputSize(1, 1024, 512, 512))
+        assertEquals(256 to 128, FileVisualRules.cropOutputSize(4096, 2048, 256, 128))
+        assertEquals(512 to 512, FileVisualRules.cropOutputSize(4096, 4096, 4096, 4096))
+        assertEquals(192 to 144, FileVisualRules.cropOutputSize(1600, 900, 192, 144))
+        assertEquals(512 to 512, FileVisualRules.cropOutputSize(100000, 1000, 512, 512))
     }
 
     @Test

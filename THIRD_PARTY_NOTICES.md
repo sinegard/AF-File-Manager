@@ -2,6 +2,17 @@
 
 AF File Manager includes open-source components in addition to the dependencies resolved by Gradle.
 
+## Google Tink
+
+`com.google.crypto.tink:tink-android:1.24.0` provides authenticated streaming
+encryption for the AFFMV2 vault format. It runs offline with an operation-local
+password key; AF does not use persistent Tink keysets or a remote key service.
+
+- Project: https://github.com/tink-crypto/tink-java/tree/v1.24.0
+- Copyright Google LLC and contributors
+- License: Apache License 2.0 — https://github.com/tink-crypto/tink-java/blob/v1.24.0/LICENSE
+- Runtime dependencies include Gson 2.13.2 (Apache 2.0), JSR-305 3.0.2 (BSD 3-Clause) and Error Prone annotations 2.41.0 (Apache 2.0); AndroidX annotations use Apache 2.0.
+
 ## ConnectBot Terminal
 
 `org.connectbot:termlib:0.1.0` provides the Jetpack Compose terminal renderer and terminal emulation.

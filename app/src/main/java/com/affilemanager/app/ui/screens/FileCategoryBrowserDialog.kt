@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -131,7 +132,6 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
     var query by remember(state.category) { mutableStateOf("") }
     var selectedParent by remember(state.category) { mutableStateOf<String?>(null) }
     var menu by remember(state.category) { mutableStateOf(false) }
-    var scopeMenu by remember(state.category) { mutableStateOf(false) }
     var showDisplaySettings by remember(state.category) { mutableStateOf(false) }
     var infoTarget by remember(state.category) { mutableStateOf<FileEntry?>(null) }
     var confirmTrash by remember(state.category) { mutableStateOf(false) }
@@ -210,6 +210,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
     }
     com.affilemanager.app.ui.theme.AppearancePage(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
+            com.affilemanager.app.ui.components.StableDirectoryHeader(state.selectedPaths.isNotEmpty()) {
                 if (state.selectedPaths.isNotEmpty()) {
                     SelectionActionBar(
                         count = state.selectedPaths.size,
@@ -304,9 +305,7 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                         onOpenSettings = { showDisplaySettings = true },
                     ) {
                         Box {
-                            IconButton(onClick = { menu = true }, modifier = Modifier.testTag("category_more")) {
-                                Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-                            }
+                            com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { menu = true }, modifier = Modifier.testTag("category_more"))
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 if (state.category == FileCategory.INSTALLED_APPS) {
                                     DropdownMenuItem(
@@ -349,12 +348,13 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                                     text = { LText("Atnaujinti") },
                                     leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
                                     enabled = !state.loading,
-                                    onClick = { menu = false; viewModel.refreshFileCategory() },
+                                    onClick = { menu = false; viewModel.refreshFileCategory(scrollToTop = false) },
                                 )
                             }
                         }
                     }
                 }
+            }
                 if (searchVisible) {
                     DirectoryQuickSearchField(
                         query = query,
@@ -378,31 +378,8 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                 } else {
                   Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                       horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.widthIn(max = 180.dp)) {
-                        FilterChip(
-                            selected = true,
-                            onClick = { scopeMenu = true },
-                            label = { CategoryScopeLabel(state.viewMode, state.storageScope) },
-                            modifier = Modifier.testTag("category_storage_scope"),
-                        )
-                        DropdownMenu(expanded = scopeMenu, onDismissRequest = { scopeMenu = false }) {
-                            CategoryViewMode.entries.forEach { mode ->
-                                CategoryStorageScope.entries.forEach { scope ->
-                                    DropdownMenuItem(
-                                        text = { CategoryScopeLabel(mode, scope) },
-                                        leadingIcon = { Checkbox(checked = state.viewMode == mode && state.storageScope == scope,
-                                            onCheckedChange = null) },
-                                        onClick = {
-                                            scopeMenu = false
-                                            viewModel.setFileCategoryView(scope, mode)
-                                        },
-                                        modifier = Modifier.testTag("category_scope_${mode.name}_${scope.name}"),
-                                    )
-                                }
-                                if (mode == CategoryViewMode.FILES) HorizontalDivider()
-                            }
-                        }
-                    }
+                    CategoryViewScopeSelector(state.viewMode, state.storageScope, viewModel::setFileCategoryView,
+                        modifier = Modifier.widthIn(max = 180.dp))
                     if (parentPaths.isNotEmpty() && state.viewMode == CategoryViewMode.FILES && state.parentFolderPath == null) {
                         LazyRow(modifier = Modifier.weight(1f).testTag("category_folder_chips"),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -577,7 +554,7 @@ private fun CategoryListItem(
         modifier = Modifier.fillMaxWidth().combinedClickable(
             onClick = { if (selectionMode) viewModel.toggleFileCategorySelection(entry.absolutePath) else onOpen(entry) },
             onLongClick = { viewModel.toggleFileCategorySelection(entry.absolutePath) },
-        ).padding(horizontal = 12.dp, vertical = verticalPadding),
+        ).padding(horizontal = 12.dp, vertical = verticalPadding).heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LocalFileVisual(entry, iconSize, iconSize, showThumbnails = showThumbnails, modifier = Modifier.size(iconSize))
@@ -660,15 +637,41 @@ private fun categoryTitle(category: FileCategory): String = when (category) {
 }
 
 @Composable
+internal fun CategoryViewScopeSelector(
+    mode: CategoryViewMode,
+    scope: CategoryStorageScope,
+    onSelect: (CategoryStorageScope, CategoryViewMode) -> Unit,
+    modifier: Modifier = Modifier,
+    tagPrefix: String = "category",
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        FilterChip(selected = true, onClick = { expanded = true },
+            label = { CategoryScopeLabel(mode, scope) }, modifier = Modifier.testTag("${tagPrefix}_storage_scope"))
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            CategoryViewMode.entries.forEach { candidateMode ->
+                CategoryStorageScope.entries.forEach { candidateScope ->
+                    DropdownMenuItem(
+                        text = { CategoryScopeLabel(candidateMode, candidateScope) },
+                        leadingIcon = { Checkbox(checked = mode == candidateMode && scope == candidateScope, onCheckedChange = null) },
+                        onClick = { expanded = false; onSelect(candidateScope, candidateMode) },
+                        modifier = Modifier.testTag("${tagPrefix}_scope_${candidateMode.name}_${candidateScope.name}"),
+                    )
+                }
+                if (candidateMode == CategoryViewMode.FILES) HorizontalDivider()
+            }
+        }
+    }
+}
+
+@Composable
 private fun CategoryScopeLabel(mode: CategoryViewMode, scope: CategoryStorageScope) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        LText(if (mode == CategoryViewMode.FILES) "Failai" else "Aplankai", maxLines = 1)
-        LText(" · ")
-        LText(when (scope) {
+    val modeLabel = uiText(if (mode == CategoryViewMode.FILES) "Failai" else "Aplankai")
+    val scopeLabel = uiText(when (scope) {
             CategoryStorageScope.ALL -> "Visa saugykla"
             CategoryStorageScope.INTERNAL -> "Vidinė atmintis"
             CategoryStorageScope.USB -> "USB saugykla"
             CategoryStorageScope.SD_CARD -> "SD kortelė"
-        }, maxLines = 1)
-    }
+        })
+    Text("$modeLabel · $scopeLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
 }

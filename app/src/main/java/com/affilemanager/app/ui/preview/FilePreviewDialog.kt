@@ -154,6 +154,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -163,6 +165,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.affilemanager.app.ui.components.passwordKeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
@@ -305,6 +308,7 @@ private data class PdfZoomScrollRequest(
 fun FilePreviewDialog(
     target: PreviewTarget,
     editState: FileEditUiState,
+    currentEditState: () -> FileEditUiState,
     signatureLibrary: SignatureLibraryUiState,
     archiveDisplayDefaults: DirectoryDisplayDefaults,
     onUpdateArchiveBrowser: (String, (ArchiveBrowserUiState) -> ArchiveBrowserUiState) -> Unit,
@@ -383,6 +387,8 @@ fun FilePreviewDialog(
     val scope = rememberCoroutineScope()
     val archiveMaterializedEntry = target is PreviewTarget.ArchiveEntry
     val internalEditor = !archiveMaterializedEntry && EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind)
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val externalEditorAvailable = remember(source.key, archiveMaterializedEntry) {
         !archiveMaterializedEntry && canEditExternally(context, source)
     }
@@ -421,6 +427,10 @@ fun FilePreviewDialog(
 
     LaunchedEffect(source.key, internalEditor) {
         if (internalEditor) onPrepareEdit()
+        else {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
     }
     LaunchedEffect(launchMediaWhenReady, editSession?.id, activeEditState?.preparing, activeEditState?.error) {
         val mode = launchMediaWhenReady ?: return@LaunchedEffect
@@ -636,6 +646,7 @@ fun FilePreviewDialog(
                             else -> null
                         },
                         editState = activeEditState,
+                        currentEditState = currentEditState,
                         onPrepareEdit = onPrepareEdit,
                         onEditTextChanged = onEditTextChanged,
                         onEditEncodingChanged = onEditEncodingChanged,
@@ -805,6 +816,7 @@ fun FilePreviewDialog(
 private fun FileContentPreview(
     source: PreviewSource,
     editState: FileEditUiState?,
+    currentEditState: () -> FileEditUiState,
     onPrepareEdit: () -> Unit,
     onEditTextChanged: (String) -> Unit,
     onEditEncodingChanged: (TextEncoding) -> Unit,
@@ -844,6 +856,7 @@ private fun FileContentPreview(
         }
         EditabilityRules.supportsInternalText(source.name, source.mimeType(context), source.kind) -> TextPreview(
             state = editState,
+            currentEditState = currentEditState,
             onPrepareEdit = onPrepareEdit,
             onTextChanged = onEditTextChanged,
             onEncodingChanged = onEditEncodingChanged,
@@ -882,10 +895,17 @@ internal fun ReadOnlyFilePreview(source: PreviewSource) {
     }
 }
 
+internal val ImageSwipeOffsetKey = SemanticsPropertyKey<Float>("ImageSwipeOffset")
+
 @Composable
 internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPrevious: () -> Unit, onNext: () -> Unit) {
     val context = LocalContext.current
+    var swipeRequest by remember { mutableStateOf<Pair<String, Float>?>(null) }
+    val incomingDirection = remember(source.key) { swipeRequest?.takeIf { it.first != source.key }?.second ?: 0f }
+    var incomingOffset by remember(source.key) { mutableFloatStateOf(incomingDirection) }
+    var incomingAnimation by remember(source.key) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val result by produceState<Result<DecodedPreviewImage>?>(initialValue = null, source.key) {
+        value = null
         value = withContext(Dispatchers.IO) { runCatching { decodePreviewImage(context, source) } }
     }
     var scale by remember(source.key) { mutableFloatStateOf(PreviewZoomRules.MIN_SCALE) }
@@ -895,7 +915,16 @@ internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPreviou
     var zoomAnimation by remember(source.key) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val currentScale by rememberUpdatedState(scale)
     val currentOffset by rememberUpdatedState(offset)
-    DisposableEffect(source.key) { onDispose { zoomAnimation?.cancel() } }
+    LaunchedEffect(source.key, result) {
+        if (result?.isSuccess == true && incomingOffset != 0f) {
+            incomingAnimation = zoomScope.launch {
+                androidx.compose.animation.core.animate(incomingOffset, 0f,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 160)) { value, _ -> incomingOffset = value }
+                swipeRequest = null
+            }
+        }
+    }
+    DisposableEffect(source.key) { onDispose { zoomAnimation?.cancel(); incomingAnimation?.cancel() } }
     @Suppress("DEPRECATION")
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
         zoomAnimation?.cancel()
@@ -924,10 +953,13 @@ internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPreviou
                             .clipToBounds()
                             .background(MaterialTheme.colorScheme.surfaceContainer)
                             .testTag("image-zoom-viewport")
+                            .semantics { this[ImageSwipeOffsetKey] = incomingOffset }
                             .onSizeChanged { viewportSize = it }
                             .pointerInput(source.key, canNavigate) {
                                 awaitEachGesture {
                                     val first = awaitFirstDown(requireUnconsumed = false)
+                                    incomingAnimation?.cancel()
+                                    incomingOffset = 0f
                                     var last = first.position
                                     var single = true
                                     var unconsumed = true
@@ -943,6 +975,7 @@ internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPreviou
                                     if (canNavigate && single && unconsumed && currentScale <= PreviewZoomRules.MIN_SCALE &&
                                         kotlin.math.abs(movement.x) > maxOf(48.dp.toPx(), size.width * .18f) &&
                                         kotlin.math.abs(movement.y) < kotlin.math.abs(movement.x) * .6f) {
+                                        swipeRequest = source.key to if (movement.x < 0) 1f else -1f
                                         if (movement.x < 0) onNext() else onPrevious()
                                     }
                                 }
@@ -976,8 +1009,9 @@ internal fun ImagePreview(source: PreviewSource, canNavigate: Boolean, onPreviou
                         val imageModifier = Modifier.fillMaxSize().graphicsLayer {
                             scaleX = scale
                             scaleY = scale
-                            translationX = offset.x
+                            translationX = offset.x + incomingOffset * viewportSize.width * .12f
                             translationY = offset.y
+                            alpha = 1f - kotlin.math.abs(incomingOffset) * .15f
                         }
                         when (decoded) {
                             is DecodedPreviewImage.Still -> Image(
@@ -1650,7 +1684,7 @@ internal fun PreviewLoadError(error: Throwable) {
 }
 
 @Composable
-private fun MediaPreview(
+internal fun MediaPreview(
     source: PreviewSource,
     canNavigateMedia: Boolean,
     onPreviousMedia: () -> Unit,
@@ -1699,12 +1733,14 @@ private fun AudioPreview(
     var player by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
     var playing by remember(source.key) { mutableStateOf(false) }
-    var positionMillis by remember(source.key) { mutableLongStateOf(0L) }
+    val playback = rememberForegroundPlayback(source.key)
+    var positionMillis by playback.position
+    var playRequested by playback.requested
     var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
     var playbackError by remember(source.key) { mutableStateOf(false) }
-    var loopEnabled by remember(source.key) { mutableStateOf(true) }
-    var playbackSpeed by remember(source.key) { mutableFloatStateOf(1f) }
-    var volume by remember(source.key) { mutableFloatStateOf(1f) }
+    var loopEnabled by playback.loop
+    var playbackSpeed by playback.speed
+    var volume by playback.volume
     var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
     var minimizeWhenReady by remember(source.key) { mutableStateOf(false) }
     val latestPlayingInBackground by rememberUpdatedState(playingInBackground)
@@ -1714,6 +1750,7 @@ private fun AudioPreview(
             .onSuccess {
                 player?.let { active -> if (runCatching { active.isPlaying }.getOrDefault(false)) active.pause() }
                 playing = false
+                playRequested = false
                 backgroundPlaybackError = false
             }.onFailure { backgroundPlaybackError = true; minimizeWhenReady = false }
     }
@@ -1741,14 +1778,32 @@ private fun AudioPreview(
                     durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
                     prepared = true
                     playbackError = false
+                    ready.isLooping = loopEnabled
+                    ready.setVolume(volume, volume)
+                    fun resume() {
+                        if (playRequested && !latestPlayingInBackground) {
+                            ready.playbackParams = ready.playbackParams.setSpeed(playbackSpeed)
+                            ready.start()
+                            playing = true
+                        }
+                    }
+                    if (positionMillis > 0L) {
+                        ready.setOnSeekCompleteListener {
+                            if (!disposed && player === ready) runCatching { resume() }
+                                .onFailure { playbackError = true; playRequested = false }
+                        }
+                        ready.seekTo(MediaPlaybackRules.boundedPosition(positionMillis, durationMillis).toInt())
+                    } else resume()
                 }.onFailure { prepared = false; playbackError = true }
             }
             created.setOnCompletionListener {
                 playing = false
+                playRequested = false
                 positionMillis = durationMillis
             }
             created.setOnErrorListener { _, _, _ ->
                 playing = false
+                playRequested = false
                 prepared = false
                 playbackError = true
                 true
@@ -1759,7 +1814,7 @@ private fun AudioPreview(
             disposed = true
             player = null
             owned?.let { created ->
-                runCatching { created.setOnPreparedListener(null); created.setOnCompletionListener(null); created.setOnErrorListener(null) }
+                runCatching { created.setOnPreparedListener(null); created.setOnCompletionListener(null); created.setOnErrorListener(null); created.setOnSeekCompleteListener(null) }
                 runCatching { created.stop() }
                 runCatching { created.release() }
             }
@@ -1775,7 +1830,8 @@ private fun AudioPreview(
     LaunchedEffect(player, prepared) {
         while (prepared) {
             player?.let { active ->
-                positionMillis = runCatching { active.currentPosition.toLong() }.getOrDefault(positionMillis)
+                val nativePosition = runCatching { active.currentPosition.toLong() }.getOrDefault(positionMillis)
+                if (nativePosition > 0L || positionMillis == 0L) positionMillis = nativePosition
                 playing = runCatching { active.isPlaying }.getOrDefault(false)
             }
             delay(if (playing) 250L else 600L)
@@ -1786,13 +1842,9 @@ private fun AudioPreview(
         PreviewLoadError(IllegalStateException())
         return
     }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp).testTag("audio_player"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top,
-    ) {
+    AudioPlayerLayout(artwork = { artworkModifier ->
         Surface(
-            modifier = Modifier.fillMaxWidth(.82f).aspectRatio(1f).testTag("audio_artwork")
+            modifier = artworkModifier.testTag("audio_artwork")
                 .pointerInput(source.key) {
                     var dragged = 0f
                     detectVerticalDragGestures(
@@ -1823,6 +1875,7 @@ private fun AudioPreview(
                 }
             }
         }
+    }, controls = {
         Text(
             source.name,
             modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
@@ -1853,7 +1906,8 @@ private fun AudioPreview(
                         active.start()
                     }
                     playing = active.isPlaying
-                    }.onFailure { prepared = false; playing = false; playbackError = true }
+                    playRequested = playing
+                    }.onFailure { prepared = false; playing = false; playRequested = false; playbackError = true }
                 }
             },
             onSeek = { requested ->
@@ -1872,6 +1926,43 @@ private fun AudioPreview(
         )
         if (backgroundPlaybackError) {
             Text(uiText("Foninio atkūrimo paleisti nepavyko"), color = MaterialTheme.colorScheme.error)
+        }
+    })
+}
+
+@Composable
+private fun AudioPlayerLayout(artwork: @Composable (Modifier) -> Unit, controls: @Composable () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp).testTag("audio_player")) {
+        val footerMaximum = maxHeight * .72f
+        val compactCoverSize = minOf(48.dp, maxHeight * .3f)
+        if (maxWidth > maxHeight && LocalDensity.current.fontScale > 1.5f) {
+            // Give long, large-text actions the full width in a short window.
+            // Scrolling the whole compact page is preferable to an oversized,
+            // permanently clipped button beside a decorative cover.
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                artwork(Modifier.size(compactCoverSize))
+                controls()
+            }
+        } else if (maxWidth > maxHeight) {
+            val compactArtwork = maxWidth < 480.dp || LocalDensity.current.fontScale > 1.5f
+            val artworkSize = if (compactArtwork) minOf(48.dp, maxHeight * .4f)
+                else minOf(maxWidth * .32f, maxHeight)
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                artwork(Modifier.size(artworkSize))
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) { controls() }
+            }
+        } else {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        artwork(Modifier.size(minOf(maxWidth * .82f, maxHeight)))
+                    }
+                }
+                Column(Modifier.fillMaxWidth().heightIn(max = footerMaximum)
+                    .verticalScroll(rememberScrollState())) { controls() }
+            }
         }
     }
 }
@@ -1893,13 +1984,17 @@ private fun VideoPreview(
     var videoView by remember(source.key) { mutableStateOf<VideoView?>(null) }
     var prepared by remember(source.key) { mutableStateOf(false) }
     var playing by remember(source.key) { mutableStateOf(false) }
-    var positionMillis by remember(source.key) { mutableLongStateOf(0L) }
+    val playback = rememberForegroundPlayback(source.key, initialPlayback?.autoPlay == true,
+        initialPlayback?.loop ?: true, initialPlayback?.speed ?: 1f)
+    var positionMillis by playback.position
+    var playRequested by playback.requested
     var durationMillis by remember(source.key) { mutableLongStateOf(info.durationMillis) }
     var playbackError by remember(source.key) { mutableStateOf(false) }
     var preparedPlayer by remember(source.key) { mutableStateOf<MediaPlayer?>(null) }
-    var loopEnabled by remember(source.key) { mutableStateOf(initialPlayback?.loop ?: true) }
-    var playbackSpeed by remember(source.key) { mutableFloatStateOf(initialPlayback?.speed ?: 1f) }
-    var volume by remember(source.key) { mutableFloatStateOf(1f) }
+    var loopEnabled by playback.loop
+    var playbackSpeed by playback.speed
+    var volume by playback.volume
+    val latestPlayingInBackground by rememberUpdatedState(playingInBackground)
     var backgroundPlaybackError by remember(source.key) { mutableStateOf(false) }
     var controlsVisible by remember(source.key) { mutableStateOf(true) }
     var controlsInteraction by remember(source.key) { mutableLongStateOf(0L) }
@@ -1930,7 +2025,8 @@ private fun VideoPreview(
     LaunchedEffect(videoView, prepared) {
         while (prepared) {
             videoView?.let { active ->
-                positionMillis = runCatching { active.currentPosition.toLong() }.getOrDefault(positionMillis)
+                val nativePosition = runCatching { active.currentPosition.toLong() }.getOrDefault(positionMillis)
+                if (nativePosition > 0L || positionMillis == 0L) positionMillis = nativePosition
                 playing = runCatching { active.isPlaying }.getOrDefault(false)
             }
             delay(if (playing) 250L else 600L)
@@ -1938,8 +2034,8 @@ private fun VideoPreview(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().testTag("video_player")) {
-    val videoHeight = if (controlsVisible) (maxHeight * 0.55f).coerceIn(120.dp, 480.dp) else maxHeight
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+    val footerMaximum = maxHeight * .65f
+    Column(modifier = Modifier.fillMaxSize()
         .pointerInput(source.key) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
@@ -1953,7 +2049,8 @@ private fun VideoPreview(
                 }
             }
         }) {
-        Box(modifier = Modifier.fillMaxWidth().height(videoHeight).background(androidx.compose.ui.graphics.Color.Black)) {
+        Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("video_surface")
+            .background(androidx.compose.ui.graphics.Color.Black)) {
             AndroidView(
                 factory = { viewContext ->
                     VideoView(viewContext).apply {
@@ -1967,20 +2064,33 @@ private fun VideoPreview(
                             durationMillis = ready.duration.toLong().coerceAtLeast(info.durationMillis)
                             prepared = true
                             playbackError = false
-                            seekTo(1)
-                            if (initialPlayback?.autoPlay == true && !playingInBackground) {
-                                ready.playbackParams = ready.playbackParams.setSpeed(playbackSpeed)
-                                start()
-                                playing = true
+                            fun resume() {
+                                if (playRequested && !latestPlayingInBackground) {
+                                    ready.playbackParams = ready.playbackParams.setSpeed(playbackSpeed)
+                                    start()
+                                    playing = true
+                                }
+                            }
+                            if (positionMillis > 0L) {
+                                ready.setOnSeekCompleteListener {
+                                    if (videoView === this) runCatching { resume() }
+                                        .onFailure { playbackError = true; playRequested = false }
+                                }
+                                seekTo(MediaPlaybackRules.boundedPosition(positionMillis, durationMillis).toInt())
+                            } else {
+                                seekTo(1)
+                                resume()
                             }
                             }.onFailure { prepared = false; playbackError = true }
                         }
                         setOnCompletionListener {
                             playing = false
+                            playRequested = false
                             positionMillis = durationMillis
                         }
                         setOnErrorListener { _, _, _ ->
                             playing = false
+                            playRequested = false
                             prepared = false
                             playbackError = true
                             true
@@ -2000,7 +2110,9 @@ private fun VideoPreview(
                 controlsInteraction++
             })
         }
-        if (!playingInBackground && controlsVisible) PlaybackControls(
+        if (controlsVisible) Column(Modifier.fillMaxWidth().heightIn(max = footerMaximum)
+            .verticalScroll(rememberScrollState()).testTag("video_controls_footer")) {
+        if (!playingInBackground) PlaybackControls(
             prefix = "video",
             prepared = prepared,
             playing = playing,
@@ -2024,7 +2136,8 @@ private fun VideoPreview(
                         active.start()
                     }
                     playing = active.isPlaying
-                    }.onFailure { prepared = false; playing = false; playbackError = true }
+                    playRequested = playing
+                    }.onFailure { prepared = false; playing = false; playRequested = false; playbackError = true }
                 }
             },
             onSeek = { requested ->
@@ -2054,6 +2167,7 @@ private fun VideoPreview(
                 }.onSuccess {
                     videoView?.pause()
                     playing = false
+                    playRequested = false
                     backgroundPlaybackError = false
                 }.onFailure {
                     backgroundPlaybackError = true
@@ -2064,6 +2178,7 @@ private fun VideoPreview(
             if (backgroundPlaybackError) {
                 Text(uiText("Foninio atkūrimo paleisti nepavyko"), color = MaterialTheme.colorScheme.error)
             }
+        }
         }
     }
     }
@@ -2102,10 +2217,11 @@ internal fun PlaybackControls(
             Spacer(Modifier.weight(1f))
             Text(MediaPlaybackRules.timeLabel(durationMillis), style = MaterialTheme.typography.labelSmall)
         }
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onPrevious, enabled = canNavigateMedia) {
                 Icon(Icons.Rounded.SkipPrevious, contentDescription = uiText("Ankstesnis failas"))
@@ -2254,6 +2370,7 @@ private fun FileEditActions(
 @Composable
 private fun TextPreview(
     state: FileEditUiState?,
+    currentEditState: () -> FileEditUiState,
     onPrepareEdit: () -> Unit,
     onTextChanged: (String) -> Unit,
     onEncodingChanged: (TextEncoding) -> Unit,
@@ -2277,7 +2394,11 @@ private fun TextPreview(
         else -> FullTextEditor(
             sourceKey = state.sourceKey.orEmpty(),
             fileName = state.session.displayName,
-            text = state.text.orEmpty(),
+            text = {
+                val current = currentEditState()
+                if (current.sourceKey == state.sourceKey) current.text.orEmpty()
+                else state.text.orEmpty()
+            },
             readOnly = state.saving,
             encoding = state.encoding ?: TextEncoding.UTF8,
             lineEnding = state.lineEnding ?: LineEnding.LF,
@@ -2661,9 +2782,7 @@ private fun ArchivePreview(
             onOpenSettings = { showDisplaySettings = true },
         ) {
             Box {
-                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("archive_actions")) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-                }
+                com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { menu = true }, modifier = Modifier.testTag("archive_actions"))
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     if (onExtract != null) {
                         BrowserActionMenuItem(BrowserAction.ARCHIVE,
@@ -3217,6 +3336,7 @@ private fun ArchiveExtractionDialog(
                     modifier = Modifier.fillMaxWidth(),
                     label = { LText("Archyvo slaptažodis (nebūtinas)") },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = passwordKeyboardOptions,
                     singleLine = true,
                 )
             }
@@ -3332,14 +3452,15 @@ private fun orderArchiveEntries(
 private fun VaultPreview(target: PreviewTarget.Vault, onDecrypt: (FileEntry, CharArray) -> Unit) {
     var askPassword by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
     ) {
         Icon(Icons.Rounded.LockOpen, contentDescription = null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
         Text(target.header.originalName, style = MaterialTheme.typography.titleLarge)
         Text(FileSystemRules.humanBytes(target.header.originalSize))
-        LText("AES-256-GCM · PBKDF2-HMAC-SHA256", style = MaterialTheme.typography.bodySmall)
+        Text(if (target.header.formatVersion == 2) "AES-256-GCM · HKDF-SHA256 · PBKDF2-HMAC-SHA256" else
+            "AES-256-GCM · PBKDF2-HMAC-SHA256", style = MaterialTheme.typography.bodySmall)
         Button(onClick = { askPassword = true }) { LText("Iššifruoti šalia originalo") }
     }
     if (askPassword) {
@@ -3347,7 +3468,8 @@ private fun VaultPreview(target: PreviewTarget.Vault, onDecrypt: (FileEntry, Cha
         AlertDialog(
             onDismissRequest = { askPassword = false },
             title = { LText("Įveskite slaptafrazę") },
-            text = { OutlinedTextField(value = password, onValueChange = { password = it }, visualTransformation = PasswordVisualTransformation(), singleLine = true) },
+            text = { OutlinedTextField(value = password, onValueChange = { password = it }, visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = passwordKeyboardOptions, singleLine = true) },
             confirmButton = {
                 Button(onClick = { onDecrypt(target.file, password.toCharArray()); password = ""; askPassword = false }, enabled = password.isNotEmpty()) {
                     LText("Iššifruoti")

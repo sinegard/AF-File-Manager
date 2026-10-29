@@ -77,6 +77,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.affilemanager.app.ui.components.passwordKeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -121,6 +124,8 @@ fun ToolsScreen(
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val appearanceSettings by viewModel.appearanceSettings.collectAsStateWithLifecycle()
     val featureVisibility by viewModel.featureVisibility.collectAsStateWithLifecycle()
+    val transferPreferences by viewModel.transferPreferences.collectAsStateWithLifecycle()
+    var editingTransferOptions by remember { mutableStateOf<Boolean?>(null) }
     var expandedSections by rememberSaveable { mutableStateOf(emptyList<String>()) }
     fun toggleSection(id: String) {
         expandedSections = if (id in expandedSections) expandedSections - id else expandedSections + id
@@ -225,6 +230,21 @@ fun ToolsScreen(
 
         item { SettingsSectionHeader("Operacijų centras", "actions", "actions" in expandedSections) { toggleSection("actions") } }
         if ("actions" in expandedSections) {
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LText("Nustatymai", fontWeight = FontWeight.SemiBold)
+                    AfActionRow {
+                        OutlinedButton(onClick = { editingTransferOptions = false }, modifier = Modifier.testTag("copy_options_settings")) {
+                            LText("Patikimai kopijuoti")
+                        }
+                        OutlinedButton(onClick = { editingTransferOptions = true }, modifier = Modifier.testTag("move_options_settings")) {
+                            LText("Patikimai perkelti")
+                        }
+                    }
+                }
+            }
+        }
         if (featureVisibility.isVisible(OptionalFeature.PLANS)) {
         item {
             Card(
@@ -506,6 +526,20 @@ fun ToolsScreen(
         }
     }
 
+    editingTransferOptions?.let { moving ->
+        TransferOptionsDialog(
+            moving = moving,
+            initialOptions = transferPreferences.optionsFor(moving),
+            settingsOnly = true,
+            onDismiss = { editingTransferOptions = null },
+            onConfirm = { options ->
+                val saved = viewModel.saveTransferOptions(moving, options)
+                if (saved) editingTransferOptions = null
+                saved
+            },
+        )
+    }
+
     if (showLanguagePicker) {
         LanguagePickerDialog(
             selectedLanguage = interfaceLanguage,
@@ -614,6 +648,7 @@ private fun LanguagePickerDialog(
         icon = Icons.Rounded.Language,
         onDismissRequest = onDismiss,
         expandedContent = true,
+        minimumContentHeight = 200.dp * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f),
         modifier = Modifier.testTag("language_picker"),
         actions = {
             TextButton(onClick = onDismiss) { LText("Atšaukti") }
@@ -1018,13 +1053,14 @@ private fun PasswordDialog(
         onDismissRequest = onDismiss,
         title = { LText(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LText(explanation, style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
                     label = { LText("Slaptafrazė") },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = passwordKeyboardOptions,
                     singleLine = true,
                 )
                 OutlinedTextField(
@@ -1032,6 +1068,7 @@ private fun PasswordDialog(
                     onValueChange = { repeated = it },
                     label = { LText("Pakartokite") },
                     visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = passwordKeyboardOptions,
                     singleLine = true,
                 )
             }

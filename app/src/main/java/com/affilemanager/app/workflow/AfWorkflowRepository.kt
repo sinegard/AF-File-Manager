@@ -76,7 +76,7 @@ class AfPlanRepository private constructor(private val store: AfAtomicJsonStore)
         if (!file.exists()) return emptyList()
         return try {
             val root = JSONObject(store.read(file, AfWorkflowLimits.MAX_METADATA_BYTES))
-            requireSchema(root, 1, "AF Plan collection")
+            requireSchema(root, 2, "AF Plan collection", minimum = 1)
             val plans = root.getJSONArray("plans")
             require(plans.length() <= AfWorkflowLimits.MAX_SAVED_PLANS) { "Too many saved AF Plans" }
             (0 until plans.length()).map { index -> AfWorkflowJson.planFromJson(plans.getJSONObject(index)) }
@@ -114,7 +114,7 @@ class AfPlanRepository private constructor(private val store: AfAtomicJsonStore)
 
     private fun write(plans: List<AfPlanDefinition>) {
         val root = JSONObject()
-            .put("schemaVersion", 1)
+            .put("schemaVersion", if (plans.any { it.hasDocuments() }) 2 else 1)
             .put("plans", JSONArray().apply { plans.forEach { put(AfWorkflowJson.planToJson(it)) } })
         store.write(file, root.toString(), AfWorkflowLimits.MAX_METADATA_BYTES)
     }
@@ -163,7 +163,7 @@ class AfExecutionRepository private constructor(private val store: AfAtomicJsonS
         validateId(executionId)
         require(items.size <= AfWorkflowLimits.MAX_RECEIPT_ITEMS) { "AF execution journal limit exceeded" }
         val root = JSONObject()
-            .put("schemaVersion", 1)
+            .put("schemaVersion", if (items.any { it.hasDocuments() }) 2 else 1)
             .put("executionId", executionId)
             .put("items", JSONArray().apply { items.forEach { put(AfWorkflowJson.receiptItemToJson(it)) } })
         store.write(journalFile(executionId), root.toString(), AfWorkflowLimits.MAX_RECEIPT_BYTES)
@@ -175,7 +175,7 @@ class AfExecutionRepository private constructor(private val store: AfAtomicJsonS
         val path = journalFile(executionId)
         if (!path.isFile) return emptyList()
         val root = JSONObject(store.read(path, AfWorkflowLimits.MAX_RECEIPT_BYTES))
-        requireSchema(root, 1, "AF execution journal")
+        requireSchema(root, 2, "AF execution journal", minimum = 1)
         require(root.getString("executionId") == executionId) { "AF execution journal identity mismatch" }
         val items = root.getJSONArray("items")
         require(items.length() <= AfWorkflowLimits.MAX_RECEIPT_ITEMS) { "AF execution journal limit exceeded" }
@@ -410,17 +410,26 @@ class AfAutomationRepository private constructor(private val store: AfAtomicJson
 
 private object AfWorkflowJson {
     fun locationToJson(value: AfLocationRef): JSONObject = JSONObject()
+        .put("locationVersion", if (value.kind == AfLocationKind.DOCUMENT) 2 else 1)
         .put("kind", value.kind.name)
         .put("path", value.path)
         .put("profileId", value.profileId ?: JSONObject.NULL)
         .put("profileName", value.profileName ?: JSONObject.NULL)
+        .put("documentPath", value.documentPath)
 
-    fun locationFromJson(value: JSONObject): AfLocationRef = AfLocationRef(
+    fun locationFromJson(value: JSONObject): AfLocationRef {
+        val version = value.optInt("locationVersion", 1)
+        if (version > 2) throw UnsupportedAfSchema("Document location was created by a newer AF File Manager")
+        require(version in 1..2) { "Invalid document location version" }
+        require(!value.has("documentPath") || value.get("documentPath") is String) { "Invalid document child path" }
+        return AfLocationRef(
         kind = AfLocationKind.valueOf(value.getString("kind")),
         path = value.getString("path"),
         profileId = value.stringOrNull("profileId"),
         profileName = value.stringOrNull("profileName"),
+        documentPath = value.optString("documentPath", ""),
     ).normalized()
+    }
 
     fun sourceToJson(value: AfSourceRef): JSONObject = JSONObject()
         .put("location", locationToJson(value.location))
@@ -436,7 +445,7 @@ private object AfWorkflowJson {
     ).normalized()
 
     fun planToJson(value: AfPlanDefinition): JSONObject = JSONObject()
-        .put("schemaVersion", value.schemaVersion)
+        .put("schemaVersion", if (value.hasDocuments()) 2 else value.schemaVersion)
         .put("id", value.id)
         .put("name", value.name)
         .put("createdAtMillis", value.createdAtMillis)
@@ -451,9 +460,11 @@ private object AfWorkflowJson {
         .put("verification", value.verification.name)
         .put("failurePolicy", value.failurePolicy.name)
         .put("deleteSourcesAfterVerifiedCopies", value.deleteSourcesAfterVerifiedCopies)
+        .put("fileManagerTransfer", value.fileManagerTransfer)
 
     fun planFromJson(value: JSONObject): AfPlanDefinition {
-        requireSchema(value, 1, "AF Plan")
+        requireSchema(value, 2, "AF Plan", minimum = 1)
+        require(!value.has("fileManagerTransfer") || value.get("fileManagerTransfer") is Boolean) { "Invalid AF transfer purpose" }
         val sources = value.getJSONArray("sources")
         val destinations = value.getJSONArray("destinations")
         require(sources.length() in 1..AfWorkflowLimits.MAX_SOURCE_ROOTS) { "Invalid AF Plan source count" }
@@ -474,6 +485,7 @@ private object AfWorkflowJson {
             verification = TransferVerification.valueOf(value.getString("verification")),
             failurePolicy = TransferFailurePolicy.valueOf(value.getString("failurePolicy")),
             deleteSourcesAfterVerifiedCopies = value.optBoolean("deleteSourcesAfterVerifiedCopies", false),
+            fileManagerTransfer = value.optBoolean("fileManagerTransfer", false),
         ).normalized(value.getLong("updatedAtMillis"))
     }
 
@@ -495,7 +507,7 @@ private object AfWorkflowJson {
     )
 
     fun preflightToJson(value: AfPreflightSummary): JSONObject = JSONObject()
-        .put("schemaVersion", value.schemaVersion)
+        .put("schemaVersion", if (value.plan.hasDocuments()) 2 else value.schemaVersion)
         .put("executionId", value.executionId)
         .put("plan", planToJson(value.plan))
         .put("createdAtMillis", value.createdAtMillis)
@@ -532,7 +544,7 @@ private object AfWorkflowJson {
         .put("warnings", JSONArray(value.warnings))
 
     fun preflightFromJson(value: JSONObject): AfPreflightSummary {
-        requireSchema(value, 1, "AF Plan preview")
+        requireSchema(value, 2, "AF Plan preview", minimum = 1)
         val entries = value.getJSONArray("entries")
         val projections = value.getJSONArray("projections")
         require(entries.length() in 1..AfWorkflowLimits.MAX_PLANNED_ENTRIES) { "Invalid AF preview entry count" }
@@ -579,7 +591,7 @@ private object AfWorkflowJson {
     }
 
     fun executionStateToJson(value: AfExecutionState): JSONObject = JSONObject()
-        .put("schemaVersion", value.schemaVersion)
+        .put("schemaVersion", if (value.activeBackup?.kind == AfLocationKind.DOCUMENT) 2 else value.schemaVersion)
         .put("executionId", value.executionId)
         .put("status", value.status.name)
         .put("nextProjectionIndex", value.nextProjectionIndex)
@@ -597,7 +609,7 @@ private object AfWorkflowJson {
         .put("finishedAtMillis", value.finishedAtMillis ?: JSONObject.NULL)
 
     fun executionStateFromJson(value: JSONObject): AfExecutionState {
-        requireSchema(value, 1, "AF execution state")
+        requireSchema(value, 2, "AF execution state", minimum = 1)
         return AfExecutionState(
             schemaVersion = 1,
             executionId = value.getString("executionId"),
@@ -640,7 +652,7 @@ private object AfWorkflowJson {
     )
 
     fun receiptToJson(value: AfOperationReceipt): JSONObject = JSONObject()
-        .put("schemaVersion", value.schemaVersion)
+        .put("schemaVersion", if (value.items.any { it.hasDocuments() }) 2 else value.schemaVersion)
         .put("id", value.id)
         .put("planId", value.planId)
         .put("planName", value.planName)
@@ -658,7 +670,7 @@ private object AfWorkflowJson {
         .put("errors", JSONArray(value.errors))
 
     fun receiptFromJson(value: JSONObject): AfOperationReceipt {
-        requireSchema(value, 1, "AF operation receipt")
+        requireSchema(value, 2, "AF operation receipt", minimum = 1)
         val items = value.getJSONArray("items")
         require(items.length() <= AfWorkflowLimits.MAX_RECEIPT_ITEMS) { "AF receipt item limit exceeded" }
         return AfOperationReceipt(
@@ -716,10 +728,15 @@ private object AfWorkflowJson {
     }
 }
 
-private fun requireSchema(json: JSONObject, expected: Int, label: String) {
+private fun AfPlanDefinition.hasDocuments() = fileManagerTransfer || sources.any { it.location.kind == AfLocationKind.DOCUMENT } ||
+    destinations.any { it.location.kind == AfLocationKind.DOCUMENT }
+
+private fun AfReceiptItem.hasDocuments() = listOfNotNull(source, destination, backup).any { it.kind == AfLocationKind.DOCUMENT }
+
+private fun requireSchema(json: JSONObject, expected: Int, label: String, minimum: Int = expected) {
     val actual = json.optInt("schemaVersion", -1)
     if (actual > expected) throw UnsupportedAfSchema("$label was created by a newer AF File Manager")
-    require(actual == expected) { "Unsupported $label version" }
+    require(actual in minimum..expected) { "Unsupported $label version" }
 }
 
 private fun validatedId(id: String): String = id.also(::validateId)

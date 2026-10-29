@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.FlowRow
@@ -106,9 +107,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.affilemanager.app.ui.components.passwordKeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
@@ -152,6 +155,7 @@ import com.affilemanager.app.ui.components.DirectorySearchButton
 import com.affilemanager.app.ui.components.SelectionActionBar
 import com.affilemanager.app.ui.components.SelectionActionDock
 import com.affilemanager.app.ui.components.SelectionHeader
+import com.affilemanager.app.ui.components.StableDirectoryHeader
 import com.affilemanager.app.ui.components.longPressDragSelect
 import com.affilemanager.app.ui.components.AfPullToRefresh
 import com.affilemanager.app.ui.components.LazyListFastScroller
@@ -184,6 +188,8 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     val localClipboard by viewModel.clipboard.collectAsStateWithLifecycle()
     val remoteClipboard by viewModel.remoteClipboard.collectAsStateWithLifecycle()
     val afClipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
+    val transferPreferences by viewModel.transferPreferences.collectAsStateWithLifecycle()
+    var documentPasteOptions by remember { mutableStateOf(false) }
     val activeLocalState = if (activePanel == com.affilemanager.app.ui.PanelId.LEFT) left else right
     val activeSelection = activeLocalState.selectedPaths
 
@@ -200,34 +206,26 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
     var showUploadPicker by remember { mutableStateOf(false) }
     var showDisplaySettings by remember { mutableStateOf(false) }
     var remoteInfo by remember { mutableStateOf<RemoteEntry?>(null) }
+    val connectionLocationsScroll = rememberLazyListState()
+    LaunchedEffect(state.connectedProfile?.id, state.error, state.loading) {
+        if (state.connectedProfile == null && state.error != null && !state.loading) {
+            connectionLocationsScroll.scrollToItem(1)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         if (state.connectedProfile == null) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    LText("Tinklas ir nuotolinės vietos", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    LText("SMB 2/3 · SFTP · WebDAV · FTP/FTPS", style = MaterialTheme.typography.bodySmall)
-                }
-                if (featureVisible(OptionalFeature.CLOUD)) OutlinedButton(
-                    onClick = viewModel::openNextcloudSetup,
-                    modifier = Modifier.testTag("add_nextcloud"),
-                ) {
-                    Icon(Icons.Rounded.Cloud, contentDescription = null)
-                    LText("Nextcloud", modifier = Modifier.padding(start = 6.dp))
-                }
-            }
-        }
-
-        if (state.connectedProfile == null) {
             Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                state = connectionLocationsScroll,
+                modifier = Modifier.fillMaxSize().testTag("network_profiles"),
                     contentPadding = PaddingValues(16.dp, 4.dp, 16.dp, 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    item(key = "connection_heading") { NetworkLocationsHeading(viewModel::openNextcloudSetup) }
+                    state.error?.let { error ->
+                        item(key = "connection_error") { Box(Modifier.testTag("network_connection_error")) { NetworkError(error) } }
+                    }
                     if (state.profiles.isEmpty()) {
                         item {
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
@@ -248,7 +246,6 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                             onDelete = { deleteProfile = profile },
                         )
                     }
-                    state.error?.let { error -> item { NetworkError(error) } }
                 }
                 FloatingActionButton(onClick = { showAdd = true }, modifier = Modifier.padding(20.dp).align(Alignment.BottomEnd)) {
                     Icon(Icons.Rounded.Add, contentDescription = uiText("Pridėti jungtį"))
@@ -272,9 +269,16 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                     onCopySelected = viewModel::copyRemoteSelection,
                     canAddToRemoteClipboard = afClipboard != null,
                     onAddToRemoteClipboard = viewModel::addRemoteSelectionToClipboard,
-                    localClipboardCount = localClipboard?.takeIf { it.mode == ClipboardMode.COPY }?.paths?.size ?: 0,
+                    localClipboardCount = localClipboard?.takeIf { it.mode == ClipboardMode.COPY }?.paths?.size
+                        ?: if (localClipboard == null) afClipboard?.sources?.size ?: 0 else 0,
                     afClipboardCount = afClipboard?.sources?.size ?: 0,
-                    onPasteLocalClipboard = { viewModel.pasteLocalClipboardToRemote() },
+                    onPasteLocalClipboard = {
+                        if (localClipboard == null && afClipboard?.sources?.any { it.location.kind == com.affilemanager.app.workflow.AfLocationKind.DOCUMENT } == true) {
+                            val options = transferPreferences.optionsFor(afClipboard?.moveAfterVerifiedCopies == true)
+                            if (options.askBeforeTransfer) documentPasteOptions = true else viewModel.pasteDocumentClipboardToRemote(options)
+                        } else if (localClipboard == null && afClipboard != null) viewModel.startAfPlanFromClipboard(remoteDestination = true)
+                        else viewModel.pasteLocalClipboardToRemote()
+                    },
                     onPasteToMany = { viewModel.startAfPlanFromClipboard(remoteDestination = true) },
                     onChooseUpload = { showUploadPicker = true },
                     onCreateFolder = { createRemoteItem = true },
@@ -296,6 +300,15 @@ fun ConnectionsScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
         }
     }
 
+    if (documentPasteOptions && afClipboard != null) {
+        val moving = afClipboard?.moveAfterVerifiedCopies == true
+        TransferOptionsDialog(moving = moving, initialOptions = transferPreferences.optionsFor(moving),
+            onDismiss = { documentPasteOptions = false }, onConfirm = { options ->
+                val saved = viewModel.saveTransferOptions(moving, options)
+                if (saved) { viewModel.pasteDocumentClipboardToRemote(options); documentPasteOptions = false }
+                saved
+            })
+    }
     if (showAdd || editingProfile != null) {
         NetworkProfileDialog(
             existingProfile = editingProfile,
@@ -491,7 +504,7 @@ internal fun ProfileCard(
     val normalized = NetworkProfileRules.normalize(profile)
     val profileProblem = runCatching { NetworkProfileRules.validate(normalized) }.exceptionOrNull()?.message
     val safeName = if (NetworkProfileRules.nameError(profile.name) == null) normalized.name else "Jungtis"
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().testTag("network_profile_card_${profile.id}")) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -614,6 +627,7 @@ internal fun RemoteBrowser(
         else displayedEntries.filter { it.path in state.selectedPaths }
     }
     Column(modifier = Modifier.fillMaxSize()) {
+        StableDirectoryHeader(state.selectedPaths.isNotEmpty()) {
         if (state.selectedPaths.isNotEmpty()) {
             SelectionHeader(
                 count = state.selectedPaths.size,
@@ -653,6 +667,7 @@ internal fun RemoteBrowser(
                 filterActive = entryFilters.isNotEmpty(),
                 onOpenFilter = { showEntryFilter = true },
             )
+        }
         }
         if (searchVisible) {
             DirectoryQuickSearchField(
@@ -867,9 +882,7 @@ private fun RemoteFolderActionsMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-        }
+        com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { expanded = true })
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             if (localClipboardCount > 0) {
                 DropdownMenuItem(
@@ -1833,6 +1846,38 @@ private fun syncPolicyLabel(policy: SyncConflictPolicy): String = when (policy) 
 }
 
 @Composable
+private fun NetworkLocationsHeading(onNextcloud: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        val heading: @Composable (Modifier) -> Unit = { headingModifier ->
+            Column(headingModifier) {
+                LText("Tinklas ir nuotolinės vietos", modifier = Modifier.testTag("network_locations_heading"),
+                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                LText("SMB 2/3 · SFTP · WebDAV · FTP/FTPS", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        val cloud: @Composable () -> Unit = {
+            OutlinedButton(onClick = onNextcloud, modifier = Modifier.testTag("add_nextcloud")) {
+                Icon(Icons.Rounded.Cloud, contentDescription = null)
+                LText("Nextcloud", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        if (!featureVisible(OptionalFeature.CLOUD)) heading(Modifier.fillMaxWidth())
+        else if (maxWidth < 480.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                heading(Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { cloud() }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                heading(Modifier.weight(1f))
+                cloud()
+            }
+        }
+    }
+}
+
+@Composable
 internal fun NetworkProfileDialog(
     existingProfile: NetworkProfile?,
     onDismiss: () -> Unit,
@@ -1910,9 +1955,9 @@ internal fun NetworkProfileDialog(
     ) {
         Box(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
                 ExcludeDialogFromAutofill(onAutofillViewReady)
-                LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(modifier = Modifier.fillMaxSize().testTag("network_profile_fields"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()).testTag("network_protocols"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         NetworkProtocol.entries.forEach { candidate ->
                             AssistChip(
                                 onClick = {
@@ -1921,6 +1966,7 @@ internal fun NetworkProfileDialog(
                                     if (port == previousDefault) port = defaultPort(candidate, webDavUseTls).toString()
                                 },
                                 label = { Text(candidate.name) },
+                                modifier = Modifier.testTag("network_protocol_${candidate.name}"),
                             )
                         }
                     }
@@ -1930,7 +1976,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("network_name"),
                         label = { LText("Jungties pavadinimas") },
                         singleLine = true,
                         isError = nameProblem != null,
@@ -1971,7 +2017,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = port,
                         onValueChange = { port = it.filter(Char::isDigit) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("network_port"),
                         label = { LText("Prievadas") },
                         singleLine = true,
                         isError = portProblem != null,
@@ -1982,7 +2028,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("network_username"),
                         label = { LText("Naudotojas") },
                         singleLine = true,
                         isError = usernameProblem != null,
@@ -1993,10 +2039,11 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("network_password"),
                         label = { LText(if (existingProfile == null) "Slaptažodis" else "Naujas slaptažodis (nebūtinas)") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = passwordKeyboardOptions,
                     )
                 }
                 if (existingProfile != null) {
@@ -2011,7 +2058,7 @@ internal fun NetworkProfileDialog(
                     OutlinedTextField(
                         value = basePath,
                         onValueChange = { basePath = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("network_base_path"),
                         label = { LText("Pradinis kelias") },
                         singleLine = true,
                         isError = basePathProblem != null,
@@ -2037,6 +2084,7 @@ internal fun NetworkProfileDialog(
                             OutlinedTextField(
                                 value = privateKeyPem,
                                 onValueChange = { if (it.length <= 1_048_576) privateKeyPem = it },
+                                keyboardOptions = passwordKeyboardOptions,
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { LText(if (existingProfile == null) "Privatus raktas PEM / OpenSSH" else "Naujas privatus raktas PEM / OpenSSH") },
                                 minLines = 4,

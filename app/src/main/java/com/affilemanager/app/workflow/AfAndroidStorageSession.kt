@@ -30,7 +30,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.UUID
 
 class AfStorageSessionFactory(
-    context: Context,
+    private val context: Context,
     private val archives: ArchiveEngine,
     private val profiles: NetworkProfileStore,
     private val clients: RemoteClientFactory,
@@ -39,6 +39,7 @@ class AfStorageSessionFactory(
     private val stagingRoot = File(context.cacheDir, "af-workflow-staging")
 
     suspend fun open(): AfStorageSession = AfAndroidStorageSession(
+        documents = AfDocumentStorage(context),
         stagingRoot = stagingRoot,
         archives = archives,
         profiles = profiles,
@@ -48,6 +49,7 @@ class AfStorageSessionFactory(
 }
 
 private class AfAndroidStorageSession(
+    private val documents: AfDocumentStorage,
     private val stagingRoot: File,
     private val archives: ArchiveEngine,
     private val profiles: NetworkProfileStore,
@@ -59,12 +61,19 @@ private class AfAndroidStorageSession(
     private var closed = false
     private val changedFiles = linkedSetOf<File>()
 
+    override suspend fun validateDocumentDestinations(source: AfSourceRef, destinations: List<AfDestinationRef>, allowSiblingCopy: Boolean) =
+        withContext(Dispatchers.IO) { documents.validateDestinations(source, destinations, allowSiblingCopy) }
+
+    override suspend fun validateDocumentDestinationSet(destinations: List<AfDestinationRef>) =
+        withContext(Dispatchers.IO) { documents.validateDestinationSet(destinations) }
+
     override suspend fun enumerate(source: AfSourceRef): List<AfEnumeratedEntry> = withContext(Dispatchers.IO) {
         checkOpen()
         when (source.kind) {
             AfSourceKind.FILE_SYSTEM -> when (source.location.kind) {
                 AfLocationKind.LOCAL -> enumerateLocal(source)
                 AfLocationKind.REMOTE -> enumerateRemote(source)
+                AfLocationKind.DOCUMENT -> documents.enumerate(source)
             }
             AfSourceKind.ARCHIVE_ENTRY -> enumerateArchive(source)
         }
@@ -88,6 +97,7 @@ private class AfAndroidStorageSession(
                 }
             }
             AfLocationKind.REMOTE -> remoteStat(normalized)
+            AfLocationKind.DOCUMENT -> documents.stat(normalized)
         }
     }
 
@@ -114,6 +124,7 @@ private class AfAndroidStorageSession(
             AfLocationKind.REMOTE -> remoteClient(normalized).list(normalized.path).also {
                 require(it.size <= MAX_REMOTE_DIRECTORY_ENTRIES) { "Remote folder contains too many entries" }
             }.map { remoteNode(normalized, it) }
+            AfLocationKind.DOCUMENT -> documents.list(normalized)
         }
     }
 
@@ -123,6 +134,7 @@ private class AfAndroidStorageSession(
         when (normalized.kind) {
             AfLocationKind.LOCAL -> File(normalized.path).usableSpace.takeIf { it > 0 }
             AfLocationKind.REMOTE -> null
+            AfLocationKind.DOCUMENT -> null
         }
     }
 
@@ -140,6 +152,7 @@ private class AfAndroidStorageSession(
                 require(file.isFile && !Files.isSymbolicLink(file.toPath())) { "File is unavailable for verification" }
                 sha256(file, operation)
             }
+            AfLocationKind.DOCUMENT -> documents.hash(normalized, operation)
             AfLocationKind.REMOTE -> {
                 val snapshot = remoteStat(normalized) ?: error("Remote file is unavailable for verification")
                 require(!snapshot.directory) { "A folder cannot be content-verified" }
@@ -198,6 +211,7 @@ private class AfAndroidStorageSession(
             }
             AfSourceKind.FILE_SYSTEM -> when (source.location.kind) {
                 AfLocationKind.LOCAL -> copyLocalSource(entry, destination, operation)
+                AfLocationKind.DOCUMENT -> documents.materialize(entry, destination, operation)
                 AfLocationKind.REMOTE -> {
                     remoteClient(entry.snapshot.location).download(
                         entry.snapshot.location.path,
@@ -222,6 +236,7 @@ private class AfAndroidStorageSession(
                     trackChange(directory)
                 }
             }
+            AfLocationKind.DOCUMENT -> documents.createDirectory(normalized)
             AfLocationKind.REMOTE -> {
                 val existing = remoteStat(normalized)
                 when {
@@ -249,6 +264,7 @@ private class AfAndroidStorageSession(
                 trackChange(destinationFile)
             }
             AfLocationKind.REMOTE -> installRemote(sourceFile, normalized, replace, operation)
+            AfLocationKind.DOCUMENT -> documents.install(sourceFile, normalized, replace, operation)
         }
     }
 
@@ -261,6 +277,7 @@ private class AfAndroidStorageSession(
                 try { deleteLocal(file, recursive) } finally { trackChange(file) }
             }
             AfLocationKind.REMOTE -> remoteClient(normalized).delete(normalized.path, recursive)
+            AfLocationKind.DOCUMENT -> documents.delete(normalized, recursive)
         }
     }
 
@@ -284,6 +301,7 @@ private class AfAndroidStorageSession(
                 trackChange(toFile)
             }
             AfLocationKind.REMOTE -> remoteClient(source).rename(source.path, target.path)
+            AfLocationKind.DOCUMENT -> documents.rename(source, target)
         }
         Unit
     }
@@ -294,6 +312,7 @@ private class AfAndroidStorageSession(
         withContext(NonCancellable + Dispatchers.IO) {
             openedClients.values.toList().asReversed().forEach { client -> runCatching { client.close() } }
             openedClients.clear()
+            documents.close()
             stagingRoot.listFiles { file -> file.name.startsWith("af-stage-") }?.forEach(File::delete)
             try {
                 if (changedFiles.isNotEmpty()) onMutation(changedFiles.toList())

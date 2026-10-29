@@ -32,7 +32,14 @@ public final class MediaEditingRuntimeVerifier {
         await(test, n -> text(n, label), 15000);
     }
     public static boolean verify(Instrumentation test) throws Exception {
+        return verifyFormats(test, "MP4", "MKV", "MOV", "M4A", "MP3", "WAV", "FLAC", "WMA", "GIF");
+    }
+    public static boolean verifyFormats(Instrumentation test, String... formats) throws Exception {
         if (!android.os.Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk")) throw new AssertionError("Owned emulator required");
+        Set<String> allowed = new HashSet<>(Arrays.asList("MP4", "MKV", "MOV", "M4A", "MP3", "WAV", "FLAC", "WMA", "GIF"));
+        if (formats.length == 0 || formats.length > allowed.size() ||
+                new HashSet<>(Arrays.asList(formats)).size() != formats.length || !allowed.containsAll(Arrays.asList(formats)))
+            throw new AssertionError("Invalid finite export fixture batch");
         Context context = test.getTargetContext();
         File root = new File(context.getCacheDir(), "media-release-" + UUID.randomUUID());
         if (!root.mkdir()) throw new AssertionError("Private fixture root unavailable");
@@ -47,7 +54,7 @@ public final class MediaEditingRuntimeVerifier {
             // Choose a real destination through AF instead of inheriting another
             // suite's last folder, which its own fixture cleanup may have removed.
             com.affilemanager.app.BrowserIssuesRuntimeVerifier.openDownloads(test);
-            for (String format : new String[]{"MP4", "MKV", "MOV", "M4A", "MP3", "WAV", "FLAC", "WMA", "GIF"}) {
+            for (String format : formats) {
                 Uri uri = Uri.parse("content://" + context.getPackageName() + ".files/app_cache/" + root.getName() + "/video.mp4");
                 // AF reuses its singleTask activity through onNewIntent. An activity
                 // monitor waiting for a newly created Activity cannot validate that path.
@@ -100,10 +107,9 @@ public final class MediaEditingRuntimeVerifier {
                 File output = new File(destination, name + "." + format.toLowerCase(Locale.ROOT));
                 if (output.exists()) throw new AssertionError("Unexpected occupied destination");
                 outputs.add(output);
-                // This owned Download fixture has files, never child folders.
-                // Wait for its completed listing, not the initial loading body's
-                // briefly enabled/cached action before the dialog's final height.
-                await(test, n -> text(n, "This folder has no subfolders"), 15000);
+                // The full suite can own other Download subfolders (including
+                // the shared video fixture). Save is enabled only after loading;
+                // the native click helper also waits for stable rendered bounds.
                 click(test, await(test, n -> text(n, "Save here") && clickable(n).isEnabled(), 5000));
                 try {
                     waitFor(() -> output.isFile() && output.length() > 0, 15000, "Actual Save As file");
@@ -213,7 +219,7 @@ public final class MediaEditingRuntimeVerifier {
         throw new AssertionError("No shipping PCM samples");
     }
     private static int count(File root) { String[] values = root.list(); return values == null ? 0 : values.length; }
-    private static void setText(AccessibilityNodeInfo input, String value) {
+    public static void setText(AccessibilityNodeInfo input, String value) {
         Bundle args = new Bundle(); args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value);
         if (!input.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) throw new AssertionError("Output field rejected edit");
     }

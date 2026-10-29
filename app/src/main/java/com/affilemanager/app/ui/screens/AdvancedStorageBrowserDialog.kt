@@ -131,6 +131,41 @@ fun AdvancedStorageBrowserDialog(
         }
     }
     val allSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.absolutePath in state.selectedPaths }
+    val selectionHeader: @Composable () -> Unit = {
+        SelectionActionBar(
+            count = state.selectedPaths.size,
+            allSelected = allSelected,
+            onClose = viewModel::clearAdvancedSelection,
+            onToggleSelectAll = {
+                if (allSelected) viewModel.clearAdvancedSelection()
+                else displayedEntries.forEach { entry ->
+                    if (entry.absolutePath !in state.selectedPaths) viewModel.toggleAdvancedSelection(entry.absolutePath)
+                }
+            },
+            modifier = Modifier.testTag("advanced_selection_bar"),
+        ) {
+            com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map { it.absolutePath })
+            BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyAdvancedSelection(move = false) }) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+            }
+            if (clipboard?.source == ClipboardSource.PRIVILEGED && clipboard.mode == ClipboardMode.COPY) {
+                BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyAdvancedSelection(move = false, append = true) }) {
+                    Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
+                }
+            }
+            BrowserActionIconButton(BrowserAction.MOVE, onClick = { viewModel.copyAdvancedSelection(move = true) }) {
+                Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
+            }
+            if (state.selectedPaths.size == 1) {
+                BrowserActionIconButton(BrowserAction.RENAME, onClick = { renameTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } }) {
+                    Icon(Icons.Rounded.DriveFileRenameOutline, contentDescription = uiText("Pervadinti"))
+                }
+            }
+            BrowserActionIconButton(BrowserAction.DELETE, onClick = { confirmDelete = true }) {
+                Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti visam laikui"), tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
 
     AfDialog(
         onDismissRequest = { viewModel.navigateAdvancedBack() },
@@ -138,6 +173,8 @@ fun AdvancedStorageBrowserDialog(
     ) {
         com.affilemanager.app.ui.theme.AppearancePage(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                com.affilemanager.app.ui.components.StableDirectoryHeader(state.selectedPaths.isNotEmpty()) {
+                    if (state.selectedPaths.isNotEmpty()) selectionHeader() else {
                 DirectoryBrowserToolbar(
                     title = uiText(state.title),
                     path = state.path.ifBlank { uiText("Jungiama") },
@@ -159,9 +196,7 @@ fun AdvancedStorageBrowserDialog(
                     onOpenSettings = { showDisplaySettings = true },
                 ) {
                     Box {
-                        IconButton(onClick = { menu = true }) {
-                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-                        }
+                        com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { menu = true })
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
                                 text = { LText("Naujas aplankas") },
@@ -218,6 +253,8 @@ fun AdvancedStorageBrowserDialog(
                         }
                     }
                 }
+                    }
+                }
                 LText(
                     advancedBackendLabel(access.activeBackend),
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
@@ -234,42 +271,6 @@ fun AdvancedStorageBrowserDialog(
                         onOpenFilter = { showEntryFilter = true },
                         modifier = Modifier.testTag("directory_search_field_advanced"),
                     )
-                }
-
-                if (state.selectedPaths.isNotEmpty()) {
-                    SelectionActionBar(
-                        count = state.selectedPaths.size,
-                        allSelected = allSelected,
-                        onClose = viewModel::clearAdvancedSelection,
-                        onToggleSelectAll = {
-                            if (allSelected) viewModel.clearAdvancedSelection()
-                            else displayedEntries.forEach { entry ->
-                                if (entry.absolutePath !in state.selectedPaths) viewModel.toggleAdvancedSelection(entry.absolutePath)
-                            }
-                        },
-                        modifier = Modifier.testTag("advanced_selection_bar"),
-                    ) {
-                        com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map { it.absolutePath })
-                        BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyAdvancedSelection(move = false) }) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
-                        }
-                        if (clipboard?.source == ClipboardSource.PRIVILEGED && clipboard.mode == ClipboardMode.COPY) {
-                            BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyAdvancedSelection(move = false, append = true) }) {
-                                Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
-                            }
-                        }
-                        BrowserActionIconButton(BrowserAction.MOVE, onClick = { viewModel.copyAdvancedSelection(move = true) }) {
-                            Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
-                        }
-                        if (state.selectedPaths.size == 1) {
-                            BrowserActionIconButton(BrowserAction.RENAME, onClick = { renameTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } }) {
-                                Icon(Icons.Rounded.DriveFileRenameOutline, contentDescription = uiText("Pervadinti"))
-                            }
-                        }
-                        BrowserActionIconButton(BrowserAction.DELETE, onClick = { confirmDelete = true }) {
-                            Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti visam laikui"), tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
                 }
 
                 AfPullToRefresh(

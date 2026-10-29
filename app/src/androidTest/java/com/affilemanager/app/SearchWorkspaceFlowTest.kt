@@ -2,9 +2,11 @@ package com.affilemanager.app
 
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -49,11 +51,16 @@ class SearchWorkspaceFlowTest {
                 viewModel.setSection(AppSection.ANALYZE)
             }
 
+            compose.onNodeWithTag("analyze_list").performScrollToNode(hasText("This folder"))
             compose.onNodeWithText("This folder").fetchSemanticsNode()
-            compose.onNodeWithTag("search_advanced_toggle").performClick()
+            if (compose.onNodeWithTag("search_advanced_toggle").fetchSemanticsNode().config
+                    .getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Selected) != true) {
+                compose.onNodeWithTag("search_advanced_toggle").performScrollTo().assertIsDisplayed().performClick()
+            }
+            compose.onNodeWithTag("analyze_list").performScrollToNode(hasText("File types"))
             compose.onNodeWithText("File types").fetchSemanticsNode()
-            compose.onNodeWithTag("search_advanced_toggle").performClick()
-            compose.onNodeWithTag("search_query").performTextInput(token)
+            compose.onNodeWithTag("search_advanced_toggle").performScrollTo().assertIsDisplayed().performClick()
+            compose.onNodeWithTag("search_query").performScrollTo().assertIsDisplayed().performTextInput(token)
             compose.onNodeWithTag("search_query").assert(hasText(token))
             compose.runOnUiThread {
                 viewModel.search(SearchFilters(query = token), listOf(root.absolutePath))

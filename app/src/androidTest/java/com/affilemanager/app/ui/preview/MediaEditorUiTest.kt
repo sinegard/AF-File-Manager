@@ -93,7 +93,16 @@ class MediaEditorUiTest {
             screenshot("export-error")
         } finally { store.discard(session); root.deleteRecursively() }
     }
-    @Test fun allShippedLanguagesKeepVideoMetadataAndExportControlsWithinTheirLayout() {
+    @Test fun allShippedLanguagesKeepVideoMetadataAndExportControlsWithinTheirLayout() = checkLanguageBatch(0)
+    @Test fun mediaLanguagesBatchTwo() = checkLanguageBatch(1)
+    @Test fun mediaLanguagesBatchThree() = checkLanguageBatch(2)
+    @Test fun mediaLanguagesBatchFour() = checkLanguageBatch(3)
+
+    private fun checkLanguageBatch(batch: Int) {
+        val requested = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("afAuditLanguages")?.split(',')
+            ?: AppLanguageManager.SUPPORTED_LANGUAGE_TAGS
+        val languages = requested.chunked(15).getOrNull(batch).orEmpty()
+        org.junit.Assume.assumeTrue("No languages in this explicitly selected batch", languages.isNotEmpty())
         val context = ApplicationProvider.getApplicationContext<Context>()
         val root = File(context.cacheDir, "media-languages-${UUID.randomUUID()}").apply { check(mkdir()) }
         val file = root.resolve("video.mp4").also { MediaTestFixtures.video(it) }
@@ -122,7 +131,7 @@ class MediaEditorUiTest {
                 }
             }
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("media_fps_original").fetchSemanticsNodes().isNotEmpty() }
-            for (tag in AppLanguageManager.SUPPORTED_LANGUAGE_TAGS) for (font in listOf(1f, 1.5f, 2f)) {
+            for (tag in languages) for (font in listOf(1f, 1.5f, 2f)) {
                 System.out.println("AF_MEDIA_LAYOUT_BEGIN $tag/$font")
                 compose.runOnIdle { language.value = tag; scale.floatValue = font }
                 compose.waitUntil(10_000) { compose.onAllNodesWithTag("media_fps_original").fetchSemanticsNodes().isNotEmpty() }

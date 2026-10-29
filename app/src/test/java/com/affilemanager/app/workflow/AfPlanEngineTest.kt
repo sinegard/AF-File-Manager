@@ -15,6 +15,36 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class AfPlanEngineTest {
+    @Test fun normalMoveSkipKeepsTheConflictingOriginalAndMovesOnlyTheOtherRoot() = runTest {
+        val storage = FakeAfStorage()
+        val skipped = storage.file("/phone/conflict.txt", "one", "phone")
+        val moved = storage.file("/phone/move.txt", "two", "phone")
+        val destination = storage.directory("/target", "server")
+        val existing = storage.file("/target/conflict.txt", "old", "server")
+        val requested = plan(listOf(AfSourceRef(skipped, "conflict.txt"), AfSourceRef(moved, "move.txt")),
+            listOf(AfDestinationRef(destination)), verification = TransferVerification.SHA256, deleteSources = true)
+            .copy(conflictPolicy = ConflictPolicy.SKIP, fileManagerTransfer = true)
+        val result = execute(requested, storage)
+        assertEquals(AfExecutionStatus.COMPLETED, result.first.status)
+        assertTrue(storage.exists(skipped))
+        assertFalse(storage.exists(moved))
+        assertArrayEquals("old".toByteArray(), storage.bytes(existing))
+        assertArrayEquals("two".toByteArray(), storage.bytes(child(destination, "move.txt")))
+        assertFalse(result.first.sourcesDeleted)
+        assertFalse(result.second.undoAvailable)
+    }
+    @Test fun verificationFailureDoesNotDeleteAChangedDestination() = runTest {
+        val storage = FakeAfStorage()
+        val source = storage.file("/phone/verified.txt", "original", "phone")
+        val destination = storage.directory("/target", "server")
+        val target = child(destination, "verified.txt")
+        storage.corruptInstallAt = target.identityKey()
+        val outcome = runCatching { execute(plan(listOf(AfSourceRef(source, "verified.txt")), listOf(AfDestinationRef(destination)),
+            verification = TransferVerification.SHA256), storage) }
+        assertTrue(outcome.isFailure)
+        assertTrue(storage.exists(source))
+        assertTrue("A failed verification is not permission to delete changed data", storage.exists(target))
+    }
     @get:Rule
     val temporary = TemporaryFolder()
 

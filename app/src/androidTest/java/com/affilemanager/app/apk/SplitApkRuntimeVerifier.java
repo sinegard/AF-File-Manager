@@ -21,7 +21,7 @@ import java.util.zip.ZipFile;
 public final class SplitApkRuntimeVerifier {
     private static final String FIXTURE = "com.affilemanager.fixture.split";
     public static boolean verify(Instrumentation test) throws Exception {
-        if (!android.os.Build.MODEL.contains("sdk")) throw new AssertionError("Disposable emulator required");
+        if (!android.os.Build.MODEL.toLowerCase(java.util.Locale.ROOT).contains("sdk")) throw new AssertionError("Disposable emulator required");
         Context context = test.getTargetContext();
         if (installed(context) != null) throw new AssertionError("Fixture already exists; refusing to change it");
         File root = new File(context.getCacheDir(), "optimized-split-" + UUID.randomUUID());
@@ -34,8 +34,12 @@ public final class SplitApkRuntimeVerifier {
             if (!install.performAction(AccessibilityNodeInfo.ACTION_CLICK)) throw new AssertionError("Install control failed");
             await(() -> installed(context) != null);
             if (!Arrays.asList(installed(context).splitNames).contains("config.en")) throw new AssertionError("Original split missing");
+            // PackageInfo appears before Android delivers the terminal install
+            // callback. Removing it sooner races that still-active session and
+            // produces PACKAGE_CHANGED instead of testing the next signature.
+            await(() -> context.getPackageManager().getPackageInstaller().getMySessions().isEmpty() && mainReturned(test));
             shell(test, "pm uninstall " + FIXTURE);
-            if (installed(context) != null) throw new AssertionError("Fixture removal failed");
+            await(() -> installed(context) == null);
 
             launch(test, fixture(test, root, "wrong-signature"));
             install = waitText(test, value -> value.equalsIgnoreCase("Install"), 3000);
@@ -95,6 +99,25 @@ public final class SplitApkRuntimeVerifier {
         long deadline = SystemClock.elapsedRealtime() + 15000;
         while (!condition.getAsBoolean() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100);
         if (!condition.getAsBoolean()) throw new AssertionError("Native install transition timed out");
+    }
+    private static boolean mainReturned(Instrumentation test) {
+        if (android.os.Build.VERSION.SDK_INT >= 34 && !test.getUiAutomation().clearCache())
+            throw new AssertionError("Native install observation cache could not refresh");
+        AccessibilityNodeInfo root = test.getUiAutomation().getRootInActiveWindow();
+        if (root == null || !test.getTargetContext().getPackageName().contentEquals(root.getPackageName())) return false;
+        java.util.ArrayDeque<AccessibilityNodeInfo> nodes = new java.util.ArrayDeque<>();
+        nodes.add(root);
+        int count = 0;
+        while (!nodes.isEmpty() && count++ < 2000) {
+            AccessibilityNodeInfo node = nodes.removeFirst();
+            String id = node.getViewIdResourceName();
+            if (node.isVisibleToUser() && id != null && (id.equals("nav_files") || id.endsWith("/nav_files"))) return true;
+            for (int i = 0; i < node.getChildCount(); i++) {
+                AccessibilityNodeInfo child = node.getChild(i);
+                if (child != null) nodes.add(child);
+            }
+        }
+        return false;
     }
     private static AccessibilityNodeInfo waitText(Instrumentation test, Predicate<String> matches, long timeout) {
         long deadline = SystemClock.elapsedRealtime() + timeout;

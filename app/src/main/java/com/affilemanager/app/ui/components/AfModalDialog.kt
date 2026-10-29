@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,15 +26,25 @@ import androidx.compose.material3.MaterialTheme
 import com.affilemanager.app.ui.theme.AfSurface as Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import com.affilemanager.app.ui.theme.AfDialog
+import com.affilemanager.app.ui.theme.dialogDecorFitsSystemWindows
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.uiText
 
@@ -54,21 +65,34 @@ fun AfModalDialog(
     expandedContent: Boolean = false,
     decorFitsSystemWindows: Boolean = true,
     compactHeightThreshold: Dp = 300.dp,
+    minimumContentHeight: Dp = 0.dp,
     actions: @Composable () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val fitsSystemWindows = dialogDecorFitsSystemWindows(decorFitsSystemWindows)
     AfDialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = decorFitsSystemWindows),
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = fitsSystemWindows),
     ) {
         // Keep the dialog window fitted to its surface so Android can still dismiss
         // an outside tap; a full-screen wrapper consumes that tap as dialog content.
         BoxWithConstraints(
-            modifier = Modifier.then(if (decorFitsSystemWindows) Modifier else Modifier.systemBarsPadding()).imePadding(),
+            modifier = Modifier.then(if (fitsSystemWindows) Modifier else Modifier.systemBarsPadding())
+                .imePadding().semantics { testTagsAsResourceId = true },
             contentAlignment = Alignment.Center,
         ) {
             val maximumDialogHeight = maxHeight * 0.92f
-            val compactHeight = maximumDialogHeight < compactHeightThreshold
+            val density = LocalDensity.current
+            val localeKey = LocalConfiguration.current.locales.toLanguageTags()
+            var headerPixels by remember(title, subtitle, localeKey, maxWidth, density.density, density.fontScale) { mutableIntStateOf(0) }
+            var footerPixels by remember(showFooter, localeKey, maxWidth, density.density, density.fontScale) { mutableIntStateOf(0) }
+            val chromeMeasured = headerPixels > 0 && (!showFooter || footerPixels > 0)
+            // A selector may have fixed search/help around its list. Other expanded
+            // forms retain their existing, independently scrollable content contract.
+            val usefulBodyHeight = minimumContentHeight.coerceAtLeast(50.dp)
+            val compactHeight = if (chromeMeasured) {
+                with(density) { maximumDialogHeight.toPx() < headerPixels + (if (showFooter) footerPixels else 0) + usefulBodyHeight.toPx() }
+            } else maximumDialogHeight < compactHeightThreshold
             Surface(
                 modifier = Modifier
                     .widthIn(max = 760.dp)
@@ -88,7 +112,9 @@ fun AfModalDialog(
                 // Keep the content slot bounded so nested lists still receive finite height.
                 Column(modifier = if (compactHeight) Modifier.verticalScroll(rememberScrollState()) else Modifier) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(unbounded = true)
+                            .onSizeChanged { headerPixels = it.height }
+                            .padding(horizontal = 18.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -126,7 +152,10 @@ fun AfModalDialog(
                     HorizontalDivider()
                     Box(
                         modifier = Modifier.fillMaxWidth().then(
-                            if (compactHeight) Modifier.heightIn(max = 300.dp)
+                            if (compactHeight && minimumContentHeight > 0.dp) Modifier.height(
+                                (300.dp * density.fontScale.coerceAtLeast(1f)).coerceAtLeast(minimumContentHeight),
+                            )
+                            else if (compactHeight) Modifier.heightIn(max = 300.dp)
                             else Modifier.weight(1f, fill = expandedContent),
                         ),
                         content = content,
@@ -134,7 +163,8 @@ fun AfModalDialog(
                     if (showFooter) {
                         HorizontalDivider()
                         FlowRow(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            modifier = Modifier.fillMaxWidth().wrapContentHeight(unbounded = true)
+                                .onSizeChanged { footerPixels = it.height }.padding(12.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                             itemVerticalAlignment = Alignment.CenterVertically,
                             verticalArrangement = Arrangement.spacedBy(4.dp),

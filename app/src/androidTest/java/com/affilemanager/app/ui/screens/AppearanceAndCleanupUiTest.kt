@@ -171,8 +171,8 @@ class AppearanceAndCleanupUiTest {
                 onOpenAppSettings = {}, onUninstall = {}, onForceStop = { stopped = it },
             )
         } }
-        compose.onNodeWithTag("cleanup_running_tab").performClick()
-        compose.onNodeWithTag("cleanup_force_stop_${app.packageName}").performClick()
+        compose.onNodeWithTag("cleanup_running_tab").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("cleanup_force_stop_${app.packageName}").performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithTag("cleanup_force_stop_confirmation").assertIsDisplayed()
         assertNull(stopped)
         compose.onNodeWithTag("cleanup_force_stop_confirm").performClick()

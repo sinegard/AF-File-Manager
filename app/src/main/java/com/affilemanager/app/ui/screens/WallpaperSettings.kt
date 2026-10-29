@@ -13,7 +13,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,11 +63,29 @@ internal fun WallpaperSettings(settings: AppearanceSettings, onWallpaper: (Uri?)
         Slider(value = transparency, onValueChange = { transparency = it }, valueRange = 0f..100f,
             onValueChangeFinished = { onTransparency(transparency.roundToInt()) },
             modifier = Modifier.fillMaxWidth().testTag("card_transparency"))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            LText("Skaidrūs meniu ir dialogai", modifier = Modifier.weight(1f))
-            Switch(checked = settings.transparentMenus, onCheckedChange = onTransparentMenus,
-                modifier = Modifier.testTag("transparent_menus"))
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val label = uiText("Skaidrūs meniu ir dialogai")
+            val layout = rememberTextMeasurer().measure(label, LocalTextStyle.current)
+            val inkWidth = (0 until layout.lineCount).maxOf { layout.getLineRight(it) - layout.getLineLeft(it) }
+            val inline = with(LocalDensity.current) { inkWidth <= (maxWidth - 64.dp).toPx() }
+            val toggle: @Composable () -> Unit = {
+                Switch(checked = settings.transparentMenus, onCheckedChange = onTransparentMenus,
+                    modifier = Modifier.testTag("transparent_menus"))
+            }
+            if (inline) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LText("Skaidrūs meniu ir dialogai", modifier = Modifier.weight(1f))
+                    toggle()
+                }
+            } else {
+                // Keep the full translated label, including fallback-font overhang,
+                // instead of squeezing it into the switch's remaining row width.
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+                    LText("Skaidrūs meniu ir dialogai", modifier = Modifier.fillMaxWidth())
+                    toggle()
+                }
+            }
         }
     }
     cropUri?.let { com.affilemanager.app.ui.components.ImageCropDialog(it, "wallpaper", null,

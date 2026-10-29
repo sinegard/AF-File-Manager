@@ -97,7 +97,7 @@ class AdvancedAccessManager(context: Context) {
     private val shizukuArgs = Shizuku.UserServiceArgs(ComponentName(appContext, ShizukuFileService::class.java))
         .daemon(false)
         .tag("af_privileged_files_v1")
-        .version(BuildConfig.VERSION_CODE)
+        .version(BuildConfig.VERSION_CODE * 100 + PrivilegedFileServiceProtocol.SERVICE_REVISION)
         .debuggable(BuildConfig.DEBUG)
         .processNameSuffix("af_privileged")
 
@@ -125,6 +125,7 @@ class AdvancedAccessManager(context: Context) {
                 val uid = privileged.processUid
                 require(uid == 0 || uid == 2_000) { "Netikėtas Shizuku tarnybos UID: $uid" }
                 val remote = FileSystemManager.getRemote(privileged.fileSystemService)
+                if (privilegedService !== privileged) PrivilegedReadInputStream.closeAll()
                 fileSystem = remote
                 privilegedService = privileged
                 shizukuBound = true
@@ -140,6 +141,7 @@ class AdvancedAccessManager(context: Context) {
                 shizukuBound = false
                 fileSystem = null
                 privilegedService = null
+                PrivilegedReadInputStream.closeAll()
                 setConnectionFailure("Shizuku failų tarnybos paleisti nepavyko", error)
             }
         }
@@ -151,6 +153,7 @@ class AdvancedAccessManager(context: Context) {
             if (_state.value.activeBackend in setOf(AdvancedAccessBackend.SHIZUKU_SHELL, AdvancedAccessBackend.SHIZUKU_ROOT)) {
                 fileSystem = null
                 privilegedService = null
+                PrivilegedReadInputStream.closeAll()
                 _state.update {
                     it.copy(
                         activeBackend = AdvancedAccessBackend.NONE,
@@ -171,6 +174,7 @@ class AdvancedAccessManager(context: Context) {
             runCatching {
                 val privileged = IPrivilegedFileService.Stub.asInterface(requireNotNull(service))
                 require(privileged.processUid == 0) { "Netikėtas root tarnybos UID: ${privileged.processUid}" }
+                if (privilegedService !== privileged) PrivilegedReadInputStream.closeAll()
                 fileSystem = FileSystemManager.getRemote(privileged.fileSystemService)
                 privilegedService = privileged
                 rootBound = true
@@ -187,6 +191,7 @@ class AdvancedAccessManager(context: Context) {
                 rootBound = false
                 fileSystem = null
                 privilegedService = null
+                PrivilegedReadInputStream.closeAll()
                 setConnectionFailure("Root failų tarnybos paleisti nepavyko", error)
             }
         }
@@ -198,6 +203,7 @@ class AdvancedAccessManager(context: Context) {
             if (_state.value.activeBackend == AdvancedAccessBackend.ROOT) {
                 fileSystem = null
                 privilegedService = null
+                PrivilegedReadInputStream.closeAll()
                 _state.update {
                     it.copy(
                         activeBackend = AdvancedAccessBackend.NONE,
@@ -222,6 +228,7 @@ class AdvancedAccessManager(context: Context) {
         if (_state.value.activeBackend in setOf(AdvancedAccessBackend.SHIZUKU_SHELL, AdvancedAccessBackend.SHIZUKU_ROOT)) {
             fileSystem = null
             privilegedService = null
+            PrivilegedReadInputStream.closeAll()
         }
         refreshCapabilities()
     }
@@ -342,6 +349,22 @@ class AdvancedAccessManager(context: Context) {
         ?.takeIf { it.asBinder().isBinderAlive }
         ?: throw IllegalStateException("Privilegijuota terminalo prieiga neaktyvi")
 
+    internal fun fileMetadataServiceOrThrow(): IPrivilegedFileService {
+        val service = privilegedService?.takeIf { it.asBinder().isBinderAlive }
+            ?: throw IllegalStateException("Privilegijuota failų prieiga neaktyvi")
+        // An older cached UserService must never silently publish content without metadata.
+        val current = runCatching { service.fileMetadataVersion == PrivilegedFileMetadata.VERSION }.getOrDefault(false)
+        check(current) { "Privilegijuota failų prieiga neaktyvi" }
+        return service
+    }
+
+    internal fun fileReadServiceOrThrow(): IPrivilegedFileService = privilegedService
+        ?.takeIf { it.asBinder().isBinderAlive }
+        ?: throw IllegalStateException("Privilegijuota failų prieiga neaktyvi")
+
+    internal fun isCurrentReadService(service: IPrivilegedFileService): Boolean =
+        privilegedService === service && service.asBinder().isBinderAlive
+
     fun reportAndroidDataProbe(accessible: Boolean, error: Throwable? = null) {
         _state.update {
             it.copy(
@@ -355,6 +378,7 @@ class AdvancedAccessManager(context: Context) {
         if (error is android.os.DeadObjectException) {
             fileSystem = null
             privilegedService = null
+            PrivilegedReadInputStream.closeAll()
             _state.update {
                 it.copy(
                     activeBackend = AdvancedAccessBackend.NONE,
@@ -427,6 +451,7 @@ class AdvancedAccessManager(context: Context) {
         disconnectRoot()
         fileSystem = null
         privilegedService = null
+        PrivilegedReadInputStream.closeAll()
     }
 
     private fun disconnectShizuku() {
@@ -444,6 +469,7 @@ class AdvancedAccessManager(context: Context) {
         if (_state.value.activeBackend in setOf(AdvancedAccessBackend.SHIZUKU_SHELL, AdvancedAccessBackend.SHIZUKU_ROOT)) {
             fileSystem = null
             privilegedService = null
+            PrivilegedReadInputStream.closeAll()
         }
     }
 
@@ -455,12 +481,14 @@ class AdvancedAccessManager(context: Context) {
         if (_state.value.activeBackend == AdvancedAccessBackend.ROOT) {
             fileSystem = null
             privilegedService = null
+            PrivilegedReadInputStream.closeAll()
         }
     }
 
     private fun setConnectionFailure(prefix: String, error: Throwable) {
         fileSystem = null
         privilegedService = null
+        PrivilegedReadInputStream.closeAll()
         _state.update {
             it.copy(
                 activeBackend = AdvancedAccessBackend.NONE,
@@ -475,6 +503,7 @@ class AdvancedAccessManager(context: Context) {
     private fun setRootConnectionFailure(prefix: String, error: Throwable) {
         fileSystem = null
         privilegedService = null
+        PrivilegedReadInputStream.closeAll()
         val rootPermission = when (runCatching { Shell.isAppGrantedRoot() }.getOrNull()) {
             true -> CapabilityState.GRANTED
             false -> CapabilityState.UNAVAILABLE

@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.CardDefaults
@@ -31,6 +33,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -42,6 +47,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onSizeChanged
 import com.affilemanager.app.ui.localization.uiText
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -66,8 +72,10 @@ internal fun AfDialog(
                 LocalDensity provides density,
                 LocalConfiguration provides configuration,
                 LocalLayoutDirection provides layoutDirection,
-                content = content,
-            )
+            ) {
+                SystemBarsTheme()
+                content()
+            }
         }
     }
 }
@@ -176,26 +184,36 @@ internal fun AfAlertDialog(
     properties: DialogProperties = DialogProperties(),
 ) {
     val fill = popupColor()
+    val fitsSystemWindows = dialogDecorFitsSystemWindows(properties.decorFitsSystemWindows)
     AfDialog(onDismissRequest = onDismissRequest,
         properties = DialogProperties(
             dismissOnBackPress = properties.dismissOnBackPress,
             dismissOnClickOutside = properties.dismissOnClickOutside,
             securePolicy = properties.securePolicy,
             usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = properties.decorFitsSystemWindows,
+            decorFitsSystemWindows = fitsSystemWindows,
         )) {
         BoxWithConstraints(
-            Modifier.then(if (properties.decorFitsSystemWindows) Modifier else Modifier.systemBarsPadding()).imePadding(),
+            Modifier.then(if (fitsSystemWindows) Modifier else Modifier.systemBarsPadding()).imePadding(),
             contentAlignment = Alignment.Center,
         ) {
+            val maximumDialogHeight = maxHeight * .92f
+            val density = LocalDensity.current
+            val locale = LocalConfiguration.current.locales.toLanguageTags()
+            var headerPixels by remember(maxWidth, density.density, density.fontScale, locale) { mutableIntStateOf(0) }
+            var footerPixels by remember(maxWidth, density.density, density.fontScale, locale) { mutableIntStateOf(0) }
+            val compactHeight = if (headerPixels > 0 && footerPixels > 0) {
+                with(density) { maximumDialogHeight.toPx() < headerPixels + footerPixels + 50.dp.toPx() }
+            } else maximumDialogHeight < 300.dp
             Surface(
                 modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(.94f)
-                    .heightIn(max = maxHeight * .92f).then(modifier),
+                    .heightIn(max = maximumDialogHeight).then(modifier),
                 shape = shape, color = fill, tonalElevation = 0.dp,
             ) {
                 PopupContent {
-                    Column {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                    Column(if (compactHeight) Modifier.verticalScroll(rememberScrollState()) else Modifier) {
+                        Row(Modifier.fillMaxWidth().wrapContentHeight(unbounded = true)
+                            .onSizeChanged { headerPixels = it.height }.padding(horizontal = 18.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             icon?.let { slot ->
@@ -210,13 +228,15 @@ internal fun AfAlertDialog(
                         }
                         HorizontalDivider()
                         text?.let { slot ->
-                            Box(Modifier.fillMaxWidth().weight(1f, fill = false).padding(horizontal = 18.dp, vertical = 14.dp)) {
+                            Box(Modifier.fillMaxWidth().then(if (compactHeight) Modifier.heightIn(max = 300.dp)
+                                else Modifier.weight(1f, fill = false)).padding(horizontal = 18.dp, vertical = 14.dp)) {
                                 ProvideTextStyle(MaterialTheme.typography.bodyMedium, slot)
                             }
                         }
                         HorizontalDivider()
                         FlowRow(
-                            Modifier.fillMaxWidth().padding(12.dp),
+                            Modifier.fillMaxWidth().wrapContentHeight(unbounded = true)
+                                .onSizeChanged { footerPixels = it.height }.padding(12.dp),
                             horizontalArrangement = Arrangement.End,
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                             itemVerticalAlignment = Alignment.CenterVertically,

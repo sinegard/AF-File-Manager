@@ -9,6 +9,8 @@ import com.affilemanager.app.ui.localization.uiText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +44,10 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import com.affilemanager.app.ui.theme.AfButton as Button
 import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,9 +69,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +104,9 @@ import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.LazyListFastScroller
 import com.affilemanager.app.ui.components.LazyGridFastScroller
 import com.affilemanager.app.ui.components.DeleteConfirmationDialog
+import com.affilemanager.app.ui.components.SelectionHeader
+import com.affilemanager.app.ui.components.SelectionActionDock
+import com.affilemanager.app.ui.components.longPressDragSelect
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,6 +120,9 @@ fun SafBrowserDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit,
 ) {
+    val clipboard by viewModel.afClipboard.collectAsStateWithLifecycle()
+    val transferPreferences by viewModel.transferPreferences.collectAsStateWithLifecycle()
+    var pasteOptions by remember { mutableStateOf(false) }
     var create by remember { mutableStateOf(false) }
     var rename by remember { mutableStateOf<SafEntry?>(null) }
     var delete by remember { mutableStateOf<SafEntry?>(null) }
@@ -166,11 +181,17 @@ fun SafBrowserDialog(
                     onOpenSettings = { showDisplaySettings = true },
                 ) {
                     Box {
-                        IconButton(onClick = { menu = true }) {
-                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-                        }
+                        com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { menu = true })
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            if (selectedLocalPath != null) {
+                            if (clipboard != null) {
+                                BrowserActionMenuItem(BrowserAction.COPY,
+                                    text = { LText("Įklijuoti") },
+                                    leadingIcon = { Icon(Icons.Rounded.ContentPaste, contentDescription = null) },
+                                    modifier = Modifier.testTag("saf_paste"),
+                                    onClick = { menu = false; if (!viewModel.pasteIntoSafUsingSavedOptions()) pasteOptions = true },
+                                )
+                                HorizontalDivider()
+                            } else if (selectedLocalPath != null) {
                                 DropdownMenuItem(
                                     text = { LText("Kopijuoti pasirinktą vietinį elementą čia") },
                                     leadingIcon = { Icon(Icons.Rounded.FileUpload, contentDescription = null) },
@@ -216,6 +237,13 @@ fun SafBrowserDialog(
                     )
                 }
                 HorizontalDivider()
+                if (state.selectedUris.isNotEmpty()) SelectionHeader(
+                    count = state.selectedUris.size,
+                    allSelected = displayedEntries.isNotEmpty() && displayedEntries.all { it.uri in state.selectedUris },
+                    onClose = viewModel::clearSafSelection,
+                    onToggleSelectAll = { viewModel.toggleAllSafSelection(displayedEntries.map(SafEntry::uri)) },
+                    modifier = Modifier.testTag("saf_selection_header"),
+                )
                 state.error?.let { error ->
                     Card(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
                         LText(error, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.error)
@@ -246,7 +274,11 @@ fun SafBrowserDialog(
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(com.affilemanager.app.ui.components.directoryGridColumns(state.gridColumns, state.gridColumnsLandscape)),
                             state = gridState,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().longPressDragSelect(
+                                state = gridState, itemCount = displayedEntries.size,
+                                isSelected = { index -> displayedEntries.getOrNull(index)?.uri in state.selectedUris },
+                                onSelectionChange = { indices, selected -> viewModel.setSafSelection(indices.mapNotNull { displayedEntries.getOrNull(it)?.uri }, selected) },
+                            ),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp, 8.dp, 10.dp, 92.dp),
                             horizontalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
                             verticalArrangement = Arrangement.spacedBy((8f * state.spacingScalePercent / 100f).dp),
@@ -257,7 +289,13 @@ fun SafBrowserDialog(
                                     showThumbnails = state.showThumbnails,
                                     iconScalePercent = state.iconScalePercent,
                                     gridStyle = state.gridStyle,
-                                    onOpen = { viewModel.openSafEntry(entry) },
+                                    selected = entry.uri in state.selectedUris,
+                                    selectionActive = state.selectedUris.isNotEmpty(),
+                                    onSelect = { viewModel.toggleSafSelection(entry.uri) },
+                                    onOpen = { if (state.selectedUris.isNotEmpty()) viewModel.toggleSafSelection(entry.uri) else viewModel.openSafEntry(entry) },
+                                    onCopy = { viewModel.copySafEntries(listOf(entry)) },
+                                    onMove = { viewModel.copySafEntries(listOf(entry), move = true) },
+                                    onCopyMore = if (clipboard != null) ({ viewModel.copySafEntries(listOf(entry), append = true) }) else null,
                                     onRename = { rename = entry },
                                     onInfo = { info = entry },
                                     onDelete = { delete = entry },
@@ -266,14 +304,24 @@ fun SafBrowserDialog(
                             }
                         }
                     } else {
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
+                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().longPressDragSelect(
+                            state = listState, itemCount = displayedEntries.size,
+                            isSelected = { index -> displayedEntries.getOrNull(index)?.uri in state.selectedUris },
+                            onSelectionChange = { indices, selected -> viewModel.setSafSelection(indices.mapNotNull { displayedEntries.getOrNull(it)?.uri }, selected) },
+                        ), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp)) {
                             items(displayedEntries, key = SafEntry::uri) { entry ->
                                 SafEntryRow(
                                     entry = entry,
                                     showThumbnails = state.showThumbnails,
                                     iconScalePercent = state.iconScalePercent,
                                     spacingScalePercent = state.spacingScalePercent,
-                                    onOpen = { viewModel.openSafEntry(entry) },
+                                    selected = entry.uri in state.selectedUris,
+                                    selectionActive = state.selectedUris.isNotEmpty(),
+                                    onSelect = { viewModel.toggleSafSelection(entry.uri) },
+                                    onOpen = { if (state.selectedUris.isNotEmpty()) viewModel.toggleSafSelection(entry.uri) else viewModel.openSafEntry(entry) },
+                                    onCopy = { viewModel.copySafEntries(listOf(entry)) },
+                                    onMove = { viewModel.copySafEntries(listOf(entry), move = true) },
+                                    onCopyMore = if (clipboard != null) ({ viewModel.copySafEntries(listOf(entry), append = true) }) else null,
                                     onRename = { rename = entry },
                                     onInfo = { info = entry },
                                     onDelete = { delete = entry },
@@ -285,7 +333,17 @@ fun SafBrowserDialog(
                     if (displayedEntries.isNotEmpty()) {
                         if (state.grid) LazyGridFastScroller(gridState) else LazyListFastScroller(listState)
                     }
-                    FloatingActionButton(onClick = { create = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)) {
+                    if (state.selectedUris.isNotEmpty()) SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp)) {
+                        BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copySafSelection() }) {
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
+                        }
+                        BrowserActionIconButton(BrowserAction.MOVE, onClick = { viewModel.copySafSelection(move = true) }) {
+                            Icon(Icons.Rounded.ContentCut, contentDescription = uiText("Perkelti"))
+                        }
+                        if (clipboard != null) BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copySafSelection(append = true) }) {
+                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = uiText("Kopijuoti daugiau"))
+                        }
+                    } else FloatingActionButton(onClick = { create = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp)) {
                         Icon(Icons.Rounded.Add, contentDescription = uiText("Sukurti"))
                     }
                 }
@@ -299,6 +357,15 @@ fun SafBrowserDialog(
             onFolder = { name -> viewModel.createSafDirectory(name); create = false },
             onFile = { name -> viewModel.createSafFile(name); create = false },
         )
+    }
+    if (pasteOptions && clipboard != null) {
+        val moving = clipboard?.moveAfterVerifiedCopies == true
+        TransferOptionsDialog(moving = moving, initialOptions = transferPreferences.optionsFor(moving),
+            onDismiss = { pasteOptions = false }, onConfirm = { options ->
+                val saved = viewModel.saveTransferOptions(moving, options)
+                if (saved) { viewModel.pasteIntoSaf(options); pasteOptions = false }
+                saved
+            })
     }
     rename?.let { entry ->
         SafNameDialog(
@@ -363,6 +430,12 @@ private fun SafEntryRow(
     showThumbnails: Boolean,
     iconScalePercent: Int,
     spacingScalePercent: Int,
+    selected: Boolean,
+    selectionActive: Boolean,
+    onSelect: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onCopyMore: (() -> Unit)?,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onInfo: () -> Unit,
@@ -376,7 +449,10 @@ private fun SafEntryRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Card(onClick = onOpen, modifier = Modifier.weight(1f)) {
+        Card(modifier = Modifier.weight(1f).testTag("saf_entry_${entry.name}")
+            .then(if (selected) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) else Modifier)
+            .semantics { onLongClick { onSelect(); true } }.clickable(onClick = onOpen),
+            colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)) {
             Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 SafFileVisual(
                     entry = entry,
@@ -391,8 +467,8 @@ private fun SafEntryRow(
                 }
             }
         }
-        Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai")) }
+        if (!selectionActive) Box {
+            IconButton(onClick = { menu = true }, modifier = Modifier.testTag("saf_actions_${entry.name}")) { Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}")) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 SafEntryMenuItems(
                     entry = entry,
@@ -402,6 +478,7 @@ private fun SafEntryRow(
                     onInfo = onInfo,
                     onDelete = onDelete,
                     onDownload = onDownload,
+                    onSelect = onSelect, onCopy = onCopy, onMove = onMove, onCopyMore = onCopyMore,
                 )
             }
         }
@@ -414,6 +491,12 @@ private fun SafEntryGridItem(
     showThumbnails: Boolean,
     iconScalePercent: Int,
     gridStyle: DirectoryGridStyle,
+    selected: Boolean,
+    selectionActive: Boolean,
+    onSelect: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onCopyMore: (() -> Unit)?,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onInfo: () -> Unit,
@@ -423,11 +506,12 @@ private fun SafEntryGridItem(
     var menu by remember { mutableStateOf(false) }
     val iconSize = (72f * iconScalePercent / 100f).dp
     Card(
-        onClick = onOpen,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("saf_entry_${entry.name}")
+            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) else Modifier)
+            .semantics { onLongClick { onSelect(); true } }.clickable(onClick = onOpen),
         shape = if (gridStyle == DirectoryGridStyle.CLASSIC) androidx.compose.foundation.shape.RoundedCornerShape(4.dp) else androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else if (gridStyle == DirectoryGridStyle.CLASSIC) MaterialTheme.colorScheme.surface.copy(alpha = 0f) else MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
         DirectoryGridItemContent(
@@ -445,8 +529,9 @@ private fun SafEntryGridItem(
                 )
             },
             actions = {
-                IconButton(onClick = { menu = true }, modifier = Modifier.align(Alignment.TopEnd)) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Veiksmai"))
+                if (!selectionActive) {
+                IconButton(onClick = { menu = true }, modifier = Modifier.align(Alignment.TopEnd).testTag("saf_actions_${entry.name}")) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Failo veiksmai: ${entry.name}"))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     SafEntryMenuItems(
@@ -457,7 +542,9 @@ private fun SafEntryGridItem(
                         onInfo = onInfo,
                         onDelete = onDelete,
                         onDownload = onDownload,
+                        onSelect = onSelect, onCopy = onCopy, onMove = onMove, onCopyMore = onCopyMore,
                     )
+                }
                 }
             },
         )
@@ -473,8 +560,19 @@ private fun SafEntryMenuItems(
     onInfo: () -> Unit,
     onDelete: () -> Unit,
     onDownload: () -> Unit,
+    onSelect: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onCopyMore: (() -> Unit)?,
 ) {
     com.affilemanager.app.ui.components.CopyPathAction(listOf(entry.uri), menu = true, onCopied = dismiss)
+    DropdownMenuItem(text = { LText("Pasirinkti") }, onClick = { dismiss(); onSelect() })
+    BrowserActionMenuItem(BrowserAction.COPY, text = { LText("Kopijuoti") },
+        leadingIcon = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, onClick = { dismiss(); onCopy() })
+    BrowserActionMenuItem(BrowserAction.MOVE, text = { LText("Perkelti") }, enabled = entry.canWrite,
+        leadingIcon = { Icon(Icons.Rounded.ContentCut, contentDescription = null) }, onClick = { dismiss(); onMove() })
+    onCopyMore?.let { more -> BrowserActionMenuItem(BrowserAction.COPY, text = { LText("Kopijuoti daugiau") },
+        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null) }, onClick = { dismiss(); more() }) }
     DropdownMenuItem(
         text = { LText(if (entry.directory) "Atidaryti aplanką" else "Peržiūrėti čia") },
         leadingIcon = { Icon(if (entry.directory) Icons.Rounded.Folder else Icons.Rounded.Visibility, contentDescription = null) },

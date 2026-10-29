@@ -10,7 +10,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import android.graphics.ImageDecoder
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.media.MediaMetadataRetriever
 import android.media.ThumbnailUtils
 import android.net.Uri
@@ -50,17 +52,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.createBitmap
@@ -121,6 +128,7 @@ internal object StorageLocationBadgeRules {
 }
 
 internal object FileVisualRules {
+    const val CONTENT_QUALITY = "crop-v3"
     fun boundedDimension(value: Int): Int = value.coerceIn(32, MAX_THUMBNAIL_DIMENSION)
 
     fun fitWithin(sourceWidth: Int, sourceHeight: Int, maximumWidth: Int, maximumHeight: Int): Pair<Int, Int> {
@@ -143,6 +151,32 @@ internal object FileVisualRules {
             sample = next
         }
         return sample
+    }
+
+    /** Decode enough pixels for a crop, with a fixed 1024px intermediate edge cap. */
+    fun cropDecodeSize(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int): Pair<Int, Int> {
+        if (sourceWidth <= 0 || sourceHeight <= 0) return 1 to 1
+        val cover = maxOf(boundedDimension(targetWidth).toDouble() / sourceWidth,
+            boundedDimension(targetHeight).toDouble() / sourceHeight)
+        val scale = minOf(1.0, cover, 1024.0 / maxOf(sourceWidth, sourceHeight))
+        return (sourceWidth * scale).roundToInt().coerceAtLeast(1) to
+            (sourceHeight * scale).roundToInt().coerceAtLeast(1)
+    }
+
+    fun cropSampleSize(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int): Int {
+        var sample = sampleSize(sourceWidth, sourceHeight, targetWidth, targetHeight)
+        while (sample < Int.MAX_VALUE / 2 && maxOf(sourceWidth, sourceHeight) / sample > 1024) sample *= 2
+        return sample
+    }
+
+    /** Keep the crop aspect ratio without manufacturing pixels absent from the source. */
+    fun cropOutputSize(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int): Pair<Int, Int> {
+        if (sourceWidth <= 0 || sourceHeight <= 0) return 1 to 1
+        val width = boundedDimension(targetWidth)
+        val height = boundedDimension(targetHeight)
+        val scale = minOf(1.0, sourceWidth.toDouble() / width, sourceHeight.toDouble() / height)
+        return (width * scale).roundToInt().coerceIn(1, sourceWidth) to
+            (height * scale).roundToInt().coerceIn(1, sourceHeight)
     }
 
     fun extensionBadge(extension: String): String = extension.trim().trimStart('.').uppercase().take(4)
@@ -192,7 +226,7 @@ internal object FileVisualRules {
         val normalizedExtension = extension.lowercase()
         val pathSpecific = kind == EntryKind.APK || (showThumbnails && hasContentThumbnail(kind, normalizedExtension))
         return if (pathSpecific) {
-            "local-content|$absolutePath|$modifiedAtMillis|$sizeBytes|$kind|$normalizedExtension|$dimensions"
+            "local-content|$CONTENT_QUALITY|$absolutePath|$modifiedAtMillis|$sizeBytes|$kind|$normalizedExtension|$dimensions"
         } else {
             "local-type|$kind|$normalizedExtension|$dimensions"
         }
@@ -262,11 +296,14 @@ fun LocalFileVisual(
     }
     val context = LocalContext.current.applicationContext
     val density = LocalDensity.current
-    val widthPx = FileVisualRules.boundedDimension(with(density) { targetWidth.roundToPx() })
-    val heightPx = FileVisualRules.boundedDimension(with(density) { targetHeight.roundToPx() })
+    val measureContent = showThumbnails && FileVisualRules.hasContentThumbnail(entry.kind, entry.extension)
+    var measured by remember { mutableStateOf(IntSize.Zero) }
+    val waitingForSize = measureContent && measured == IntSize.Zero
+    val widthPx = FileVisualRules.boundedDimension(if (measureContent && measured.width > 0) measured.width else with(density) { targetWidth.roundToPx() })
+    val heightPx = FileVisualRules.boundedDimension(if (measureContent && measured.height > 0) measured.height else with(density) { targetHeight.roundToPx() })
     val key = localVisualKey(entry, widthPx, heightPx, showThumbnails)
     val cached = FileVisualLoader.peek(key)
-    val visual = if (cached != null || FileVisualLoader.isKnownMissing(key)) {
+    val visual = if (waitingForSize || cached != null || FileVisualLoader.isKnownMissing(key)) {
         cached
     } else {
         val loaded by produceState<LoadedFileVisual?>(
@@ -285,7 +322,7 @@ fun LocalFileVisual(
         visual = visual,
         storageKind = storageKind,
         accessLocked = FileVisualRules.showAccessLock(entry.isReadable),
-        modifier = modifier,
+        modifier = if (measureContent) modifier.onSizeChanged { measured = it } else modifier,
     )
 }
 
@@ -387,11 +424,12 @@ fun SafFileVisual(
     }
     val context = LocalContext.current.applicationContext
     val density = LocalDensity.current
-    val widthPx = FileVisualRules.boundedDimension(with(density) { targetWidth.roundToPx() })
-    val heightPx = FileVisualRules.boundedDimension(with(density) { targetHeight.roundToPx() })
-    val key = "saf|${entry.uri}|${entry.modifiedAtMillis}|${entry.sizeBytes}|$widthPx|$heightPx"
+    var measured by remember { mutableStateOf(IntSize.Zero) }
+    val widthPx = FileVisualRules.boundedDimension(measured.width.takeIf { it > 0 } ?: with(density) { targetWidth.roundToPx() })
+    val heightPx = FileVisualRules.boundedDimension(measured.height.takeIf { it > 0 } ?: with(density) { targetHeight.roundToPx() })
+    val key = "saf|${FileVisualRules.CONTENT_QUALITY}|${entry.uri}|${entry.modifiedAtMillis}|${entry.sizeBytes}|$widthPx|$heightPx"
     val cached = FileVisualLoader.peek(key)
-    val visual = if (cached != null) {
+    val visual = if (measured == IntSize.Zero || cached != null) {
         cached
     } else {
         val loaded by produceState<LoadedFileVisual?>(
@@ -408,7 +446,7 @@ fun SafFileVisual(
         kind = entry.kind,
         extension = extension,
         visual = visual,
-        modifier = modifier,
+        modifier = modifier.onSizeChanged { measured = it },
     )
 }
 
@@ -557,8 +595,14 @@ internal object FileVisualLoader {
         .coerceIn(MIN_MEMORY_CACHE_BYTES.toLong(), MAX_MEMORY_CACHE_BYTES.toLong())
         .toInt()
     private val cache = object : LruCache<String, LoadedFileVisual>(maximumCacheBytes) {
-        override fun sizeOf(key: String, value: LoadedFileVisual): Int =
-            runCatching { value.bitmap.allocationByteCount }.getOrDefault(value.bitmap.byteCount).coerceAtLeast(1)
+        override fun sizeOf(key: String, value: LoadedFileVisual): Int {
+            val pixels = runCatching { value.bitmap.allocationByteCount }.getOrDefault(value.bitmap.byteCount).coerceAtLeast(1)
+            // Tiny images still retain bitmap wrappers, keys and source metadata.
+            // Charge those against the same existing budget instead of treating
+            // a one-pixel entry as only four bytes of memory.
+            return (pixels.toLong() + 256L + key.length * 2L + value.sourceIdentity.orEmpty().length * 2L +
+                value.sourceRevision.orEmpty().length * 2L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        }
     }
     private val missingCache = object : LinkedHashMap<String, Unit>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?): Boolean =
@@ -779,7 +823,7 @@ internal object FileVisualLoader {
         entry: SafEntry,
         widthPx: Int,
         heightPx: Int,
-        key: String = "saf|${entry.uri}|${entry.modifiedAtMillis}|${entry.sizeBytes}|$widthPx|$heightPx",
+        key: String = "saf|${FileVisualRules.CONTENT_QUALITY}|${entry.uri}|${entry.modifiedAtMillis}|${entry.sizeBytes}|$widthPx|$heightPx",
     ): LoadedFileVisual? {
         peek(key)?.let { return it }
         if (isKnownMissing(key)) return null
@@ -878,15 +922,20 @@ internal object FileVisualLoader {
         val extension = entry.name.substringAfterLast('.', "").lowercase()
         val rich = when (entry.kind) {
             EntryKind.IMAGE, EntryKind.VIDEO -> {
-                val systemThumbnail = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    runCatching { resolver.loadThumbnail(uri, Size(widthPx, heightPx), CancellationSignal()) }.getOrNull()
+                // Providers may implement loadThumbnail by sampling the original
+                // first. Its returned dimensions do not describe the original,
+                // so prefer the bounded original decode for image crops.
+                val image = if (entry.kind == EntryKind.IMAGE) {
+                    try { decodeContentImage(context, uri, widthPx, heightPx) }
+                    catch (_: IOException) { null }
+                    catch (_: SecurityException) { null }
                 } else null
-                val fallback = if (systemThumbnail == null && entry.kind == EntryKind.IMAGE) {
-                    decodeContentImage(context, uri, widthPx, heightPx)
+                val systemThumbnail = if (image == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val edge = maxOf(widthPx, heightPx)
+                    runCatching { resolver.loadThumbnail(uri, Size(edge, edge), CancellationSignal()) }.getOrNull()
                 } else null
-                (systemThumbnail ?: fallback)?.let {
-                    LoadedFileVisual(scaleDown(it, widthPx, heightPx), crop = true, contentThumbnail = true)
-                }
+                val thumbnail = image ?: systemThumbnail?.let { cropThumbnail(it, widthPx, heightPx) }
+                thumbnail?.let { LoadedFileVisual(it, crop = true, contentThumbnail = true) }
             }
             EntryKind.AUDIO -> embeddedAudioArt(context, uri, widthPx, heightPx)
                 ?.let { LoadedFileVisual(it, crop = true, contentThumbnail = true) }
@@ -901,21 +950,27 @@ internal object FileVisualLoader {
 
     private fun decodeLocalImage(file: File, widthPx: Int, heightPx: Int): Bitmap? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
-                val (width, height) = FileVisualRules.fitWithin(info.size.width, info.size.height, widthPx, heightPx)
+            var sourceWidth = 0
+            var sourceHeight = 0
+            val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
+                sourceWidth = info.size.width
+                sourceHeight = info.size.height
+                val (width, height) = FileVisualRules.cropDecodeSize(info.size.width, info.size.height, widthPx, heightPx)
                 decoder.setTargetSize(width, height)
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                decoder.memorySizePolicy = ImageDecoder.MEMORY_POLICY_LOW_RAM
             }
+            return cropThumbnail(decoded, widthPx, heightPx, sourceWidth, sourceHeight)
         }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         val options = BitmapFactory.Options().apply {
-            inSampleSize = FileVisualRules.sampleSize(bounds.outWidth, bounds.outHeight, widthPx, heightPx)
+            inSampleSize = FileVisualRules.cropSampleSize(bounds.outWidth, bounds.outHeight, widthPx, heightPx)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return BitmapFactory.decodeFile(file.absolutePath, options)?.let { scaleDown(it, widthPx, heightPx) }
+        return BitmapFactory.decodeFile(file.absolutePath, options)?.let {
+            cropThumbnail(it, widthPx, heightPx, bounds.outWidth, bounds.outHeight)
+        }
     }
 
     private fun decodeContentImage(context: Context, uri: Uri, widthPx: Int, heightPx: Int): Bitmap? {
@@ -925,12 +980,12 @@ internal object FileVisualLoader {
         }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         val options = BitmapFactory.Options().apply {
-            inSampleSize = FileVisualRules.sampleSize(bounds.outWidth, bounds.outHeight, widthPx, heightPx)
+            inSampleSize = FileVisualRules.cropSampleSize(bounds.outWidth, bounds.outHeight, widthPx, heightPx)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         return context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
             BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, options)
-        }?.let { scaleDown(it, widthPx, heightPx) }
+        }?.let { cropThumbnail(it, widthPx, heightPx, bounds.outWidth, bounds.outHeight) }
     }
 
     @Suppress("DEPRECATION")
@@ -940,7 +995,7 @@ internal object FileVisualLoader {
         } else {
             ThumbnailUtils.createVideoThumbnail(file.absolutePath, MediaStore.Video.Thumbnails.MINI_KIND)
         }
-        return bitmap?.let { scaleDown(it, widthPx, heightPx) }
+        return bitmap?.let { cropThumbnail(it, widthPx, heightPx) }
     }
 
     private fun embeddedAudioArt(file: File, widthPx: Int, heightPx: Int): Bitmap? {
@@ -975,10 +1030,12 @@ internal object FileVisualLoader {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         val options = BitmapFactory.Options().apply {
-            inSampleSize = FileVisualRules.sampleSize(bounds.outWidth, bounds.outHeight, widthPx, heightPx)
+            inSampleSize = FileVisualRules.cropSampleSize(bounds.outWidth, bounds.outHeight, widthPx, heightPx)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.let { scaleDown(it, widthPx, heightPx) }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.let {
+            cropThumbnail(it, widthPx, heightPx, bounds.outWidth, bounds.outHeight)
+        }
     }
 
     private fun pdfThumbnail(file: File, widthPx: Int, heightPx: Int): Bitmap? =
@@ -1047,6 +1104,44 @@ internal object FileVisualLoader {
         val (width, height) = FileVisualRules.fitWithin(bitmap.width, bitmap.height, widthPx, heightPx)
         return if (width == bitmap.width && height == bitmap.height) bitmap
         else bitmap.scale(width, height, true)
+    }
+
+    private fun cropThumbnail(
+        bitmap: Bitmap,
+        widthPx: Int,
+        heightPx: Int,
+        sourceWidth: Int = bitmap.width,
+        sourceHeight: Int = bitmap.height,
+    ): Bitmap {
+        // Sampling bounds the decoder's temporary bitmap, not the original's
+        // resolution. Only genuinely small originals should produce a small crop.
+        val (width, height) = FileVisualRules.cropOutputSize(sourceWidth, sourceHeight, widthPx, heightPx)
+        if (width == bitmap.width && height == bitmap.height) return bitmap
+        val config = bitmap.config?.takeUnless { it == Bitmap.Config.HARDWARE } ?: Bitmap.Config.ARGB_8888
+        val colorSpace = bitmap.colorSpace
+        val output = if (config != Bitmap.Config.ALPHA_8 && colorSpace != null) {
+            Bitmap.createBitmap(width, height, config, bitmap.hasAlpha(), colorSpace)
+        } else {
+            Bitmap.createBitmap(width, height, config).apply { setHasAlpha(bitmap.hasAlpha()) }
+        }
+        output.density = bitmap.density
+        try {
+            // Draw directly into the final bounded bitmap. An extremely thin
+            // source must not allocate an enormous scaled intermediate first.
+            val scale = maxOf(width.toFloat() / bitmap.width, height.toFloat() / bitmap.height)
+            val drawWidth = bitmap.width * scale
+            val drawHeight = bitmap.height * scale
+            val left = (width - drawWidth) / 2f
+            val top = (height - drawHeight) / 2f
+            Canvas(output).drawBitmap(bitmap, null, RectF(left, top, left + drawWidth, top + drawHeight),
+                Paint(Paint.FILTER_BITMAP_FLAG))
+        } catch (failure: Throwable) {
+            output.recycle()
+            throw failure
+        } finally {
+            bitmap.recycle()
+        }
+        return output
     }
 
 }

@@ -19,12 +19,14 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Analytics
 import androidx.compose.material.icons.rounded.Folder
@@ -37,7 +39,6 @@ import androidx.compose.material3.BadgedBox
 import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -63,17 +64,23 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -165,6 +172,19 @@ fun AFFileManagerApp(
     val fileEditState by viewModel.fileEditState.collectAsStateWithLifecycle()
     val signatureLibrary by viewModel.signatureLibrary.collectAsStateWithLifecycle()
     val terminalState by viewModel.terminalState.collectAsStateWithLifecycle()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val selectSection: (AppSection) -> Unit = { destination ->
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        viewModel.setSection(destination)
+    }
+    LaunchedEffect(section, filesHomeVisible, preview == null, terminalState.visible) {
+        if (section == AppSection.FILES && filesHomeVisible && preview == null && !terminalState.visible) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
+    }
     val activePanel by viewModel.activePanel.collectAsStateWithLifecycle()
     val leftPanel by viewModel.leftPanel.collectAsStateWithLifecycle()
     val rightPanel by viewModel.rightPanel.collectAsStateWithLifecycle()
@@ -237,6 +257,12 @@ fun AFFileManagerApp(
     val safLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) viewModel.addSafLocation(uri, uri.lastPathSegment?.substringAfterLast(':').orEmpty())
     }
+    var pendingRemovableVolume by rememberSaveable { mutableStateOf<String?>(null) }
+    val removableAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val requested = pendingRemovableVolume
+        pendingRemovableVolume = null
+        if (uri != null && requested != null) viewModel.addRemovableStorageAccess(requested, uri)
+    }
     val systemFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) viewModel.openExternalUri(uri, context.contentResolver.getType(uri))
     }
@@ -305,6 +331,8 @@ fun AFFileManagerApp(
         com.affilemanager.app.ui.theme.AppearanceBackground()
         val wideNavigation = maxWidth >= 900.dp
         val railLabelWidth = (80.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).coerceAtMost(maxWidth / 4)
+        // Measure all bottom items against one conservative cell width. Per-item pixel
+        // rounding can otherwise put a translated word on different lines in each slot.
         Scaffold(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onBackground,
@@ -320,10 +348,11 @@ fun AFFileManagerApp(
                     if (!wideNavigation) {
                         com.affilemanager.app.ui.theme.AppearanceContentOn(MaterialTheme.colorScheme.surfaceContainer) {
                         NavigationBar {
-                            visibleDestinations.forEach { destination ->
+                            AfNavigationRow(visibleDestinations.map { it.label }) { index ->
+                                val destination = visibleDestinations[index]
                                 NavigationBarItem(
                                     selected = section == destination.section,
-                                    onClick = { viewModel.setSection(destination.section) },
+                                    onClick = { selectSection(destination.section) },
                                     modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
                                     icon = {
                                         Box(Modifier.testTag("nav_icon_${destination.section.name.lowercase()}")) {
@@ -346,7 +375,7 @@ fun AFFileManagerApp(
                         visibleDestinations.forEach { destination ->
                             NavigationRailItem(
                                 selected = section == destination.section,
-                                onClick = { viewModel.setSection(destination.section) },
+                                onClick = { selectSection(destination.section) },
                                 modifier = Modifier.testTag("nav_${destination.section.name.lowercase()}"),
                                 icon = {
                                     Box(Modifier.testTag("nav_icon_${destination.section.name.lowercase()}")) {
@@ -379,6 +408,13 @@ fun AFFileManagerApp(
                                 }
                             },
                             onAddSafLocation = { safLauncher.launch(null) },
+                            onGrantRemovableAccess = { root ->
+                                val initial = com.affilemanager.app.data.RemovableStorageAccess.initialTree(root.id)
+                                if (root.requiresDocumentAccess && initial != null) {
+                                    pendingRemovableVolume = root.id
+                                    removableAccessLauncher.launch(Uri.parse(initial))
+                                }
+                            },
                             onOpenSystemFiles = { systemFilesLauncher.launch(arrayOf("*/*")) },
                         )
                         AppSection.ANALYZE -> AnalyzeScreen(viewModel, padding)
@@ -460,6 +496,7 @@ fun AFFileManagerApp(
         FilePreviewDialog(
             target = target,
             editState = fileEditState,
+            currentEditState = { viewModel.fileEditState.value },
             signatureLibrary = signatureLibrary,
             archiveDisplayDefaults = archiveDisplayDefaults,
             onUpdateArchiveBrowser = viewModel::updateArchiveBrowser,
@@ -681,26 +718,94 @@ internal fun authenticate(
     )
 }
 
+private data class NavigationLabelMetrics(
+    val width: Dp,
+    val height: Dp,
+    val style: androidx.compose.ui.text.TextStyle,
+)
+
+private val LocalNavigationLabelMetrics = staticCompositionLocalOf<NavigationLabelMetrics?> { null }
+
 @Composable
-private fun NavigationLabel(label: String, modifier: Modifier = Modifier) {
+private fun navigationLabelStyle(language: String) = MaterialTheme.typography.labelMedium.copy(
+    platformStyle = PlatformTextStyle(includeFontPadding = true),
+    textAlign = TextAlign.Center,
+    localeList = androidx.compose.ui.text.intl.LocaleList(language),
+    letterSpacing = 0.sp,
+)
+
+@Composable
+internal fun AfNavigationRow(labels: List<String>, modifier: Modifier = Modifier, content: @Composable RowScope.(Int) -> Unit) {
+    require(labels.size in 1..destinations.size)
+    val language = LocalConfiguration.current.locales[0].language
+    val translated = remember(labels, language) { labels.map { UiTranslator.translate(it, language) } }
+    val style = navigationLabelStyle(language)
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        fun edgeInset(columns: Int): Dp = with(density) {
+            if ((constraints.maxWidth / columns).toDp() < 64.dp) 8.dp else 0.dp
+        }
+        fun cellWidth(columns: Int, inset: Dp): Int = with(density) {
+            ((constraints.maxWidth - 2 * inset.roundToPx()) / columns).coerceAtLeast(1)
+        }
+        val singleWidth = cellWidth(labels.size, edgeInset(labels.size))
+        val initial = translated.map { measurer.measure(it, style, constraints = Constraints(maxWidth = singleWidth)) }
+        val wrap = labels.size > 1 && (singleWidth < with(density) { 48.dp.roundToPx() } || initial.any { layout ->
+            (0 until layout.lineCount).any { line ->
+                layout.getLineLeft(line) < -1f || layout.getLineRight(line) > singleWidth + 1f
+            }
+        })
+        val columns = if (wrap) (labels.size + 1) / 2 else labels.size
+        val inset = edgeInset(columns)
+        val width = cellWidth(columns, inset)
+        val layouts = if (wrap) translated.map { measurer.measure(it, style, constraints = Constraints(maxWidth = width)) } else initial
+        val metrics = with(density) { NavigationLabelMetrics(width.toDp(), layouts.maxOf { it.size.height }.toDp(), style) }
+        CompositionLocalProvider(LocalNavigationLabelMetrics provides metrics) {
+            val rowModifier = Modifier.fillMaxWidth().padding(horizontal = inset).testTag("navigation_rows_${if (wrap) 2 else 1}")
+            // Keep the existing native tab controls. A second row is used only
+            // when a shaped glyph cannot fit, never by reducing the user's font.
+            if (wrap) {
+                Column(rowModifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (first in labels.indices step columns) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            for (index in first until minOf(first + columns, labels.size)) content(index)
+                        }
+                    }
+                }
+            } else Row(rowModifier, verticalAlignment = Alignment.CenterVertically) {
+                labels.indices.forEach { content(it) }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun NavigationLabel(label: String, modifier: Modifier = Modifier, measurementWidth: Dp? = null) {
+    val group = LocalNavigationLabelMetrics.current
+    if (group != null) {
+        Box(modifier.requiredWidth(group.width).height(group.height), contentAlignment = Alignment.TopCenter) {
+            LText(label, Modifier.fillMaxWidth(), style = group.style)
+        }
+        return
+    }
     val language = LocalConfiguration.current.locales[0].language
     val labels = remember(language) { destinations.map { UiTranslator.translate(it.label, language) } }
     val density = LocalDensity.current
-    val style = LocalTextStyle.current.copy(
-        platformStyle = PlatformTextStyle(includeFontPadding = true),
-        textAlign = TextAlign.Center,
-    )
+    val style = navigationLabelStyle(language)
 
     val measurer = rememberTextMeasurer()
-    BoxWithConstraints(modifier) {
-        val width = with(density) { (maxWidth - 4.dp).roundToPx().coerceAtLeast(1) }
+    BoxWithConstraints(modifier.then(if (measurementWidth != null) Modifier.requiredWidth(measurementWidth) else Modifier)) {
+        // Material's label slot is narrower than its navigation cell. Use the safe
+        // cell width for both the rendered label and its shared height measurement.
+        val width = with(density) { maxWidth.roundToPx().coerceAtLeast(1) }
         // Reserve the tallest translated label for every item. Icons keep one
         // baseline even when only one label wraps; no font scaling is disabled.
-        val height = remember(labels, style, width, density) {
-            labels.maxOf { measurer.measure(it, style, constraints = Constraints(maxWidth = width)).size.height }
-        }
+        // TextMeasurer already has a bounded cache and detects resolved-font
+        // changes. Do not freeze its result behind a second, stale height cache.
+        val height = labels.maxOf { measurer.measure(it, style, constraints = Constraints(maxWidth = width)).size.height }
         Box(
-            Modifier.fillMaxWidth().padding(horizontal = 2.dp).height(with(density) { height.toDp() }),
+            Modifier.fillMaxWidth().height(with(density) { height.toDp() }),
             contentAlignment = Alignment.TopCenter,
         ) {
             LText(label, modifier = Modifier.fillMaxWidth(), style = style)

@@ -23,6 +23,8 @@ import java.util.regex.Pattern
 class SafAddressWorkflowTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     @Test fun selectedProviderRootAndTypedChildRemainInsideTheGrantedTree() {
+        compose.runOnUiThread { AppLanguageManager.setLanguage(compose.activity, "en") }
+        compose.waitForIdle()
         val vm = ViewModelProvider(compose.activity)[MainViewModel::class.java]
         val root = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "AF-address-${System.nanoTime()}").apply { mkdirs() }
         val child = File(root, "child folder").apply { mkdir() }
@@ -33,7 +35,6 @@ class SafAddressWorkflowTest {
         var launcher: ActivityResultLauncher<Uri?>? = null
         try {
             compose.runOnUiThread {
-                AppLanguageManager.setLanguage(compose.activity, "en")
                 launcher = compose.activity.activityResultRegistry.register("saf-address-fixture", ActivityResultContracts.OpenDocumentTree()) { uri ->
                     selected = uri
                     if (uri != null) vm.addSafLocation(uri, "AF provider test")
@@ -54,6 +55,26 @@ class SafAddressWorkflowTest {
             val grantedChild = requireNotNull(grantedRoot.findFile(child.name))
             assertTrue(grantedChild.isDirectory)
             val childUri = grantedChild.uri
+            kotlinx.coroutines.runBlocking {
+                val app = compose.activity.application as AFFileManagerApplication
+                val storage = com.affilemanager.app.workflow.AfStorageSessionFactory(app, app.graph.archives,
+                    app.graph.networkProfiles, app.graph.remoteClients).open()
+                try {
+                    val local = com.affilemanager.app.workflow.AfLocationRef.local(root.path)
+                    val document = com.affilemanager.app.workflow.AfLocationRef.document(tree.toString())
+                    val plan = com.affilemanager.app.workflow.AfPlanDefinition(name = "Owned alias self-copy check",
+                        sources = listOf(com.affilemanager.app.workflow.AfSourceRef(local, root.name)),
+                        destinations = listOf(com.affilemanager.app.workflow.AfDestinationRef(
+                            com.affilemanager.app.workflow.AfLocationRef.document(childUri.toString()))))
+                    assertFalse("A native folder cannot be copied into its home-provider child alias",
+                        com.affilemanager.app.workflow.AfPlanPreflight().preview(plan, storage).canRun)
+                    val reverse = plan.copy(sources = listOf(com.affilemanager.app.workflow.AfSourceRef(document, root.name)),
+                        destinations = listOf(com.affilemanager.app.workflow.AfDestinationRef(
+                            com.affilemanager.app.workflow.AfLocationRef.local(child.path))))
+                    assertFalse("A home-provider folder cannot be copied into its native child alias",
+                        com.affilemanager.app.workflow.AfPlanPreflight().preview(reverse, storage).canRun)
+                } finally { storage.close() }
+            }
             compose.runOnUiThread { vm.openSafAddress(childUri.toString()) }
             compose.waitUntil(10_000) { vm.safBrowser.value.currentUri == childUri.toString() && !vm.safBrowser.value.loading }
             assertTrue(vm.safBrowser.value.entries.any { it.name == "visible.txt" })
@@ -62,7 +83,7 @@ class SafAddressWorkflowTest {
             compose.onNodeWithTag("directory_address_open").performClick()
             compose.waitUntil(10_000) { vm.safBrowser.value.currentUri == tree.toString() && !vm.safBrowser.value.loading }
             assertTrue(vm.safBrowser.value.entries.any { it.name == child.name })
-            compose.onNodeWithContentDescription("Actions").performClick()
+            compose.onNodeWithContentDescription("File actions: ${child.name}").performClick()
             compose.onNodeWithText("Copy URI").performClick()
             var copied = ""
             compose.runOnUiThread {

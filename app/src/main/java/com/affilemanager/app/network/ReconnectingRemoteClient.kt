@@ -25,6 +25,9 @@ object RemoteFailureClassifier {
     fun isTransient(error: Throwable): Boolean {
         if (error is CancellationException) return false
         val chain = generateSequence(error) { it.cause }.take(12).toList()
+        // The operation left a recovery copy that needs attention. A new upload
+        // could succeed and hide that warning without resolving the old copy.
+        if (chain.any { it is RemoteUploadRecoveryException }) return false
         val message = chain.joinToString(" ") { it.message.orEmpty() }.lowercase(Locale.ROOT)
         if (securityOrConfigurationMarkers.any(message::contains)) return false
         return chain.any { it is SocketException || it is SocketTimeoutException || it is EOFException || it is ClosedChannelException } ||

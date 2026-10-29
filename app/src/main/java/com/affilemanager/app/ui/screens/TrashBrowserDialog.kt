@@ -168,9 +168,7 @@ fun TrashBrowserDialog(
                     onOpenSettings = { showDisplaySettings = true },
                 ) {
                     Box {
-                        IconButton(onClick = { menu = true }) {
-                            Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Aplanko veiksmai"))
-                        }
+                        com.affilemanager.app.ui.components.DirectoryActionsButton(onClick = { menu = true })
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DirectoryDisplayMenuItems(
                                 grid = state.grid,
@@ -479,7 +477,7 @@ private fun TrashBrowserGridItem(
         ),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -499,11 +497,11 @@ private fun TrashBrowserGridItem(
                 textAlign = TextAlign.Center,
             )
             if (entry.topLevel) {
-                Row {
-                    IconButton(onClick = onRestore) {
+                com.affilemanager.app.ui.components.AfActionRow {
+                    IconButton(onClick = onRestore, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Rounded.Restore, contentDescription = uiText("Atkurti ${entry.name}"))
                     }
-                    BrowserActionIconButton(BrowserAction.DELETE, onClick = onDelete) {
+                    BrowserActionIconButton(BrowserAction.DELETE, onClick = onDelete, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Ištrinti ${entry.name} visam laikui"))
                     }
                 }

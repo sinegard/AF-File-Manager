@@ -24,12 +24,35 @@ public final class ArchiveRuntimeVerifier {
         File root = new File(downloads, "AFArchiveRuntime-" + UUID.randomUUID());
         if (!root.getCanonicalFile().getParentFile().equals(downloads.getCanonicalFile()) || !root.mkdir()) throw new AssertionError("Archive fixture boundary");
         File list = new File(root, "list.zip"), grid = new File(root, "grid.zip");
+        boolean accepted = false;
         try {
             writeZip(list); writeZip(grid);
             byte[] listHash = digest(list), gridHash = digest(grid);
             test.startActivitySync(new Intent(Intent.ACTION_MAIN)
                     .setClassName(context, "com.affilemanager.app.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             if (description(test.getUiAutomation().getRootInActiveWindow(), "Close")) MediaEditingRuntimeVerifier.clickDescription(test, "Close");
+            // This non-text workflow starts on Files home. API 26 may leave the
+            // prior independent instrumentation's IME visible after its app exits.
+            // Establish that observed prerequisite without clearing app data or
+            // weakening any archive, scroll-position or Back assertion below.
+            boolean keyboard = false;
+            for (android.view.accessibility.AccessibilityWindowInfo window : test.getUiAutomation().getWindows()) {
+                if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) keyboard = true;
+            }
+            if (keyboard) {
+                if (!test.getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+                    throw new AssertionError("Observed pre-existing keyboard could not be dismissed");
+                long deadline = android.os.SystemClock.elapsedRealtime() + 5000;
+                while (keyboard) {
+                    keyboard = false;
+                    for (android.view.accessibility.AccessibilityWindowInfo window : test.getUiAutomation().getWindows()) {
+                        if (window.getType() == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) keyboard = true;
+                    }
+                    if (keyboard && android.os.SystemClock.elapsedRealtime() >= deadline)
+                        throw new AssertionError("Pre-existing keyboard remained above the non-text archive workflow");
+                    if (keyboard) android.os.SystemClock.sleep(100);
+                }
+            }
             // A newly started process already displays Files home. Its navigation
             // label is separate from the icon's touch target on older Compose.
             MediaEditingRuntimeVerifier.awaitLabel(test, "Internal storage");
@@ -79,15 +102,18 @@ public final class ArchiveRuntimeVerifier {
             }
             MediaEditingRuntimeVerifier.awaitLabel(test, "Download");
             if (!Arrays.equals(listHash, digest(list)) || !Arrays.equals(gridHash, digest(grid))) throw new AssertionError("Archive source changed");
+            accepted = true;
             return true;
         } catch (Throwable error) {
             try { capture(test, "archive-shipping-failure"); }
             catch (Throwable captureFailure) { error.addSuppressed(captureFailure); }
             throw error;
         } finally {
-            if (list.exists() && !list.delete()) throw new AssertionError("Owned list archive cleanup");
-            if (grid.exists() && !grid.delete()) throw new AssertionError("Owned grid archive cleanup");
-            if (!root.delete()) throw new AssertionError("Owned archive folder cleanup");
+            if (accepted) {
+                if (list.exists() && !list.delete()) throw new AssertionError("Owned list archive cleanup");
+                if (grid.exists() && !grid.delete()) throw new AssertionError("Owned grid archive cleanup");
+                if (!root.delete()) throw new AssertionError("Owned archive folder cleanup");
+            } else android.util.Log.e("AFArchiveAudit", "Retained failed synthetic archive fixture: " + root.getPath());
         }
     }
     private static boolean description(AccessibilityNodeInfo node, String value) {

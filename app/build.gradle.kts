@@ -31,8 +31,8 @@ android {
         applicationId = "com.affilemanager.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 74
-        versionName = "0.46.0"
+        versionCode = 75
+        versionName = "0.47.0"
 
         buildConfigField("String", "UPDATE_REPOSITORY", "\"sinegard/AF-File-Manager\"")
 
@@ -134,6 +134,9 @@ android {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
         unitTests.all {
             it.useJUnit()
+            // Keep resource-intensive crypto scenarios independent of earlier test garbage/state.
+            // This changes process isolation, not the test heap or the app's memory admission rules.
+            it.forkEvery = 1
             it.testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         }
     }
@@ -230,6 +233,8 @@ dependencies {
     implementation("org.apache.commons:commons-compress:1.28.0")
     implementation("org.tukaani:xz:1.10")
     implementation("net.lingala.zip4j:zip4j:2.11.6")
+    // Offline streaming vaults; passwords and derived keys never enter persistent keysets.
+    implementation("com.google.crypto.tink:tink-android:1.24.0")
     implementation("com.github.junrar:junrar:7.6.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
         // Visual signatures do not use CMS or encrypted-PDF support. Keeping

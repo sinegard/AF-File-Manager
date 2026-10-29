@@ -14,12 +14,59 @@ import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.SocketException
+import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 @RunWith(AndroidJUnit4::class)
 class WebDavRemoteClientTest {
+    @Test fun downloadDoesNotBorrowAnUnrelatedFixedNamePartial() = stagingOwnership("regular", success = true)
+    @Test fun downloadDoesNotFollowAFixedNamePartialLink() = stagingOwnership("link", success = true)
+    @Test fun downloadDoesNotCreateTheTargetOfABrokenPartialLink() = stagingOwnership("broken-link", success = true)
+    @Test fun failedDownloadDoesNotRemoveAnUnownedPartialOrOriginal() = stagingOwnership("regular", success = false)
+
+    private fun stagingOwnership(kind: String, success: Boolean) = runBlocking {
+        val cache = ApplicationProvider.getApplicationContext<Context>().cacheDir
+        val root = File(cache, "webdav-stage-${System.nanoTime()}").apply { check(mkdir()) }
+        val destination = File(root, "document.txt").apply { writeText("original destination") }
+        val unrelated = File(root, "unselected.txt")
+        val fixedStage = File(root, ".document.txt.partial")
+        when (kind) {
+            "regular" -> fixedStage.writeText("unrelated partial")
+            "link" -> { unrelated.writeText("unselected data"); Files.createSymbolicLink(fixedStage.toPath(), unrelated.toPath()) }
+            "broken-link" -> Files.createSymbolicLink(fixedStage.toPath(), unrelated.toPath())
+            else -> error("Unknown owned fixture")
+        }
+        try {
+            Fixture { request ->
+                if (request.method == "PROPFIND") Reply(207, listing("/dav"))
+                else if (success) Reply(200, "remote replacement") else Reply(500)
+            }.use { fixture ->
+                val client = WebDavRemoteClient.connect(profile(fixture.port), "synthetic-only".toCharArray())
+                try {
+                    val result = runCatching { client.download("/dav/document.txt", destination) }
+                    assertEquals("Download outcome changed", success, result.isSuccess)
+                    assertEquals(if (success) "remote replacement" else "original destination", destination.readText())
+                    when (kind) {
+                        "regular" -> assertTrue("Download borrowed or removed an unowned partial", fixedStage.isFile && fixedStage.readText() == "unrelated partial")
+                        "link" -> {
+                            assertEquals("Download changed the unselected link target", "unselected data", unrelated.readText())
+                            assertTrue("Download removed an unowned link", Files.isSymbolicLink(fixedStage.toPath()))
+                        }
+                        "broken-link" -> {
+                            assertFalse("Download created the unselected link target", unrelated.exists())
+                            assertTrue("Download removed an unowned broken link", Files.isSymbolicLink(fixedStage.toPath()))
+                        }
+                    }
+                } finally { client.close() }
+            }
+        } finally {
+            Files.deleteIfExists(fixedStage.toPath())
+            check(root.deleteRecursively())
+        }
+    }
+
     @Test
     fun collectionUrlsAndSameOriginRedirectsPreserveAuthenticationMethodAndBody() = runBlocking {
         Fixture { request ->

@@ -66,7 +66,7 @@ class TranslatedPlaybackLayoutTest {
                 }
             }
         }
-        AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.filterNot { it == "bn" }.forEach { tag ->
+        AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.forEach { tag ->
             listOf(1f, 1.5f, 2f).forEach { scale ->
                 compose.runOnIdle { language.value = tag; fontScale.floatValue = scale }
                 compose.waitForIdle()
@@ -86,7 +86,7 @@ class TranslatedPlaybackLayoutTest {
                             File(root, "overflow.png").outputStream().use { stream -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream) }
                             bitmap.recycle()
                         }
-                        assertFalse("$tag/$scale clipped glyphs: ${it.layoutInput.text}; size=${it.size}", clipped)
+                        assertFalse("$tag/$scale clipped glyphs: ${it.layoutInput.text}; size=${it.size}; paragraph=${it.multiParagraph.height}; exceeded=${it.multiParagraph.didExceedMaxLines}; lines=${(0 until it.lineCount).map { line -> it.getLineLeft(line) to it.getLineRight(line) }}", clipped)
                     }
                 }
                 compose.onNodeWithTag("test_play_pause").performScrollTo().assertIsDisplayed().performClick()
@@ -98,14 +98,54 @@ class TranslatedPlaybackLayoutTest {
                 }
             }
         }
-        val expected = (AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.size - 1) * 3
+        val expected = AppLanguageManager.SUPPORTED_LANGUAGE_TAGS.size * 3
         compose.runOnIdle { assertEquals(expected, plays); assertEquals(expected, backgrounds); assertEquals(expected, stops) }
+    }
+
+    @Test fun bengaliWallpaperLabelKeepsItsGlyphsAndItsSwitchWorks() {
+        val settings = mutableStateOf(com.affilemanager.app.ui.theme.AppearanceSettings(wallpaperRevision = 1L))
+        var toggles = 0
+        compose.setContent {
+            val config = Configuration(LocalConfiguration.current).apply { setLocale(Locale.forLanguageTag("bn")) }
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalConfiguration provides config,
+                LocalDensity provides Density(density.density, 2f)) {
+                MaterialTheme {
+                    Surface(Modifier.width(320.dp).testTag("bengali_wallpaper_root")) {
+                        Column(Modifier.verticalScroll(rememberScrollState())) {
+                            com.affilemanager.app.ui.screens.WallpaperSettings(settings.value, {}, {},
+                                onTransparentMenus = { settings.value = settings.value.copy(transparentMenus = it); toggles++ })
+                        }
+                    }
+                }
+            }
+        }
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val directory = File(context.cacheDir, "playback-layout-captures").apply { mkdirs() }
+        compose.onNodeWithTag("bengali_wallpaper_root").captureToImage().asAndroidBitmap().let { bitmap ->
+            File(directory, "bengali-wallpaper-focused.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult), useUnmergedTree = true)
+            .fetchSemanticsNodes().forEach { node ->
+                val layouts = mutableListOf<TextLayoutResult>()
+                node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+                layouts.forEach { layout ->
+                    val clipped = layout.multiParagraph.didExceedMaxLines || layout.multiParagraph.height > layout.size.height + 1f ||
+                        (0 until layout.lineCount).any { layout.isLineEllipsized(it) || layout.getLineRight(it) - layout.getLineLeft(it) > layout.size.width + 1f }
+                    assertFalse("Bengali glyph clipping: ${layout.layoutInput.text}; size=${layout.size}; paragraph=${layout.multiParagraph.height}; exceeded=${layout.multiParagraph.didExceedMaxLines}; lines=${(0 until layout.lineCount).map { layout.getLineLeft(it) to layout.getLineRight(it) }}", clipped)
+                }
+            }
+        compose.onNodeWithTag("transparent_menus").performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, toggles); assertTrue(settings.value.transparentMenus) }
     }
 
     @Test fun bengaliPlaybackControlsWrapAtDoubleTextScaleWhenTheSystemFontIsAvailable() {
         org.junit.Assume.assumeTrue(
             "The API image does not provide Bengali glyphs",
-            Paint().hasGlyph("বাংলা"),
+            // hasGlyph with a whole word asks for one ligature, not whether
+            // its script can be rendered. Probe individual base code points.
+            Paint().let { paint -> listOf("ব", "ল", "ক").all(paint::hasGlyph) },
         )
         var backgrounds = 0
         compose.setContent {

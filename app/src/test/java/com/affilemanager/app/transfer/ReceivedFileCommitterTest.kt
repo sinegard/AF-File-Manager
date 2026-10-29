@@ -19,6 +19,18 @@ import java.util.concurrent.CancellationException
 class ReceivedFileCommitterTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun detailedCopyPhasesDescribeTheActualFallbackWithoutChangingItsBytesOrSourceRetention() {
+        val staging = temporary.newFile("phases.partial").apply { writeBytes(ByteArray(700_000) { (it % 251).toByte() }) }
+        val target = temporary.root.resolve("phases.mp4")
+        val phases = mutableListOf<TransferPhase>()
+        copyingCommitter().commitWithCopyDiagnostics(staging, target, staging.length(), {}, {}, phases::add)
+        assertEquals(TransferPhase.COMMIT_COPY_OPEN, phases.first())
+        assertEquals(TransferPhase.COMMIT_COPY_VERIFY, phases.last())
+        assertTrue(phases.containsAll(listOf(TransferPhase.COMMIT_COPY_READ, TransferPhase.COMMIT_COPY_WRITE, TransferPhase.COMMIT_COPY_SYNC)))
+        assertTrue(staging.isFile)
+        assertTrue(staging.readBytes().contentEquals(target.readBytes()))
+    }
+
     @Test fun normalCommitDoesNotCopyOrHashTheFileAgain() {
         val staging = temporary.newFile("normal.partial").apply { writeText("normal") }
         val target = temporary.root.resolve("normal.txt")
