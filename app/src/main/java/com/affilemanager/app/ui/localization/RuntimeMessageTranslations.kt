@@ -3,6 +3,7 @@ package com.affilemanager.app.ui.localization
 /** English equivalents for bounded runtime failures that can surface through dialogs or snackbars. */
 internal object RuntimeMessageTranslations {
     val english = mapOf(
+        "Atidaryti Wi-Fi Direct nustatymus" to "Open Wi-Fi Direct settings",
         "Sukurti aplankus pagal failų tipus" to "Create type folders",
         "Gavimo nustatymai pasikeitė" to "The receiving settings changed",
         "Aplankų paruošimas nebaigtas, gavimo nustatymai nepakeisti. Patikrinkite pasirinktą aplanką." to "Folder setup did not finish; the receiving settings were not changed. Check the selected folder.",

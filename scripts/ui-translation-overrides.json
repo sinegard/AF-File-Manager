@@ -1,4 +1,16 @@
 {
+  "Create type folders": {
+    "ar": "إنشاء مجلدات حسب نوع الملف",
+    "de": "Ordner nach Dateityp erstellen",
+    "fr": "Créer des dossiers par type de fichier",
+    "tl": "Gumawa ng mga folder ayon sa uri ng file"
+  },
+  "The receiving settings changed": {
+    "de": "Die Empfangseinstellungen wurden geändert."
+  },
+  "Folder setup did not finish; the receiving settings were not changed. Check the selected folder.": {
+    "de": "Die Ordner konnten nicht vollständig vorbereitet werden. Die Empfangseinstellungen wurden nicht geändert. Prüfen Sie den ausgewählten Ordner."
+  },
   "Invalid recovery provider": {
     "tl": "Hindi wastong provider ng pagbawi"
   },
