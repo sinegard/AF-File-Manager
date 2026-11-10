@@ -56,11 +56,29 @@ class NearbyStorageScopeUiTest {
             assertTrue(scanned.await(15, TimeUnit.SECONDS))
             assertNotNull(indexed)
             val vm = MainViewModel(app).also { store.put("scope", it) }
-            compose.setContent { MaterialTheme { NearbySendDialog(vm, null, {}, {}) } }
+            val language = androidx.compose.runtime.mutableStateOf("en")
+            val largeText = androidx.compose.runtime.mutableStateOf(false)
+            compose.setContent {
+                val configuration = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                    setLocales(android.os.LocaleList(java.util.Locale(language.value)))
+                }
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalConfiguration provides configuration,
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, if (largeText.value) 1.5f else density.fontScale),
+                    androidx.compose.ui.platform.LocalLayoutDirection provides if (language.value == "ar") androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr,
+                ) { MaterialTheme { NearbySendDialog(vm, null, {}, {}) } }
+            }
             compose.onNodeWithTag("nearby_category_Nuotraukos").performClick()
             waitTag("nearby_entry_${file.path}")
             compose.onNodeWithTag("nearby_entry_${file.path}").performClick()
             compose.onNodeWithText("Next (1)").assertIsEnabled()
+            compose.onNodeWithText("Selected: 1").assertDoesNotExist()
+            val filter = compose.onNodeWithTag("nearby_storage_scope").getUnclippedBoundsInRoot()
+            val sort = compose.onNodeWithTag("nearby_sort_direction").getUnclippedBoundsInRoot()
+            assertEquals("Scope and sort share one toolbar", (filter.top.value + filter.bottom.value) / 2,
+                (sort.top.value + sort.bottom.value) / 2, 1f)
+            assertTrue("Scope overlaps sort controls", filter.right <= sort.left)
             val automation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
             val accessibility = automation.serviceInfo
             accessibility.flags = accessibility.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -87,6 +105,37 @@ class NearbyStorageScopeUiTest {
             compose.onNodeWithText("Next (1)").assertIsEnabled()
             choose("FILES_ALL")
             waitTag("nearby_entry_${file.path}")
+            for (locale in listOf("en", "lt", "de", "ar")) {
+                compose.runOnIdle { language.value = locale; largeText.value = true }
+                val scopeControl = compose.onNodeWithTag("nearby_storage_scope").performScrollTo().assertIsDisplayed()
+                val scopeBounds = scopeControl.getUnclippedBoundsInRoot()
+                val directionBounds = compose.onNodeWithTag("nearby_sort_direction").assertIsDisplayed().getUnclippedBoundsInRoot()
+                assertEquals(scopeBounds, scopeControl.getBoundsInRoot())
+                assertTrue("$locale toolbar overlap", if (locale == "ar") scopeBounds.left >= directionBounds.right else scopeBounds.right <= directionBounds.left)
+                for (tag in listOf("nearby_previous_page", "nearby_next_page")) {
+                    val button = compose.onNodeWithTag(tag).assertIsDisplayed()
+                    val bounds = button.getUnclippedBoundsInRoot()
+                    assertEquals(bounds, button.getBoundsInRoot())
+                    assertTrue("$locale pager collapsed", bounds.right - bounds.left >= androidx.compose.ui.unit.Dp(100f))
+                    compose.onNode(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) and
+                        hasAnyAncestor(hasTestTag(tag)), useUnmergedTree = true)
+                        .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { get ->
+                            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                            assertTrue(get(layouts))
+                            assertTrue(layouts.isNotEmpty())
+                            layouts.forEach { layout ->
+                                assertFalse("$locale pager lines clipped", layout.multiParagraph.didExceedMaxLines)
+                                assertEquals(layout.layoutInput.text.length, layout.getLineEnd(layout.lineCount - 1))
+                                repeat(layout.lineCount) { line ->
+                                    assertTrue("$locale pager glyphs clipped", layout.getLineLeft(line) >= -1f &&
+                                        layout.getLineRight(line) <= layout.size.width + 1f)
+                                }
+                            }
+                        }
+                }
+                capture(app, "picker-toolbar-$locale.png")
+            }
+            compose.runOnIdle { language.value = "en"; largeText.value = false }
             compose.onNodeWithText("Next (1)").performClick()
             waitText("Ready to send: 1")
         } finally {

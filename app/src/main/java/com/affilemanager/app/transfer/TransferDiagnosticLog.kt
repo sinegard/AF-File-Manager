@@ -180,7 +180,20 @@ internal class TransferDiagnosticLog(private val file: File) {
 }
 
 /** A server response is not an argument validation error or an implicit transport exception. */
-internal class NearbyUploadException(val httpStatus: Int, val failure: TransferFailure?, message: String) : IOException(message)
+internal class NearbyUploadException(
+    val httpStatus: Int,
+    val failure: TransferFailure?,
+    message: String,
+    val receiverPhase: TransferPhase? = null,
+) : IOException(message) {
+    val isFinalSavePermissionDenied: Boolean
+        get() = httpStatus == 500 && failure == TransferFailure.PERMISSION && when (receiverPhase) {
+            TransferPhase.COMMIT, TransferPhase.COMMIT_COPY, TransferPhase.COMMIT_COPY_OPEN,
+            TransferPhase.COMMIT_COPY_READ, TransferPhase.COMMIT_COPY_WRITE,
+            TransferPhase.COMMIT_COPY_SYNC, TransferPhase.COMMIT_COPY_VERIFY -> true
+            else -> false
+        }
+}
 internal class NearbySourceException(cause: IOException) : IOException("Failo srautas nepasiekiamas", cause)
 
 internal class ReceiverUploadException(

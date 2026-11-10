@@ -20,6 +20,17 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 @Composable
+internal fun NearbyReceiveConcurrency(viewModel: MainViewModel, enabled: Boolean) {
+    val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxWidth().testTag("nearby_receive_concurrency_control")) {
+        LText("Vienu metu gaunami failai: ${preferences.nearbyConcurrentUploads}")
+        Slider(value = preferences.nearbyConcurrentUploads.toFloat(), valueRange = 1f..5f, steps = 3, enabled = enabled,
+            onValueChange = { next -> viewModel.updateShareScreenPreferences { it.copy(nearbyConcurrentUploads = next.roundToInt()) } },
+            modifier = Modifier.fillMaxWidth().testTag("nearby_receive_concurrency"))
+    }
+}
+
+@Composable
 internal fun NearbyReceiveSettings(viewModel: MainViewModel, enabled: Boolean) {
     val preferences by viewModel.shareScreenPreferences.collectAsStateWithLifecycle()
     var choosing by remember { mutableStateOf<EntryKind?>(null) }
@@ -27,10 +38,6 @@ internal fun NearbyReceiveSettings(viewModel: MainViewModel, enabled: Boolean) {
     var creatingFolders by remember { mutableStateOf(false) }
     var folderError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    LText("Vienu metu gaunami failai: ${preferences.nearbyConcurrentUploads}")
-    Slider(value = preferences.nearbyConcurrentUploads.toFloat(), valueRange = 1f..5f, steps = 3, enabled = enabled,
-        onValueChange = { next -> viewModel.updateShareScreenPreferences { it.copy(nearbyConcurrentUploads = next.roundToInt()) } },
-        modifier = Modifier.fillMaxWidth().testTag("nearby_receive_concurrency"))
     AfActionRow {
         listOf(EntryKind.IMAGE, EntryKind.VIDEO, EntryKind.AUDIO, EntryKind.DOCUMENT, EntryKind.ARCHIVE, EntryKind.APK).forEach { kind ->
             TextButton(onClick = { choosing = kind }, enabled = enabled, modifier = Modifier.testTag("receive_path_${kind.name}")) {

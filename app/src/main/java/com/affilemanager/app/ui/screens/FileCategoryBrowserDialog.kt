@@ -13,6 +13,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.FilterAlt
 import com.affilemanager.app.ui.theme.AfAlertDialog as AlertDialog
 import com.affilemanager.app.ui.theme.AfCard as Card
 import androidx.compose.material3.Checkbox
@@ -217,15 +219,15 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                         allSelected = allSelected,
                         onClose = viewModel::clearFileCategorySelection,
                         onToggleSelectAll = { viewModel.toggleAllFileCategoryEntries(visiblePaths) },
-                    ) {
-                        com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map { it.absolutePath })
-                        if (state.category == FileCategory.INSTALLED_APPS) {
+                        primaryActions = {
                             BrowserActionIconButton(BrowserAction.SHARE,
                                 onClick = viewModel::shareFileCategorySelection,
                                 modifier = Modifier.testTag("category_share"),
-                            ) {
-                                Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
-                            }
+                            ) { Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti")) }
+                        },
+                    ) {
+                        com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map { it.absolutePath })
+                        if (state.category == FileCategory.INSTALLED_APPS) {
                             BrowserActionIconButton(BrowserAction.INFO,
                                 enabled = state.selectedPaths.size == 1,
                                 onClick = { infoTarget = state.entries.firstOrNull { it.absolutePath in state.selectedPaths } },
@@ -247,12 +249,6 @@ private fun FileCategoryBrowserContent(state: FileCategoryUiState, viewModel: Ma
                                 Icon(Icons.Rounded.DeleteForever, contentDescription = uiText("Pašalinti programą"), tint = MaterialTheme.colorScheme.error)
                             }
                         } else {
-                            BrowserActionIconButton(BrowserAction.SHARE,
-                                onClick = viewModel::shareFileCategorySelection,
-                                modifier = Modifier.testTag("category_share"),
-                            ) {
-                                Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
-                            }
                             BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copyFileCategorySelection(move = false) }) {
                                 Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
                             }
@@ -643,11 +639,16 @@ internal fun CategoryViewScopeSelector(
     onSelect: (CategoryStorageScope, CategoryViewMode) -> Unit,
     modifier: Modifier = Modifier,
     tagPrefix: String = "category",
+    compactWhenNarrow: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box(modifier) {
+    BoxWithConstraints(modifier) {
+        val compact = compactWhenNarrow && maxWidth < 128.dp * androidx.compose.ui.platform.LocalDensity.current.fontScale
         FilterChip(selected = true, onClick = { expanded = true },
-            label = { CategoryScopeLabel(mode, scope) }, modifier = Modifier.testTag("${tagPrefix}_storage_scope"))
+            label = {
+                if (compact) Icon(Icons.Rounded.FilterAlt, contentDescription = categoryScopeDescription(mode, scope))
+                else CategoryScopeLabel(mode, scope)
+            }, modifier = Modifier.testTag("${tagPrefix}_storage_scope"))
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             CategoryViewMode.entries.forEach { candidateMode ->
                 CategoryStorageScope.entries.forEach { candidateScope ->
@@ -666,6 +667,11 @@ internal fun CategoryViewScopeSelector(
 
 @Composable
 private fun CategoryScopeLabel(mode: CategoryViewMode, scope: CategoryStorageScope) {
+    Text(categoryScopeDescription(mode, scope), maxLines = 2, overflow = TextOverflow.Ellipsis)
+}
+
+@Composable
+private fun categoryScopeDescription(mode: CategoryViewMode, scope: CategoryStorageScope): String {
     val modeLabel = uiText(if (mode == CategoryViewMode.FILES) "Failai" else "Aplankai")
     val scopeLabel = uiText(when (scope) {
             CategoryStorageScope.ALL -> "Visa saugykla"
@@ -673,5 +679,5 @@ private fun CategoryScopeLabel(mode: CategoryViewMode, scope: CategoryStorageSco
             CategoryStorageScope.USB -> "USB saugykla"
             CategoryStorageScope.SD_CARD -> "SD kortelė"
         })
-    Text("$modeLabel · $scopeLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+    return "$modeLabel · $scopeLabel"
 }

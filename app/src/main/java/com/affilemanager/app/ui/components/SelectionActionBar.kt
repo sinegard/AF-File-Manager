@@ -56,6 +56,7 @@ fun SelectionHeader(
 @Composable
 fun SelectionActionDock(
     modifier: Modifier = Modifier,
+    primaryActions: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit,
 ) {
     Surface(
@@ -65,11 +66,14 @@ fun SelectionActionDock(
         tonalElevation = 5.dp,
         shadowElevation = 5.dp,
     ) {
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 7.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = actions,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            primaryActions?.invoke(this)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 7.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions,
+            )
+        }
     }
 }
 
@@ -81,10 +85,13 @@ fun SelectionActionBar(
     onClose: () -> Unit,
     onToggleSelectAll: () -> Unit,
     modifier: Modifier = Modifier,
+    primaryActions: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Surface(modifier = modifier, color = MaterialTheme.colorScheme.primaryContainer) {
-        Row(
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            primaryActions?.invoke(this)
+            Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
@@ -102,6 +109,7 @@ fun SelectionActionBar(
                 )
             }
             actions()
+        }
         }
     }
 }

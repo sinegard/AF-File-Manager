@@ -1075,7 +1075,14 @@ private fun FilePanel(
                 else -> FileList(panelId, displayedState, tagsByPath, favoritePaths, scrollKey, viewModel, onRename, { onInfo(listOf(it)) }, onTrashEntry, onArchiveEntry, onTagEntry)
             }
             if (state.selectedPaths.isNotEmpty()) {
-                SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
+                SelectionActionDock(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                    primaryActions = {
+                        BrowserActionIconButton(BrowserAction.SHARE,
+                            onClick = { viewModel.shareSelection(panelId) },
+                            modifier = Modifier.testTag("selection_share_local"),
+                        ) { Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti")) }
+                    },
+                ) {
                     com.affilemanager.app.ui.components.CopyPathAction(state.entries.filter { it.absolutePath in state.selectedPaths }.map(FileEntry::absolutePath))
                     BrowserActionIconButton(BrowserAction.COPY, onClick = { viewModel.copySelection(panelId, move = false) }) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = uiText("Kopijuoti"))
@@ -1099,12 +1106,6 @@ private fun FilePanel(
                         modifier = Modifier.testTag("selection_bookmark_local"),
                     ) {
                         Icon(Icons.Rounded.BookmarkAdd, contentDescription = uiText("Pridėti žymelę"))
-                    }
-                    BrowserActionIconButton(BrowserAction.SHARE,
-                        onClick = { viewModel.shareSelection(panelId) },
-                        modifier = Modifier.testTag("selection_share_local"),
-                    ) {
-                        Icon(Icons.Rounded.Share, contentDescription = uiText("Bendrinti"))
                     }
                     BrowserActionIconButton(BrowserAction.INFO,
                         onClick = {

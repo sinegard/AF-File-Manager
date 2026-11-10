@@ -1,11 +1,23 @@
 package com.affilemanager.app.transfer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.FileNotFoundException
 import java.io.IOException
 
 class NearbyTransferRetryTest {
+    @Test fun onlyAnExplicitFinalSavePermissionFailureIsLocalToOneFile() {
+        val finalSave = NearbyUploadException(500, TransferFailure.PERMISSION, "rejected", TransferPhase.COMMIT_COPY_OPEN)
+        assertTrue(finalSave.isFinalSavePermissionDenied)
+        assertFalse(NearbyUploadException(500, TransferFailure.PERMISSION, "rejected").isFinalSavePermissionDenied)
+        assertFalse(NearbyUploadException(500, TransferFailure.PERMISSION, "rejected", TransferPhase.VALIDATE).isFinalSavePermissionDenied)
+        assertFalse(NearbyUploadException(403, TransferFailure.PERMISSION, "rejected", TransferPhase.COMMIT).isFinalSavePermissionDenied)
+        assertFalse(NearbyUploadException(500, TransferFailure.STORAGE, "rejected", TransferPhase.COMMIT).isFinalSavePermissionDenied)
+        assertEquals(NearbyUploadRecovery.FAIL, NearbyTransferRetry.decide(finalSave, TransferFileStatus.FAILED, 1))
+    }
+
     @Test fun retriesOnlyWhenReceiverProvesThatTheFileWasNotCommitted() {
         assertEquals(
             NearbyUploadRecovery.RETRY,

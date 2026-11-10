@@ -2,6 +2,16 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
+## [0.48.0] - 2026-11-10
+
+- The Share button stays visible when you select several files in local folders or Quick locations.
+- The phone-to-phone picker puts the storage filter next to sorting, shows the selected count only on the next action, and keeps paging controls readable at larger text sizes.
+- In both receiving and group settings, the simultaneous-file control is now below session duration.
+- If the receiving phone denies the final save for one file, the other files can still finish. The failed file remains marked as failed.
+- The receiving screen can open an installed manufacturer's sharing app. If Android provides no launchable entry, AF shows where to look in system settings.
+
+The original HONOR save failure in #215 and the idle disconnect in #276 are still under investigation.
+
 ## [0.47.0] - 2026-10-29
 
 - New vault files use streaming encryption instead of holding a whole file in memory. Older vaults remain readable with a safe memory check and are never rewritten automatically.

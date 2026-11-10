@@ -845,6 +845,7 @@ private fun NearbyGroupDialog(
                     keyboardOptions = passwordKeyboardOptions,
                     singleLine = true, modifier = Modifier.fillMaxWidth().testTag("nearby_group_password"))
                 NearbyDurationControl(durationMinutes, onDurationMinutesChange, "nearby_group_duration")
+                NearbyReceiveConcurrency(viewModel, lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING))
                 NearbyReceiveModeButtons(
                     onNetwork = {
                         runCatching { startOwnGroupReceiver(groupName.trim().ifBlank { "AF group" }) }
@@ -1319,6 +1320,7 @@ private fun NearbyReceiveDialog(
                     steps = (LanSessionDuration.MAX_TIMED_MINUTES / LanSessionDuration.STEP_MINUTES) - 1,
                     modifier = Modifier.fillMaxWidth().testTag("nearby_receive_duration"),
                 )
+                NearbyReceiveConcurrency(viewModel, !activeWebReceiver)
                 NearbyReceiveModeButtons(
                         onNetwork = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !nearbyPermissionGranted) {
@@ -1333,6 +1335,8 @@ private fun NearbyReceiveDialog(
                         networkTag = "nearby_receive_network", wifiTag = "nearby_receive_wifi_direct",
                 )
                 NearbyNetworkSettingsButton()
+                NearbyManufacturerSharingButton(enabled = !wifiDirectPending &&
+                    lanState.status !in setOf(LanTransferStatus.STARTING, LanTransferStatus.RUNNING))
                 LText("5 GHz dažnį galima pasirinkti sistemos nustatymuose tik tada, kai jį palaiko abu telefonai.", style = MaterialTheme.typography.bodySmall)
                 LText("Wi-Fi Direct nereikia interneto ar prieigos taško, tačiau naudojamas telefono Wi-Fi ryšys.",
                     style = MaterialTheme.typography.bodySmall)
@@ -1775,11 +1779,12 @@ internal fun NearbySendDialog(
                         NearbyOpenStorageButton(enabled = !loading,
                             onClick = { storageStartPath = null; openStorage = true },
                             onAndroidPicker = { documentsLauncher.launch(arrayOf("*/*")) })
-                        if (!contactsMode && category != null && category != FileCategory.INSTALLED_APPS) {
-                            CategoryViewScopeSelector(categoryView, storageScope,
-                                onSelect = { scope, mode -> storageScope = scope; categoryView = mode }, tagPrefix = "nearby")
-                        }
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (!contactsMode && category != null && category != FileCategory.INSTALLED_APPS) {
+                                CategoryViewScopeSelector(categoryView, storageScope,
+                                    onSelect = { scope, mode -> storageScope = scope; categoryView = mode },
+                                    modifier = Modifier.weight(1f), tagPrefix = "nearby", compactWhenNarrow = true)
+                            } else {
                             LText(
                                 if (contactsMode) "Kontaktai" else when (sortMode) {
                                     SortMode.NAME -> "Pavadinimas"
@@ -1790,6 +1795,7 @@ internal fun NearbySendDialog(
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            }
                             if (searchVisible || featureVisible(OptionalFeature.TOOLBAR_SEARCH)) IconButton(
                                 onClick = {
                                     searchVisible = !searchVisible
@@ -2032,24 +2038,13 @@ internal fun NearbySendDialog(
                         }
                     }
                     if (category != null) {
-                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton(onClick = { pageOffset = (pageOffset - FileCategoryPagingRules.BROWSE_PAGE_ROWS).coerceAtLeast(0) },
-                                enabled = pageOffset > 0 && !loading && !pageLoading, modifier = Modifier.testTag("nearby_previous_page")) {
-                                LText("Ankstesnis puslapis")
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                LText("Puslapis", style = MaterialTheme.typography.labelSmall)
-                                Text((pageOffset / FileCategoryPagingRules.BROWSE_PAGE_ROWS + 1).toString())
-                            }
-                            TextButton(onClick = { nextOffset?.let { pageOffset = it } },
-                                enabled = nextOffset != null && !loading && !pageLoading, modifier = Modifier.testTag("nearby_next_page")) {
-                                LText("Kitas puslapis")
-                            }
-                        }
-                        if (selectedPaths.isNotEmpty()) LText("Pasirinkta: ${selectedPaths.size}", style = MaterialTheme.typography.labelSmall)
-                    } else if (contactsMode && selectedContacts.isNotEmpty()) {
-                        LText("Pasirinkta: ${selectedContacts.size}", style = MaterialTheme.typography.labelSmall)
+                        NearbyPickerPagination(
+                            page = pageOffset / FileCategoryPagingRules.BROWSE_PAGE_ROWS + 1,
+                            previousEnabled = pageOffset > 0 && !loading && !pageLoading,
+                            nextEnabled = nextOffset != null && !loading && !pageLoading,
+                            onPrevious = { pageOffset = (pageOffset - FileCategoryPagingRules.BROWSE_PAGE_ROWS).coerceAtLeast(0) },
+                            onNext = { nextOffset?.let { pageOffset = it } },
+                        )
                     }
                 }
             }
@@ -2170,6 +2165,46 @@ internal fun NearbySendDialog(
                 error = null
             },
         )
+    }
+}
+
+/** Narrow/large-text screens keep whole pager labels rather than squeezing the last button. */
+@Composable
+internal fun NearbyPickerPagination(page: Int, previousEnabled: Boolean, nextEnabled: Boolean,
+                                    onPrevious: () -> Unit, onNext: () -> Unit) {
+    val previous: @Composable (Modifier) -> Unit = { modifier ->
+        TextButton(onClick = onPrevious, enabled = previousEnabled, modifier = modifier.testTag("nearby_previous_page")) {
+            LText("Ankstesnis puslapis")
+        }
+    }
+    val next: @Composable (Modifier) -> Unit = { modifier ->
+        TextButton(onClick = onNext, enabled = nextEnabled, modifier = modifier.testTag("nearby_next_page")) {
+            LText("Kitas puslapis")
+        }
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 360.dp * LocalDensity.current.fontScale) {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LText("Puslapis", style = MaterialTheme.typography.labelSmall)
+                    Text(page.toString())
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    previous(Modifier.weight(1f))
+                    next(Modifier.weight(1f))
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                previous(Modifier)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    LText("Puslapis", style = MaterialTheme.typography.labelSmall)
+                    Text(page.toString())
+                }
+                next(Modifier)
+            }
+        }
     }
 }
 

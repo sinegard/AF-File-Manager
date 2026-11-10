@@ -438,6 +438,7 @@ class NearbyTransferService : Service() {
         val directories = batch.sources.directories
         val cleanupRoot = batch.sources.cleanupRootPath
         var terminalState: NearbyTransferState? = null
+        var fileWorkersFinished = false
         // The worker owns its snapshot until it exits, independently of cleared UI history.
         var latestState = batch.state
         fun currentState() = NearbyTransferController.queue.get(batch.id)?.state ?: latestState
@@ -542,11 +543,20 @@ class NearbyTransferService : Service() {
                     val cancelled = key in cancelledFileKeys || runCatching {
                         remoteFileStatus(pairing, cookie, batchId, index + 1) == TransferFileStatus.CANCELLED
                     }.getOrDefault(false)
-                    if (!cancelled) throw failure
-                    cancelledFileKeys += key
-                    synchronized(progressLock) {
-                        details[index] = details[index].copy(transferredBytes = 0, status = TransferFileStatus.CANCELLED)
-                        publishProgress(force = true)
+                    if (cancelled) {
+                        cancelledFileKeys += key
+                        synchronized(progressLock) {
+                            details[index] = details[index].copy(transferredBytes = 0, status = TransferFileStatus.CANCELLED)
+                            publishProgress(force = true)
+                        }
+                    } else {
+                        // A confirmed final-save permission denial belongs to this file.
+                        // Unknown failures, auth, and transport errors still abort the batch.
+                        if (failure !is NearbyUploadException || !failure.isFinalSavePermissionDenied) throw failure
+                        synchronized(progressLock) {
+                            details[index] = details[index].copy(status = TransferFileStatus.FAILED, failure = failure.failure)
+                            publishProgress(force = true)
+                        }
                     }
                     return@forEachFileBounded
                 } finally {
@@ -559,9 +569,15 @@ class NearbyTransferService : Service() {
                     publishProgress(transferFile.name)
                 }
             }
+            fileWorkersFinished = true
+            val failedFile = details.firstOrNull { it.status == TransferFileStatus.FAILED }
             val allCancelled = details.isNotEmpty() && details.all { it.status == TransferFileStatus.CANCELLED }
             val completed = NearbyTransferState(
-                status = if (allCancelled) NearbyTransferStatus.CANCELLED else NearbyTransferStatus.COMPLETED,
+                status = when {
+                    failedFile != null -> NearbyTransferStatus.ERROR
+                    allCancelled -> NearbyTransferStatus.CANCELLED
+                    else -> NearbyTransferStatus.COMPLETED
+                },
                 receiverName = pairing.receiverName,
                 fileCount = files.size,
                 completedFiles = completedFiles,
@@ -569,6 +585,7 @@ class NearbyTransferService : Service() {
                 sentBytes = completedBytes,
                 message = when {
                     files.isEmpty() -> "Telefonai susieti"
+                    failedFile != null -> "Serverio klaida (${failedFile.failure?.code ?: TransferFailure.UNKNOWN.code})"
                     allCancelled -> "Siuntimas atšauktas"
                     details.any { it.status == TransferFileStatus.CANCELLED } -> "Siuntimas baigtas, dalis failų atšaukta"
                     else -> "Siuntimas baigtas"
@@ -610,7 +627,8 @@ class NearbyTransferService : Service() {
                 batchId = batch.id, transferredBytes = terminalState?.sentBytes ?: latestState.sentBytes,
                 totalBytes = latestState.totalBytes))
             activeCall = null
-            if (terminalState?.status in setOf(NearbyTransferStatus.ERROR, NearbyTransferStatus.CANCELLED) &&
+            if ((terminalState?.status == NearbyTransferStatus.CANCELLED ||
+                    (terminalState?.status == NearbyTransferStatus.ERROR && !fileWorkersFinished)) &&
                 NearbyTransferController.connection.supportsQueue(pairing)) {
                 val cookie = NearbyTransferController.connection.cookieFor(pairing)
                 if (cookie != null) runCatching { sendControl(pairing, cookie, "/nearby/cancel", batch.id) }
@@ -731,11 +749,14 @@ class NearbyTransferService : Service() {
             checkSessionResponse(pairing, response.code)
             if (!response.isSuccessful) {
                 val code = TransferFailure.fromCode(response.header(LanHttpServer.ERROR_CODE_HEADER))
+                val phaseCode = response.header(LanHttpServer.ERROR_PHASE_HEADER)
+                val receiverPhase = TransferPhase.entries.firstOrNull { it.code == phaseCode }
                 TransferDiagnostics.record(TransferDiagnosticEvent(TransferRole.SEND, TransferPhase.RESPONSE,
                     batchId, fileIndex, totalBytes = source.length, httpStatus = response.code, failure = code))
                 throw NearbyUploadException(response.code, code,
                     if (code != null) "Serverio klaida (${code.code})" else
-                        response.peekBody(200L).string().ifBlank { null } ?: "Gavęs telefonas atmetė failą (${response.code})")
+                        response.peekBody(200L).string().ifBlank { null } ?: "Gavęs telefonas atmetė failą (${response.code})",
+                    receiverPhase)
             }
         }
         } finally { payloadCalls.remove(uploadKey, call) }
@@ -807,7 +828,9 @@ class NearbyTransferService : Service() {
             window.observe(now, report?.status != null)
             val recoveredFailure = if (failure is java.io.IOException && failure !is NearbySourceException &&
                 report?.failure != null) {
-                NearbyUploadException((failure as? NearbyUploadException)?.httpStatus ?: 500, report.failure, failure.message.orEmpty())
+                val directFailure = failure as? NearbyUploadException
+                NearbyUploadException(directFailure?.httpStatus ?: 500, report.failure, failure.message.orEmpty(),
+                    directFailure?.takeIf { it.failure == report.failure }?.receiverPhase)
             } else failure
             TransferDiagnostics.record(TransferDiagnosticEvent(TransferRole.SEND, TransferPhase.RECOVER,
                 batchId, fileIndex, transferredBytes = report?.receivedBytes ?: 0,
@@ -816,7 +839,7 @@ class NearbyTransferService : Service() {
             if (decision == NearbyUploadRecovery.FAIL && report?.failure != null &&
                 recoveredFailure is NearbyUploadException) {
                 throw NearbyUploadException(recoveredFailure.httpStatus, report.failure,
-                    "Serverio klaida (${report.failure.code})")
+                    "Serverio klaida (${report.failure.code})", recoveredFailure.receiverPhase)
             }
             if (decision != NearbyUploadRecovery.WAIT) return decision
             if (window.expired(now)) return NearbyUploadRecovery.FAIL
