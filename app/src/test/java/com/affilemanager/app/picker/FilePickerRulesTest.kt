@@ -15,7 +15,7 @@ class FilePickerRulesTest {
         assertTrue(request.accepts("image/png"))
         assertTrue(request.accepts("application/pdf"))
         assertFalse(request.accepts("text/plain"))
-        assertEquals(100, request.selectionLimit)
+        assertEquals(1_000, request.selectionLimit)
         assertEquals(1, FilePickerRequest.parse("text/*", null, false)!!.selectionLimit)
         assertNull(FilePickerRequest.parse(null, null, false))
         assertNull(FilePickerRequest.parse("image/png", listOf("*/*"), false))
@@ -45,7 +45,7 @@ class FilePickerRulesTest {
         assertThrows(IllegalArgumentException::class.java) { boundary.selected(listOf(child.path), request) { "text/plain" } }
         assertThrows(IllegalArgumentException::class.java) { boundary.selected(listOf(text.path), request) { "image/png" } }
         assertThrows(IllegalArgumentException::class.java) { boundary.selected(listOf(text.path, text.path), request) { "text/plain" } }
-        assertThrows(IllegalArgumentException::class.java) { boundary.selected(List(101) { text.path }, request) { "text/plain" } }
+        assertThrows(IllegalArgumentException::class.java) { boundary.selected(List(1_001) { text.path }, request) { "text/plain" } }
         text.delete()
         assertThrows(IllegalArgumentException::class.java) { boundary.selected(listOf(text.path), request) { "text/plain" } }
     }

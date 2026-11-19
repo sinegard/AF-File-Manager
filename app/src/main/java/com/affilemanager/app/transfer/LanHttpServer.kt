@@ -61,6 +61,8 @@ internal interface TemporaryLanServer : AutoCloseable {
     fun removeGroupMember(pairing: NearbyPairing): Boolean = false
     fun setGroupMessagesBlocked(pairing: NearbyPairing, blocked: Boolean): Boolean = false
     fun setGroupBanner(bytes: ByteArray?, highQuality: ByteArray? = null): Boolean = false
+    fun decideNearbySender(id: String, allow: Boolean): Boolean = false
+    fun pendingNearbySenders(): List<NearbySenderRequest> = emptyList()
 }
 
 class LanHttpServer(
@@ -92,6 +94,10 @@ class LanHttpServer(
     receiveDestinations: Map<com.affilemanager.app.model.EntryKind, File> = emptyMap(),
     groupBanner: ByteArray? = null,
     groupBannerHigh: ByteArray? = null,
+    private val receiveStorage: LanReceiveStorage? = null,
+    private val requireSenderApproval: Boolean = false,
+    private val onSenderRequests: (List<NearbySenderRequest>) -> Unit = {},
+    approvalNowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : TemporaryLanServer {
     private data class Banners(val legacy: ByteArray?, val high: ByteArray?)
     init { require(groupBannerHigh == null || groupBanner != null) }
@@ -117,12 +123,29 @@ class LanHttpServer(
     private val groupDirectory = NearbyGroupDirectory(nowMillis)
     private data class GroupSession(val host: String, @Volatile var peer: NearbyPairing? = null)
     private val groupSessions = java.util.concurrent.ConcurrentHashMap<String, GroupSession>()
+    private val senderApproval: NearbySenderApproval? = if (requireSenderApproval) NearbySenderApproval(
+        if (groupMode) NearbyGroupDirectory.MAX_MEMBERS - 1 else 1, approvalNowMillis, { publishSenderRequests() },
+    ) else null
+
+    private fun publishSenderRequests() { onSenderRequests(senderApproval?.pending().orEmpty()) }
+    override fun pendingNearbySenders(): List<NearbySenderRequest> = senderApproval?.pending().orEmpty()
+
+    override fun decideNearbySender(id: String, allow: Boolean): Boolean {
+        if (!running.get()) return false
+        return senderApproval?.decide(id, allow) { cookie, address ->
+            if (groupMode) groupSessions[cookie] = GroupSession(address)
+        } ?: false
+    }
 
     override fun removeGroupMember(pairing: NearbyPairing): Boolean {
         if (!groupMode || !running.get()) return false
         val active = session ?: return false
         val removed = groupDirectory.remove(pairing)
         if (removed) {
+            groupSessions.entries.filter { senderApproval != null && it.value.peer == pairing }.forEach {
+                senderApproval?.revoke(it.key)
+                groupSessions.remove(it.key)
+            }
             uploadPeers.entries.filter { it.value == pairing }.forEach { runCatching { it.key.close() } }
             publishGroupMembers(active)
         }
@@ -143,7 +166,10 @@ class LanHttpServer(
         const val MAX_SESSION_MINUTES = LanSessionDuration.MAX_TIMED_MINUTES
         const val MAX_CONCURRENT_REQUESTS = 4
         const val MAX_QUEUED_REQUESTS = 16
-        const val MAX_REQUESTS_PER_SESSION = 10_000
+        // A full batch also creates folders and may confirm or retry individual files.
+        // This is finite even for a manual-duration session. Login failures stay separately bounded.
+        const val MAX_REQUESTS_PER_SESSION = NearbySourcePreparer.MAX_FILES * 10 + NearbySourcePreparer.MAX_DIRECTORIES + 1_000
+        private const val MAX_UNAUTHENTICATED_REQUESTS = 10_000
         const val MAX_AUTH_FAILURES = 20
         const val MAX_HEADER_BYTES = 16 * 1_024
         const val MAX_UPLOAD_BYTES = 32L * 1_024 * 1_024 * 1_024
@@ -158,6 +184,7 @@ class LanHttpServer(
     private val normalizedDurationMinutes = LanSessionDuration.normalize(durationMinutes)
     private val running = AtomicBoolean(false)
     private val requests = AtomicInteger(0)
+    private val unauthenticatedRequests = AtomicInteger(0)
     private val authFailures = AtomicInteger(0)
     private val codeConsumed = AtomicBoolean(false)
     private val cookieToken = randomToken(24)
@@ -191,7 +218,7 @@ class LanHttpServer(
             port = socket.localPort,
             code = code,
             expiresAtMillis = LanSessionDuration.expiresAt(nowMillis(), normalizedDurationMinutes),
-            rootName = root.name.ifBlank { "Pasirinktas katalogas" },
+            rootName = receiveStorage?.label ?: root.name.ifBlank { "Pasirinktas katalogas" },
             readOnly = readOnly,
         )
         session = created
@@ -208,6 +235,7 @@ class LanHttpServer(
 
     override fun stop(reason: String) {
         if (!running.compareAndSet(true, false)) return
+        senderApproval?.close()
         runCatching { serverSocket?.close() }
         serverSocket = null
         executor.shutdownNow()
@@ -232,12 +260,13 @@ class LanHttpServer(
     private fun acceptLoop(activeSession: LanServerSession) {
         try {
             while (running.get()) {
+                senderApproval?.refresh()
                 if (groupMode) publishGroupMembers(activeSession)
                 if (LanSessionDuration.isExpired(nowMillis(), activeSession.expiresAtMillis)) {
                     stop("LAN sesijos laikas baigėsi")
                     break
                 }
-                if (requests.get() >= MAX_REQUESTS_PER_SESSION) {
+                if (requests.get() >= MAX_REQUESTS_PER_SESSION || unauthenticatedRequests.get() >= MAX_UNAUTHENTICATED_REQUESTS) {
                     stop("LAN sesijos užklausų riba pasiekta")
                     break
                 }
@@ -247,6 +276,7 @@ class LanHttpServer(
                     client.soTimeout = SOCKET_TIMEOUT_MILLIS
                     clients.add(client)
                     requests.incrementAndGet()
+                    unauthenticatedRequests.incrementAndGet()
                     runCatching { executor.execute { try { client.use(::handle) } finally { clients.remove(client) } } }
                         .onFailure { clients.remove(client); client.close() }
                 } catch (_: SocketTimeoutException) {
@@ -320,8 +350,24 @@ class LanHttpServer(
             handleLogin(request, input, output, active, remoteAddress)
             return
         }
+        if (requireSenderApproval && request.method == "POST" && request.path in setOf("/nearby/approval", "/nearby/approval/cancel")) {
+            require(request.contentLength == 0L) { "Užklausa atmesta" }
+            val ticket = request.headers["x-af-approval-request"].orEmpty()
+            require(ticket.matches(Regex("[a-f0-9]{64}"))) { "Užklausa atmesta" }
+            if (request.path.endsWith("/cancel")) {
+                senderApproval?.cancel(ticket, remoteAddress) { groupSessions.remove(it) }
+                writeText(output, 200, "OK", "text/plain; charset=utf-8")
+            } else writeApproval(output, active, requireNotNull(senderApproval).poll(ticket, remoteAddress))
+            return
+        }
         if (!isAuthenticated(request, remoteAddress)) {
             writeText(output, 401, loginPage(active), "text/html; charset=utf-8")
+            return
+        }
+        unauthenticatedRequests.decrementAndGet()
+        // A phone sender may upload, not browse or download the recipient's existing files.
+        if (requireSenderApproval && request.path in setOf("/", "/list", "/download")) {
+            writeText(output, 403, t("Užklausa atmesta"), "text/plain; charset=utf-8")
             return
         }
         val boundPeer = requestToken(request)?.let { groupSessions[it]?.peer }
@@ -340,7 +386,7 @@ class LanHttpServer(
                     val token = requestToken(request)
                     val peer = token?.let { groupSessions[it]?.peer }
                     if (peer != null) groupDirectory.leave(peer)
-                    if (token != null) groupSessions.remove(token)
+                    if (token != null) { senderApproval?.revoke(token); groupSessions.remove(token) }
                     publishGroupMembers(active)
                 } else {
                     onNearbyDisconnect()
@@ -424,6 +470,7 @@ class LanHttpServer(
                 }
                 val peer = readGroupPairing(request, input, remoteAddress)
                 groupDirectory.leave(peer)
+                if (senderApproval != null) requestToken(request)?.let { senderApproval.revoke(it); groupSessions.remove(it) }
                 publishGroupMembers(active)
                 writeText(output, 200, "OK", "text/plain; charset=utf-8")
             }
@@ -507,10 +554,17 @@ class LanHttpServer(
         }
     }
 
+    private var lastNearbyProgressNanos = 0L
     private fun publishNearbyFiles(
         bytesPerSecond: Long = 0L,
         remainingMillis: Long? = null,
+        force: Boolean = true,
     ) = synchronized(nearbyProgressLock) {
+        val now = System.nanoTime()
+        val totals = nearbyFiles.totals()
+        if (!force && totals.files > NearbyTransferCapacity.LEGACY_FILES && !totals.finished &&
+            now - lastNearbyProgressNanos < 150_000_000L) return@synchronized
+        lastNearbyProgressNanos = now
         val files = nearbyFiles.snapshot()
         val active = files.firstOrNull { it.status == TransferFileStatus.TRANSFERRING }
         onUploadProgress(LanUploadProgress(active?.name.orEmpty(), 0, files.size,
@@ -537,20 +591,32 @@ class LanHttpServer(
     }
 
     private fun handleLogin(request: Request, input: BufferedInputStream, output: BufferedOutputStream, active: LanServerSession, remoteAddress: String) {
-        if ((!groupMode && codeConsumed.get()) || authFailures.get() >= MAX_AUTH_FAILURES) {
+        if ((!requireSenderApproval && !groupMode && codeConsumed.get()) || authFailures.get() >= MAX_AUTH_FAILURES) {
             writeText(output, 403, t("Kodas nebegalioja. Sustabdykite ir paleiskite naują sesiją."), "text/plain; charset=utf-8")
             return
         }
         val length = request.contentLength
-        if (length !in 1..1_024) {
+        // The phone handshake also carries a bounded device name and client nonce.
+        // 2 KiB fits all existing 128-character codes plus 64-character UTF-8 names,
+        // including URL escaping; generic web login keeps its existing 1 KiB budget.
+        val loginLimit = if (requireSenderApproval) 2_048 else 1_024
+        if (length !in 1..loginLimit) {
             writeText(output, 400, t("Netinkamas prisijungimo dydis"), "text/plain; charset=utf-8")
             return
         }
         val body = readExactly(input, length.toInt()).toString(StandardCharsets.UTF_8)
-        val code = parseQuery(body)["code"]
+        val form = parseQuery(body)
+        val code = form["code"]
         if (code != active.code) {
             authFailures.incrementAndGet()
             writeText(output, 403, loginPage(active, t("Neteisingas kodas")), "text/html; charset=utf-8")
+            return
+        }
+        if (requireSenderApproval) {
+            // Old clients cannot turn knowing a code into an implicit consent grant.
+            require(request.headers["x-af-sender-approval"] == "1") { "Gavimo sesija nepatvirtinta" }
+            writeApproval(output, active, requireNotNull(senderApproval).request(remoteAddress,
+                form["client"].orEmpty(), form["name"].orEmpty()))
             return
         }
         if (!groupMode && !codeConsumed.compareAndSet(false, true)) {
@@ -561,6 +627,27 @@ class LanHttpServer(
             require(groupSessions.size < 128) { "Grupė pilna" }
             randomToken(24).also { groupSessions[it] = GroupSession(remoteAddress) }
         } else cookieToken
+        writeAcceptedLogin(output, active, token)
+    }
+
+    private fun writeApproval(output: BufferedOutputStream, active: LanServerSession, reply: NearbySenderApproval.Reply) {
+        if (reply.status == NearbySenderApproval.Status.APPROVED) {
+            writeAcceptedLogin(output, active, requireNotNull(reply.cookie))
+            return
+        }
+        val status = when (reply.status) {
+            NearbySenderApproval.Status.PENDING -> 202
+            NearbySenderApproval.Status.FULL -> 429
+            NearbySenderApproval.Status.EXPIRED -> 410
+            else -> 403
+        }
+        writeText(output, status, reply.status.name, "text/plain; charset=utf-8", buildList {
+            add("X-AF-Approval-State: ${reply.status.name}")
+            if (reply.status == NearbySenderApproval.Status.PENDING) add("X-AF-Approval-Request: ${requireNotNull(reply.ticket)}")
+        })
+    }
+
+    private fun writeAcceptedLogin(output: BufferedOutputStream, active: LanServerSession, token: String) {
         val page = "<html lang='${html(language)}'><head><meta http-equiv='refresh' content='0;url=/'></head><body>${html(t("Prisijungta"))}.</body></html>"
         writeText(
             output,
@@ -568,15 +655,23 @@ class LanHttpServer(
             page,
             "text/html; charset=utf-8",
             extraHeaders = listOf("Set-Cookie: af_session=$token; HttpOnly; SameSite=Strict; Path=/",
-                "X-AF-Session-Expires: ${active.expiresAtMillis}", "X-AF-Queue-Version: 1", "X-AF-Concurrent-Uploads: $concurrentUploads"),
+                "X-AF-Session-Expires: ${active.expiresAtMillis}", "X-AF-Queue-Version: 1", "X-AF-Concurrent-Uploads: $concurrentUploads",
+                "${NearbyTransferCapacity.HEADER}: ${NearbySourcePreparer.MAX_FILES}"),
         )
     }
 
     private fun showDirectory(output: BufferedOutputStream, relativePath: String) {
-        val directory = resolveRelative(relativePath, requireDirectory = true)
-        val relative = root.toPath().relativize(directory.toPath()).toString().replace(File.separatorChar, '/')
-        val entries = directory.listFiles()?.sortedWith(compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase(Locale.ROOT) })
-            ?: throw SecurityException("Katalogo perskaityti nepavyko")
+        val relative: String
+        val listed = if (receiveStorage != null) {
+            relative = checkedRelative(relativePath)
+            receiveStorage.list(relative)
+        } else {
+            val directory = resolveRelative(relativePath, requireDirectory = true)
+            relative = root.toPath().relativize(directory.toPath()).toString().replace(File.separatorChar, '/')
+            directory.listFiles()?.map { LanSharedEntry(it.name, it.isDirectory, it.length()) }
+                ?: throw SecurityException("Katalogo perskaityti nepavyko")
+        }
+        val entries = listed.sortedWith(compareByDescending<LanSharedEntry> { it.directory }.thenBy { it.name.lowercase(Locale.ROOT) })
         require(entries.size <= 100_000) { "Kataloge per daug elementų interneto peržiūrai" }
         val rows = buildString {
             if (relative.isNotEmpty()) {
@@ -585,10 +680,10 @@ class LanHttpServer(
             }
             entries.forEach { entry ->
                 val childRelative = listOf(relative, entry.name).filter(String::isNotEmpty).joinToString("/")
-                if (entry.isDirectory) {
+                if (entry.directory) {
                     append("<li>📁 <a href='/list?path=${url(childRelative)}'>${html(entry.name)}</a></li>")
                 } else {
-                    append("<li>📄 <a href='/download?path=${url(childRelative)}'>${html(entry.name)}</a> · ${html(FileSystemRules.humanBytes(entry.length()))}</li>")
+                    append("<li>📄 <a href='/download?path=${url(childRelative)}'>${html(entry.name)}</a> · ${html(FileSystemRules.humanBytes(entry.size))}</li>")
                 }
             }
         }
@@ -609,6 +704,25 @@ class LanHttpServer(
     }
 
     private fun download(output: BufferedOutputStream, relativePath: String) {
+        if (receiveStorage != null) {
+            val source = receiveStorage.read(checkedRelative(relativePath))
+            source.input.use { input ->
+                val mime = URLConnection.guessContentTypeFromName(source.name) ?: "application/octet-stream"
+                val encoded = URLEncoder.encode(source.name, StandardCharsets.UTF_8.name()).replace("+", "%20")
+                writeHeaders(output, 200, mime, source.size, listOf("Content-Disposition: attachment; filename*=UTF-8''$encoded"))
+                val buffer = ByteArray(NearbyTransferTuning.IO_BUFFER_BYTES)
+                try {
+                    var remaining = source.size
+                    while (remaining > 0) {
+                        val count = input.read(buffer, 0, minOf(remaining, buffer.size.toLong()).toInt())
+                        if (count < 0) throw java.io.EOFException("Failas pasikeitė po peržiūros")
+                        output.write(buffer, 0, count); remaining -= count
+                    }
+                } finally { buffer.fill(0) }
+                output.flush()
+            }
+            return
+        }
         val file = resolveRelative(relativePath, requireDirectory = false)
         require(file.isFile && file.canRead()) { "Failas nepasiekiamas" }
         val mime = URLConnection.guessContentTypeFromName(file.name) ?: "application/octet-stream"
@@ -636,57 +750,87 @@ class LanHttpServer(
         var received = 0L
         var committed = false
         var validated = false
+        var validatedPath: String? = null
         var diagnosticRoot = root
         var partial: File? = null
+        var documentUpload: LanDocumentUpload? = null
         var progress: ((Boolean, TransferFailure?) -> Unit)? = null
         fun diagnostic(failure: TransferFailure? = null, errno: Int = 0) {
             if (!diagnosticsEnabled()) return
             // Diagnostics must never change the outcome of a file operation.
             runCatching { onDiagnostic(TransferDiagnosticEvent(
                 TransferRole.RECEIVE, phase, batchId, fileIndex, received, length,
-                failure = failure, errno = errno, freeBytes = diagnosticRoot.usableSpace,
+                failure = failure, errno = errno, freeBytes = if (documentUpload != null) -1 else diagnosticRoot.usableSpace,
                 storage = if (diagnosticRoot == root) storageKind else TransferStorage.UNKNOWN,
             )) }
         }
         try {
             require(length in 0..MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
-            val requestedDirectory = resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true)
+            val requestedDirectory = if (receiveStorage == null) resolveRelative(request.query["dir"].orEmpty(), requireDirectory = true) else null
             val name = FileSystemRules.validateFileName(request.query["name"].orEmpty()).getOrThrow()
-            val requestedRelativeDirectory = requestedDirectory.relativeTo(root).invariantSeparatorsPath
+            val requestedRelativeDirectory = requestedDirectory?.relativeTo(root)?.invariantSeparatorsPath
+                ?: checkedRelative(request.query["dir"].orEmpty())
             val relativePath = requestedRelativeDirectory.takeIf(String::isNotEmpty)?.let { "$it/$name" } ?: name
             // Validate the wire path before creating anything in an explicitly chosen type destination.
             nearbyFiles.validate(fileIndex, relativePath, length, batchId)
             validated = true
-            val (destinationRoot, directory) = if (batchId != null && nearbyFiles.hasManifest()) receiveTargets.directory(requestedRelativeDirectory, name)
-                else root to requestedDirectory
-            diagnosticRoot = destinationRoot
-            if (!directory.canWrite()) throw java.nio.file.AccessDeniedException(directory.path)
-            val requested = File(directory, name)
-            val target = FileSystemRules.keepBothTarget(requested)
-            require(FileSystemRules.isContained(destinationRoot, target)) { "Tikslas išeina už pasirinkto katalogo" }
-            val staging = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
+            validatedPath = relativePath
+            val destination = receiveStorage?.directory(requestedRelativeDirectory, name, batchId != null && nearbyFiles.hasManifest())
+                ?: (if (batchId != null && nearbyFiles.hasManifest()) receiveTargets.directory(requestedRelativeDirectory, name)
+                    else root to requireNotNull(requestedDirectory)).let { LanReceiveDirectory.Local(it.first, it.second) }
+            val target: File?
+            val staging: File?
+            if (destination is LanReceiveDirectory.Local) {
+                diagnosticRoot = destination.root
+                val directory = destination.directory
+                if (!directory.canWrite()) throw java.nio.file.AccessDeniedException(directory.path)
+                target = FileSystemRules.keepBothTarget(File(directory, name))
+                require(FileSystemRules.isContained(destination.root, target)) { "Tikslas išeina už pasirinkto katalogo" }
+                staging = File(directory, ".af-upload-${UUID.randomUUID()}.partial")
+            } else {
+                target = null; staging = null
+                documentUpload = (destination as LanReceiveDirectory.Documents).open(name)
+            }
+            var publishedDocument: LanPublishedDocument? = null
             partial = staging
             val totalBytes = request.query["batchBytes"]?.toLongOrNull()
                 ?.coerceIn(length, NearbySourcePreparer.MAX_TOTAL_BYTES) ?: length
             val batchOffset = request.query["batchOffset"]?.toLongOrNull()?.coerceIn(0L, totalBytes) ?: 0L
             var remaining = length
             var lastProgressAt = 0L
+            var lastPublishedBytes = 0L
             val uploadStartedAt = System.nanoTime()
             fun publishProgress(completed: Boolean = false, failure: TransferFailure? = null) {
                 val now = System.nanoTime()
-                if (!completed && failure == null && received > 0L && now - lastProgressAt < 150_000_000L) return
+                if (!completed && failure == null && received > 0L && lastPublishedBytes > 0L && now - lastProgressAt < 150_000_000L) return
                 lastProgressAt = now
-                val files = nearbyFiles.update(fileIndex, TransferFileProgress(
+                lastPublishedBytes = received
+                val row = TransferFileProgress(
                     relativePath = relativePath, sizeBytes = length, transferredBytes = received,
                     status = when {
                         completed -> TransferFileStatus.COMPLETED
                         failure != null -> TransferFileStatus.FAILED
                         else -> TransferFileStatus.TRANSFERRING
                     },
-                    localPath = if (completed) target.absolutePath else null,
-                    modifiedAtMillis = if (completed) target.lastModified() else 0,
+                    localPath = if (completed) publishedDocument?.uri ?: target?.absolutePath else null,
+                    modifiedAtMillis = if (completed) publishedDocument?.modifiedAtMillis ?: target?.lastModified() ?: 0 else 0,
                     failure = failure,
-                ), batchId)
+                    savedName = if (completed) publishedDocument?.name else null,
+                )
+                if (nearbyFiles.hasManifest()) {
+                    // Internal status is exact on every write; publish at a bounded rate,
+                    // not by allocating a30,000-row snapshot on every tiny file.
+                    nearbyFiles.record(fileIndex, row, batchId)
+                    val totals = nearbyFiles.totals()
+                    val metrics = TransferProgressEstimator.calculate(received,
+                        (totals.totalBytes - batchOffset).coerceAtLeast(received),
+                        ((now - uploadStartedAt).coerceAtLeast(0L) / 1_000_000L))
+                    val remainingMillis = TransferProgressEstimator.remainingMillis(
+                        (totals.totalBytes - totals.receivedBytes).coerceAtLeast(0L), metrics.bytesPerSecond)
+                    publishNearbyFiles(metrics.bytesPerSecond, if (totals.finished) 0L else remainingMillis, force = false)
+                    return
+                }
+                val files = nearbyFiles.update(fileIndex, row, batchId)
                 val receivedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.transferredBytes }
                     else (batchOffset + received).coerceAtMost(totalBytes)
                 val expectedTotal = if (nearbyFiles.hasManifest()) files.sumOf { it.sizeBytes } else totalBytes
@@ -725,7 +869,7 @@ class LanHttpServer(
             publishProgress()
             phase = TransferPhase.OPEN
             diagnostic()
-            FileOutputStream(staging).use { fileOutput ->
+            (documentUpload?.output ?: FileOutputStream(requireNotNull(staging))).use { fileOutput ->
                 val bufferedFileOutput = BufferedOutputStream(fileOutput, NearbyTransferTuning.IO_BUFFER_BYTES)
                 val buffer = ByteArray(NearbyTransferTuning.IO_BUFFER_BYTES)
                 try {
@@ -747,23 +891,26 @@ class LanHttpServer(
                     phase = TransferPhase.SYNC
                     diagnostic()
                     bufferedFileOutput.flush()
-                    fileOutput.fd.sync()
+                    if (documentUpload != null) documentUpload!!.sync() else (fileOutput as FileOutputStream).fd.sync()
                 } finally {
                     buffer.fill(0)
                 }
             }
             phase = TransferPhase.COMMIT
             diagnostic()
-            check(staging.length() == length) { "Įkelto failo dydis nesutampa" }
+            if (staging != null) check(staging.length() == length) { "Įkelto failo dydis nesutampa" }
             if (!running.get() || nearbyFiles.isCancelled(batchId, fileIndex))
                 throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
             check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
             // A file created after keep-both planning must never be silently replaced.
-            receivedFileCommitter.commitWithCopyDiagnostics(staging, target, length, checkpoint = {
+            val checkpoint = {
                 if (!running.get() || nearbyFiles.isCancelled(batchId, fileIndex))
                     throw java.util.concurrent.CancellationException("Siuntimas atšauktas")
                 check(boundPeer == null || !groupDirectory.isRemoved(boundPeer)) { "Organizatorius pašalino šį telefoną iš grupės" }
-            }, onFallback = { failure ->
+            }
+            if (documentUpload != null) {
+                publishedDocument = documentUpload!!.commit(length, checkpoint)
+            } else receivedFileCommitter.commitWithCopyDiagnostics(requireNotNull(staging), requireNotNull(target), length, checkpoint = checkpoint, onFallback = { failure ->
                 diagnostic(TransferFailure.classify(failure, phase), systemErrorNumber(failure))
                 phase = TransferPhase.COMMIT_COPY
                 diagnostic()
@@ -773,19 +920,20 @@ class LanHttpServer(
             // publishing success or acknowledging the upload, not afterwards.
             // A verified destination must never be retried because unlink failed;
             // retain the finally cleanup attempt and the diagnostic in that case.
-            if (staging.exists() && !staging.delete()) {
+            if (staging != null && staging.exists() && !staging.delete()) {
                 phase = TransferPhase.NOTIFY
                 diagnostic(TransferFailure.STORAGE)
             }
+            documentUpload?.close(); documentUpload = null
             phase = TransferPhase.NOTIFY
             publishProgress(completed = true)
-            onMutation(listOf(target))
+            target?.let { onMutation(listOf(it)) }
             // The bytes and committed target are complete. A length-bounded client
             // can start its next upload as soon as it reads201, before COMPLETE's
             // observer returns. Release once now; finally still covers every error.
             onPayloadFinished()
             phase = TransferPhase.RESPONSE
-            writeText(output, 201, t("Įkelta kaip ${target.name}"), "text/plain; charset=utf-8")
+            writeText(output, 201, t("Įkelta kaip ${publishedDocument?.name ?: target?.name ?: name}"), "text/plain; charset=utf-8")
             phase = TransferPhase.COMPLETE
             diagnostic()
         } catch (failure: Exception) {
@@ -801,7 +949,20 @@ class LanHttpServer(
             // A response write can fail after commit; that file is still complete.
             if (!committed && validated) {
                 // Update the status even if the UI notification callback was the failure.
-                runCatching { progress?.invoke(false, category) }.onFailure { notificationError ->
+                runCatching {
+                    if (progress != null) progress?.invoke(false, category)
+                    else validatedPath?.let { path ->
+                        val row = TransferFileProgress(path, length, received, TransferFileStatus.FAILED, failure = category)
+                        if (nearbyFiles.hasManifest()) {
+                            nearbyFiles.record(fileIndex, row, batchId)
+                            publishNearbyFiles(force = false)
+                        } else {
+                            val files = nearbyFiles.update(fileIndex, row, batchId)
+                            onUploadProgress(LanUploadProgress(path.substringAfterLast('/'), fileIndex, totalFiles,
+                                received, length, received, length, files = files))
+                        }
+                    }
+                }.onFailure { notificationError ->
                     phase = TransferPhase.NOTIFY
                     diagnostic(TransferFailure.CALLBACK, systemErrorNumber(notificationError))
                 }
@@ -809,7 +970,15 @@ class LanHttpServer(
             throw ReceiverUploadException(category, failedPhase, errno, failure)
         } finally {
             partial?.let { if (it.exists()) it.delete() }
+            documentUpload?.let { runCatching { it.close() } }
         }
+    }
+
+    private fun checkedRelative(value: String): String {
+        require(value.length <= 4_096 && !value.startsWith('/') && !value.startsWith('\\') && '\u0000' !in value) { "Netinkamas santykinis kelias" }
+        val parts = value.replace('\\', '/').split('/').filter(String::isNotEmpty)
+        require(parts.size <= 65) { "Netinkamas santykinis kelias" }
+        return parts.joinToString("/") { FileSystemRules.validateFileName(it).getOrThrow() }
     }
 
     private fun resolveRelative(value: String, requireDirectory: Boolean): File {
@@ -825,6 +994,7 @@ class LanHttpServer(
 
     private fun isAuthenticated(request: Request, remoteAddress: String): Boolean {
         val token = requestToken(request) ?: return false
+        if (requireSenderApproval) return senderApproval?.authenticated(token, remoteAddress) == true
         return if (groupMode) groupSessions[token]?.host == remoteAddress else token == cookieToken
     }
 
@@ -860,6 +1030,12 @@ class LanHttpServer(
 
     private fun createDirectory(request: Request, output: BufferedOutputStream) {
         val value = request.query["path"].orEmpty()
+        if (receiveStorage != null) {
+            require(value.isNotEmpty()) { "Netinkamas santykinis kelias" }
+            receiveStorage.createDirectory(checkedRelative(value))
+            writeText(output, 201, t("Aplankas paruoštas"), "text/plain; charset=utf-8")
+            return
+        }
         require(value.length in 1..4_096 && '\u0000' !in value) { "Netinkamas santykinis kelias" }
         require(!value.startsWith('/') && !value.startsWith('\\')) { "Leidžiamas tik santykinis kelias" }
         val parts = value.replace('\\', '/').split('/').filter(String::isNotBlank)
@@ -958,6 +1134,7 @@ class LanHttpServer(
         val reason = when (status) {
             200 -> "OK"
             201 -> "Created"
+            202 -> "Accepted"
             400 -> "Bad Request"
             401 -> "Unauthorized"
             403 -> "Forbidden"

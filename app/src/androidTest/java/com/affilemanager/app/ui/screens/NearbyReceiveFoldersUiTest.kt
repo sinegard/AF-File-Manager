@@ -30,6 +30,8 @@ class NearbyReceiveFoldersUiTest {
                 NearbyReceiveSettings(vm, true)
             }
         } }
+        compose.onNodeWithTag("nearby_create_type_folders").assertDoesNotExist()
+        compose.onNodeWithTag("nearby_receive_type_toggle").performScrollTo().performClick()
         compose.onNodeWithTag("nearby_create_type_folders").performScrollTo().performClick()
         compose.onNodeWithText("Cancel").performClick()
         assertEquals(setOf("untouched.txt"), root.list()!!.toSet())

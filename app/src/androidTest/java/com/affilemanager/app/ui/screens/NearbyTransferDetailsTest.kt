@@ -83,6 +83,7 @@ class NearbyTransferDetailsTest {
                 state.value = com.affilemanager.app.transfer.LanTransferState(
                     status = com.affilemanager.app.transfer.LanTransferStatus.RUNNING,
                     url = "http://10.0.2.15:8080/", code = "12345678",
+                    phoneReceiver = true,
                     incomingUpload = com.affilemanager.app.transfer.LanUploadProgress("", 0, 1, 0, 0, 0, 10,
                         files = listOf(TransferFileProgress("pending.txt", 10))),
                 )

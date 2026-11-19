@@ -76,8 +76,17 @@ public final class DocumentWorkflowRuntimeVerifier {
             Uri root = DocumentsContract.buildDocumentUriUsingTree(grant,anchorId);
             providerFolder=DocumentsContract.createDocument(context.getContentResolver(),root,DocumentsContract.Document.MIME_TYPE_DIR,name);
             if (providerFolder==null) throw new AssertionError("Owned provider folder unavailable");
+            if (!providerFolder.equals(waitForChild(context,root,name,10000))) throw new AssertionError("Provider fixture identity differs");
             MediaEditingRuntimeVerifier.clickDescription(test,"Folder actions");
             MediaEditingRuntimeVerifier.scrollClickLabel(test,"Refresh");
+            // Refresh intentionally retains the user's old scroll position. A newly
+            // created A-prefixed fixture can be above it, not in a forward-only search.
+            for(int scroll=0;scroll<32;scroll++) {
+                AccessibilityNodeInfo list=awaitOptional(test,n -> n.isScrollable() &&
+                    !"android.widget.HorizontalScrollView".contentEquals(n.getClassName()),1000);
+                if(list==null || !list.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) break;
+                test.waitForIdleSync();test.getUiAutomation().waitForIdle(150,3000);
+            }
             MediaEditingRuntimeVerifier.scrollClickLabel(test,name);
             MediaEditingRuntimeVerifier.clickDescription(test,"Folder actions");
             MediaEditingRuntimeVerifier.clickLabel(test,"Paste");
@@ -121,7 +130,7 @@ public final class DocumentWorkflowRuntimeVerifier {
     public static void chooseOwnedVolumeInSystemPicker(Instrumentation test,String volumeTitle)throws Exception {
         chooseOwnedVolumeInSystemPicker(test,volumeTitle,null);
     }
-    private static void chooseOwnedVolumeInSystemPicker(Instrumentation test,String volumeTitle,String child)throws Exception {
+    public static void chooseOwnedVolumeInSystemPicker(Instrumentation test,String volumeTitle,String child)throws Exception {
         if(!Build.MODEL.toLowerCase(Locale.ROOT).contains("sdk") || !volumeTitle.toLowerCase(Locale.ROOT).contains("virtual"))
             throw new AssertionError("Only the owned virtual-volume picker fixture is allowed");
         // Older DocumentsUI ignores a suggested tree URI. Select the explicitly owned volume.

@@ -76,6 +76,12 @@ public final class SharingControlsRuntimeVerifier {
             for (int level = 0; level < 65; level++) {
                 AccessibilityNodeInfo own = find(test, n -> text(n, root.getName()));
                 if (own != null) { click(test, own); break; }
+                AccessibilityNodeInfo internal = find(test, n -> text(n, "Internal storage"));
+                if (internal != null) {
+                    click(test, internal);
+                    MediaEditingRuntimeVerifier.scrollClickLabel(test, root.getName());
+                    break;
+                }
                 if (level == 64) throw new AssertionError("Owned receiving folder was not reachable");
                 AccessibilityNodeInfo up = await(test, n -> tag(n, "share_folder_up") && n.isEnabled(), 5000);
                 own = find(test, n -> text(n, root.getName()));
@@ -83,8 +89,11 @@ public final class SharingControlsRuntimeVerifier {
                 click(test, up);
                 SystemClock.sleep(150);
             }
-            MediaEditingRuntimeVerifier.clickLabel(test, "Share this folder");
-            click(test, await(test, n -> tag(n, "nearby_main_receive"), 10000));
+            click(test, await(test, n -> tag(n, "share_folder_select") && n.isEnabled(), 10000));
+            // Folder choice keeps the receiver dialog open. Type routing is now an
+            // explicit collapsed-by-default control in both single and group modes.
+            if (find(test, n -> text(n, "Create type folders")) != null) throw new AssertionError("Type settings are forced on");
+            click(test, await(test, n -> tag(n, "nearby_receive_type_toggle"), 10000));
             MediaEditingRuntimeVerifier.scrollClickLabel(test, "Create type folders");
             MediaEditingRuntimeVerifier.clickLabel(test, "Cancel");
             if (root.list() == null || root.list().length != 1) throw new AssertionError("Cancelling the preview created folders");

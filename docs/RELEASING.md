@@ -12,6 +12,7 @@ The Android package is `com.affilemanager.app`. Every public APK must be signed 
 6. Download the exact draft APK for the test device ABI, verify its package/version, checksum, packaged ABI and signing certificate, and exercise affected optimized runtime paths on the test device. In particular, JNI/Binder and network checks must use the downloadable artifact, not just a local rebuild. Keep failures visible and leave the release as a draft until they are resolved.
 7. Add concise release notes from `CHANGELOG.md`, then publish the draft. Only a published stable release is offered by the in-app updater.
 8. After verifying the published assets and update metadata, perform the local cleanup below. A failed or draft release is not a successful release.
+9. Include a short launcher-icon reminder in the handoff to the owner, even if the artwork did not change. Keep the approved turquoise folder artwork until the owner requests a change.
 
 Required repository secrets:
 

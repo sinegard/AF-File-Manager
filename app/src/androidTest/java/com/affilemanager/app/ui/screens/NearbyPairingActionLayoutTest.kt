@@ -154,17 +154,16 @@ class NearbyPairingActionLayoutTest {
                 assertTrue(node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts) == true)
                 assertTrue(layouts.isNotEmpty())
                 for (layout in layouts) {
-                    // Compose may retain the wider available paragraph box even
-                    // when Text wraps to its intrinsic width. Assert every actual
-                    // glyph line and the complete text, not that unused box.
+                    // A centered or RTL paragraph can report a line origin in a
+                    // wider measurement box. Verify the drawn span and full text
+                    // instead of comparing that absolute origin to the label size.
                     assertFalse("$locale/$font/$source exceeded its line limit", layout.multiParagraph.didExceedMaxLines)
                     assertTrue("$locale/$font/$source lost trailing text",
                         layout.getLineEnd(layout.lineCount - 1) == layout.layoutInput.text.length)
-                    val drawOrigin = if (layout.layoutInput.layoutDirection == LayoutDirection.Rtl)
-                        layout.size.width - layout.multiParagraph.width else 0f
                     for (line in 0 until layout.lineCount) {
-                        assertTrue("$locale/$font/$source clips on the left", layout.getLineLeft(line) + drawOrigin >= -.5f)
-                        assertTrue("$locale/$font/$source clips on the right", layout.getLineRight(line) + drawOrigin <= layout.size.width + .5f)
+                        assertFalse("$locale/$font/$source is ellipsized", layout.isLineEllipsized(line))
+                        assertTrue("$locale/$font/$source clips horizontally",
+                            layout.getLineRight(line) - layout.getLineLeft(line) <= layout.size.width + 1f)
                         assertTrue("$locale/$font/$source clips vertically", layout.getLineBottom(line) <= layout.size.height + .5f)
                     }
                 }
@@ -183,6 +182,7 @@ class NearbyPairingActionLayoutTest {
         val selected = mutableStateOf("en" to 1.5f)
         var scans = 0
         var discoveries = 0
+        var directConnections = 0
         compose.setContent {
             val (language, scale) = selected.value
             val configuration = Configuration(context.resources.configuration).apply {
@@ -196,22 +196,30 @@ class NearbyPairingActionLayoutTest {
                 MaterialTheme {
                     Box(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp)) {
                     Box(Modifier.width(284.dp).testTag("pairing_action_bounds")) {
-                        NearbyPairingActionButtons({ scans++ }, { discoveries++ })
+                        NearbyPairingActionButtons({ scans++ }, { discoveries++ }, { directConnections++ })
                     }
                     }
                 }
             }
         }
-        for (language in listOf("en", "lt", "de", "ar")) for (scale in listOf(1.5f, 2f)) {
+        for (language in listOf("en", "lt", "de", "ar")) for (scale in listOf(1f, 1.5f, 2f)) {
             compose.runOnIdle { selected.value = language to scale }
             val outer = compose.onNodeWithTag("pairing_action_bounds").fetchSemanticsNode().boundsInRoot
             val scan = compose.onNodeWithTag("nearby_scan_qr").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
             val find = compose.onNodeWithTag("nearby_find_devices").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-            for (action in listOf(scan, find)) {
+            val wifi = compose.onNodeWithTag("nearby_join_wifi_direct").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            for (action in listOf(scan, find, wifi)) {
                 assertTrue("$language/$scale action is inside its viewport", action.left >= outer.left - 1f && action.right <= outer.right + 1f)
             }
-            assertFalse("$language/$scale buttons overlap", scan.overlaps(find))
-            for (source in listOf("Nuskaityti QR kodą", "Rasti artimus AF įrenginius")) {
+            assertTrue("$language/$scale QR should precede network choices", scan.bottom <= minOf(find.top, wifi.top))
+            assertFalse("$language/$scale discovery buttons overlap", find.overlaps(wifi))
+            if (language == "en" && scale == 1f) {
+                assertEquals(find.top, wifi.top, 1f)
+                assertEquals(find.height, wifi.height, 1f)
+                assertEquals(find.width, wifi.width, 1f)
+            }
+            if (scale >= 1.5f) assertTrue("$language/$scale discovery should stack", wifi.top >= find.bottom)
+            for (source in listOf("Nuskaityti QR kodą", "Rasti artimus AF įrenginius", "Prisijungti per Wi-Fi Direct")) {
                 val text = compose.onNodeWithText(UiTranslator.translate(source, language), useUnmergedTree = true)
                     .assertIsDisplayed().fetchSemanticsNode()
                 val layouts = mutableListOf<TextLayoutResult>()
@@ -236,15 +244,17 @@ class NearbyPairingActionLayoutTest {
             }
             compose.onNodeWithTag("nearby_scan_qr").performClick()
             compose.onNodeWithTag("nearby_find_devices").performClick()
-            if (scale == 2f) {
+            compose.onNodeWithTag("nearby_join_wifi_direct").performClick()
+            if (scale == 1f || scale == 2f) {
                 val test = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-                val snapshot = java.io.File(context.getExternalFilesDir("validation"), "pairing-actions-$language.png")
+                val snapshot = java.io.File(com.affilemanager.app.uiAuditDirectory(context), "pairing-actions-$language-$scale.png")
                 val bitmap = requireNotNull(test.uiAutomation.takeScreenshot())
                 try { snapshot.outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
                 finally { bitmap.recycle() }
             }
         }
-        assertEquals(8, scans)
-        assertEquals(8, discoveries)
+        assertEquals(12, scans)
+        assertEquals(12, discoveries)
+        assertEquals(12, directConnections)
     }
 }

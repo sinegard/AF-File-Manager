@@ -240,12 +240,21 @@ class FilePickerActivity : AppCompatActivity() {
                         file.inputStream().use { }
                         FileProvider.getUriForFile(this@FilePickerActivity, "$packageName.files", file)
                     }
+                    com.affilemanager.app.core.ExternalShareRules.collect(uris.asSequence(), Uri::toString) { true }
                     Intent().apply {
                         data = uris.first()
                         clipData = ClipData.newUri(contentResolver, "AF File Manager", uris.first()).also { clip ->
                             uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
                         }
                         flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    }.also { result ->
+                        val parcel = android.os.Parcel.obtain()
+                        try {
+                            result.writeToParcel(parcel, 0)
+                            require(parcel.dataSize() <= com.affilemanager.app.core.ExternalShareRules.MAX_RESULT_BYTES) {
+                                com.affilemanager.app.core.ExternalShareRules.TOO_LARGE
+                            }
+                        } finally { parcel.recycle() }
                     }
                 }
                 ensureActive()
@@ -255,8 +264,10 @@ class FilePickerActivity : AppCompatActivity() {
                 finish()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                error = "Pasirinkti failai nepasiekiami arba neatitinka prašomo tipo"
+            } catch (failure: Exception) {
+                error = if (failure.message == com.affilemanager.app.core.ExternalShareRules.TOO_LARGE)
+                    com.affilemanager.app.core.ExternalShareRules.TOO_LARGE
+                else "Pasirinkti failai nepasiekiami arba neatitinka prašomo tipo"
             } finally {
                 confirming = false
             }

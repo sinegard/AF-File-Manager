@@ -16,9 +16,13 @@ data class NearbyDiscoveredDevice(
     val serviceName: String,
     val receiverName: String,
     val deviceName: String,
-    val pairing: NearbyPairing,
+    val host: String,
+    val port: Int,
     val groupName: String? = null,
-)
+) {
+    /** Discovery supplies an address, never a fabricated or broadcast credential. */
+    fun withPrivateCode(code: String): NearbyPairing = NearbyPairing.create(host, port, code, receiverName)
+}
 
 data class NearbyDiscoveryState(
     val searching: Boolean = false,
@@ -40,11 +44,10 @@ internal object NearbyDiscoveryPayload {
     }
 
     fun attributes(pairing: NearbyPairing, receiverName: String, deviceName: String, groupName: String? = null): Map<String, ByteArray> = mapOf(
-        "v" to "1".toByteArray(StandardCharsets.UTF_8),
+        "v" to "2".toByteArray(StandardCharsets.UTF_8),
         "name" to attributeText(receiverName),
         "device" to attributeText(deviceName),
         "host" to pairing.host.toByteArray(StandardCharsets.US_ASCII),
-        "code" to pairing.code.toByteArray(StandardCharsets.UTF_8),
     ) + if (groupName.isNullOrBlank()) emptyMap() else mapOf("group" to attributeText(groupName))
 
     fun decode(
@@ -53,7 +56,8 @@ internal object NearbyDiscoveryPayload {
         resolvedHost: String?,
         attributes: Map<String, ByteArray>,
     ): NearbyDiscoveredDevice? = runCatching {
-        require(text(attributes, "v") == "1") { "Nepalaikoma radimo versija" }
+        require(text(attributes, "v") == "2" && attributes.size <= 8 &&
+            attributes.keys.none { it.lowercase() in setOf("code", "cookie", "token", "password", "pairing") }) { "Nepalaikoma radimo versija" }
         val receiver = clean(text(attributes, "name"), NearbyPairing.MAX_NAME_LENGTH)
         val device = clean(text(attributes, "device"), NearbyPairing.MAX_NAME_LENGTH)
         val advertisedHost = text(attributes, "host")
@@ -61,12 +65,13 @@ internal object NearbyDiscoveryPayload {
             .filterNotNull()
             .firstOrNull(NearbyPairing::isPrivateIpv4)
             ?: error("Privatus gavėjo adresas nerastas")
-        val pairing = NearbyPairing.create(host, port, text(attributes, "code"), receiver)
+        require(port in LanTransferOptions.MIN_CUSTOM_PORT..LanTransferOptions.MAX_PORT)
         NearbyDiscoveredDevice(
             serviceName = clean(serviceName, NearbyPairing.MAX_NAME_LENGTH),
             receiverName = receiver,
             deviceName = device.ifBlank { "Android" },
-            pairing = pairing,
+            host = host,
+            port = port,
             groupName = attributes["group"]?.let { clean(text(attributes, "group"), NearbyGroupInvite.MAX_GROUP_NAME_LENGTH) }?.takeIf(String::isNotBlank),
         )
     }.getOrNull()

@@ -20,6 +20,12 @@ import com.affilemanager.app.R
 import com.affilemanager.app.AFFileManagerApplication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,11 +54,36 @@ data class LanTransferState(
     val incomingUpload: LanUploadProgress? = null,
     val groupMode: Boolean = false,
     val discoveryError: String? = null,
+    val phoneReceiver: Boolean = false,
+    val pendingSenders: List<NearbySenderRequest> = emptyList(),
+    val receiveSessionId: String? = null,
 )
 
 object LanTransferController {
     private val _state = MutableStateFlow(LanTransferState())
     val state: StateFlow<LanTransferState> = _state.asStateFlow()
+    @Volatile private var receiveStore: NearbyReceiveStorage? = null
+    @Synchronized internal fun attachReceiver(store: NearbyReceiveStorage) { receiveStore = store }
+    @Synchronized internal fun detachReceiver(store: NearbyReceiveStorage?) { if (receiveStore === store) receiveStore = null }
+
+    /** Validate on IO; the returned no-IO commit is applied with the corresponding UI preference. */
+    internal fun prepareReceivePathChange(context: Context, path: String, config: NearbyReceiveConfiguration): () -> Unit {
+        val app = context.applicationContext as AFFileManagerApplication
+        val status = state.value.status
+        require(status != LanTransferStatus.STARTING) { "Įkeliama…" }
+        val store = receiveStore
+        if (status != LanTransferStatus.RUNNING) {
+            NearbyReceiveStorage(app, app.graph.nearbySourceReader, path, config)
+            return {}
+        }
+        require(store != null) { "Pirmiausia sustabdykite kitą bendrinimo sesiją" }
+        val apply = store.prepareUpdate(path, config)
+        return { synchronized(this) {
+            require(receiveStore === store && state.value.status == LanTransferStatus.RUNNING) { "Gavimo sesija nepatvirtinta" }
+            apply()
+            _state.update { it.copy(rootPath = path, rootName = store.label) }
+        } }
+    }
 
     fun start(
         context: Context,
@@ -68,6 +99,7 @@ object LanTransferController {
         receiveConfiguration: NearbyReceiveConfiguration = NearbyReceiveConfiguration(),
         groupBanner: ByteArray? = null,
         groupBannerHigh: ByteArray? = null,
+        phoneReceiver: Boolean = false,
     ) {
         if (bindAddress == null) WifiDirectController.stop(context)
         if (!groupMode) NearbyGroupController.sessionStopped()
@@ -92,12 +124,24 @@ object LanTransferController {
             .putStringArrayListExtra("receive_allowed_roots", ArrayList(receiveConfiguration.approvedRootPaths))
             .putExtra("group_banner_bytes", groupBanner?.also { NearbyGroupBanner.validate(it) })
             .putExtra("group_banner_high_bytes", groupBannerHigh?.also { NearbyGroupBanner.validate(it, true) })
+            .putExtra("phone_receiver", phoneReceiver)
         ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {
         context.startService(Intent(context, LanTransferService::class.java).setAction(LanTransferService.ACTION_STOP))
         WifiDirectController.stop(context)
+    }
+
+    /** Explicit local owner action; the target service is not exported. No network counterpart. */
+    fun decideSender(context: Context, sessionId: String, id: String, allow: Boolean) {
+        context.startService(Intent(context, LanTransferService::class.java).setAction(LanTransferService.ACTION_DECIDE_SENDER)
+            .putExtra("receive_session_id", sessionId).putExtra("sender_request_id", id).putExtra("allow_sender", allow))
+    }
+
+    internal fun publishSenderRequests(sessionId: String, requests: List<NearbySenderRequest>) {
+        _state.update { if (it.status == LanTransferStatus.RUNNING && it.receiveSessionId == sessionId)
+            it.copy(pendingSenders = requests) else it }
     }
 
     internal fun updateGroupBanner(context: Context, bytes: ByteArray?, highQuality: ByteArray? = null) {
@@ -138,7 +182,7 @@ object LanTransferController {
         _state.value = state
     }
 
-    internal fun publishStopped(reason: String) {
+    internal fun publishStopped(reason: String, interrupted: Boolean = false) {
         _state.update { previous ->
             val incoming = previous.incomingUpload?.let { progress ->
                 progress.copy(files = progress.files.map { file ->
@@ -148,7 +192,11 @@ object LanTransferController {
             }
             // Credentials/endpoints belong to the ended session; its bounded file results
             // stay available until a new receive session replaces them. No disk history.
-            LanTransferState(status = LanTransferStatus.STOPPED, message = reason, incomingUpload = incoming)
+            LanTransferState(
+                status = if (interrupted) LanTransferStatus.ERROR else LanTransferStatus.STOPPED,
+                message = reason,
+                incomingUpload = incoming,
+            )
         }
     }
 
@@ -170,6 +218,7 @@ class LanTransferService : Service() {
         const val ACTION_CANCEL_NEARBY_FILE = "com.affilemanager.app.action.CANCEL_NEARBY_FILE"
         const val ACTION_REMOVE_GROUP_MEMBER = "com.affilemanager.app.action.REMOVE_GROUP_MEMBER"
         const val ACTION_GROUP_MESSAGES = "com.affilemanager.app.action.GROUP_MESSAGES"
+        const val ACTION_DECIDE_SENDER = "com.affilemanager.app.action.DECIDE_NEARBY_SENDER"
         const val EXTRA_ROOT = "root"
         const val EXTRA_DURATION_MINUTES = "duration_minutes"
         const val EXTRA_PROTOCOL = "protocol"
@@ -188,8 +237,14 @@ class LanTransferService : Service() {
         private const val NOTIFICATION_ID = 41
     }
 
-    private var server: TemporaryLanServer? = null
+    @Volatile private var server: TemporaryLanServer? = null
     private var advertiser: NearbyDeviceAdvertiser? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var startup: Job? = null
+    private val serverLock = Any()
+    private val generation = java.util.concurrent.atomic.AtomicLong()
+    private var receiverStore: NearbyReceiveStorage? = null
+    private var receiveNamespace: File? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -201,6 +256,16 @@ class LanTransferService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_DECIDE_SENDER) {
+            synchronized(serverLock) {
+                val state = LanTransferController.state.value
+                if (state.status == LanTransferStatus.RUNNING && state.phoneReceiver && state.receiveSessionId != null &&
+                    state.receiveSessionId == intent.getStringExtra("receive_session_id")) {
+                    server?.decideNearbySender(intent.getStringExtra("sender_request_id").orEmpty(), intent.getBooleanExtra("allow_sender", false))
+                }
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action == "com.affilemanager.app.action.GROUP_BANNER") {
             runCatching { server?.setGroupBanner(intent.getByteArrayExtra("group_banner_bytes"), intent.getByteArrayExtra("group_banner_high_bytes")) }
                 .onFailure { LanTransferController.publish(LanTransferController.state.value.copy(message = "Grupės paveikslėlio pakeisti nepavyko")) }
@@ -237,8 +302,7 @@ class LanTransferService : Service() {
             return START_NOT_STICKY
         }
         if (intent?.action != ACTION_START) return START_NOT_STICKY
-        startAsForeground(startingNotification())
-        if (server != null) {
+        if (server != null || startup?.isActive == true) {
             LanTransferController.publish(LanTransferController.state.value.copy(message = "LAN sesija jau veikia"))
             return START_NOT_STICKY
         }
@@ -248,6 +312,8 @@ class LanTransferService : Service() {
         val protocol = runCatching {
             LanTransferProtocol.valueOf(intent.getStringExtra(EXTRA_PROTOCOL).orEmpty())
         }.getOrDefault(LanTransferProtocol.WEB)
+        val phoneReceiver = intent.getBooleanExtra("phone_receiver", false) && protocol == LanTransferProtocol.WEB
+        startAsForeground(startingNotification(), phoneReceiver)
         val rawOptions = LanTransferOptions(
             port = intent.getIntExtra(EXTRA_PORT, 0),
             username = intent.getStringExtra(EXTRA_USERNAME).orEmpty(),
@@ -293,13 +359,25 @@ class LanTransferService : Service() {
                 message = "Ieškomas privatus vietinio tinklo adresas",
             ),
         )
+        val requestGeneration = synchronized(serverLock) { generation.incrementAndGet() }
+        val receiveSessionId = java.util.UUID.randomUUID().toString()
+        val startWork: () -> Unit = {
+        var candidate: TemporaryLanServer? = null
+        var preparedNamespace: File? = null
+        var preparedStore: NearbyReceiveStorage? = null
         runCatching {
-            val root = File(rootPath).canonicalFile
             val receiveConfiguration = NearbyReceiveConfiguration.parse(intent.getIntExtra("concurrent_uploads", 1), intent.getStringExtra("type_destinations").orEmpty(), intent.getStringArrayListExtra("receive_allowed_roots").orEmpty())
             receiveConfiguration.checkMemory()
+            val graph = (application as AFFileManagerApplication).graph
+            preparedStore = if (phoneReceiver) NearbyReceiveStorage(application, graph.nearbySourceReader, rootPath, receiveConfiguration) { message ->
+                LanTransferController.publish(LanTransferController.state.value.copy(message = message))
+            } else null
+            val root = if (preparedStore?.usesDocuments == true) File(cacheDir, "nearby-receive-${java.util.UUID.randomUUID()}").also {
+                require(it.mkdir()) { "Gavimo katalogas nepasiekiamas" }; preparedNamespace = it
+            } else File(rootPath).canonicalFile
             // These paths come only from the non-exported service's app-owned start request, never a peer.
             val approvedRoots = receiveConfiguration.approvedRootPaths.map(::File).ifEmpty { listOf(root) }
-            val typeDestinations = receiveConfiguration.approvedDestinations(approvedRoots)
+            val typeDestinations = if (phoneReceiver) emptyMap() else receiveConfiguration.approvedDestinations(approvedRoots)
             require(root.isDirectory && root.canRead()) { "Pasirinktas katalogas nepasiekiamas" }
             val preferred = intent.getStringExtra("bind_address")
             val address = if (preferred == null) privateLanAddress() else {
@@ -310,11 +388,13 @@ class LanTransferService : Service() {
             }
             requireNotNull(address) { "Privatus Wi-Fi arba Ethernet IPv4 adresas nerastas" }
             val stopped: (String) -> Unit = { reason ->
+                synchronized(serverLock) { if (generation.get() == requestGeneration) {
                 NearbyTransferController.connection.clear()
                 NearbyGroupController.sessionStopped()
                 LanTransferController.publishStopped(reason)
                 WifiDirectController.stop(this)
                 stopSelf()
+                } }
             }
             val publishFiles: (List<File>) -> Unit = { files ->
                 // Called on a server worker only, never on the service's main thread.
@@ -337,6 +417,10 @@ class LanTransferService : Service() {
                     readOnly = options.readOnly,
                     concurrentUploads = receiveConfiguration.concurrentUploads,
                     receiveDestinations = typeDestinations,
+                    receiveStorage = preparedStore,
+                    requireSenderApproval = phoneReceiver,
+                    approvalNowMillis = android.os.SystemClock::elapsedRealtime,
+                    onSenderRequests = { LanTransferController.publishSenderRequests(receiveSessionId, it) },
                     groupBanner = intent.getByteArrayExtra("group_banner_bytes"),
                     groupBannerHigh = intent.getByteArrayExtra("group_banner_high_bytes"),
                     language = appLanguageContext().resources.configuration.locales[0].language,
@@ -385,8 +469,16 @@ class LanTransferService : Service() {
                     onStopped = stopped,
                     onMutation = publishFiles,
                 )
-            }.also { server = it }.start()
-        }.onSuccess { session ->
+            }.also { candidate = it }.let { created -> synchronized(serverLock) {
+                check(generation.get() == requestGeneration) { "Siuntimas atšauktas" }
+                server = created
+                receiverStore = preparedStore
+                receiveNamespace = preparedNamespace
+                preparedStore?.let(LanTransferController::attachReceiver)
+                created.start()
+            } }
+        }.mapCatching { session -> synchronized(serverLock) {
+            if (generation.get() != requestGeneration) { candidate?.stop("Sustabdyta naudotojo"); return@synchronized }
             LanTransferController.publish(
                 LanTransferState(
                     status = LanTransferStatus.RUNNING,
@@ -400,6 +492,9 @@ class LanTransferService : Service() {
                     anonymous = session.anonymous,
                     groupMode = groupMode,
                     expiresAtMillis = session.expiresAtMillis,
+                    phoneReceiver = phoneReceiver,
+                    receiveSessionId = receiveSessionId.takeIf { phoneReceiver },
+                    pendingSenders = candidate?.pendingNearbySenders().orEmpty(),
                     message = "Serveris pasiekiamas tik pasirinktame privačiame tinkle",
                 ),
             )
@@ -408,14 +503,19 @@ class LanTransferService : Service() {
                 val organizer = NearbyPairing.create(session.address, session.port, session.code, receiverName)
                 NearbyGroupController.host(NearbyGroupInvite(organizer, groupName))
             }
-            if (protocol == LanTransferProtocol.WEB && !session.readOnly) {
+            if (phoneReceiver && !session.readOnly) {
                 advertiser = NearbyDeviceAdvertiser(this) { error ->
                     LanTransferController.publish(LanTransferController.state.value.copy(discoveryError = error))
                 }.also { it.start(NearbyPairing.create(session.address, session.port, session.code, receiverName),
                     receiverName, groupName.takeIf { groupMode && groupOrganizer }) }
             }
-            startAsForeground(runningNotification(session))
-        }.onFailure { error ->
+            startAsForeground(runningNotification(session), phoneReceiver)
+        } }.onFailure { error -> synchronized(serverLock) {
+            candidate?.stop("Gavimo sesijos paleisti nepavyko")
+            preparedNamespace?.delete()
+            if (generation.get() != requestGeneration) return@synchronized
+            LanTransferController.detachReceiver(preparedStore)
+            receiverStore = null
             server = null
             WifiDirectController.stop(this)
             NearbyGroupController.sessionStopped()
@@ -433,34 +533,60 @@ class LanTransferService : Service() {
             )
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+        } }
         }
+        if (phoneReceiver) startup = serviceScope.launch { kotlinx.coroutines.runInterruptible { startWork() } } else startWork()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        val interrupted = synchronized(serverLock) {
+            generation.incrementAndGet()
+            startup?.cancel()
+            LanTransferController.state.value.takeIf {
+                it.status == LanTransferStatus.STARTING || it.status == LanTransferStatus.RUNNING
+            }
+        }
+        serviceScope.cancel()
         advertiser?.close()
         advertiser = null
-        server?.stop("LAN paslauga sustabdyta")
-        server = null
+        synchronized(serverLock) {
+            server?.stop("LAN paslauga sustabdyta"); server = null
+            LanTransferController.detachReceiver(receiverStore); receiverStore = null
+            receiveNamespace?.delete(); receiveNamespace = null
+            // The generation fence suppresses callbacks from the closed server.
+            // If Android destroyed the service first, clear the published endpoint here.
+            if (interrupted != null) {
+                if (interrupted.phoneReceiver) NearbyTransferController.connection.clear()
+                LanTransferController.publishStopped("LAN paslauga sustabdyta", interrupted = true)
+            }
+        }
         WifiDirectController.stop(this)
         NearbyGroupController.sessionStopped()
         super.onDestroy()
     }
 
     private fun stopServer(reason: String) {
+        synchronized(serverLock) { generation.incrementAndGet(); startup?.cancel() }
         advertiser?.close()
         advertiser = null
-        server?.stop(reason)
-        server = null
+        synchronized(serverLock) {
+            server?.stop(reason); server = null
+            LanTransferController.detachReceiver(receiverStore); receiverStore = null
+            receiveNamespace?.delete(); receiveNamespace = null
+        }
         NearbyGroupController.sessionStopped()
         LanTransferController.publishStopped(reason)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private fun startAsForeground(notification: Notification) {
+    private fun startAsForeground(notification: Notification, phoneReceiver: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            // A user-started peer listener waits for another device, not a batch sync.
+            val type = if (phoneReceiver) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            startForeground(NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }

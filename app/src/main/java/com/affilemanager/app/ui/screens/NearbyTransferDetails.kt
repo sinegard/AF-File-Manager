@@ -58,11 +58,21 @@ import com.affilemanager.app.transfer.NearbyChatController
 import com.affilemanager.app.transfer.TransferProgressEstimator
 import com.affilemanager.app.ui.components.AfModalDialog
 import com.affilemanager.app.ui.components.LocalFileVisual
+import com.affilemanager.app.ui.components.SafFileVisual
 import com.affilemanager.app.ui.localization.LText
 import com.affilemanager.app.ui.localization.rememberLocalizedDateTimeFormat
 import com.affilemanager.app.ui.localization.uiText
 import java.text.DateFormat
 import java.util.Date
+
+@Composable
+private fun NearbyReceivedVisual(entry: FileEntry, size: Int) {
+    if (entry.absolutePath.startsWith("content://")) SafFileVisual(
+        com.affilemanager.app.data.SafEntry(entry.absolutePath, entry.name, false, entry.sizeBytes,
+            entry.modifiedAtMillis, null, entry.kind, false), size.dp, size.dp, showThumbnails = true,
+        modifier = Modifier.size(size.dp))
+    else LocalFileVisual(entry, size.dp, size.dp, showThumbnails = entry.absolutePath.isNotEmpty(), modifier = Modifier.size(size.dp))
+}
 
 @Composable
 internal fun NearbyTransferDetails(
@@ -412,7 +422,7 @@ private fun TransferGridFileCard(
     onRetry: (() -> Unit)? = null,
 ) {
     val entry = remember(file.localPath, file.name, file.sizeBytes, file.modifiedAtMillis) {
-        FileEntry(file.localPath.orEmpty(), file.localPath?.let { java.io.File(it).name } ?: file.name,
+        FileEntry(file.localPath.orEmpty(), file.savedName ?: file.localPath?.takeUnless { it.startsWith("content://") }?.let { java.io.File(it).name } ?: file.name,
             FileSystemRules.detectKind(file.name, null), file.sizeBytes, file.modifiedAtMillis,
             false, true, false)
     }
@@ -422,8 +432,7 @@ private fun TransferGridFileCard(
         modifier = modifier.padding(vertical = 3.dp).testTag("nearby_transfer_file_$index"),
     ) {
         Column(Modifier.fillMaxWidth().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            LocalFileVisual(entry, 44.dp, 44.dp, showThumbnails = file.localPath != null,
-                modifier = Modifier.size(44.dp))
+            NearbyReceivedVisual(entry, 44)
             Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.labelSmall)
             LText(if (incoming) "Gaunami failai" else "Siunčiami failai",
@@ -471,7 +480,7 @@ private fun TransferFileRow(
 ) {
     // Pure metadata mapping, no filesystem stat or decoding on the UI thread.
     val entry = remember(file.localPath, file.relativePath, file.sizeBytes, file.modifiedAtMillis) {
-        val visibleName = file.localPath?.let { java.io.File(it).name } ?: file.name
+        val visibleName = file.savedName ?: file.localPath?.takeUnless { it.startsWith("content://") }?.let { java.io.File(it).name } ?: file.name
         FileEntry(file.localPath.orEmpty(), visibleName, FileSystemRules.detectKind(file.name, null),
             file.sizeBytes, file.modifiedAtMillis, false, true, false)
     }
@@ -486,7 +495,7 @@ private fun TransferFileRow(
     }
     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp).testTag("nearby_transfer_file_$index"),
         verticalAlignment = Alignment.CenterVertically) {
-        LocalFileVisual(entry, 48.dp, 48.dp, showThumbnails = file.localPath != null, modifier = Modifier.size(48.dp))
+        NearbyReceivedVisual(entry, 48)
         Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
             incoming?.let { LText(if (it) "Gaunami failai" else "Siunčiami failai", style = MaterialTheme.typography.labelSmall) }
             Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)

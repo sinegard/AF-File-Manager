@@ -539,7 +539,7 @@ class LanHttpServerTest {
     fun resourceAndAuthenticationLimitsAreExplicit() {
         assertEquals(4, LanHttpServer.MAX_CONCURRENT_REQUESTS)
         assertEquals(16, LanHttpServer.MAX_QUEUED_REQUESTS)
-        assertEquals(10_000, LanHttpServer.MAX_REQUESTS_PER_SESSION)
+        assertEquals(317_000, LanHttpServer.MAX_REQUESTS_PER_SESSION)
         assertEquals(20, LanHttpServer.MAX_AUTH_FAILURES)
         assertEquals(120, LanHttpServer.MAX_SESSION_MINUTES)
     }

@@ -3,13 +3,10 @@ package com.affilemanager.app.ui.screens
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,7 +15,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import com.affilemanager.app.transfer.NetworkSettingsActions
 import com.affilemanager.app.transfer.NetworkSettingsTarget
 import com.affilemanager.app.ui.localization.LText
@@ -31,11 +27,8 @@ internal fun NearbyNetworkSettingsButton(label: String = "Atidaryti Wi-Fi ir pri
     var failed by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Box {
-            OutlinedButton(onClick = { expanded = true; failed = false },
-                modifier = Modifier.fillMaxWidth().testTag("nearby_network_settings")) {
-                Icon(Icons.Rounded.WifiTethering, contentDescription = null)
-                LText(label, modifier = Modifier.padding(start = 7.dp))
-            }
+            NearbyShareActionButton(NearbyShareAction(label, Icons.Rounded.WifiTethering,
+                { expanded = true; failed = false }, "nearby_network_settings"))
             AfDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 NetworkSettingsTarget.entries.forEach { target ->
                     DropdownMenuItem(text = {

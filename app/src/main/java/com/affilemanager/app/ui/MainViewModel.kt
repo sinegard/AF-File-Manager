@@ -985,6 +985,91 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sharePreferenceSaveRequests.trySend(updated)
     }
 
+    private val _nearbyReceiveFolderError = MutableStateFlow<String?>(null)
+    val nearbyReceiveFolderError = _nearbyReceiveFolderError.asStateFlow()
+    private val _nearbyReceiveFolderChanging = MutableStateFlow(false)
+    val nearbyReceiveFolderChanging = _nearbyReceiveFolderChanging.asStateFlow()
+    private var nearbyReceiveFolderJob: Job? = null
+
+    fun changeNearbyReceiveDirectory(path: String, grant: Uri? = null) = changeNearbyReceiveTarget(path, grant, null)
+
+    fun changeNearbyReceiveTypeDirectory(kind: EntryKind, path: String, grant: Uri? = null) {
+        require(kind in com.affilemanager.app.transfer.NearbyReceiveConfiguration.TYPES)
+        changeNearbyReceiveTarget(path, grant, kind)
+    }
+
+    suspend fun nearbyReceivePathLabel(path: String): String = withContext(Dispatchers.IO) {
+        if (path.startsWith("content://")) graph.nearbySourceReader.node(path).entry.name else path
+    }
+
+    private fun changeNearbyReceiveTarget(path: String, grant: Uri?, kind: EntryKind?) {
+        nearbyReceiveFolderJob?.cancel()
+        nearbyReceiveFolderJob = viewModelScope.launch {
+            _nearbyReceiveFolderError.value = null
+            _nearbyReceiveFolderChanging.value = true
+            val before = shareScreenPreferences.value
+            var priorRead = false
+            var priorWrite = false
+            var saved = false
+            val resolver = getApplication<Application>().contentResolver
+            try {
+                if (kind != null) require(com.affilemanager.app.transfer.LanTransferController.state.value.status !in setOf(
+                    com.affilemanager.app.transfer.LanTransferStatus.STARTING, com.affilemanager.app.transfer.LanTransferStatus.RUNNING)) {
+                    "Gavimo nustatymai pasikeitė"
+                }
+                val updated = if (kind == null) before.withNearbyReceivePath(path)
+                    else before.copy(nearbyTypePaths = before.nearbyTypePaths + (kind to path))
+                val commit = withContext(Dispatchers.IO) {
+                    grant?.let { uri ->
+                        resolver.persistedUriPermissions.firstOrNull { it.uri == uri }?.let {
+                            priorRead = it.isReadPermission; priorWrite = it.isWritePermission
+                        }
+                        resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                    }
+                    val config = com.affilemanager.app.transfer.NearbyReceiveConfiguration.from(updated,
+                        graph.localFiles.roots().map { it.path })
+                    com.affilemanager.app.transfer.LanTransferController.prepareReceivePathChange(getApplication(), updated.nearbyReceivePath, config)
+                }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val actual = shareScreenPreferences.value
+                require(before.nearbyTypePaths == actual.nearbyTypePaths && before.nearbyReceivePath == actual.nearbyReceivePath &&
+                    before.nearbyConcurrentUploads == actual.nearbyConcurrentUploads) { "Gavimo nustatymai pasikeitė" }
+                // Neither operation suspends: the active receiver and visible preference change together.
+                commit()
+                updateShareScreenPreferences { if (kind == null) it.withNearbyReceivePath(path)
+                    else it.copy(nearbyTypePaths = it.nearbyTypePaths + (kind to path)) }
+                saved = true
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { _nearbyReceiveFolderError.value = failure.message ?: "Gavimo katalogas nepasiekiamas" }
+            finally {
+                if (!saved && grant != null) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                    resolver.persistedUriPermissions.firstOrNull { it.uri == grant }?.let { actual ->
+                        val flags = (if (!priorRead && actual.isReadPermission) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+                            (if (!priorWrite && actual.isWritePermission) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+                        if (flags != 0) runCatching { resolver.releasePersistableUriPermission(grant, flags) }
+                    }
+                }
+                _nearbyReceiveFolderChanging.value = false
+            }
+        }
+    }
+
+    suspend fun listNearbyReceivePickerDirectory(path: String): Result<List<FileEntry>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val roots = graph.localFiles.roots()
+            if (path.isNotEmpty() && !path.startsWith("content://")) require(roots.any {
+                FileSystemRules.isContained(File(it.path), File(path))
+            }) { "Gavimo katalogas nepasiekiamas" }
+            graph.nearbySourceReader.list(path, hidden = false).getOrThrow().filter { entry ->
+                entry.isDirectory && if (entry.absolutePath.startsWith("content://")) entry.isWritable
+                    else roots.any { FileSystemRules.isContained(File(it.path), File(entry.absolutePath)) }
+            }
+        }
+    }
+
+    fun nearbyReceivePickerParent(path: String): String? =
+        if (_roots.value.any { it.path == path }) "" else graph.nearbySourceReader.parent(path)
+
     fun updateSearchDraftPreferences(settings: SearchDraftPreferences) {
         if (settings == _searchDraftPreferences.value) return
         _searchDraftPreferences.value = settings
@@ -1638,8 +1723,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { message("Išvaizdos nustatymo išsaugoti nepavyko", true) }
     }
 
-    fun beginIncomingShare(uris: List<Uri>) {
-        val accepted = uris.asSequence().distinctBy(Uri::toString).take(1_000).toList()
+    fun beginIncomingShare(uris: List<Uri>, error: String? = null) {
+        if (error != null) { message(error, true); return }
+        val accepted = try {
+            com.affilemanager.app.core.ExternalShareRules.collect(uris.asSequence(), Uri::toString) {
+                it.scheme in setOf("content", "file")
+            }
+        } catch (failure: IllegalArgumentException) {
+            message(failure.message ?: "Failų paruošti nepavyko", true)
+            return
+        }
         if (accepted.isEmpty()) return
         _section.value = AppSection.SHARE
         _incomingShare.value = IncomingShareUiState(System.nanoTime(), accepted)
@@ -2491,6 +2584,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         includeHidden: Boolean = false,
         storageScope: CategoryStorageScope = CategoryStorageScope.ALL,
         viewMode: CategoryViewMode = CategoryViewMode.FILES,
+        appScope: com.affilemanager.app.data.InstalledAppScope = com.affilemanager.app.data.InstalledAppScope.USER,
     ): Result<com.affilemanager.app.data.FileCategoryPage> =
         withContext(Dispatchers.IO) {
             try {
@@ -2504,6 +2598,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     includeHidden = includeHidden,
                     storageScope = storageScope,
                     viewMode = viewMode,
+                    appScope = appScope,
                 )
                 Result.success(page.copy(entries = page.entries.filter { includeHidden || !it.absolutePath.replace('\\', '/').split('/').any { segment -> segment.startsWith('.') } }))
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -2522,11 +2617,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         copyToPrivateStage: Boolean = true,
     ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareContentUris(uris, copyToPrivateStage)
 
-    suspend fun loadNearbyContacts(): Result<com.affilemanager.app.transfer.NearbyContactPage> =
-        graph.nearbySources.loadContacts()
+    suspend fun loadNearbyContacts(offset: Int = 0, query: String = "", descending: Boolean = false): Result<com.affilemanager.app.transfer.NearbyContactPage> =
+        graph.nearbySources.loadContacts(offset, query, descending)
 
     suspend fun createNearbyReceiveTypeFolders(): Result<Unit> = withContext(Dispatchers.IO) {
         val before = shareScreenPreferences.value
+        val document = runCatching { graph.nearbySourceReader.documentUri(before.nearbyReceivePath) }
+        document.exceptionOrNull()?.let { error ->
+            if (error is CancellationException) throw error
+            return@withContext Result.failure(error)
+        }
+        document.getOrNull()?.let { uri ->
+            return@withContext createNearbyDocumentTypeFolders(before, uri)
+        }
         var creationAttempted = false
         try {
             val selected = File(before.nearbyReceivePath)
@@ -2568,6 +2671,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun createNearbyDocumentTypeFolders(before: ShareScreenPreferences, uri: Uri): Result<Unit> {
+        val storage = com.affilemanager.app.workflow.AfDocumentStorage(getApplication())
+        val created = ArrayList<com.affilemanager.app.workflow.AfLocationRef>()
+        var committed = false
+        var failure: Throwable? = null
+        try {
+            val base = com.affilemanager.app.workflow.AfLocationRef.document(uri.toString())
+            storage.uriFor(base, write = true)
+            val targets = com.affilemanager.app.transfer.NearbyReceiveFolderRules.names.mapValues { (_, name) ->
+                com.affilemanager.app.workflow.AfWorkflowPaths.child(base, name)
+            }
+            val existing = targets.mapValues { storage.stat(it.value) }
+            require(existing.values.all { it == null || it.directory }) { "Toks pavadinimas jau naudojamas" }
+            targets.forEach { (kind, location) ->
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (existing[kind] == null) { storage.createDirectory(location); created += location }
+            }
+            val paths = targets.mapValues { storage.uriFor(it.value, write = true).toString() }
+            withContext(Dispatchers.Main.immediate) {
+                require(shareScreenPreferences.value.nearbyReceivePath == before.nearbyReceivePath &&
+                    shareScreenPreferences.value.nearbyTypePaths == before.nearbyTypePaths &&
+                    com.affilemanager.app.transfer.LanTransferController.state.value.status !in setOf(
+                        com.affilemanager.app.transfer.LanTransferStatus.STARTING, com.affilemanager.app.transfer.LanTransferStatus.RUNNING)) { "Gavimo nustatymai pasikeitė" }
+                updateShareScreenPreferences { it.copy(nearbyTypePaths = paths) }
+                committed = true
+            }
+        } catch (error: Throwable) { failure = error }
+        finally {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                if (!committed) created.asReversed().forEach { location ->
+                    runCatching { storage.delete(location, recursive = false) }.onFailure { cleanup ->
+                        val recovery = IllegalStateException("Document recovery is required", cleanup)
+                        failure?.let(recovery::addSuppressed); failure = recovery
+                    }
+                }
+                storage.close()
+            }
+        }
+        failure?.let { if (it is CancellationException) throw it; return Result.failure(it) }
+        return Result.success(Unit)
+    }
+
     suspend fun prepareNearbyTransferContacts(
         contacts: Collection<com.affilemanager.app.transfer.NearbyContact>,
     ): Result<PreparedNearbyTransfer> = graph.nearbySources.prepareContacts(contacts)
@@ -2587,7 +2732,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     if (path !in combined) {
                         require(combined.size < limit) { "Vienu kartu galima siųsti iki $limit failų" }
-                        combined[path] = graph.localFiles.toEntry(File(path))
+                        combined[path] = graph.nearbySourceReader.node(path).entry
                     }
                 }
                 graph.nearbySources.prepareEntries(combined.values)
@@ -3145,6 +3290,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun open(entry: FileEntry) = open(entry, null)
+    fun openNearbyTransferEntry(entry: FileEntry) {
+        if (entry.absolutePath.startsWith("content://")) openExternalUri(Uri.parse(entry.absolutePath), null)
+        else open(entry)
+    }
     fun openWidgetMedia(entry: FileEntry, playback: InitialMediaPlayback) = open(entry, playback)
     private fun open(entry: FileEntry, playback: InitialMediaPlayback?, advancedOrigin: Boolean = false) {
         cancelArchiveUnlock()
@@ -6977,6 +7126,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun listLocalPickerDirectory(path: String, includeHidden: Boolean): Result<List<FileEntry>> = graph.localFiles.list(
         directoryPath = path, includeHidden = includeHidden, sortMode = SortMode.NAME, sortDirection = SortDirection.ASCENDING)
+
+    suspend fun listNearbyPickerDirectory(path: String, includeHidden: Boolean = false): Result<List<FileEntry>> =
+        graph.nearbySourceReader.list(path, includeHidden)
+
+    fun nearbyPickerParent(path: String): String? = graph.nearbySourceReader.parent(path)
 
     suspend fun loadLocalPickerCategory(category: FileCategory, root: StorageRoot, offset: Int, includeHidden: Boolean): Result<com.affilemanager.app.data.FileCategoryPage> =
         withContext(Dispatchers.IO) { runCatching {

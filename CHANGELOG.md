@@ -2,6 +2,16 @@
 
 This file records the user-visible changes in AF File Manager releases.
 
+## [0.49.0] - 2026-11-19
+
+- A new launcher icon: a turquoise folder with two angled cutouts.
+- Send, Receive, and Group use the same button layout. Pairing starts with the code and QR options, and longer labels still fit at larger text sizes.
+- Nearby discovery no longer exposes the pairing code. Before a sender can write any files, you must approve them on the receiving phone. Update both phones for the new approval flow.
+- Receive to a folder on an SD card or USB drive. Changing the save location during a transfer applies to files that have not started saving; completed files stay where they are.
+- Share larger batches: up to 30,000 files with a compatible receiver, within the transfer's folder and metadata limits. Selections are no longer silently cut off.
+- Send authorized files from Shizuku locations and select system apps or contacts from the sharing picker. Contact search and browsing go beyond the first 1,000 entries.
+- Phone receiving now uses Android's connected-device service. If the service stops, AF clears the old session and keeps completed files available. The original device-specific reports in #215 and #276 remain open.
+
 ## [0.48.0] - 2026-11-10
 
 - The Share button stays visible when you select several files in local folders or Quick locations.

@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -277,7 +276,10 @@ object NearbyGroupController {
         )
         polling = scope.launch {
             try {
-                val activeCookie = login(invite.organizer)
+                val activeCookie = kotlinx.coroutines.runInterruptible {
+                    NearbyLoginClient.login(client, invite.organizer, ownPairing.receiverName,
+                        checkCancelled = { if (Thread.currentThread().isInterrupted) throw CancellationException("Siuntimas atšauktas") }).cookie
+                }
                 coroutineContext.ensureActive()
                 synchronized(this@NearbyGroupController) {
                     if (generation != activeGeneration) return@launch
@@ -389,18 +391,6 @@ object NearbyGroupController {
             !member.organizer && "${member.pairing.host}:${member.pairing.port}" !in currentKeys
         }
         return left?.let { "${it.pairing.receiverName} paliko grupę" }
-    }
-
-    private fun login(organizer: NearbyPairing): String {
-        val request = Request.Builder()
-            .url(url(organizer, "/login"))
-            .post(FormBody.Builder().add("code", organizer.code).build())
-            .build()
-        return client.newCall(request).execute().use { response ->
-            require(response.code == 200) { "Grupės kodas atmestas (HTTP ${response.code})" }
-            response.header("Set-Cookie")?.substringBefore(';')?.takeIf { it.startsWith("af_session=") }
-                ?: throw IllegalStateException("Grupės sesija nesukurta")
-        }
     }
 
     private fun postPairing(organizer: NearbyPairing, cookie: String, path: String, pairing: NearbyPairing) {

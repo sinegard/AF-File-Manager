@@ -19,6 +19,7 @@ data class NearbyTransferHistoryFile(
     val outgoing: Boolean,
     val localPath: String? = null,
     val notAttempted: Boolean = false,
+    val savedName: String? = null,
 )
 
 data class NearbyTransferHistorySession(
@@ -60,6 +61,7 @@ internal object NearbyTransferHistoryRules {
                     status = file.status,
                     outgoing = outgoing,
                     notAttempted = file.notAttempted,
+                    savedName = file.savedName?.takeIf { it.length in 1..255 && '/' !in it && '\\' !in it && it.none(Char::isISOControl) },
                     localPath = file.localPath?.takeIf {
                         file.status == TransferFileStatus.COMPLETED &&
                             it.length in 1..MAX_LOCAL_PATH_CHARS &&
@@ -172,7 +174,10 @@ private class NearbyTransferHistoryRepository(context: Context) {
             session.files.forEach { file ->
                 put(JSONObject().put("id", file.id).put("path", file.relativePath).put("size", file.sizeBytes)
                     .put("transferred", file.transferredBytes).put("status", file.status.name).put("outgoing", file.outgoing)
-                    .put("localPath", file.localPath ?: JSONObject.NULL).apply { if (file.notAttempted) put("notAttempted", true) })
+                    .put("localPath", file.localPath ?: JSONObject.NULL).apply {
+                        if (file.notAttempted) put("notAttempted", true)
+                        file.savedName?.let { put("savedName", it) }
+                    })
             }
         })
         .put("messages", JSONArray().apply {
@@ -207,6 +212,7 @@ private class NearbyTransferHistoryRepository(context: Context) {
                     status = runCatching { TransferFileStatus.valueOf(item.getString("status")) }.getOrDefault(TransferFileStatus.FAILED),
                     outgoing = item.optBoolean("outgoing"),
                     notAttempted = item.optBoolean("notAttempted"),
+                    savedName = item.optString("savedName").takeIf { it.length in 1..255 && '/' !in it && '\\' !in it && it.none(Char::isISOControl) },
                     localPath = if (version >= 2 && !item.isNull("localPath")) {
                         item.optString("localPath").takeIf {
                             it.length in 1..NearbyTransferHistoryRules.MAX_LOCAL_PATH_CHARS && it.none(Char::isISOControl)

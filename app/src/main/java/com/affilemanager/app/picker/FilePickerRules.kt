@@ -5,7 +5,7 @@ import java.util.Locale
 
 /** Rules for an external read-only picker; caller input never chooses its roots or a source path. */
 internal data class FilePickerRequest(val mimeTypes: List<String>, val allowMultiple: Boolean) {
-    val selectionLimit: Int get() = if (allowMultiple) 100 else 1
+    val selectionLimit: Int get() = if (allowMultiple) com.affilemanager.app.core.ExternalShareRules.MAX_FILES else 1
 
     fun accepts(mimeType: String): Boolean = mimeTypes.any { filter ->
         filter == "*/*" || filter.equals(mimeType, ignoreCase = true) ||

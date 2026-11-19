@@ -21,7 +21,7 @@ class NearbyDiscoveryPayloadTest {
         assertTrue(attributes.values.all { it.size <= 128 })
         val group = NearbyDiscoveryPayload.decode("AF group", 8088, "192.168.1.20", attributes)
         assertTrue(group?.groupName?.isNotBlank() == true)
-        assertEquals(pairing, group?.pairing)
+        assertEquals(pairing, group?.withPrivateCode(pairing.code))
         val legacy = NearbyDiscoveryPayload.decode("AF phone", 8088, "192.168.1.20",
             NearbyDiscoveryPayload.attributes(pairing, "Phone", "Android"))
         assertNull(legacy?.groupName)
@@ -32,7 +32,7 @@ class NearbyDiscoveryPayloadTest {
         val attributes = NearbyDiscoveryPayload.attributes(pairing, "My phone", "Samsung M13")
         val result = NearbyDiscoveryPayload.decode("AF My phone", 8088, "192.168.1.20", attributes)
 
-        assertEquals(pairing, result?.pairing)
+        assertEquals(pairing, result?.withPrivateCode(pairing.code))
         assertEquals("My phone", result?.receiverName)
         assertEquals("Samsung M13", result?.deviceName)
         assertTrue(attributes.values.sumOf(ByteArray::size) < 512)

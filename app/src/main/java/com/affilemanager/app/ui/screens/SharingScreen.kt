@@ -141,7 +141,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
 
     LaunchedEffect(pendingQuickTunnelStart, transfer.status, transfer.url) {
         if (pendingQuickTunnelStart && transfer.status == LanTransferStatus.RUNNING &&
-            transfer.protocol == LanTransferProtocol.WEB && !transfer.groupMode
+            transfer.protocol == LanTransferProtocol.WEB && !transfer.groupMode && !transfer.phoneReceiver
         ) {
             transfer.url?.let { url -> QuickTunnelController.start(context, url, transfer.expiresAtMillis) }
             pendingQuickTunnelStart = false
@@ -401,7 +401,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                         QuickTunnelController.stop(context)
                         LanTransferController.stop(context)
                     }
-                    if (transfer.protocol == LanTransferProtocol.WEB && !transfer.groupMode) {
+                    if (transfer.protocol == LanTransferProtocol.WEB && !transfer.groupMode && !transfer.phoneReceiver) {
                         QuickTunnelCard(
                             context = context,
                             state = quickTunnel,
@@ -452,7 +452,7 @@ fun SharingScreen(viewModel: MainViewModel, contentPadding: PaddingValues) {
                 TextButton(onClick = { showQuickTunnelDialog = false }) { LText("Atšaukti") }
                 Button(onClick = {
                     showQuickTunnelDialog = false
-                    if (transfer.status == LanTransferStatus.RUNNING && transfer.protocol == LanTransferProtocol.WEB) {
+                    if (transfer.status == LanTransferStatus.RUNNING && transfer.protocol == LanTransferProtocol.WEB && !transfer.phoneReceiver) {
                         transfer.url?.let { QuickTunnelController.start(context, it, transfer.expiresAtMillis) }
                     } else {
                         val webOptions = optionsResult.getOrNull()
@@ -498,6 +498,8 @@ internal fun SharedFolderPickerDialog(
     title: String = "Pasirinkti bendrinamą aplanką",
     onUseDefault: (() -> Unit)? = null,
     confirmLabel: String = "Bendrinti šį aplanką",
+    parentDirectory: (String) -> String? = { File(it).parentFile?.absolutePath },
+    onAndroidPicker: (() -> Unit)? = null,
 ) {
     var navigation by remember(initialPath) { mutableStateOf(LocalUploadNavigationState(initialPath)) }
     var directories by remember(initialPath) { mutableStateOf<List<FileEntry>>(emptyList()) }
@@ -545,7 +547,7 @@ internal fun SharedFolderPickerDialog(
             TextButton(onClick = ::dismissOrBack) { LText(if (navigation.canNavigateBack) "Grįžti" else "Atšaukti") }
             Button(
                 onClick = { onSelect(currentPath) },
-                enabled = !loading && error == null,
+                enabled = !loading && error == null && currentPath.isNotEmpty(),
                 modifier = Modifier.testTag("share_folder_select"),
             ) {
                 LText(confirmLabel)
@@ -554,12 +556,13 @@ internal fun SharedFolderPickerDialog(
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                val parent = File(currentPath).parentFile?.absolutePath
+                val parent = parentDirectory(currentPath)
                 if (featureVisible(OptionalFeature.TOOLBAR_UP)) IconButton(onClick = { parent?.let { navigation = navigation.navigateTo(it) } },
                     enabled = parent != null && !loading, modifier = Modifier.testTag("share_folder_up")) {
                     Icon(Icons.Rounded.ArrowUpward, contentDescription = uiText("Aukštyn"))
                 }
-                CanonicalPathText(currentPath, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (currentPath.isEmpty()) LText("Saugykla", modifier = Modifier.weight(1f))
+                else CanonicalPathText(currentPath, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (searchVisible || featureVisible(OptionalFeature.TOOLBAR_SEARCH)) IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) searchQuery = "" },
                     modifier = Modifier.testTag("share_folder_search_toggle")) {
                     Icon(Icons.Rounded.Search, contentDescription = uiText(if (searchVisible) "Slėpti paiešką" else "Ieškoti"))
@@ -569,6 +572,8 @@ internal fun SharedFolderPickerDialog(
                         Icon(Icons.Rounded.MoreVert, contentDescription = uiText("Daugiau veiksmų"))
                     }
                     DropdownMenu(expanded = pickerMenu, onDismissRequest = { pickerMenu = false }) {
+                        onAndroidPicker?.let { choose -> DropdownMenuItem(text = { LText("Pasirinkti aplanką") },
+                            onClick = { pickerMenu = false; choose() }, modifier = Modifier.testTag("share_folder_android_picker")) }
                         DropdownMenuItem(text = { LText(if (reverseOrder) "Pavadinimas A–Z" else "Pavadinimas Z–A") },
                             onClick = { reverseOrder = !reverseOrder; pickerMenu = false })
                     }

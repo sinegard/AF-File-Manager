@@ -3,13 +3,10 @@ package com.affilemanager.app.ui.screens
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,7 +17,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import com.affilemanager.app.transfer.ManufacturerSharingActions
 import com.affilemanager.app.transfer.ManufacturerSharingTarget
 import com.affilemanager.app.ui.localization.LText
@@ -35,14 +31,10 @@ internal fun NearbyManufacturerSharingButton(enabled: Boolean) {
     var settingsFailed by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Box {
-            OutlinedButton(
-                onClick = { expanded = true; unavailable = null; settingsFailed = false },
+            NearbyShareActionButton(NearbyShareAction("Atidaryti su kita programa", Icons.Rounded.Share,
+                { expanded = true; unavailable = null; settingsFailed = false }, "nearby_manufacturer_sharing",
                 enabled = enabled,
-                modifier = Modifier.fillMaxWidth().testTag("nearby_manufacturer_sharing"),
-            ) {
-                Icon(Icons.Rounded.Share, contentDescription = null)
-                LText("Atidaryti su kita programa", modifier = Modifier.padding(start = 7.dp))
-            }
+            ))
             AfDropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
                 ManufacturerSharingTarget.entries.forEach { target ->
                     DropdownMenuItem(

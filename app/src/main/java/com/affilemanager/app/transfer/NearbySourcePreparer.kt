@@ -27,11 +27,16 @@ data class PreparedNearbyTransfer(
     val totalBytes: Long = fileSizes.sum(),
     /** A non-null entry is streamed from ContentResolver instead of being duplicated in cache. */
     val sourceUris: List<String?> = List(paths.size) { null },
+    /** Internal, already-authorized Root/Shizuku streams; never included in a wire manifest. */
+    val privilegedPaths: List<String?> = List(paths.size) { null },
 ) {
     init {
-        require(paths.size == relativePaths.size && paths.size == sourceUris.size) {
+        require(paths.size == relativePaths.size && paths.size == sourceUris.size && paths.size == privilegedPaths.size) {
             "Siuntimo rinkinio keliai nesutampa"
         }
+        require(paths.indices.all { index ->
+            listOf(paths[index].takeIf(String::isNotBlank), sourceUris[index], privilegedPaths[index]).count { it != null } == 1
+        }) { "Siuntimo rinkinio keliai nesutampa" }
     }
 
     companion object {
@@ -48,18 +53,21 @@ data class NearbyContact(
 data class NearbyContactPage(
     val contacts: List<NearbyContact>,
     val truncated: Boolean,
+    val nextOffset: Int? = null,
 )
 
-class NearbySourcePreparer(
+class NearbySourcePreparer internal constructor(
     private val application: Application,
     private val fileCategories: FileCategoryRepository,
+    internal val reader: NearbySourceReader? = null,
 ) {
     companion object {
-        const val MAX_FILES = 8_000
+        const val MAX_FILES = 30_000
         const val MAX_DIRECTORIES = 16_000
         const val MAX_TOTAL_BYTES = 60L * 1_024L * 1_024L * 1_024L
         const val MAX_PATH_PAYLOAD_CHARS = 4_000_000
         const val MAX_CONTACTS = 1_000
+        const val CONTACT_PAGE_ROWS = 240
         private const val MAX_DEPTH = 64
         private const val BUFFER_SIZE = 256 * 1_024
     }
@@ -67,14 +75,16 @@ class NearbySourcePreparer(
     private val stagingRoot = File(application.cacheDir, "nearby-send-staging")
 
     suspend fun prepareEntries(entries: Collection<FileEntry>): Result<PreparedNearbyTransfer> =
-        withContext(Dispatchers.IO) {
-            runCatching {
+        prepareResult {
                 val selected = entries.distinctBy(FileEntry::absolutePath)
                 require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą" }
                 require(selected.size <= MAX_FILES) { "Vienu kartu galima siųsti iki $MAX_FILES failų" }
+                if (reader != null && selected.any { it.packageName == null && reader.needsAuthorizedRead(it.absolutePath) }) {
+                    return@prepareResult prepareAuthorizedEntries(selected)
+                }
                 val installed = selected.filter { it.packageName != null }
                 val local = selected.filter { it.packageName == null }
-                if (installed.isEmpty()) return@runCatching prepareLocalNodes(local.map { File(it.absolutePath) })
+                if (installed.isEmpty()) return@prepareResult prepareLocalNodes(local.map { File(it.absolutePath) })
 
                 val stage = newStage()
                 try {
@@ -100,8 +110,19 @@ class NearbySourcePreparer(
                     stage.deleteRecursively()
                     throw error
                 }
-            }
         }
+
+    private suspend fun prepareResult(block: suspend () -> PreparedNearbyTransfer): Result<PreparedNearbyTransfer> {
+        var owned: PreparedNearbyTransfer? = null
+        var delivered = false
+        try {
+            val result = withContext(Dispatchers.IO) { runCatching { block().also { owned = it } } }
+            delivered = result.isSuccess
+            return result
+        } finally {
+            if (!delivered) withContext(NonCancellable + Dispatchers.IO) { owned?.cleanupRootPath?.let(::safeDeleteStage) }
+        }
+    }
 
     suspend fun prepareContentUris(
         uris: Collection<Uri>,
@@ -132,7 +153,11 @@ class NearbySourcePreparer(
         }
     }
 
-    suspend fun loadContacts(): Result<NearbyContactPage> = withContext(Dispatchers.IO) {
+    suspend fun loadContacts(
+        offset: Int = 0,
+        query: String = "",
+        descending: Boolean = false,
+    ): Result<NearbyContactPage> = withContext(Dispatchers.IO) {
         runCatching {
             require(
                 ContextCompat.checkSelfPermission(application, android.Manifest.permission.READ_CONTACTS) ==
@@ -143,39 +168,40 @@ class NearbySourcePreparer(
                 ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
                 ContactsContract.Contacts.PHOTO_THUMBNAIL_URI,
             )
-            val contacts = ArrayList<NearbyContact>(MAX_CONTACTS)
-            var truncated = false
+            require(offset >= 0 && query.length <= 200) { "Kontakto duomenys netinkami" }
+            val filter = query.trim()
+            val uri = if (filter.isEmpty()) ContactsContract.Contacts.CONTENT_URI
+                else Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_FILTER_URI, Uri.encode(filter))
             application.contentResolver.query(
-                ContactsContract.Contacts.CONTENT_URI,
+                uri,
                 projection,
                 null,
                 null,
-                "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} COLLATE LOCALIZED ASC",
+                "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} COLLATE LOCALIZED ${if (descending) "DESC" else "ASC"}, ${ContactsContract.Contacts._ID} ASC",
             )?.use { cursor ->
-                val lookupIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.LOOKUP_KEY)
-                val nameIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
-                val photoIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.PHOTO_THUMBNAIL_URI)
-                val seen = HashSet<String>()
-                while (cursor.moveToNext()) {
-                    coroutineContext.ensureActive()
-                    val lookup = cursor.getString(lookupIndex)?.trim()?.takeIf(String::isNotBlank) ?: continue
-                    if (!seen.add(lookup)) continue
-                    if (contacts.size >= MAX_CONTACTS) {
-                        truncated = true
-                        break
-                    }
-                    // Keep missing names as data, not as Lithuanian UI copy. The composable renders
-                    // its translated fallback while exported files use a stable neutral name.
-                    val name = cursor.getString(nameIndex)?.trim().orEmpty()
-                    contacts += NearbyContact(
-                        lookupKey = lookup.take(1_024),
-                        displayName = name.take(200),
-                        photoUri = cursor.getString(photoIndex)?.takeIf(String::isNotBlank)?.take(2_048),
-                    )
-                }
+                readContactPage(cursor, offset)
             } ?: throw IllegalStateException("Kontaktų sąrašo perskaityti nepavyko")
-            NearbyContactPage(contacts, truncated)
         }
+    }
+
+    internal suspend fun readContactPage(cursor: android.database.Cursor, offset: Int): NearbyContactPage {
+        val contacts = ArrayList<NearbyContact>(CONTACT_PAGE_ROWS)
+        val lookupIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.LOOKUP_KEY)
+        val nameIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+        val photoIndex = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.PHOTO_THUMBNAIL_URI)
+        val seen = HashSet<String>()
+        cursor.moveToPosition(offset - 1)
+        var scanned = 0
+        while (contacts.size < CONTACT_PAGE_ROWS && scanned < CONTACT_PAGE_ROWS * 8 && cursor.moveToNext()) {
+            coroutineContext.ensureActive()
+            scanned++
+            val lookup = cursor.getString(lookupIndex)?.takeIf { it.isNotBlank() && it.length <= 1_024 } ?: continue
+            if (!seen.add(lookup)) continue
+            contacts += NearbyContact(lookup, cursor.getString(nameIndex)?.trim().orEmpty().take(200),
+                cursor.getString(photoIndex)?.takeIf(String::isNotBlank)?.take(2_048))
+        }
+        val next = (offset.toLong() + scanned).takeIf { it < cursor.count && it <= Int.MAX_VALUE }?.toInt()
+        return NearbyContactPage(contacts, truncated = false, nextOffset = next)
     }
 
     suspend fun prepareContacts(contacts: Collection<NearbyContact>): Result<PreparedNearbyTransfer> =
@@ -337,22 +363,120 @@ class NearbySourcePreparer(
         prepared.cleanupRootPath?.let(::safeDeleteStage)
     }
 
-    suspend fun prepareLocalPaths(paths: Collection<String>): Result<PreparedNearbyTransfer> = withContext(Dispatchers.IO) {
-        runCatching {
+    suspend fun prepareLocalPaths(paths: Collection<String>): Result<PreparedNearbyTransfer> = prepareResult {
+            if (reader != null && paths.any(reader::needsAuthorizedRead)) {
+                require(paths.size <= MAX_FILES) { "Vienu kartu galima pasirinkti iki $MAX_FILES pradinių elementų" }
+                return@prepareResult prepareAuthorizedEntries(paths.distinct().map { reader.node(it).entry })
+            }
             val selected = paths.asSequence()
                 // Keep the selected filesystem node unresolved until the symbolic-link check.
                 // Canonicalizing first would silently turn a selected link into its target.
                 .map { File(it).toPath().toAbsolutePath().normalize().toFile() }
-                .filter(File::exists)
+                .onEach { require(it.exists()) { "Failas nepasiekiamas: ${it.name}" } }
                 .distinctBy(File::getAbsolutePath)
                 .sortedBy { it.absolutePath.length }
                 .toList()
             require(selected.isNotEmpty()) { "Pasirinkite bent vieną failą ar aplanką" }
             require(selected.size <= MAX_FILES) { "Vienu kartu galima pasirinkti iki $MAX_FILES pradinių elementų" }
+            // A large multi-selection must not compare every path to every other path.
+            // These are unresolved absolute paths: selected symlinks are still rejected below.
+            val selectedDirectories = selected.filter(File::isDirectory).mapTo(hashSetOf()) { it.toPath() }
             val compact = selected.filter { candidate ->
-                selected.none { parent -> parent != candidate && parent.isDirectory && FileSystemRules.isContained(parent, candidate) }
+                var parent = candidate.toPath().parent
+                var covered = false
+                while (parent != null && !covered) {
+                    covered = parent in selectedDirectories
+                    parent = parent.parent
+                }
+                !covered
             }
             prepareLocalNodes(compact)
+    }
+
+    /** Same bounded batch for raw files, authorized documents and protected sources. */
+    private suspend fun prepareAuthorizedEntries(entries: List<FileEntry>): PreparedNearbyTransfer {
+        val sourceReader = requireNotNull(reader)
+        val paths = ArrayList<String>()
+        val uris = ArrayList<String?>()
+        val privileged = ArrayList<String?>()
+        val relativePaths = ArrayList<String>()
+        val sizes = ArrayList<Long>()
+        val directories = LinkedHashSet<String>()
+        val seen = HashSet<String>()
+        val usedNames = HashSet<String>()
+        var stage: File? = null
+        var total = 0L
+        var chars = 0L
+        var pendingChars = 0L
+        fun ownedStage(): File = stage ?: newStage().also { stage = it }
+        data class Pending(val path: String, val relative: String, val depth: Int)
+        val pending = ArrayDeque<Pending>()
+        fun enqueue(path: String, relative: String, depth: Int) {
+            require(pending.size + paths.size + directories.size < MAX_FILES + MAX_DIRECTORIES) { "Siuntimo rinkinio kelių aprašas per didelis" }
+            pendingChars += path.length + relative.length
+            require(chars + pendingChars <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+            pending.add(Pending(path, normalizeRelative(relative), depth))
+        }
+        fun addFile(path: String, uri: String?, privilegedPath: String?, relative: String, size: Long) {
+            require(paths.size < MAX_FILES) { "Siunčiamame rinkinyje daugiau nei $MAX_FILES failų" }
+            require(size in 0..LanHttpServer.MAX_UPLOAD_BYTES) { "Failas viršija saugyklos ribą" }
+            total = Math.addExact(total, size)
+            require(total <= MAX_TOTAL_BYTES) { "Siuntimo rinkinys viršija 60 GB ribą" }
+            chars += relative.length + path.length + (uri?.length ?: 0) + (privilegedPath?.length ?: 0)
+            require(chars + pendingChars <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+            paths += path; uris += uri; privileged += privilegedPath
+            relativePaths += normalizeRelative(relative); sizes += size
+        }
+        try {
+            // Depth first: a selected parent must own its complete hierarchy before
+            // an overlapping child from another picker page is considered as a root.
+            entries.sortedByDescending { it.absolutePath.length }.forEach { entry ->
+                coroutineContext.ensureActive()
+                if (entry.packageName != null) {
+                    val directory = File(ownedStage(), "app-${paths.size}").apply { require(mkdir()) }
+                    val file = fileCategories.stageInstalledApp(entry, directory)
+                    addFile(file.canonicalPath, null, null, uniqueName(file.name, usedNames), file.length())
+                } else enqueue(entry.absolutePath, uniqueName(entry.name, usedNames), 0)
+            }
+            while (pending.isNotEmpty()) {
+                coroutineContext.ensureActive()
+                val current = pending.removeLast()
+                pendingChars -= current.path.length + current.relative.length
+                require(current.depth <= MAX_DEPTH) { "Siunčiamo aplanko gylio riba viršyta" }
+                val node = sourceReader.node(current.path)
+                if (!seen.add(node.entry.absolutePath)) continue
+                if (node.entry.isDirectory) {
+                    require(directories.size < MAX_DIRECTORIES) { "Siunčiamame rinkinyje per daug aplankų" }
+                    directories += current.relative
+                    chars += current.relative.length
+                    require(chars + pendingChars <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+                    sourceReader.children(node).forEach { child ->
+                        enqueue(child.entry.absolutePath, "${current.relative}/${child.entry.name}", current.depth + 1)
+                    }
+                } else if (node.uri != null) {
+                    val uri = Uri.parse(node.uri)
+                    val size = contentLength(uri)
+                    if (size == null) {
+                        val file = uniqueFile(ownedStage(), node.entry.name)
+                        copyContentUri(uri, file, total)
+                        addFile(file.canonicalPath, null, null, current.relative, file.length())
+                    } else {
+                        application.contentResolver.openInputStream(uri)?.use { Unit }
+                            ?: throw IllegalArgumentException("Failo srautas nepasiekiamas")
+                        addFile("", node.uri, null, current.relative, size)
+                    }
+                } else if (node.privilegedPath != null) {
+                    addFile("", null, node.privilegedPath, current.relative, node.entry.sizeBytes)
+                } else {
+                    addFile(node.entry.absolutePath, null, null, current.relative, node.entry.sizeBytes)
+                }
+            }
+            require(paths.isNotEmpty() || directories.isNotEmpty()) { "Pasirinkite bent vieną failą ar aplanką" }
+            NearbyTransferMemory.requireAvailable(paths.size, chars.toInt())
+            return PreparedNearbyTransfer(paths, relativePaths, directories.toList(), stage?.canonicalPath, sizes, total, uris, privileged)
+        } catch (failure: Throwable) {
+            stage?.let { safeDeleteStage(it.path) }
+            throw failure
         }
     }
 
@@ -360,19 +484,37 @@ class NearbySourcePreparer(
         val files = ArrayList<File>()
         val relativePaths = ArrayList<String>()
         val directories = LinkedHashSet<String>()
+        var pathCharacters = 0L
         val pending = ArrayDeque<Triple<File, String, Int>>()
+        var pendingPathCharacters = roots.sumOf { it.absolutePath.length.toLong() + it.name.length }
+        require(pendingPathCharacters <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
         roots.asReversed().forEach { root -> pending.add(Triple(root, root.name, 0)) }
         while (pending.isNotEmpty()) {
             coroutineContext.ensureActive()
             val (node, relative, depth) = pending.removeLast()
+            pendingPathCharacters -= node.absolutePath.length + relative.length
             require(depth <= MAX_DEPTH) { "Siunčiamo aplanko gylio riba viršyta" }
+            pathCharacters += relative.length + if (node.isDirectory) 0 else node.absolutePath.length
+            require(pathCharacters <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
             require(!Files.isSymbolicLink(node.toPath())) { "Simbolinės nuorodos telefonu nesiunčiamos" }
             if (node.isDirectory) {
                 require(node.canRead()) { "Aplankas nepasiekiamas: ${node.name}" }
                 directories += normalizeRelative(relative)
                 require(directories.size <= MAX_DIRECTORIES) { "Siunčiamame rinkinyje per daug aplankų" }
-                val children = node.listFiles()?.sortedBy(File::getName)
-                    ?: throw SecurityException("Aplankas neperskaitomas: ${node.name}")
+                val children = ArrayList<File>()
+                Files.newDirectoryStream(node.toPath()).use { stream ->
+                    for (child in stream) {
+                        coroutineContext.ensureActive()
+                        require(children.size + pending.size + files.size + directories.size < MAX_FILES + MAX_DIRECTORIES) {
+                            "Siuntimo rinkinio kelių aprašas per didelis"
+                        }
+                        val childFile = child.toFile()
+                        pendingPathCharacters += childFile.absolutePath.length + relative.length + 1 + childFile.name.length
+                        require(pathCharacters + pendingPathCharacters <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+                        children += childFile
+                    }
+                }
+                children.sortBy(File::getName)
                 children.asReversed().forEach { child ->
                     require(FileSystemRules.isContained(node, child)) { "Aplanko elementas išeina už pasirinkto aplanko" }
                     pending.add(Triple(child, "$relative/${child.name}", depth + 1))
@@ -414,6 +556,7 @@ class NearbySourcePreparer(
         val payloadChars = canonical.sumOf(String::length) + normalizedRelative.sumOf(String::length) +
             normalizedDirectories.sumOf(String::length)
         require(payloadChars <= MAX_PATH_PAYLOAD_CHARS) { "Siuntimo rinkinio kelių aprašas per didelis" }
+        NearbyTransferMemory.requireAvailable(files.size, payloadChars)
         return PreparedNearbyTransfer(
             paths = canonical,
             relativePaths = normalizedRelative,

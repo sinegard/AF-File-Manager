@@ -78,6 +78,13 @@ class PrivilegedFileRepository(
         roots.filter { root -> runCatching { manager.getFile(root.path).isDirectory }.getOrDefault(false) }
     }
 
+    /** Read-only metadata for an already authorized internal transfer; never exports a URI grant. */
+    fun readEntry(path: String): FileEntry {
+        val file = existingContained(access.fileSystemOrThrow(), path, allowRoot = true)
+        require(file.isFile || file.isDirectory) { "Nepalaikomas elementas: ${file.name}" }
+        return toEntry(file)
+    }
+
     suspend fun list(
         directoryPath: String,
         includeHidden: Boolean,

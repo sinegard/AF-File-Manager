@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NearbyConnectionTest {
+    @Test fun advertisedBatchLimitsArePeerLocalAndResetOnExpiry() {
+        var time = 0L
+        val connection = NearbyConnection { time }
+        val first = NearbyPairing.create("192.168.1.2", 8080, "12345678")
+        val second = first.copy(host = "192.168.1.3")
+        connection.beginGroup(listOf(first, second))
+        connection.remember(first, "af_session=first", expires = 100L)
+        connection.setCapacity(first, "30000")
+        connection.remember(second, "af_session=second", expires = 200L)
+        connection.setCapacity(second, "5000")
+        assertEquals(30_000, connection.capacity(first).files)
+        assertEquals(5_000, connection.capacity(second).files)
+        time = 101L
+        assertEquals(8_000, connection.capacity(first).files)
+        assertEquals(5_000, connection.capacity(second).files)
+        connection.clear()
+        assertEquals(8_000, connection.capacity(second).files)
+    }
+
     @Test fun groupSessionsAreIsolatedReusedAndForgottenOnExpiryOrAnUnrelatedPeer() {
         var time = 0L
         val connection = NearbyConnection { time }

@@ -35,7 +35,10 @@ public final class OptimizedSftpInstrumentation extends Instrumentation {
         char[] password = new char[0];
         try {
             boolean verified;
-            if ("media-player".equals(suite)) {
+            if ("receiver-consent".equals(suite)) {
+                verified = com.affilemanager.app.transfer.ReceiverConsentRuntimeVerifier.verify(this,
+                    testArguments.getString("afAuditCapturePrefix", "consent-" + System.nanoTime()));
+            } else if ("media-player".equals(suite)) {
                 verified = com.affilemanager.app.MediaPlayerRuntimeVerifier.verify(this);
             } else if ("vault".equals(suite)) {
                 verified = com.affilemanager.app.security.VaultRuntimeVerifier.verify(this);

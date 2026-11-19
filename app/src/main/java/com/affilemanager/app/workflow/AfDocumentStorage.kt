@@ -18,6 +18,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 
+internal class AfDocumentConflictException(override val message: String) : java.nio.file.FileAlreadyExistsException("")
+
 /** IO belongs to the enclosing storage session; grants are never inferred from raw paths. */
 internal class AfDocumentStorage(private val context: Context) {
     private val resolver = context.contentResolver
@@ -117,6 +119,10 @@ internal class AfDocumentStorage(private val context: Context) {
 
     suspend fun stat(location: AfLocationRef): AfNodeSnapshot? = resolve(location)?.snapshot(location)
 
+    /** Keeps all URI resolution behind the existing persisted-grant and path checks. */
+    suspend fun uriFor(location: AfLocationRef, write: Boolean = false): Uri =
+        resolve(location, write = write, fresh = true)?.uri ?: error("Document file is unavailable")
+
     suspend fun list(location: AfLocationRef): List<AfNodeSnapshot> {
         val directory = resolve(location) ?: error("Document folder is unavailable")
         require(directory.directory) { "Document is not a folder" }
@@ -208,14 +214,14 @@ internal class AfDocumentStorage(private val context: Context) {
         }
     }
 
-    suspend fun hash(location: AfLocationRef, operation: OperationContext?): String {
+    suspend fun hash(location: AfLocationRef, operation: OperationContext?, checkpoint: () -> Unit = {}): String {
         val source = resolve(location) ?: error("Document file is unavailable")
         require(!source.directory) { "A folder cannot be content-verified" }
         val digest = MessageDigest.getInstance("SHA-256")
         resolver.openInputStream(source.uri)?.use { input ->
             val buffer = ByteArray(BUFFER)
             while (true) {
-                currentCoroutineContext().ensureActive(); operation?.checkpoint()
+                currentCoroutineContext().ensureActive(); operation?.checkpoint(); checkpoint()
                 val count = input.read(buffer)
                 if (count < 0) break
                 if (count > 0) digest.update(buffer, 0, count)
@@ -259,7 +265,14 @@ internal class AfDocumentStorage(private val context: Context) {
 
     suspend fun install(source: File, destination: AfLocationRef, replace: Boolean, operation: OperationContext) {
         require(!replace) { "Document replacement requires the shared recovery backup" }
-        require(resolve(destination, write = true) == null) { "Document destination already exists" }
+        installStream(source.length(), fileHash(source), source::inputStream, destination, operation)
+    }
+
+    /** A provider-side stage need not be duplicated onto the phone's internal storage. */
+    suspend fun installStream(expected: Long, expectedHash: String, openInput: () -> java.io.InputStream,
+                              destination: AfLocationRef, operation: OperationContext, checkpoint: () -> Unit = {}) {
+        require(expected >= 0 && expectedHash.matches(Regex("[a-fA-F0-9]{64}"))) { "Document copy verification failed" }
+        if (resolve(destination, write = true) != null) throw AfDocumentConflictException("Document destination already exists")
         val folder = resolve(parent(destination), write = true) ?: error("Document parent is unavailable")
         val name = exactLeafName(destination.documentPath.substringAfterLast('/'))
         // createDocument owns a NEW object, unlike provider rename which may replace
@@ -270,18 +283,20 @@ internal class AfDocumentStorage(private val context: Context) {
         val ownedName = node(owned)?.name
         var published = false
         var writtenIdentity: StructStat? = null
+        var readWitness: ParcelFileDescriptor? = null
         try {
             val descriptor = resolver.openFileDescriptor(owned, "wt") ?: error("Document destination cannot be opened")
+            try { readWitness = resolver.openFileDescriptor(owned, "r") ?: error("Document cannot be opened") }
+            catch (error: Throwable) { descriptor.close(); throw error }
             ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
               try {
-                writtenIdentity = Os.fstat(descriptor.fileDescriptor)
-                require(ownedName == name) { "Provider changed the destination name to avoid a conflict" }
-                source.inputStream().use { input ->
+                writtenIdentity = Os.fstat(requireNotNull(readWitness).fileDescriptor)
+                if (ownedName != name) throw AfDocumentConflictException("Provider changed the destination name to avoid a conflict")
+                openInput().use { input ->
                     val buffer = ByteArray(BUFFER)
-                    val expected = source.length()
                     var written = 0L
                     while (true) {
-                        currentCoroutineContext().ensureActive(); operation.checkpoint()
+                        currentCoroutineContext().ensureActive(); operation.checkpoint(); checkpoint()
                         val count = input.read(buffer)
                         if (count < 0) break
                         if (count > 0) {
@@ -293,14 +308,17 @@ internal class AfDocumentStorage(private val context: Context) {
                     output.flush()
                     if (writtenIdentity?.let { OsConstants.S_ISREG(it.st_mode) } == true) output.fd.sync()
                 }
-              } finally { writtenIdentity = runCatching { Os.fstat(descriptor.fileDescriptor) }.getOrNull() }
+              } finally { writtenIdentity = runCatching { Os.fstat(requireNotNull(readWitness).fileDescriptor) }.getOrNull() }
             }
+            writtenIdentity = Os.fstat(requireNotNull(readWitness).fileDescriptor)
             mutated(owned, folder.uri, added = node(owned))
-            require(stat(destination)?.sizeBytes == source.length() && hash(destination, operation) == fileHash(source)) {
+            checkpoint()
+            require(stat(destination)?.sizeBytes == expected && hash(destination, operation, checkpoint) == expectedHash.lowercase(java.util.Locale.ROOT)) {
                 "Document copy verification failed"
             }
             published = true
         } finally {
+            try {
             if (!published) withContext(NonCancellable) {
                 val expected = writtenIdentity
                 val removed = runCatching {
@@ -315,6 +333,7 @@ internal class AfDocumentStorage(private val context: Context) {
                 mutated(owned, folder.uri, removedName = if (removed) ownedName else null)
                 if (!removed) throw AfDocumentRecoveryException(folder.uri.toString(), IllegalStateException("Incomplete copy was retained"))
             }
+            } finally { readWitness?.close() }
         }
     }
 

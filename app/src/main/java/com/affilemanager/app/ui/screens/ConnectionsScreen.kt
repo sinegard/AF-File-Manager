@@ -1370,8 +1370,11 @@ internal fun LocalUploadDialog(
     storageRoots: List<StorageRoot> = emptyList(),
     loadWithHidden: (suspend (String, Boolean) -> Result<List<FileEntry>>)? = null,
     loadCategory: (suspend (FileCategory, StorageRoot, Int, Boolean) -> Result<FileCategoryPage>)? = null,
+    loadRoots: (suspend () -> Result<List<FileEntry>>)? = null,
 ) {
-    val maxSelection = if (allowMultiple) selectionLimit.coerceIn(1, RemoteCopyEngine.MAX_SELECTED_ROOTS) else 1
+    // The same browser is also used by nearby sharing. The caller owns its
+    // admission ceiling; server uploads keep their existing smaller default.
+    val maxSelection = if (allowMultiple) selectionLimit.coerceIn(1, com.affilemanager.app.transfer.NearbySourcePreparer.MAX_FILES) else 1
     val pickerLanguage = androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language
     var navigation by remember(initialDirectoryPath, remotePath) {
         mutableStateOf(LocalUploadNavigationState(initialDirectoryPath))
@@ -1423,6 +1426,8 @@ internal fun LocalUploadDialog(
                 if (page.truncated) error = "Rezultatas sutrumpintas pasiekus saugos ribą"
                 page.entries
             }
+        } else if (currentPath.isEmpty() && loadRoots != null && chosenCategory == null) {
+            loadRoots()
         } else if (currentPath.isEmpty() && storageRoots.isNotEmpty()) {
             Result.success(storageRoots.map { root -> FileEntry(root.path, com.affilemanager.app.ui.localization.UiTranslator.translate(root.title, pickerLanguage), com.affilemanager.app.model.EntryKind.DIRECTORY,
                 0, 0, false, true, false) })

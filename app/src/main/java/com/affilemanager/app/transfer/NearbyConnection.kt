@@ -9,7 +9,9 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
     private var expiresAt = 0L
     private var queuedMetadata = false
     private var concurrentUploads = 1
-    private data class GroupSession(val cookie: String, val expires: Long, val supportsQueue: Boolean, val concurrentUploads: Int = 1)
+    private var capacity = NearbyTransferCapacity()
+    private data class GroupSession(val cookie: String, val expires: Long, val supportsQueue: Boolean, val concurrentUploads: Int = 1,
+        val capacity: NearbyTransferCapacity = NearbyTransferCapacity())
     private var groupPeers: Set<NearbyPairing> = emptySet()
     private val groupSessions = linkedMapOf<NearbyPairing, GroupSession>()
     @Synchronized fun beginGroup(peers: List<NearbyPairing>) {
@@ -19,7 +21,7 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
         expire()
         val current = peer
         val accepted = cookie
-        if (current in groupPeers && accepted != null) groupSessions[requireNotNull(current)] = GroupSession(accepted, expiresAt, queuedMetadata, concurrentUploads)
+        if (current in groupPeers && accepted != null) groupSessions[requireNotNull(current)] = GroupSession(accepted, expiresAt, queuedMetadata, concurrentUploads, capacity)
     }
     @Synchronized fun supportsQueue(pairing: NearbyPairing): Boolean { expire(); return groupSessions[pairing]?.supportsQueue ?: (peer == pairing && queuedMetadata) }
     @Synchronized fun setQueueSupported(pairing: NearbyPairing, supported: Boolean) {
@@ -36,6 +38,15 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
         if (peer == pairing) concurrentUploads = count
         groupSessions[pairing]?.let { groupSessions[pairing] = it.copy(concurrentUploads = count) }
     }
+    @Synchronized fun capacity(pairing: NearbyPairing): NearbyTransferCapacity {
+        expire()
+        return groupSessions[pairing]?.capacity ?: capacity.takeIf { peer == pairing } ?: NearbyTransferCapacity()
+    }
+    @Synchronized fun setCapacity(pairing: NearbyPairing, advertised: String?) {
+        val accepted = NearbyTransferCapacity.advertised(advertised)
+        if (peer == pairing) capacity = accepted
+        groupSessions[pairing]?.let { groupSessions[pairing] = it.copy(capacity = accepted) }
+    }
 
     @Synchronized fun pairing(): NearbyPairing? { expire(); return peer }
     @Synchronized fun cookieFor(pairing: NearbyPairing): String? {
@@ -44,7 +55,7 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
     }
     @Synchronized fun remember(pairing: NearbyPairing, sessionCookie: String? = null, expires: Long = now() + 15 * 60_000L) {
         if (pairing !in groupPeers) { groupPeers = emptySet(); groupSessions.clear() }
-        if (pairing != peer) { cookie = null; queuedMetadata = false; concurrentUploads = 1 }
+        if (pairing != peer) { cookie = null; queuedMetadata = false; concurrentUploads = 1; capacity = NearbyTransferCapacity() }
         peer = pairing
         if (sessionCookie != null) {
             require(sessionCookie.length <= 256 && sessionCookie.startsWith("af_session=") && sessionCookie.none(Char::isISOControl))
@@ -57,20 +68,20 @@ internal class NearbyConnection(private val now: () -> Long = System::currentTim
             minOf(expires, maximumTimedExpiry)
         }
         mutablePeer.value = peer
-        if (pairing in groupPeers && cookie != null) groupSessions[pairing] = GroupSession(requireNotNull(cookie), expiresAt, queuedMetadata, concurrentUploads)
+        if (pairing in groupPeers && cookie != null) groupSessions[pairing] = GroupSession(requireNotNull(cookie), expiresAt, queuedMetadata, concurrentUploads, capacity)
     }
-    @Synchronized fun clear() { peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; concurrentUploads = 1; mutablePeer.value = null; groupPeers = emptySet(); groupSessions.clear() }
+    @Synchronized fun clear() { peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; concurrentUploads = 1; capacity = NearbyTransferCapacity(); mutablePeer.value = null; groupPeers = emptySet(); groupSessions.clear() }
     @Synchronized fun clearIfRejected(pairing: NearbyPairing, httpCode: Int): Boolean {
         if (httpCode !in setOf(401, 403, 410)) return false
         groupSessions.remove(pairing)
-        if (peer == pairing) { peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; concurrentUploads = 1; mutablePeer.value = null }
+        if (peer == pairing) { peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; concurrentUploads = 1; capacity = NearbyTransferCapacity(); mutablePeer.value = null }
         return true
     }
     private fun expire() {
         val currentTime = now()
         groupSessions.entries.removeAll { LanSessionDuration.isExpired(currentTime, it.value.expires) }
         if (LanSessionDuration.isExpired(currentTime, expiresAt)) {
-            peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; concurrentUploads = 1; mutablePeer.value = null
+            peer = null; cookie = null; expiresAt = 0L; queuedMetadata = false; concurrentUploads = 1; capacity = NearbyTransferCapacity(); mutablePeer.value = null
         }
     }
 }

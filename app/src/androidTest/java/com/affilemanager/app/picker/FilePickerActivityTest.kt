@@ -7,11 +7,13 @@ import android.os.Environment
 import android.os.Build
 import android.system.Os
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
@@ -127,6 +129,21 @@ class FilePickerActivityTest {
             compose.onNodeWithText("Cancel").performClick()
             assertEquals(Activity.RESULT_CANCELED, scenario.result.resultCode)
             assertNull(scenario.result.resultData)
+        }
+    }
+
+    @Test fun aThousandFilesReturnThroughTheActualActivityResultWithoutClippingAtOneHundred() {
+        repeat(998) { File(fixture, "bulk-$it.txt").writeText("$it") }
+        ActivityScenario.launchActivityForResult<FilePickerActivity>(request(true)).use { scenario ->
+            openFixture()
+            clickEntry(File(fixture, "first.txt").path)
+            compose.onNodeWithContentDescription("Select all").performClick()
+            compose.onNodeWithTag("local_upload_confirm").assertTextContains("Select (1000)").performClick()
+            assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
+            val result = scenario.result.resultData
+            assertEquals(1_000, result.clipData!!.itemCount)
+            assertEquals(1_000, (0 until result.clipData!!.itemCount).map { result.clipData!!.getItemAt(it).uri }.distinct().size)
+            assertEquals(1_000, fixture.listFiles()!!.count { it.extension == "txt" })
         }
     }
 

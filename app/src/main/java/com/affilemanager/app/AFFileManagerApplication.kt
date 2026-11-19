@@ -134,7 +134,10 @@ class AppGraph(application: Application) {
     val similarImages by lazy { SimilarImageEngine() }
     val archives = ArchiveEngine(onMutation = sharedStorageIndex::changed)
     val localShare by lazy { LocalShareManager(application, archives) }
-    val nearbySources by lazy { NearbySourcePreparer(application, fileCategories) }
+    internal val nearbySourceReader by lazy {
+        com.affilemanager.app.transfer.NearbySourceReader(application, localFiles, safFiles, privilegedFiles, advancedAccess)
+    }
+    val nearbySources by lazy { NearbySourcePreparer(application, fileCategories, nearbySourceReader) }
     val credentialVault = CredentialVault()
     val appLock = AppLockRepository(application)
     val networkProfiles = NetworkProfileStore(application, credentialVault)

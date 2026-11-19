@@ -462,7 +462,7 @@ fun AFFileManagerApp(
 
     LaunchedEffect(incomingShareRequest) {
         incomingShareRequest?.let { request ->
-            viewModel.beginIncomingShare(request.uris)
+            viewModel.beginIncomingShare(request.uris, request.error)
             onIncomingShareRequestConsumed()
         }
     }
@@ -620,6 +620,10 @@ fun AFFileManagerApp(
                 TextButton(onClick = { dismissedUpdateVersion = offeredRelease.version }) { LText("Vėliau") }
             },
         )
+    }
+
+    com.affilemanager.app.ui.screens.NearbySenderApprovalDialog(sharingState, unlocked) { sessionId, id, allow ->
+        LanTransferController.decideSender(context, sessionId, id, allow)
     }
 
     if (appLockEnabled && !unlocked) {

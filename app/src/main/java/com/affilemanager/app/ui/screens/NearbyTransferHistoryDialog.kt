@@ -53,6 +53,7 @@ internal fun NearbyTransferHistoryDialog(
     onClear: () -> Unit,
     onPreview: (FileEntry) -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var selectedId by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     val selected = sessions.firstOrNull { it.id == selectedId }
@@ -65,6 +66,9 @@ internal fun NearbyTransferHistoryDialog(
             value = withContext(Dispatchers.IO) {
                 selected.files.mapNotNull { historyFile ->
                     val path = historyFile.localPath ?: return@mapNotNull null
+                    if (path.startsWith("content://")) return@mapNotNull runCatching {
+                        context.contentResolver.openFileDescriptor(android.net.Uri.parse(path), "r")?.use { historyFile.id to path }
+                    }.getOrNull()
                     val local = runCatching { File(path).canonicalFile }.getOrNull() ?: return@mapNotNull null
                     if (local.isFile && local.canRead()) historyFile.id to local.absolutePath else null
                 }.toMap()
@@ -81,6 +85,7 @@ internal fun NearbyTransferHistoryDialog(
                 localPath = availablePaths[file.id],
                 batchId = file.id,
                 notAttempted = file.notAttempted,
+                savedName = file.savedName,
             )
         }
         NearbyTransferDetails(

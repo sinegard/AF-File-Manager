@@ -14,6 +14,53 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class NearbySourcePreparerTest {
+    @Test fun aDisappearedSelectionDoesNotSilentlyTurnIntoAPartialBatch() = runBlocking<Unit> {
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "missing-selection-${UUID.randomUUID()}").apply { check(mkdir()) }
+        val kept = File(root, "kept.txt").apply { writeText("keep original") }
+        try {
+            val prepared = app.graph.nearbySources.prepareLocalPaths(listOf(kept.path, File(root, "missing.txt").path))
+            assertTrue(prepared.isFailure)
+            assertEquals("keep original", kept.readText())
+        } finally { check(root.deleteRecursively()) }
+    }
+    @Test fun longPathMetadataStopsBeforeAnUnboundedDirectoryListingIsBuilt() = runBlocking<Unit> {
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "paths-${UUID.randomUUID().toString().take(8)}").apply { check(mkdir()) }
+        try {
+            var nested = root
+            repeat(10) { nested = File(nested, "d".repeat(220)).apply { check(mkdir()) } }
+            repeat(1_100) { check(File(nested, "f$it.txt").createNewFile()) }
+            val prepared = app.graph.nearbySources.prepareLocalPaths(listOf(root.path))
+            assertTrue(prepared.isFailure)
+            assertEquals("Siuntimo rinkinio kelių aprašas per didelis", prepared.exceptionOrNull()?.message)
+            assertEquals(1_100, nested.listFiles()!!.size)
+        } finally { check(root.deleteRecursively()) }
+    }
+
+    @Test fun thirtyThousandFilesAndEightThousandFoldersArePreparedWithoutQuadraticSelection() = runBlocking<Unit> {
+        check(android.os.Build.MODEL.contains("sdk", ignoreCase = true))
+        val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
+        val root = File(app.cacheDir, "bulk-${UUID.randomUUID().toString().take(8)}").apply { check(mkdir()) }
+        try {
+            val sources = (0 until 30_000).map { File(root, "f$it.txt").apply { check(createNewFile()) } }
+            repeat(7_999) { check(File(root, "d$it").mkdir()) }
+            val started = android.os.SystemClock.elapsedRealtime()
+            // Selected descendants must not be sent a second time when their parent is selected.
+            val prepared = app.graph.nearbySources.prepareLocalPaths(listOf(root.path) + sources.take(29_999).map { it.path }).getOrThrow()
+            val elapsed = android.os.SystemClock.elapsedRealtime() - started
+            assertEquals(30_000, prepared.paths.size)
+            assertEquals(8_000, prepared.directories.size)
+            assertEquals(30_000, prepared.relativePaths.distinct().size)
+            assertEquals(0L, prepared.totalBytes)
+            assertTrue("Bulk preparation took ${elapsed}ms", elapsed < 120_000)
+            assertTrue(prepared.paths.all { File(it).isFile })
+            assertEquals(null, prepared.cleanupRootPath)
+            android.util.Log.i("AFBulkTest", "files=30000 folders=8000 preparationMillis=$elapsed")
+        } finally { check(root.deleteRecursively()) }
+    }
+
     @Test fun cancellationDuringTheReturnHandoffRemovesTheUndeliveredCopy() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<AFFileManagerApplication>()
         val source = File(app.cacheDir, "cancel-share-${UUID.randomUUID()}.txt").apply { writeText("cancel fixture") }

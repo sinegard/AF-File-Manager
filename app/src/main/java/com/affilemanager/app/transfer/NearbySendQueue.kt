@@ -20,7 +20,7 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
 
     @Synchronized fun enqueue(pairing: NearbyPairing, sources: PreparedNearbyTransfer, returnPairing: NearbyPairing?, groupId: String? = null): NearbySendBatch {
         require(sources.paths.size == sources.relativePaths.size &&
-            sources.paths.size == sources.sourceUris.size) { "Netinkamas siunčiamų failų skaičius" }
+            sources.paths.size == sources.sourceUris.size && sources.paths.size == sources.privilegedPaths.size) { "Netinkamas siunčiamų failų skaičius" }
         val pending = batches.values.filter { !it.state.status.finished() }
         require(pending.all { it.pairing == pairing || groupId != null && it.groupId == groupId }) { "Pirmiausia sustabdykite kitą bendrinimo sesiją" }
         require(pending.size < 16 && pending.sumOf { it.sources.paths.size } + sources.paths.size <= NearbySourcePreparer.MAX_FILES &&
@@ -209,12 +209,13 @@ internal class NearbySendQueue(private val onChanged: (NearbyTransferState) -> U
 
 internal fun NearbyTransferStatus.finished() = this in setOf(NearbyTransferStatus.COMPLETED, NearbyTransferStatus.CANCELLED, NearbyTransferStatus.ERROR)
 private fun PreparedNearbyTransfer.payloadCharacters() = paths.sumOf { it.length } + sourceUris.filterNotNull().sumOf { it.length } +
+    privilegedPaths.filterNotNull().sumOf { it.length } +
     relativePaths.sumOf { it.length } + directories.sumOf { it.length }
 
 /** A mixed batch may contain original files/URIs alongside already-discarded staging copies. */
 internal fun PreparedNearbyTransfer.retainsRetrySource(index: Int): Boolean {
     val path = paths.getOrNull(index) ?: return false
-    if (sourceUris.getOrNull(index) != null) return true
+    if (sourceUris.getOrNull(index) != null || privilegedPaths.getOrNull(index) != null) return true
     if (path.isBlank()) return false
     val stage = cleanupRootPath ?: return true
     return runCatching {

@@ -146,7 +146,7 @@ class NearbyTransferManifestTest {
     }
 
     @Test fun requestedLargeTransferLimitsStayExplicitAndLongBased() {
-        assertEquals(8_000, NearbySourcePreparer.MAX_FILES)
+        assertEquals(30_000, NearbySourcePreparer.MAX_FILES)
         assertEquals(32L * 1_024L * 1_024L * 1_024L, LanHttpServer.MAX_UPLOAD_BYTES)
         assertEquals(60L * 1_024L * 1_024L * 1_024L, NearbySourcePreparer.MAX_TOTAL_BYTES)
         val maximumFile = NearbyTransferManifest.encode(

@@ -5,6 +5,18 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class NearbyTransferHistoryRulesTest {
+    @Test fun `received document references retain their actual conflict name without granting failed partials`() {
+        val uri = "content://com.android.externalstorage.documents/tree/ABCD-1234%3AFolder/document/ABCD-1234%3AFolder%2Ffile%20(1).txt"
+        val merged = NearbyTransferHistoryRules.mergeFiles(session(), listOf(
+            TransferFileProgress("file.txt", 3, 3, TransferFileStatus.COMPLETED, localPath = uri, savedName = "file (1).txt"),
+            TransferFileProgress("failed.txt", 3, 1, TransferFileStatus.FAILED, localPath = uri, savedName = "../unsafe"),
+        ), outgoing = false, nowMillis = 2)
+        assertEquals(uri, merged.files.first().localPath)
+        assertEquals("file (1).txt", merged.files.first().savedName)
+        assertEquals(null, merged.files.last().localPath)
+        assertEquals(null, merged.files.last().savedName)
+    }
+
     @Test
     fun `progress-only updates are not retained but terminal files are`() {
         val session = session()
